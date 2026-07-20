@@ -38,13 +38,19 @@ export function promptThumbnailUrl(value?: string, width = 640) {
     return `https://images.weserv.nl/?url=${encodeURIComponent(source)}&w=${width}&h=${width}&fit=inside&q=78&output=webp`;
 }
 
+export function promptServerThumbnailUrl(value?: string, width = 640) {
+    const thumbnail = promptThumbnailUrl(value, width);
+    if (!thumbnail.startsWith("https://images.weserv.nl/")) return thumbnail;
+    return `/prompt-proxy/thumbnail/${thumbnail.slice("https://images.weserv.nl/".length)}`;
+}
+
 export function promptOriginalCandidates(value?: string) {
     const input = String(value || "").trim();
     return uniqueUrls([promptOriginalUrl(input), input]);
 }
 
 export function promptImageCandidates(value?: string, width = 640) {
-    return uniqueUrls([promptThumbnailUrl(value, width), ...promptOriginalCandidates(value)]);
+    return uniqueUrls([promptServerThumbnailUrl(value, width), promptThumbnailUrl(value, width), ...promptOriginalCandidates(value)]);
 }
 
 function uniqueUrls(values: Array<string | undefined>) {

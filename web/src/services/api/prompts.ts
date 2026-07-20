@@ -30,7 +30,7 @@ function enabledSources() {
 }
 
 export function promptSourceCacheKey(sourceId: string) {
-    return `prompt-source:v2:${sourceId}`;
+    return `prompt-source:v3:${sourceId}`;
 }
 
 /** Cheap stable signature of a source so cached prompts invalidate when the script or name changes. */

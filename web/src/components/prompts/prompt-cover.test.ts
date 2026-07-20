@@ -20,14 +20,15 @@ describe("prompt image URLs", () => {
         assert.ok(thumbnail.includes("output=webp"));
     });
 
-    test("provides thumbnail, direct CDN, and server proxy fallbacks", () => {
+    test("provides cached thumbnail, external thumbnail, direct CDN, and server proxy fallbacks", () => {
         const proxy = "/prompt-proxy/raw/freestylefly/awesome-gpt-image-2/main/data/images/case1.jpg";
         const candidates = promptImageCandidates(proxy);
 
-        assert.equal(candidates.length, 3);
-        assert.ok(candidates[0].startsWith("https://images.weserv.nl/"));
-        assert.equal(candidates[1], "https://cdn.jsdelivr.net/gh/freestylefly/awesome-gpt-image-2@main/data/images/case1.jpg");
-        assert.equal(candidates[2], proxy);
+        assert.equal(candidates.length, 4);
+        assert.ok(candidates[0].startsWith("/prompt-proxy/thumbnail/?url="));
+        assert.ok(candidates[1].startsWith("https://images.weserv.nl/"));
+        assert.equal(candidates[2], "https://cdn.jsdelivr.net/gh/freestylefly/awesome-gpt-image-2@main/data/images/case1.jpg");
+        assert.equal(candidates[3], proxy);
     });
 
     test("routes raw GitHub URLs through the direct CDN", () => {

@@ -76,18 +76,44 @@ function firstMatch(value: string, pattern: RegExp) {
     return pattern.exec(value)?.[1] || "";
 }
 
+function resolvePromptAssetUrl(baseUrl: string, path: string) {
+    const input = String(path || "").trim().replace(/&amp;/gi, "&");
+    if (!input) return "";
+    try {
+        return new URL(input, `${baseUrl.replace(/\/+$/, "")}/`).toString();
+    } catch {
+        return input;
+    }
+}
+
 function absoluteUrl(baseUrl: string, path: string) {
-    if (!path) return "";
-    if (/^https?:\/\//i.test(path)) return proxyPromptAssetUrl(path);
-    return proxyPromptAssetUrl(`${baseUrl}/${path.replace(/^\.?\//, "")}`);
+    return proxyPromptAssetUrl(resolvePromptAssetUrl(baseUrl, path));
 }
 
 function extractImages(baseUrl: string, markdown: string) {
-    const imagePattern = /!\[(?:\\.|[^\]\\])*]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g;
-    return Array.from(markdown.matchAll(imagePattern), (match) => absoluteUrl(baseUrl, match[1] || match[2])).filter(Boolean).filter((url) => !isDecorativePromptImage(url));
+    const candidates: Array<{ index: number; path: string }> = [];
+    const markdownImagePattern = /!\[(?:\\.|[^\]\\])*]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g;
+    const htmlImagePattern = /<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))[^>]*>/gi;
+
+    for (const match of markdown.matchAll(markdownImagePattern)) {
+        candidates.push({ index: match.index, path: match[1] || match[2] });
+    }
+    for (const match of markdown.matchAll(htmlImagePattern)) {
+        candidates.push({ index: match.index, path: match[1] || match[2] || match[3] });
+    }
+
+    const images = candidates
+        .sort((left, right) => left.index - right.index)
+        .map(({ path }) => resolvePromptAssetUrl(baseUrl, path))
+        .filter(Boolean)
+        .filter((url) => !isDecorativePromptImage(url))
+        .map(proxyPromptAssetUrl);
+
+    return Array.from(new Set(images));
 }
 
 function isDecorativePromptImage(value: string) {
+    if (/^\/prompt-proxy\/(?:shields|star-history)\//i.test(value)) return true;
     try {
         const host = new URL(value, window.location.origin).hostname.toLowerCase();
         return host === "img.shields.io" || host === "api.star-history.com";
