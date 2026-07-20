@@ -53,7 +53,10 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
             partialize: (state) => ({ sources: state.sources, schedule: state.schedule }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<PromptSourceStore>;
-                const sources = Array.isArray(persistedState.sources) && persistedState.sources.length ? persistedState.sources.map((item) => createPromptSource(item)) : DEFAULT_PROMPT_SOURCES;
+                const savedSources = Array.isArray(persistedState.sources) ? persistedState.sources.map((item) => createPromptSource(item)) : [];
+                const savedIds = new Set(savedSources.map((source) => source.id));
+                const missingDefaults = DEFAULT_PROMPT_SOURCES.filter((source) => !savedIds.has(source.id));
+                const sources = savedSources.length ? [...savedSources, ...missingDefaults] : DEFAULT_PROMPT_SOURCES;
                 return {
                     ...current,
                     sources,

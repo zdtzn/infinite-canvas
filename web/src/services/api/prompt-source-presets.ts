@@ -82,8 +82,40 @@ data.forEach((item, index) => {
 });
 return items;`;
 
+const freestyleflyAwesomeGptImage2Script = `// freestylefly/awesome-gpt-image-2: parse both gallery volumes.
+const base = "https://raw.githubusercontent.com/freestylefly/awesome-gpt-image-2/main";
+const files = ["docs/gallery-part-1.md", "docs/gallery-part-2.md"];
+const items = [];
+const promptPattern = /\\*\\*\\u63d0\\u793a\\u8bcd\\uff1a\\*\\*\\s*\\r?\\n\\s*\`\`\`[^\r\n]*\\r?\\n([\\s\\S]*?)\\r?\\n\`\`\`/;
+
+for (const file of files) {
+  const markdown = await fetchText(\`\${base}/\${file}\`);
+  const imageBase = \`\${base}/docs\`;
+
+  for (const block of splitSections(markdown, "### ")) {
+    const title = firstMatch(block, /^###\\s+(.+)$/m).trim();
+    const prompt = firstMatch(block, promptPattern).trim();
+    if (!title || !prompt) continue;
+
+    const images = extractImages(imageBase, block);
+    items.push(
+      makePrompt({
+        id: \`freestylefly-awesome-gpt-image-2-\${leftPad(items.length + 1)}\`,
+        title,
+        prompt,
+        coverUrl: images[0] || "",
+        tags: ["gpt-image-2", "freestylefly"],
+        preview: markdownPreview(images),
+      }),
+    );
+  }
+}
+
+return items;`;
+
 export const DEFAULT_PROMPT_SOURCES: PromptSource[] = [
     { id: "davidwu-gpt-image2-prompts", name: "davidwu-gpt-image2-prompts", githubUrl: "https://github.com/davidwuw0811-boop/awesome-gpt-image2-prompts", enabled: true, script: davidWuGptImage2Script },
+    { id: "freestylefly-awesome-gpt-image-2", name: "freestylefly/awesome-gpt-image-2", githubUrl: "https://github.com/freestylefly/awesome-gpt-image-2", enabled: true, script: freestyleflyAwesomeGptImage2Script },
     { id: "awesome-gpt-image", name: "awesome-gpt-image", githubUrl: "https://github.com/ZeroLu/awesome-gpt-image", enabled: true, script: awesomeGptImageScript },
     { id: "awesome-gpt4o-image-prompts", name: "awesome-gpt4o-image-prompts", githubUrl: "https://github.com/ImgEdify/Awesome-GPT4o-Image-Prompts", enabled: true, script: awesomeGpt4oImageScript },
     {
