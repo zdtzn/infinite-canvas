@@ -1,6 +1,6 @@
 import localforage from "localforage";
 
-import { runPromptSource, type RawPrompt } from "./prompt-source-runtime";
+import { normalizePromptAssets, runPromptSource, type RawPrompt } from "./prompt-source-runtime";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "./prompt-source-presets";
 
@@ -44,7 +44,7 @@ function sourceSignature(source: PromptSource) {
 }
 
 function withSourceMeta(source: PromptSource, items: RawPrompt[]): Prompt[] {
-    return items.map((item) => ({ ...item, category: source.name, githubUrl: source.githubUrl }));
+    return items.map((item) => ({ ...normalizePromptAssets(item), category: source.name, githubUrl: source.githubUrl }));
 }
 
 async function runSource(source: PromptSource): Promise<Prompt[]> {
@@ -58,7 +58,7 @@ async function getSourcePrompts(source: PromptSource, force = false): Promise<Pr
     const signature = sourceSignature(source);
     if (!force) {
         const cached = await promptCacheStore.getItem<SourceCache>(cacheKey(source.id));
-        if (cached?.items?.length && cached.signature === signature && Date.now() - cached.fetchedAt < cacheTtlMs) return cached.items;
+        if (cached?.items?.length && cached.signature === signature && Date.now() - cached.fetchedAt < cacheTtlMs) return cached.items.map(normalizePromptAssets);
     }
     if (!force && loadingSources.has(source.id)) return loadingSources.get(source.id)!;
     const loading = runSource(source).finally(() => loadingSources.delete(source.id));

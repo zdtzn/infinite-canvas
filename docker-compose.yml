@@ -1,5 +1,6 @@
 services:
   app:
+    build: .
     image: ghcr.io/basketikun/infinite-canvas:latest
     container_name: infinite-canvas
     ports:

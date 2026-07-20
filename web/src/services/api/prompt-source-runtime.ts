@@ -17,8 +17,38 @@ export type RawPrompt = {
 
 type RunOptions = { signal?: AbortSignal };
 
+const PROMPT_PROXY_PREFIXES: Record<string, string> = {
+    "raw.githubusercontent.com": "/prompt-proxy/raw/",
+    "pbs.twimg.com": "/prompt-proxy/pbs/",
+    "img.shields.io": "/prompt-proxy/shields/",
+    "api.star-history.com": "/prompt-proxy/star-history/",
+    "awesome.re": "/prompt-proxy/awesome/",
+    "atomgit.com": "/prompt-proxy/atomgit/",
+};
+
+function proxyPromptAssetUrl(value: string) {
+    const input = String(value || "").trim();
+    if (!input || input.startsWith("data:") || input.startsWith("/")) return input;
+    try {
+        const url = new URL(input, window.location.origin);
+        const prefix = PROMPT_PROXY_PREFIXES[url.hostname.toLowerCase()];
+        if (!prefix || !["http:", "https:"].includes(url.protocol)) return input;
+        return `${prefix}${url.pathname.replace(/^\/+/, "")}${url.search}`;
+    } catch {
+        return input;
+    }
+}
+
+function rewritePromptPreview(value: string) {
+    return String(value || "").replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, alt, url) => `![${alt}](${proxyPromptAssetUrl(url)})`);
+}
+
+export function normalizePromptAssets<T extends { coverUrl: string; preview: string }>(item: T): T {
+    return { ...item, coverUrl: proxyPromptAssetUrl(item.coverUrl), preview: rewritePromptPreview(item.preview) };
+}
+
 async function fetchText(url: string) {
-    const response = await fetch(url, { cache: "no-store" });
+    const response = await fetch(proxyPromptAssetUrl(url), { cache: "no-store" });
     if (!response.ok) throw new Error(`${url} 拉取失败`);
     return response.text();
 }
@@ -48,12 +78,21 @@ function firstMatch(value: string, pattern: RegExp) {
 
 function absoluteUrl(baseUrl: string, path: string) {
     if (!path) return "";
-    if (/^https?:\/\//i.test(path)) return path;
-    return `${baseUrl}/${path.replace(/^\.?\//, "")}`;
+    if (/^https?:\/\//i.test(path)) return proxyPromptAssetUrl(path);
+    return proxyPromptAssetUrl(`${baseUrl}/${path.replace(/^\.?\//, "")}`);
 }
 
 function extractImages(baseUrl: string, markdown: string) {
-    return Array.from(markdown.matchAll(/!\[[^\]]*]\(([^)]+)\)/g), (match) => absoluteUrl(baseUrl, match[1])).filter(Boolean);
+    return Array.from(markdown.matchAll(/!\[[^\]]*]\(([^)]+)\)/g), (match) => absoluteUrl(baseUrl, match[1])).filter(Boolean).filter((url) => !isDecorativePromptImage(url));
+}
+
+function isDecorativePromptImage(value: string) {
+    try {
+        const host = new URL(value, window.location.origin).hostname.toLowerCase();
+        return host === "img.shields.io" || host === "api.star-history.com";
+    } catch {
+        return false;
+    }
 }
 
 function splitTags(value: string, pattern: RegExp) {
@@ -79,7 +118,7 @@ function leftPad(value: number) {
 }
 
 function makePrompt(input: { id: string; title: string; prompt: string; coverUrl?: string; tags?: string[]; preview?: string; createdAt?: string; updatedAt?: string }): RawPrompt {
-    return {
+    return normalizePromptAssets({
         id: input.id,
         title: input.title,
         prompt: input.prompt,
@@ -88,7 +127,7 @@ function makePrompt(input: { id: string; title: string; prompt: string; coverUrl
         preview: input.preview || "",
         createdAt: input.createdAt || "",
         updatedAt: input.updatedAt || "",
-    };
+    });
 }
 
 /** Run a prompt-source script and normalize its result into a deduped RawPrompt[]. */
