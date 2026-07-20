@@ -1,37 +1,44 @@
 import { ImageOff } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 const PROXY_SOURCE_HOSTS: Record<string, string> = {
-    raw: "raw.githubusercontent.com",
     pbs: "pbs.twimg.com",
     awesome: "awesome.re",
     atomgit: "atomgit.com",
 };
 
-function thumbnailSource(value: string) {
-    const proxyMatch = value.match(/^\/prompt-proxy\/([^/]+)\/(.+)$/);
+export function promptOriginalUrl(value?: string) {
+    const input = String(value || "").trim();
+    if (!input) return input;
+
+    const rawMatch = input.match(/^\/prompt-proxy\/raw\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)$/);
+    if (rawMatch) {
+        const [, owner, repo, ref, path] = rawMatch;
+        return `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/${path}`;
+    }
+
+    const proxyMatch = input.match(/^\/prompt-proxy\/([^/]+)\/(.+)$/);
     if (proxyMatch && PROXY_SOURCE_HOSTS[proxyMatch[1]]) {
         return `https://${PROXY_SOURCE_HOSTS[proxyMatch[1]]}/${proxyMatch[2]}`;
     }
-    return value;
+    return input;
 }
 
 export function promptThumbnailUrl(value?: string, width = 640) {
     const input = String(value || "").trim();
     if (!input || input.startsWith("data:") || input.startsWith("blob:") || input.startsWith("https://images.weserv.nl/")) return input;
-    const source = thumbnailSource(input);
+    const source = promptOriginalUrl(input);
     if (!/^https?:\/\//i.test(source)) return input;
     return `https://images.weserv.nl/?url=${encodeURIComponent(source)}&w=${width}&h=${width}&fit=inside&q=78&output=webp`;
 }
 
-export function PromptCover({ src, fallbackSrc, alt, className }: { src?: string; fallbackSrc?: string; alt: string; className: string }) {
-    const [currentSrc, setCurrentSrc] = useState(src);
-    const [failed, setFailed] = useState(!src);
+type CoverStatus = { src?: string; fallbackActive: boolean; failed: boolean };
 
-    useEffect(() => {
-        setCurrentSrc(src);
-        setFailed(!src);
-    }, [src]);
+export function PromptCover({ src, fallbackSrc, alt, className, loading = "lazy", fetchPriority = "auto" }: { src?: string; fallbackSrc?: string; alt: string; className: string; loading?: "eager" | "lazy"; fetchPriority?: "high" | "low" | "auto" }) {
+    const [status, setStatus] = useState<CoverStatus>({ src, fallbackActive: false, failed: !src });
+    const sourceChanged = status.src !== src;
+    const currentSrc = !sourceChanged && status.fallbackActive ? fallbackSrc : src;
+    const failed = sourceChanged ? !src : status.failed;
 
     if (failed) {
         return (
@@ -44,18 +51,21 @@ export function PromptCover({ src, fallbackSrc, alt, className }: { src?: string
 
     return (
         <img
+            key={currentSrc}
             src={currentSrc}
             alt={alt}
             className={className}
-            loading="lazy"
+            loading={loading}
+            fetchPriority={fetchPriority}
             decoding="async"
             referrerPolicy="no-referrer"
+            onLoad={() => setStatus({ src, fallbackActive: Boolean(fallbackSrc && currentSrc === fallbackSrc), failed: false })}
             onError={() => {
                 if (fallbackSrc && currentSrc !== fallbackSrc) {
-                    setCurrentSrc(fallbackSrc);
+                    setStatus({ src, fallbackActive: true, failed: false });
                     return;
                 }
-                setFailed(true);
+                setStatus({ src, fallbackActive: false, failed: true });
             }}
         />
     );
