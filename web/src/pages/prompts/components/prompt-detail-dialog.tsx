@@ -1,8 +1,18 @@
-import { Copy, FolderPlus } from "lucide-react";
+import { Copy, Download, FolderPlus } from "lucide-react";
 import { Button, Modal, Space, Tag } from "antd";
+import { saveAs } from "file-saver";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
 import { PromptCover } from "@/components/prompts/prompt-cover";
+
+async function downloadPromptCover(prompt: Prompt) {
+    if (!prompt.coverUrl) return;
+    const response = await fetch(prompt.coverUrl);
+    if (!response.ok) throw new Error("Original image request failed");
+    const blob = await response.blob();
+    const extension = blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
+    saveAs(blob, `${prompt.title || "prompt-image"}.${extension}`);
+}
 
 export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { prompt: Prompt | null; onClose: () => void; onCopy: (prompt: string) => void; onSaveAsset?: (prompt: Prompt) => void }) {
     return (
@@ -28,6 +38,11 @@ export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { p
                                     创建：{formatPromptDate(prompt.createdAt)} · 更新：{formatPromptDate(prompt.updatedAt)}
                                 </div>
                                 <Space wrap className="mt-5">
+                                    {prompt.coverUrl ? (
+                                        <Button icon={<Download className="size-4" />} onClick={() => void downloadPromptCover(prompt)}>
+                                            下载原图
+                                        </Button>
+                                    ) : null}
                                     <Button type="primary" icon={<Copy className="size-4" />} onClick={() => onCopy(prompt.prompt)}>
                                         复制提示词
                                     </Button>
