@@ -25,6 +25,11 @@ type SourceCache = { items: Prompt[]; fetchedAt: number; signature: string };
 
 const loadingSources = new Map<string, Promise<Prompt[]>>();
 
+const sourceCacheRevisions: Record<string, string> = {
+    "youmind-gpt-image-2": "html-content-images-v1",
+    "youmind-nano-banana-pro": "html-content-images-v1",
+};
+
 function enabledSources() {
     return usePromptSourceStore.getState().sources.filter((source) => source.enabled);
 }
@@ -33,9 +38,14 @@ export function promptSourceCacheKey(sourceId: string) {
     return `prompt-source:v2:${sourceId}`;
 }
 
+export function promptSourceCacheRevision(sourceId: string) {
+    return sourceCacheRevisions[sourceId] || "";
+}
+
 /** Cheap stable signature of a source so cached prompts invalidate when the script or name changes. */
 function sourceSignature(source: PromptSource) {
-    const value = `${source.name}\n${source.githubUrl}\n${source.script}`;
+    const revision = promptSourceCacheRevision(source.id);
+    const value = `${revision ? `${revision}\n` : ""}${source.name}\n${source.githubUrl}\n${source.script}`;
     let hash = 0;
     for (let i = 0; i < value.length; i += 1) {
         hash = (hash * 31 + value.charCodeAt(i)) | 0;
