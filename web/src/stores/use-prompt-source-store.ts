@@ -53,9 +53,20 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
             partialize: (state) => ({ sources: state.sources, schedule: state.schedule }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<PromptSourceStore>;
-                const savedSources = Array.isArray(persistedState.sources) ? persistedState.sources.map((item) => createPromptSource(item)) : [];
+                const savedSourceCandidates = Array.isArray(persistedState.sources) ? persistedState.sources.map((item) => createPromptSource(item)) : [];
+                const seenSourceKeys = new Set<string>();
+                const savedSources = savedSourceCandidates.filter((source) => {
+                    const key = source.githubUrl.trim().toLowerCase() || `id:${source.id}`;
+                    if (seenSourceKeys.has(key)) return false;
+                    seenSourceKeys.add(key);
+                    return true;
+                });
                 const savedIds = new Set(savedSources.map((source) => source.id));
-                const missingDefaults = DEFAULT_PROMPT_SOURCES.filter((source) => !savedIds.has(source.id));
+                const savedGithubUrls = new Set(savedSources.map((source) => source.githubUrl.trim().toLowerCase()).filter(Boolean));
+                const missingDefaults = DEFAULT_PROMPT_SOURCES.filter((source) => {
+                    const githubUrl = source.githubUrl.trim().toLowerCase();
+                    return !savedIds.has(source.id) && (!githubUrl || !savedGithubUrls.has(githubUrl));
+                });
                 const sources = savedSources.length ? [...savedSources, ...missingDefaults] : DEFAULT_PROMPT_SOURCES;
                 return {
                     ...current,
