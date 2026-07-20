@@ -48,7 +48,8 @@ for (const block of splitSections(markdown, "### ")) {
 return items;`;
 
 function youMindScript(base: string, idPrefix: string, modelTag: string) {
-    return `// YouMind 系列：README_zh.md 里 "### No.N: 标题" + "#### ...提示词" 代码块。
+    return `// parser-cache: html-content-images-v1
+// YouMind 系列：README_zh.md 里 "### No.N: 标题" + "#### ...提示词" 代码块。
 const base = "${base}";
 const idPrefix = "${idPrefix}";
 const modelTag = "${modelTag}";
