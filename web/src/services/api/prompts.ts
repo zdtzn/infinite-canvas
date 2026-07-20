@@ -29,8 +29,8 @@ function enabledSources() {
     return usePromptSourceStore.getState().sources.filter((source) => source.enabled);
 }
 
-function cacheKey(sourceId: string) {
-    return `prompt-source:${sourceId}`;
+export function promptSourceCacheKey(sourceId: string) {
+    return `prompt-source:v2:${sourceId}`;
 }
 
 /** Cheap stable signature of a source so cached prompts invalidate when the script or name changes. */
@@ -50,14 +50,14 @@ function withSourceMeta(source: PromptSource, items: RawPrompt[]): Prompt[] {
 async function runSource(source: PromptSource): Promise<Prompt[]> {
     const items = await runPromptSource(source.script);
     const prompts = withSourceMeta(source, items);
-    await promptCacheStore.setItem<SourceCache>(cacheKey(source.id), { items: prompts, fetchedAt: Date.now(), signature: sourceSignature(source) });
+    await promptCacheStore.setItem<SourceCache>(promptSourceCacheKey(source.id), { items: prompts, fetchedAt: Date.now(), signature: sourceSignature(source) });
     return prompts;
 }
 
 async function getSourcePrompts(source: PromptSource, force = false): Promise<Prompt[]> {
     const signature = sourceSignature(source);
     if (!force) {
-        const cached = await promptCacheStore.getItem<SourceCache>(cacheKey(source.id));
+        const cached = await promptCacheStore.getItem<SourceCache>(promptSourceCacheKey(source.id));
         if (cached?.items?.length && cached.signature === signature && Date.now() - cached.fetchedAt < cacheTtlMs) return cached.items.map(normalizePromptAssets);
     }
     if (!force && loadingSources.has(source.id)) return loadingSources.get(source.id)!;

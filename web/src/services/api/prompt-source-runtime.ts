@@ -83,7 +83,8 @@ function absoluteUrl(baseUrl: string, path: string) {
 }
 
 function extractImages(baseUrl: string, markdown: string) {
-    return Array.from(markdown.matchAll(/!\[[^\]]*]\(([^)]+)\)/g), (match) => absoluteUrl(baseUrl, match[1])).filter(Boolean).filter((url) => !isDecorativePromptImage(url));
+    const imagePattern = /!\[(?:\\.|[^\]\\])*]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g;
+    return Array.from(markdown.matchAll(imagePattern), (match) => absoluteUrl(baseUrl, match[1] || match[2])).filter(Boolean).filter((url) => !isDecorativePromptImage(url));
 }
 
 function isDecorativePromptImage(value: string) {

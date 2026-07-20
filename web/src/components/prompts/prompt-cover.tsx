@@ -1,4 +1,4 @@
-import { ImageOff } from "lucide-react";
+import { ImageOff, RotateCcw } from "lucide-react";
 import { useState } from "react";
 
 const PROXY_SOURCE_HOSTS: Record<string, string> = {
@@ -10,6 +10,12 @@ const PROXY_SOURCE_HOSTS: Record<string, string> = {
 export function promptOriginalUrl(value?: string) {
     const input = String(value || "").trim();
     if (!input) return input;
+
+    const rawUrlMatch = input.match(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)$/i);
+    if (rawUrlMatch) {
+        const [, owner, repo, ref, path] = rawUrlMatch;
+        return `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/${path}`;
+    }
 
     const rawMatch = input.match(/^\/prompt-proxy\/raw\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)$/);
     if (rawMatch) {
@@ -32,26 +38,58 @@ export function promptThumbnailUrl(value?: string, width = 640) {
     return `https://images.weserv.nl/?url=${encodeURIComponent(source)}&w=${width}&h=${width}&fit=inside&q=78&output=webp`;
 }
 
-type CoverStatus = { src?: string; fallbackActive: boolean; failed: boolean };
+export function promptOriginalCandidates(value?: string) {
+    const input = String(value || "").trim();
+    return uniqueUrls([promptOriginalUrl(input), input]);
+}
 
-export function PromptCover({ src, fallbackSrc, alt, className, loading = "lazy", fetchPriority = "auto" }: { src?: string; fallbackSrc?: string; alt: string; className: string; loading?: "eager" | "lazy"; fetchPriority?: "high" | "low" | "auto" }) {
-    const [status, setStatus] = useState<CoverStatus>({ src, fallbackActive: false, failed: !src });
-    const sourceChanged = status.src !== src;
-    const currentSrc = !sourceChanged && status.fallbackActive ? fallbackSrc : src;
-    const failed = sourceChanged ? !src : status.failed;
+export function promptImageCandidates(value?: string, width = 640) {
+    return uniqueUrls([promptThumbnailUrl(value, width), ...promptOriginalCandidates(value)]);
+}
 
-    if (failed) {
+function uniqueUrls(values: Array<string | undefined>) {
+    return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
+}
+
+type CoverStatus = { sourceKey: string; index: number; failed: boolean; retry: number };
+
+export function PromptCover({ sources, alt, className, loading = "lazy", fetchPriority = "auto" }: { sources?: string[]; alt: string; className: string; loading?: "eager" | "lazy"; fetchPriority?: "high" | "low" | "auto" }) {
+    const candidates = uniqueUrls(sources || []);
+    const sourceKey = candidates.join("\n");
+    const [status, setStatus] = useState<CoverStatus>({ sourceKey, index: 0, failed: false, retry: 0 });
+    const activeStatus = status.sourceKey === sourceKey ? status : { sourceKey, index: 0, failed: false, retry: 0 };
+    const currentSrc = candidates[activeStatus.index];
+
+    if (!currentSrc) {
         return (
-            <div className={`${className} flex flex-col items-center justify-center gap-2 bg-stone-100 text-stone-400 dark:bg-stone-900 dark:text-stone-500`} role="img" aria-label={`${alt}暂无图片预览`}>
+            <div className={`${className} flex flex-col items-center justify-center gap-2 bg-stone-100 text-stone-400 dark:bg-stone-900 dark:text-stone-500`} role="img" aria-label={`${alt}源内容未提供图片`}>
                 <ImageOff className="size-6" aria-hidden="true" />
-                <span className="text-xs">暂无图片预览</span>
+                <span className="text-xs">源内容未提供图片</span>
+            </div>
+        );
+    }
+
+    if (activeStatus.failed) {
+        return (
+            <div className={`${className} flex flex-col items-center justify-center gap-2 bg-stone-100 text-stone-400 dark:bg-stone-900 dark:text-stone-500`} role="img" aria-label={`${alt}图片加载失败`}>
+                <ImageOff className="size-6" aria-hidden="true" />
+                <span className="text-xs">图片加载失败</span>
+                <button
+                    type="button"
+                    title="重新加载"
+                    aria-label="重新加载图片"
+                    className="flex size-8 items-center justify-center rounded border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-300 dark:hover:bg-stone-900"
+                    onClick={() => setStatus({ sourceKey, index: 0, failed: false, retry: activeStatus.retry + 1 })}
+                >
+                    <RotateCcw className="size-4" />
+                </button>
             </div>
         );
     }
 
     return (
         <img
-            key={currentSrc}
+            key={`${sourceKey}:${activeStatus.index}:${activeStatus.retry}`}
             src={currentSrc}
             alt={alt}
             className={className}
@@ -59,13 +97,12 @@ export function PromptCover({ src, fallbackSrc, alt, className, loading = "lazy"
             fetchPriority={fetchPriority}
             decoding="async"
             referrerPolicy="no-referrer"
-            onLoad={() => setStatus({ src, fallbackActive: Boolean(fallbackSrc && currentSrc === fallbackSrc), failed: false })}
             onError={() => {
-                if (fallbackSrc && currentSrc !== fallbackSrc) {
-                    setStatus({ src, fallbackActive: true, failed: false });
+                if (activeStatus.index + 1 < candidates.length) {
+                    setStatus({ ...activeStatus, index: activeStatus.index + 1 });
                     return;
                 }
-                setStatus({ src, fallbackActive: false, failed: true });
+                setStatus({ ...activeStatus, failed: true });
             }}
         />
     );

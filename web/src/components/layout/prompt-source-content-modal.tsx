@@ -3,7 +3,7 @@ import { Copy, FolderPlus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
-import { promptOriginalUrl, promptThumbnailUrl, PromptCover } from "@/components/prompts/prompt-cover";
+import { promptImageCandidates, PromptCover } from "@/components/prompts/prompt-cover";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { fetchSourcePrompts, refreshSource, type Prompt } from "@/services/api/prompts";
@@ -76,7 +76,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                             width: 72,
                             render: (coverUrl: string, item) =>
                                 coverUrl ? (
-                                    <PromptCover src={promptThumbnailUrl(coverUrl)} fallbackSrc={promptOriginalUrl(coverUrl)} alt={item.title} className="size-12 rounded bg-stone-100 object-contain dark:bg-stone-800" />
+                                    <PromptCover sources={promptImageCandidates(coverUrl)} alt={item.title} className="size-12 rounded bg-stone-100 object-contain dark:bg-stone-800" />
                                 ) : (
                                     <div className="size-12 rounded bg-stone-100 dark:bg-stone-800" />
                                 ),
