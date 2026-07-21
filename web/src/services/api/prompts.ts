@@ -1,8 +1,9 @@
 import localforage from "localforage";
 
-import { normalizePromptAssets, runPromptSource, type RawPrompt } from "./prompt-source-runtime";
+import { normalizePromptAssets, runPromptSource, runTrustedPromptSource, type RawPrompt } from "./prompt-source-runtime";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "./prompt-source-presets";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
 
 export type Prompt = RawPrompt & {
     category: string;
@@ -31,7 +32,7 @@ const sourceCacheRevisions: Record<string, string> = {
 };
 
 function enabledSources() {
-    return usePromptSourceStore.getState().sources.filter((source) => source.enabled);
+    return usePromptSourceStore.getState().sources.filter((source) => source.enabled && (!PUBLIC_MODE || source.trusted));
 }
 
 export function promptSourceCacheKey(sourceId: string) {
@@ -58,7 +59,7 @@ function withSourceMeta(source: PromptSource, items: RawPrompt[]): Prompt[] {
 }
 
 async function runSource(source: PromptSource): Promise<Prompt[]> {
-    const items = await runPromptSource(source.script);
+    const items = PUBLIC_MODE ? await runTrustedPromptSource(source.id) : await runPromptSource(source.script);
     const prompts = withSourceMeta(source, items);
     await promptCacheStore.setItem<SourceCache>(promptSourceCacheKey(source.id), { items: prompts, fetchedAt: Date.now(), signature: sourceSignature(source) });
     return prompts;
@@ -66,12 +67,17 @@ async function runSource(source: PromptSource): Promise<Prompt[]> {
 
 async function getSourcePrompts(source: PromptSource, force = false): Promise<Prompt[]> {
     const signature = sourceSignature(source);
+    const cached = await promptCacheStore.getItem<SourceCache>(promptSourceCacheKey(source.id));
     if (!force) {
-        const cached = await promptCacheStore.getItem<SourceCache>(promptSourceCacheKey(source.id));
         if (cached?.items?.length && cached.signature === signature && Date.now() - cached.fetchedAt < cacheTtlMs) return cached.items.map(normalizePromptAssets);
     }
     if (!force && loadingSources.has(source.id)) return loadingSources.get(source.id)!;
-    const loading = runSource(source).finally(() => loadingSources.delete(source.id));
+    const loading = runSource(source)
+        .catch((error) => {
+            if (cached?.items?.length && cached.signature === signature) return cached.items.map(normalizePromptAssets);
+            throw error;
+        })
+        .finally(() => loadingSources.delete(source.id));
     loadingSources.set(source.id, loading);
     return loading;
 }

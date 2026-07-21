@@ -4,7 +4,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
+import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
 
 export type CanvasProject = {
     id: string;
@@ -113,7 +113,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     const projects = state.projects.filter((project) => !ids.includes(project.id));
                     return { projects };
                 }),
-            replaceProjects: (projects) => set({ projects }),
+            replaceProjects: (projects) => set({ projects: projects.map(normalizeCanvasProject).filter((project): project is CanvasProject => Boolean(project)) }),
             updateProject: (id, patch) =>
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)),
@@ -121,7 +121,12 @@ export const useCanvasStore = create<CanvasStore>()(
         }),
         {
             name: CANVAS_STORE_KEY,
+            version: 3,
             storage: canvasStorage,
+            migrate: (persisted) => {
+                const value = (persisted || {}) as Partial<PersistedCanvasState>;
+                return { projects: Array.isArray(value.projects) ? value.projects.map(normalizeCanvasProject).filter((project): project is CanvasProject => Boolean(project)) : [] } as CanvasStore;
+            },
             partialize: (state) =>
                 ({
                     projects: state.projects,
@@ -132,3 +137,56 @@ export const useCanvasStore = create<CanvasStore>()(
         },
     ),
 );
+
+export function normalizeCanvasProject(source: unknown): CanvasProject | null {
+    if (!source || typeof source !== "object") return null;
+    const value = source as Partial<CanvasProject>;
+    const id = typeof value.id === "string" && value.id ? value.id : "";
+    if (!id) return null;
+    const now = new Date().toISOString();
+    const viewport = value.viewport && typeof value.viewport === "object" ? value.viewport : initialViewport;
+    return {
+        id,
+        title: typeof value.title === "string" && value.title.trim() ? value.title : "未命名画布",
+        createdAt: validDate(value.createdAt) ? value.createdAt! : now,
+        updatedAt: validDate(value.updatedAt) ? value.updatedAt! : now,
+        nodes: Array.isArray(value.nodes) ? value.nodes.map(normalizeCanvasNode).filter((node): node is CanvasNodeData => Boolean(node)) : [],
+        connections: Array.isArray(value.connections) ? value.connections.filter(isCanvasConnection) : [],
+        chatSessions: Array.isArray(value.chatSessions) ? value.chatSessions : [],
+        activeChatId: typeof value.activeChatId === "string" ? value.activeChatId : null,
+        backgroundMode: value.backgroundMode === "dots" || value.backgroundMode === "blank" ? value.backgroundMode : "lines",
+        showImageInfo: Boolean(value.showImageInfo),
+        viewport: { x: finiteNumber(viewport.x, 0), y: finiteNumber(viewport.y, 0), k: Math.max(0.1, finiteNumber(viewport.k, 1)) },
+    };
+}
+
+function normalizeCanvasNode(source: unknown, index: number): CanvasNodeData | null {
+    if (!source || typeof source !== "object") return null;
+    const value = source as Partial<CanvasNodeData>;
+    const type = typeof value.type === "string" && value.type ? value.type : CanvasNodeType.Text;
+    const position = value.position && typeof value.position === "object" ? value.position : { x: 0, y: 0 };
+    return {
+        id: typeof value.id === "string" && value.id ? value.id : `legacy-node-${index}`,
+        type,
+        title: typeof value.title === "string" && value.title ? value.title : "未命名节点",
+        position: { x: finiteNumber(position.x, 0), y: finiteNumber(position.y, 0) },
+        width: Math.max(40, finiteNumber(value.width, 320)),
+        height: Math.max(40, finiteNumber(value.height, 220)),
+        metadata: value.metadata && typeof value.metadata === "object" ? value.metadata : {},
+    };
+}
+
+function isCanvasConnection(value: unknown): value is CanvasConnection {
+    if (!value || typeof value !== "object") return false;
+    const connection = value as Partial<CanvasConnection>;
+    return Boolean(connection.id && connection.fromNodeId && connection.toNodeId);
+}
+
+function finiteNumber(value: unknown, fallback: number) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+}
+
+function validDate(value: unknown): value is string {
+    return typeof value === "string" && Number.isFinite(Date.parse(value));
+}

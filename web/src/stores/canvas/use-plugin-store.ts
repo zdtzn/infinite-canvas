@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { localForageStorage } from "@/lib/localforage-storage";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
 
 export type InstalledPlugin = {
     id: string;
@@ -39,7 +40,9 @@ export const usePluginStore = create<PluginStore>()(
         }),
         {
             name: "infinite-canvas:plugin_store",
+            version: 1,
             storage: createJSONStorage(() => localForageStorage),
+            merge: (persisted, current) => (PUBLIC_MODE ? current : { ...current, ...(persisted as Partial<PluginStore>) }),
         },
     ),
 );

@@ -27,6 +27,7 @@ import {
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
+import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
 
 type GenerationLog = {
     id: string;
@@ -102,13 +103,23 @@ export default function ImagePage() {
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
-        const nextReferences = await Promise.all(
-            imageFiles.map(async (file) => {
-                const image = await uploadImage(file);
-                return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
-            }),
-        );
-        setReferences((value) => [...value, ...nextReferences]);
+        const channel = effectiveConfig.channels.find((item) => model.startsWith(`${item.id}::`)) || effectiveConfig.channels[0];
+        const maxReferences = deriveImageModelCapabilities(model, channel?.apiFormat || effectiveConfig.apiFormat).maxReferences;
+        if (references.length + imageFiles.length > maxReferences) {
+            message.error(`当前模型最多支持 ${maxReferences} 张参考图`);
+            return;
+        }
+        try {
+            const nextReferences = await Promise.all(
+                imageFiles.map(async (file) => {
+                    const image = await uploadImage(file);
+                    return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+                }),
+            );
+            setReferences((value) => [...value, ...nextReferences]);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "参考图上传失败");
+        }
     };
 
     const addReferencesFromClipboard = async () => {

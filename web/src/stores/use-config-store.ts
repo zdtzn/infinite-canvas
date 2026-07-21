@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -17,6 +18,7 @@ export type ModelChannel = {
     name: string;
     baseUrl: string;
     apiKey: string;
+    credentialState?: "missing" | "saved";
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
 };
@@ -56,7 +58,7 @@ export type WebdavSyncConfig = {
     directory: string;
     lastSyncedAt: string;
 };
-export type ConfigTabKey = "channels" | "preferences" | "prompt-sources" | "webdav";
+export type ConfigTabKey = "channels" | "preferences" | "prompt-sources" | "webdav" | "members";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
@@ -74,6 +76,7 @@ export const defaultConfig: AiConfig = {
             name: "默认渠道",
             baseUrl: OPENAI_BASE_URL,
             apiKey: "",
+            credentialState: "missing",
             apiFormat: "openai",
             models: [
                 { name: "gpt-image-2", capability: "image" },
@@ -164,12 +167,13 @@ export function selectableModelsByCapability(config: AiConfig, capability?: Mode
 
 /** The user script (if any) attached to a model; empty string means use the system default call. */
 export function resolveModelScript(config: AiConfig, value: string) {
+    if (PUBLIC_MODE) return "";
     return findChannelModel(config, value)?.model.script?.trim() || "";
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
     const channel = resolveModelChannel(config, model);
-    return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
+    return Boolean(model.trim() && channel.baseUrl.trim() && (channel.credentialState === "saved" || channel.apiKey.trim()));
 }
 
 export const useConfigStore = create<ConfigStore>()(
@@ -201,7 +205,15 @@ export const useConfigStore = create<ConfigStore>()(
         }),
         {
             name: CONFIG_STORE_KEY,
-            partialize: (state) => ({ config: state.config, webdav: state.webdav }),
+            version: 2,
+            partialize: (state) => ({
+                config: {
+                    ...state.config,
+                    apiKey: "",
+                    channels: state.config.channels.map((channel) => ({ ...channel, apiKey: "" })),
+                },
+                webdav: state.webdav,
+            }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
@@ -266,6 +278,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         name: channel?.name?.trim() || "新渠道",
         baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
         apiKey: channel?.apiKey || "",
+        credentialState: channel?.credentialState || (channel?.apiKey ? "saved" : "missing"),
         apiFormat,
         models: normalizeChannelModels(channel?.models),
     };
@@ -327,6 +340,8 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
+        channelId: channel.id,
+        serverManaged: channel.credentialState === "saved",
     };
 }
 

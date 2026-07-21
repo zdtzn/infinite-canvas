@@ -16,6 +16,7 @@ export type RawPrompt = {
 };
 
 type RunOptions = { signal?: AbortSignal };
+const PROMPT_FETCH_TIMEOUT_MS = 12_000;
 
 const PROMPT_PROXY_PREFIXES: Record<string, string> = {
     "raw.githubusercontent.com": "/prompt-proxy/raw/",
@@ -47,14 +48,18 @@ export function normalizePromptAssets<T extends { coverUrl: string; preview: str
     return { ...item, coverUrl: proxyPromptAssetUrl(item.coverUrl), preview: rewritePromptPreview(item.preview) };
 }
 
-async function fetchText(url: string) {
-    const response = await fetch(proxyPromptAssetUrl(url), { cache: "no-store" });
+async function fetchText(url: string, signal?: AbortSignal) {
+    const proxied = proxyPromptAssetUrl(url);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(new DOMException("Timeout", "TimeoutError")), PROMPT_FETCH_TIMEOUT_MS);
+    const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const response = await fetch(proxied, { cache: "no-store", signal: requestSignal }).finally(() => window.clearTimeout(timer));
     if (!response.ok) throw new Error(`${url} 拉取失败`);
     return response.text();
 }
 
-async function fetchJson<T = unknown>(url: string) {
-    return JSON.parse(await fetchText(url)) as T;
+async function fetchJson<T = unknown>(url: string, signal?: AbortSignal) {
+    return JSON.parse(await fetchText(url, signal)) as T;
 }
 
 /** Split markdown into blocks, each starting at a line that begins with `prefix` (e.g. "## " / "### "). */
@@ -178,7 +183,7 @@ export async function runPromptSource(script: string, options?: RunOptions): Pro
     ) as (...args: unknown[]) => Promise<unknown>;
     let result: unknown;
     try {
-        result = await runner(fetchText, fetchJson, splitSections, firstMatch, extractImages, absoluteUrl, tagsFromHeading, splitTags, markdownPreview, leftPad, makePrompt, options?.signal);
+        result = await runner((url: string) => fetchText(url, options?.signal), (url: string) => fetchJson(url, options?.signal), splitSections, firstMatch, extractImages, absoluteUrl, tagsFromHeading, splitTags, markdownPreview, leftPad, makePrompt, options?.signal);
     } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
         const message = error instanceof Error ? error.message : String(error);
@@ -208,6 +213,93 @@ export async function runPromptSource(script: string, options?: RunOptions): Pro
                 updatedAt: String(record.updatedAt || ""),
             }),
         );
+    }
+    return items;
+}
+
+export async function runTrustedPromptSource(sourceId: string, options?: RunOptions): Promise<RawPrompt[]> {
+    if (sourceId === "davidwu-gpt-image2-prompts") return parseDavidWu(options);
+    if (sourceId === "freestylefly-awesome-gpt-image-2") return parseFreestylefly(options);
+    if (sourceId === "awesome-gpt-image") return parseAwesomeGptImage(options);
+    if (sourceId === "awesome-gpt4o-image-prompts") return parseAwesomeGpt4o(options);
+    if (sourceId === "youmind-gpt-image-2") return parseYouMind("https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main", "youmind-gpt-image-2", "gpt-image-2", options);
+    if (sourceId === "youmind-nano-banana-pro") return parseYouMind("https://raw.githubusercontent.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts/main", "youmind-nano-banana-pro", "nano-banana-pro", options);
+    throw new Error("公网安全模式不允许运行自定义提示词脚本");
+}
+
+async function parseDavidWu(options?: RunOptions) {
+    const base = "https://raw.githubusercontent.com/davidwuw0811-boop/awesome-gpt-image2-prompts/main";
+    const data = await fetchJson<Array<Record<string, unknown>>>(`${base}/prompts.json`, options?.signal);
+    return data.flatMap((item, index) => {
+        const title = String(item.title_cn || item.title_en || "").trim();
+        const prompt = String(item.prompt || "").trim();
+        if (!title || !prompt) return [];
+        const image = absoluteUrl(base, String(item.image || ""));
+        const tags = splitTags([item.category_cn, item.category, item.author, item.source].filter(Boolean).join("/"), /\//);
+        if (item.needs_ref) tags.push("需要参考图");
+        const preview = [item.title_en, item.note, image ? `![](${image})` : ""].filter(Boolean).join("\n\n");
+        return [makePrompt({ id: `davidwu-gpt-image2-prompts-${leftPad(Number(item.id) || index + 1)}`, title, prompt, coverUrl: image, tags, preview })];
+    });
+}
+
+async function parseFreestylefly(options?: RunOptions) {
+    const base = "https://raw.githubusercontent.com/freestylefly/awesome-gpt-image-2/main";
+    const items: RawPrompt[] = [];
+    const promptPattern = /\*\*提示词：\*\*\s*\r?\n\s*```[^\r\n]*\r?\n([\s\S]*?)\r?\n```/;
+    for (const file of ["docs/gallery-part-1.md", "docs/gallery-part-2.md"]) {
+        const markdown = await fetchText(`${base}/${file}`, options?.signal);
+        for (const block of splitSections(markdown, "### ")) {
+            const title = firstMatch(block, /^###\s+(.+)$/m).trim();
+            const prompt = firstMatch(block, promptPattern).trim();
+            if (!title || !prompt) continue;
+            const images = extractImages(`${base}/docs`, block);
+            items.push(makePrompt({ id: `freestylefly-awesome-gpt-image-2-${leftPad(items.length + 1)}`, title, prompt, coverUrl: images[0] || "", tags: ["gpt-image-2", "freestylefly"], preview: markdownPreview(images) }));
+        }
+    }
+    return items;
+}
+
+async function parseAwesomeGptImage(options?: RunOptions) {
+    const base = "https://raw.githubusercontent.com/ZeroLu/awesome-gpt-image/main";
+    const markdown = await fetchText(`${base}/README.zh-CN.md`, options?.signal);
+    const items: RawPrompt[] = [];
+    for (const section of splitSections(markdown, "## ")) {
+        const tags = tagsFromHeading(firstMatch(section, /^##\s+(.+)$/m));
+        for (const block of splitSections(section, "### ")) {
+            const title = firstMatch(block, /^###\s+(.+)$/m).replace(/\[([^\]]+)]\([^)]+\)/g, "$1").trim();
+            const prompt = firstMatch(block, /\*\*提示词:\*\*\s*\r?\n\s*```[\w-]*\r?\n(.*?)\r?\n```/s).trim();
+            if (!title || !prompt) continue;
+            const images = extractImages(base, block);
+            items.push(makePrompt({ id: `awesome-gpt-image-${leftPad(items.length + 1)}`, title, prompt, coverUrl: images[0] || "", tags, preview: markdownPreview(images) }));
+        }
+    }
+    return items;
+}
+
+async function parseAwesomeGpt4o(options?: RunOptions) {
+    const base = "https://raw.githubusercontent.com/ImgEdify/Awesome-GPT4o-Image-Prompts/main";
+    const markdown = await fetchText(`${base}/README.zh-CN.md`, options?.signal);
+    const items: RawPrompt[] = [];
+    for (const block of splitSections(markdown, "### ")) {
+        const title = firstMatch(block, /^###\s+(.+)$/m).trim();
+        const prompt = firstMatch(block, /- \*\*提示词文本：\*\*\s*`(.*?)`/s).trim();
+        if (!title || !prompt) continue;
+        const images = extractImages(base, block);
+        items.push(makePrompt({ id: `awesome-gpt4o-image-prompts-${leftPad(items.length + 1)}`, title, prompt, coverUrl: images[0] || "", tags: ["gpt4o"], preview: markdownPreview(images) }));
+    }
+    return items;
+}
+
+async function parseYouMind(base: string, idPrefix: string, modelTag: string, options?: RunOptions) {
+    const markdown = await fetchText(`${base}/README_zh.md`, options?.signal);
+    const items: RawPrompt[] = [];
+    for (const block of splitSections(markdown, "### ")) {
+        const title = firstMatch(block, /^###\s+No\.\s*\d+:\s*(.+)$/m).trim();
+        const prompt = firstMatch(block, /#### .*?提示词\s*\r?\n\s*```[\w-]*\r?\n(.*?)\r?\n```/s).trim();
+        if (!title || !prompt) continue;
+        const images = extractImages(base, block);
+        const prefix = title.match(/^(.+?) - /)?.[1] || "";
+        items.push(makePrompt({ id: `${idPrefix}-${leftPad(items.length + 1)}`, title, prompt, coverUrl: images[0] || "", tags: [modelTag, ...tagsFromHeading(prefix)], preview: markdownPreview(images) }));
     }
     return items;
 }

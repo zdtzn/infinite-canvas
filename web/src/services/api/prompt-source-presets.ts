@@ -6,6 +6,7 @@ export type PromptSource = {
     githubUrl: string;
     enabled: boolean;
     script: string;
+    trusted?: boolean;
 };
 
 export function createPromptSource(source?: Partial<PromptSource>): PromptSource {
@@ -15,6 +16,7 @@ export function createPromptSource(source?: Partial<PromptSource>): PromptSource
         githubUrl: source?.githubUrl?.trim() || "",
         enabled: source?.enabled ?? true,
         script: source?.script ?? "",
+        trusted: source?.trusted ?? false,
     };
 }
 
@@ -114,15 +116,16 @@ for (const file of files) {
 return items;`;
 
 export const DEFAULT_PROMPT_SOURCES: PromptSource[] = [
-    { id: "davidwu-gpt-image2-prompts", name: "davidwu-gpt-image2-prompts", githubUrl: "https://github.com/davidwuw0811-boop/awesome-gpt-image2-prompts", enabled: true, script: davidWuGptImage2Script },
-    { id: "freestylefly-awesome-gpt-image-2", name: "freestylefly/awesome-gpt-image-2", githubUrl: "https://github.com/freestylefly/awesome-gpt-image-2", enabled: true, script: freestyleflyAwesomeGptImage2Script },
-    { id: "awesome-gpt-image", name: "awesome-gpt-image", githubUrl: "https://github.com/ZeroLu/awesome-gpt-image", enabled: true, script: awesomeGptImageScript },
-    { id: "awesome-gpt4o-image-prompts", name: "awesome-gpt4o-image-prompts", githubUrl: "https://github.com/ImgEdify/Awesome-GPT4o-Image-Prompts", enabled: true, script: awesomeGpt4oImageScript },
+    { id: "davidwu-gpt-image2-prompts", name: "davidwu-gpt-image2-prompts", githubUrl: "https://github.com/davidwuw0811-boop/awesome-gpt-image2-prompts", enabled: true, trusted: true, script: davidWuGptImage2Script },
+    { id: "freestylefly-awesome-gpt-image-2", name: "freestylefly/awesome-gpt-image-2", githubUrl: "https://github.com/freestylefly/awesome-gpt-image-2", enabled: true, trusted: true, script: freestyleflyAwesomeGptImage2Script },
+    { id: "awesome-gpt-image", name: "awesome-gpt-image", githubUrl: "https://github.com/ZeroLu/awesome-gpt-image", enabled: true, trusted: true, script: awesomeGptImageScript },
+    { id: "awesome-gpt4o-image-prompts", name: "awesome-gpt4o-image-prompts", githubUrl: "https://github.com/ImgEdify/Awesome-GPT4o-Image-Prompts", enabled: true, trusted: true, script: awesomeGpt4oImageScript },
     {
         id: "youmind-gpt-image-2",
         name: "youmind-gpt-image-2",
         githubUrl: "https://github.com/YouMind-OpenLab/awesome-gpt-image-2",
         enabled: true,
+        trusted: true,
         script: youMindScript("https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main", "youmind-gpt-image-2", "gpt-image-2"),
     },
     {
@@ -130,6 +133,7 @@ export const DEFAULT_PROMPT_SOURCES: PromptSource[] = [
         name: "youmind-nano-banana-pro",
         githubUrl: "https://github.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts",
         enabled: true,
+        trusted: true,
         script: youMindScript("https://raw.githubusercontent.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts/main", "youmind-nano-banana-pro", "nano-banana-pro"),
     },
 ];

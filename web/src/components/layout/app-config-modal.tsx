@@ -7,6 +7,10 @@ import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
+import { deleteServerChannel, saveServerChannel } from "@/services/server-api";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { ConfigMembers } from "@/components/layout/config-members";
+import { useUserStore } from "@/stores/use-user-store";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
@@ -58,6 +62,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
+    const user = useUserStore((state) => state.user);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const updateWebdavConfig = useConfigStore((state) => state.updateWebdavConfig);
@@ -73,7 +78,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     };
 
     const finishConfig = () => {
-        const ready = config.channels.some((channel) => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length);
+        const ready = config.channels.some((channel) => channel.baseUrl.trim() && (channel.credentialState === "saved" || channel.apiKey.trim()) && channel.models.length);
         setConfigDialogOpen(false);
         if (!ready) return;
         message.success(shouldPromptContinue ? "配置已保存，请继续刚才的请求" : "配置已保存");
@@ -94,10 +99,14 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             return;
         }
         updateChannels(config.channels.filter((channel) => channel.id !== id));
+        if (PUBLIC_MODE) void deleteServerChannel(id).catch(() => undefined);
     };
 
-    const saveChannel = (channel: ModelChannel) => {
-        updateChannels(config.channels.map((item) => (item.id === channel.id ? channel : item)));
+    const saveChannel = async (channel: ModelChannel) => {
+        if (PUBLIC_MODE) await saveServerChannel(channel);
+        const saved = PUBLIC_MODE ? { ...channel, apiKey: "", credentialState: "saved" as const } : channel;
+        updateChannels(config.channels.map((item) => (item.id === channel.id ? saved : item)));
+        message.success("渠道已保存");
     };
 
     const testWebdav = async () => {
@@ -163,7 +172,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         children: (
                             <div>
                                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                                    <div className="text-xs text-stone-500">每个渠道选择一个协议并拉取模型，为每个模型指定能力（生图/视频/文本/音频），并可自定义调用脚本。</div>
+                                    <div className="text-xs text-stone-500">每个渠道选择一个协议并拉取模型，为每个模型指定能力（生图/视频/文本/音频）。公网模式下 API Key 仅加密保存在服务端。</div>
                                     <Button type="primary" icon={<Plus className="size-4" />} onClick={addChannel}>
                                         新增渠道
                                     </Button>
@@ -189,6 +198,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                             </div>
                         ),
                     },
+                    ...(PUBLIC_MODE && user?.admin ? [{ key: "members", label: "成员", children: <ConfigMembers /> }] : []),
                     {
                         key: "preferences",
                         label: "偏好设置",
@@ -334,7 +344,7 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         channels,
         models: modelOptionsFromChannels(channels),
         baseUrl: channels[0]?.baseUrl || config.baseUrl,
-        apiKey: channels[0]?.apiKey || config.apiKey,
+        apiKey: PUBLIC_MODE ? "" : channels[0]?.apiKey || config.apiKey,
         apiFormat: channels[0]?.apiFormat || config.apiFormat,
     };
     return {

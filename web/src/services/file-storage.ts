@@ -1,5 +1,7 @@
 import localforage from "localforage";
 import { nanoid } from "nanoid";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { deleteServerAsset, fetchServerAssetBlob, uploadServerAsset } from "@/services/server-api";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
@@ -8,6 +10,11 @@ const objectUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+    if (PUBLIC_MODE) {
+        const { asset } = await uploadServerAsset(blob, prefix);
+        const meta = blob.type.startsWith("video/") ? await readVideoMeta(asset.url) : blob.type.startsWith("audio/") ? await readAudioMeta(asset.url) : {};
+        return { url: asset.url, storageKey: asset.key, bytes: asset.bytes, mimeType: asset.mimeType, ...meta };
+    }
     const storageKey = `${prefix}:${nanoid()}`;
     await store.setItem(storageKey, blob);
     const url = URL.createObjectURL(blob);
@@ -18,6 +25,7 @@ export async function uploadMediaFile(input: string | Blob, prefix = "file"): Pr
 
 export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
+    if (PUBLIC_MODE) return `/api/assets/${encodeURIComponent(storageKey)}`;
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
     const blob = await store.getItem<Blob>(storageKey);
@@ -28,10 +36,12 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
 }
 
 export async function getMediaBlob(storageKey: string) {
+    if (PUBLIC_MODE) return fetchServerAssetBlob(storageKey);
     return store.getItem<Blob>(storageKey);
 }
 
 export async function setMediaBlob(storageKey: string, blob: Blob) {
+    if (PUBLIC_MODE) return (await uploadServerAsset(blob, storageKey.split(":")[0] || "file", storageKey)).asset.url;
     await store.setItem(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
@@ -39,6 +49,10 @@ export async function setMediaBlob(storageKey: string, blob: Blob) {
 }
 
 export async function deleteStoredMedia(keys: Iterable<string>) {
+    if (PUBLIC_MODE) {
+        await Promise.all(Array.from(new Set(keys)).map((key) => deleteServerAsset(key).catch(() => undefined)));
+        return;
+    }
     await Promise.all(
         Array.from(new Set(keys)).map(async (key) => {
             const url = objectUrls.get(key);
@@ -50,6 +64,7 @@ export async function deleteStoredMedia(keys: Iterable<string>) {
 }
 
 export async function cleanupUnusedMedia(usedData: unknown) {
+    if (PUBLIC_MODE) return;
     const usedKeys = collectMediaStorageKeys(usedData);
     const unused: string[] = [];
     await store.iterate((_value, key) => {

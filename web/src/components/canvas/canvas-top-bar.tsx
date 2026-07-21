@@ -46,7 +46,7 @@ export function CanvasTopBar({
     onDeleteProject: () => void;
     onExportProject: () => void;
     onImportImage: () => void;
-    onOpenPlugins: () => void;
+    onOpenPlugins?: () => void;
     onUndo: () => void;
     onRedo: () => void;
     agentOpen: boolean;

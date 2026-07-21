@@ -1,13 +1,15 @@
 import { App, Button, Select, Switch } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
 import { Eye, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 
-import { PromptSourceEditorDrawer } from "./prompt-source-editor-drawer";
 import { PromptSourceContentModal } from "./prompt-source-content-modal";
 import { refreshAllSources, refreshSource } from "@/services/api/prompts";
 import { PROMPT_SOURCE_INTERVAL_OPTIONS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
+
+const PromptSourceEditorDrawer = lazy(() => import("./prompt-source-editor-drawer").then((module) => ({ default: module.PromptSourceEditorDrawer })));
 
 export function ConfigPromptSources() {
     const { message } = App.useApp();
@@ -79,10 +81,8 @@ export function ConfigPromptSources() {
     return (
         <div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs text-stone-500">每个来源是一段拉取脚本，可自定义、可查看内容；系统内置几个默认来源，你也可以本地新增。</div>
-                <Button type="primary" icon={<Plus className="size-4" />} onClick={handleAdd}>
-                    新增来源
-                </Button>
+                <div className="text-xs text-stone-500">公网模式仅启用内置可信来源；资源由本站代理缓存，单个来源异常不会拖垮整个图库。</div>
+                {!PUBLIC_MODE ? <Button type="primary" icon={<Plus className="size-4" />} onClick={handleAdd}>新增来源</Button> : null}
             </div>
 
             <div className="space-y-2">
@@ -102,10 +102,8 @@ export function ConfigPromptSources() {
                             <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={refreshingId === source.id} onClick={() => void handleRefreshOne(source)}>
                                 立即拉取
                             </Button>
-                            <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingId(source.id)}>
-                                编辑脚本
-                            </Button>
-                            <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => handleDelete(source)} />
+                            {!PUBLIC_MODE ? <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingId(source.id)}>编辑脚本</Button> : null}
+                            {!PUBLIC_MODE ? <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => handleDelete(source)} /> : null}
                         </div>
                     </div>
                 ))}
@@ -126,7 +124,11 @@ export function ConfigPromptSources() {
                 <div className="mt-2 text-xs text-stone-400">开启周期后，页面打开期间会按周期自动拉取所有启用的来源。</div>
             </section>
 
-            <PromptSourceEditorDrawer open={Boolean(editingSource)} source={editingSource} onSave={handleSave} onClose={() => setEditingId("")} />
+            {!PUBLIC_MODE && editingSource ? (
+                <Suspense fallback={null}>
+                    <PromptSourceEditorDrawer open source={editingSource} onSave={handleSave} onClose={() => setEditingId("")} />
+                </Suspense>
+            ) : null}
             <PromptSourceContentModal source={viewingSource} onClose={() => setViewingId("")} />
         </div>
     );

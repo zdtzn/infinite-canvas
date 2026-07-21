@@ -9,12 +9,16 @@ COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
 RUN bun run build
 
-# 运行镜像：只启动静态前端，AI 请求由浏览器前台直连用户自己的接口。
-FROM nginx:1.27-alpine
+# 运行镜像：Bun 同时提供静态页面、登录鉴权、密钥代理与持久任务队列。
+FROM oven/bun:1.3.13-alpine
 
-COPY --from=web-build /app/web/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY web/docker-entrypoint.sh /docker-entrypoint.d/40-runtime-config.sh
-RUN chmod +x /docker-entrypoint.d/40-runtime-config.sh
+WORKDIR /app
+COPY --from=web-build /app/web/dist /app/web
+COPY server /app/server
+RUN mkdir -p /data && chown -R bun:bun /app /data
 
+USER bun
+ENV PORT=3000 DATA_DIR=/data WEB_ROOT=/app/web
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD bun -e "const r=await fetch('http://127.0.0.1:3000/health');if(!r.ok)process.exit(1)"
+CMD ["bun", "run", "/app/server/index.ts"]

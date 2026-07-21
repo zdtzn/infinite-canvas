@@ -6,6 +6,7 @@ import { App, ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 
 import { ClientRootInit } from "@/components/layout/client-root-init";
+import { AuthGate } from "@/components/layout/auth-gate";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 
@@ -13,7 +14,8 @@ const queryClient = new QueryClient({
     defaultOptions: {
         queries: {
             staleTime: 30_000,
-            retry: false,
+            retry: (failureCount, error) => failureCount < 2 && !/鉴权|口令|权限|参数|格式/.test(error instanceof Error ? error.message : ""),
+            retryDelay: (attempt) => Math.min(800 * 2 ** attempt, 5000),
             refetchOnWindowFocus: false,
         },
     },
@@ -33,7 +35,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
             <ProConfigProvider dark={dark}>
                 <App>
                     <QueryClientProvider client={queryClient}>
-                        <ClientRootInit>{children}</ClientRootInit>
+                        <AuthGate>
+                            <ClientRootInit>{children}</ClientRootInit>
+                        </AuthGate>
                     </QueryClientProvider>
                 </App>
             </ProConfigProvider>

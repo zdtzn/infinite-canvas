@@ -2,6 +2,7 @@ import { registerNodeDefinitions, unregisterPluginNodes } from "@/lib/canvas/nod
 import { getPluginRuntime } from "@/lib/canvas/plugin-runtime";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 import type { CanvasPlugin } from "@/types/canvas-plugin";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
 
 const cleanups = new Map<string, () => void>();
 
@@ -59,6 +60,7 @@ function withCacheBust(url: string) {
 // bustCache=true 时下载绕过 HTTP/CDN 缓存(升级场景必需,避免拿到旧产物),
 // 但落库的 url 始终保持干净(不带 ?t=),便于后续再次更新。
 export async function installPluginFromUrl(url: string, opts?: { official?: boolean; bustCache?: boolean }) {
+    if (PUBLIC_MODE) throw new Error("公网安全模式已禁用第三方节点插件");
     const source = await fetchPluginSource(opts?.bustCache ? withCacheBust(url) : url);
     const plugin = await evaluatePluginSource(source);
     deactivatePlugin(plugin.id); // 覆盖旧版本
@@ -73,6 +75,7 @@ export async function updatePlugin(record: InstalledPlugin) {
 }
 
 export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean) {
+    if (PUBLIC_MODE) throw new Error("公网安全模式已禁用第三方节点插件");
     usePluginStore.getState().setEnabled(record.id, enabled);
     if (!enabled) {
         deactivatePlugin(record.id);
@@ -93,6 +96,7 @@ let loaded = false;
 
 // 应用启动时加载已安装且启用的插件
 export async function ensurePluginsLoaded() {
+    if (PUBLIC_MODE) return;
     if (loaded) return;
     loaded = true;
     await usePluginStore.persist.rehydrate();

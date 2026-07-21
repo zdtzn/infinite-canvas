@@ -1,7 +1,9 @@
 import { nanoid } from "nanoid";
+import localforage from "localforage";
 
 import { requestEdit, requestGeneration } from "@/services/api/image";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
+import { fetchServerJob, waitForServerJob } from "@/services/server-api";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 
@@ -21,6 +23,7 @@ export type GenerationResult = {
     status: "pending" | "success" | "failed";
     image?: GeneratedImage;
     error?: string;
+    serverJobId?: string;
 };
 
 export type ImageGenerationSnapshot = {
@@ -40,6 +43,7 @@ export type ImageGenerationJob = {
     successCount: number;
     failCount: number;
     error?: string;
+    snapshot?: ImageGenerationSnapshot;
 };
 
 export type ImageGenerationCompletion = {
@@ -51,18 +55,23 @@ export type ImageGenerationCompletion = {
 };
 
 type CompletionHandler = (completion: ImageGenerationCompletion) => void | Promise<void>;
-type SlotRunner = (snapshot: ImageGenerationSnapshot, index: number) => Promise<GeneratedImage>;
+type SlotRunner = (snapshot: ImageGenerationSnapshot, index: number, onServerJobCreated?: (jobId: string) => void) => Promise<GeneratedImage>;
 
 let currentJob: ImageGenerationJob | null = null;
 let elapsedTimer: ReturnType<typeof setInterval> | undefined;
 const listeners = new Set<() => void>();
+const runtimeStore = localforage.createInstance({ name: "infinite-canvas", storeName: "generation_runtime" });
+const RUNTIME_JOB_KEY = "active-image-job:v1";
+let hydrationStarted = false;
 
 export function subscribeImageGeneration(listener: () => void) {
+    hydrateRuntime();
     listeners.add(listener);
     return () => listeners.delete(listener);
 }
 
 export function getImageGenerationSnapshot() {
+    hydrateRuntime();
     return currentJob;
 }
 
@@ -80,10 +89,12 @@ export function startImageGeneration(snapshot: ImageGenerationSnapshot, count: n
         elapsedMs: 0,
         successCount: 0,
         failCount: 0,
+        snapshot,
     };
     currentJob = job;
     startElapsedTimer();
     emit();
+    persistCurrentJob();
 
     void runGeneration(job.id, snapshot, onComplete, slotRunner);
     return job.id;
@@ -106,6 +117,7 @@ export function clearImageGenerationJob() {
     if (currentJob?.status === "running") return false;
     currentJob = null;
     emit();
+    if (typeof window !== "undefined") void runtimeStore.removeItem(RUNTIME_JOB_KEY);
     return true;
 }
 
@@ -113,7 +125,7 @@ async function runGeneration(jobId: string, snapshot: ImageGenerationSnapshot, o
     const job = currentJob;
     if (!job || job.id !== jobId) return;
 
-    const tasks = job.results.map((_, index) => runGenerationSlot(jobId, index, snapshot, slotRunner));
+    const tasks = job.results.map((result, index) => (result.status === "success" ? Promise.resolve(result.image!) : runGenerationSlot(jobId, index, snapshot, slotRunner)));
     const settled = await Promise.allSettled(tasks);
     const successImages = settled.filter((item): item is PromiseFulfilledResult<GeneratedImage> => item.status === "fulfilled").map((item) => item.value);
     const successCount = successImages.length;
@@ -133,6 +145,7 @@ async function runGeneration(jobId: string, snapshot: ImageGenerationSnapshot, o
             error,
         };
         emit();
+        persistCurrentJob();
     }
 
     try {
@@ -144,7 +157,8 @@ async function runGeneration(jobId: string, snapshot: ImageGenerationSnapshot, o
 
 async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGenerationSnapshot, slotRunner: SlotRunner = requestImageSlot) {
     try {
-        const nextImage = await slotRunner(snapshot, index);
+        const existingServerJobId = currentJob?.id === jobId ? currentJob.results[index]?.serverJobId : undefined;
+        const nextImage = existingServerJobId ? await restoreServerImage(existingServerJobId) : await slotRunner(snapshot, index, (serverJobId) => updateResult(jobId, index, { serverJobId }));
         updateResult(jobId, index, { status: "success", image: nextImage });
         return nextImage;
     } catch (error) {
@@ -153,9 +167,11 @@ async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGe
     }
 }
 
-async function requestImageSlot(snapshot: ImageGenerationSnapshot) {
+async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: number, onServerJobCreated?: (jobId: string) => void) {
     const itemStartedAt = Date.now();
-    const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
+    const result = snapshot.references.length
+        ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, { onJobCreated: onServerJobCreated, source: { route: "/image", label: "生图工作台" } })
+        : await requestGeneration(snapshot.config, snapshot.text, { onJobCreated: onServerJobCreated, source: { route: "/image", label: "生图工作台" } });
     const image = result[0];
     if (!image) throw new Error("接口没有返回图片");
     const meta = await readImageMeta(image.dataUrl);
@@ -173,6 +189,7 @@ function updateResult(jobId: string, index: number, next: Partial<GenerationResu
     if (!currentJob || currentJob.id !== jobId) return;
     currentJob = { ...currentJob, results: currentJob.results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item)) };
     emit();
+    persistCurrentJob();
 }
 
 function startElapsedTimer() {
@@ -192,4 +209,51 @@ function stopElapsedTimer() {
 
 function emit() {
     listeners.forEach((listener) => listener());
+}
+
+async function restoreServerImage(serverJobId: string) {
+    const current = await fetchServerJob(serverJobId);
+    const job = current.job.status === "succeeded" ? current.job : await waitForServerJob(serverJobId);
+    const image = job.result?.images[0];
+    if (!image) throw new Error(job.error || "任务没有返回图片");
+    const meta = await readImageMeta(image.dataUrl);
+    return { id: image.id, dataUrl: image.dataUrl, durationMs: image.durationMs || job.result?.durationMs || 0, width: meta.width, height: meta.height, bytes: image.bytes || getDataUrlByteSize(image.dataUrl), mimeType: image.mimeType };
+}
+
+function hydrateRuntime() {
+    if (hydrationStarted || typeof window === "undefined") return;
+    hydrationStarted = true;
+    void runtimeStore.getItem<ImageGenerationJob>(RUNTIME_JOB_KEY).then((saved) => {
+        if (!saved || currentJob) return;
+        currentJob = saved;
+        emit();
+        if (saved.status === "running" && saved.snapshot) {
+            startElapsedTimer();
+            void runGeneration(saved.id, saved.snapshot, undefined, requestImageSlot);
+        }
+    });
+}
+
+function persistCurrentJob() {
+    if (typeof window === "undefined" || !currentJob) return;
+    const persisted: ImageGenerationJob = {
+        ...currentJob,
+        references: currentJob.references.map(stripReferenceData),
+        snapshot: currentJob.snapshot
+            ? {
+                  ...currentJob.snapshot,
+                  references: currentJob.snapshot.references.map(stripReferenceData),
+                  config: {
+                      ...currentJob.snapshot.config,
+                      apiKey: "",
+                      channels: currentJob.snapshot.config.channels.map((channel) => ({ ...channel, apiKey: "" })),
+                  },
+              }
+            : undefined,
+    };
+    void runtimeStore.setItem(RUNTIME_JOB_KEY, persisted);
+}
+
+function stripReferenceData(reference: ReferenceImage): ReferenceImage {
+    return reference.storageKey ? { ...reference, dataUrl: "" } : reference;
 }

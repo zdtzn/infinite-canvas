@@ -1,11 +1,15 @@
 import axios from "axios";
 
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, defaultConfig, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
+import { cancelServerJob, saveServerChannel, submitImageJob, waitForServerJob } from "@/services/server-api";
+import { deriveImageModelCapabilities, validateImageRequest } from "@/stores/model-capabilities";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { geminiApiBase, geminiProviderHeaders, isServerManagedConfig, openAiApiUrl, providerHeaders, type ManagedAiConfig } from "./gateway";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -91,7 +95,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal };
+export type RequestOptions = { signal?: AbortSignal; onJobCreated?: (jobId: string) => void; source?: { route?: string; projectId?: string; nodeId?: string; label?: string } };
 
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
@@ -278,38 +282,30 @@ function withSystemPrompt(config: AiConfig, prompt: string) {
     return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
 }
 
-function aiApiUrl(config: AiConfig, path: string) {
-    return buildApiUrl(config.baseUrl, path);
+function aiApiUrl(config: ManagedAiConfig, path: string) {
+    return openAiApiUrl(config, path);
 }
 
-function aiHeaders(config: AiConfig, contentType?: string) {
-    return {
-        Authorization: `Bearer ${config.apiKey}`,
-        ...(contentType ? { "Content-Type": contentType } : {}),
-    };
+function aiHeaders(config: ManagedAiConfig, contentType?: string) {
+    return providerHeaders(config, contentType);
 }
 
-function geminiBaseUrl(config: Pick<AiConfig, "baseUrl">) {
-    const normalizedBaseUrl = config.baseUrl.trim().replace(/\/+$/, "");
-    const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
-    return lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/v1beta") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1beta`;
+function geminiBaseUrl(config: ManagedAiConfig) {
+    return geminiApiBase(config);
 }
 
 function geminiModelName(model: string) {
     return model.trim().replace(/^models\//, "");
 }
 
-function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "generateContent" | "streamGenerateContent") {
+function geminiApiUrl(config: ManagedAiConfig, action?: "generateContent" | "streamGenerateContent") {
     const baseUrl = geminiBaseUrl(config);
     if (!action) return `${baseUrl}/models`;
     return `${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`;
 }
 
-function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
-    return {
-        "x-goog-api-key": config.apiKey,
-        "Content-Type": "application/json",
-    };
+function geminiHeaders(config: ManagedAiConfig) {
+    return geminiProviderHeaders(config);
 }
 
 function withSystemMessage<T extends ResponseInputMessage>(config: AiConfig, messages: T[]): ResponseInputMessage[] {
@@ -662,6 +658,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    if (isServerManagedConfig(requestConfig)) return requestServerImageJob(requestConfig, prompt, [], undefined, n, options);
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
@@ -721,6 +718,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
+    if (isServerManagedConfig(requestConfig)) return requestServerImageJob(requestConfig, requestPrompt, references, mask, n, options);
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
@@ -818,7 +816,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
     }
 }
 
-export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+export async function fetchImageModels(config: ManagedAiConfig) {
     try {
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
@@ -843,7 +841,40 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
 }
 
 export async function fetchChannelModels(channel: ModelChannel) {
-    return fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
+    if (PUBLIC_MODE) {
+        await saveServerChannel(channel);
+        return fetchImageModels({ ...defaultConfig, baseUrl: channel.baseUrl, apiKey: "", apiFormat: channel.apiFormat, channelId: channel.id, serverManaged: true });
+    }
+    return fetchImageModels({ ...defaultConfig, baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
+}
+
+async function requestServerImageJob(requestConfig: ManagedAiConfig & { channelId: string; serverManaged: true }, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, count: number, options?: RequestOptions) {
+    const capabilities = deriveImageModelCapabilities(requestConfig.model, requestConfig.apiFormat);
+    validateImageRequest(capabilities, { quality: requestConfig.quality || "auto", size: requestConfig.size || "auto", background: requestConfig.background || "", referenceCount: references.length, count });
+    const referenceData = await Promise.all(references.map(imageToDataUrl));
+    const maskData = mask ? await imageToDataUrl(mask) : undefined;
+    const { job } = await submitImageJob({
+        channelId: requestConfig.channelId,
+        apiFormat: requestConfig.apiFormat,
+        model: requestConfig.model,
+        prompt: withSystemPrompt(requestConfig, prompt),
+        count,
+        quality: normalizeQuality(requestConfig.quality),
+        size: requestConfig.size || undefined,
+        background: normalizeBackground(requestConfig.background),
+        references: referenceData,
+        mask: maskData,
+        source: options?.source,
+    });
+    options?.onJobCreated?.(job.id);
+    const abort = () => void cancelServerJob(job.id).catch(() => undefined);
+    options?.signal?.addEventListener("abort", abort, { once: true });
+    try {
+        const completed = await waitForServerJob(job.id, { signal: options?.signal });
+        return (completed.result?.images || []).map((image) => ({ id: image.id, dataUrl: image.dataUrl }));
+    } finally {
+        options?.signal?.removeEventListener("abort", abort);
+    }
 }
 
 const defaultGeminiConfig: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat" | "model" | "systemPrompt"> = {

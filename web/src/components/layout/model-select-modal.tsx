@@ -59,7 +59,7 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
 
     const fetchModels = async () => {
         if (!channel) return;
-        if (!channel.baseUrl.trim() || !channel.apiKey.trim()) {
+        if (!channel.baseUrl.trim() || (!channel.apiKey.trim() && channel.credentialState !== "saved")) {
             message.error("请先填写接口地址和 API Key");
             return;
         }
