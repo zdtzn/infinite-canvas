@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Drawer, Empty, Form, Input, InputNumber, Modal, Result, Select, Switch, Table, Tabs, Tag } from "antd";
-import { Check, Edit3, RefreshCw } from "lucide-react";
+import { Check, Edit3, RefreshCw, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { previewCultivationBreakthrough } from "@/features/cultivation/breakthrough-overlay";
 import {
     approveAdminBreakthrough,
     fetchAdminCultivationUsers,
@@ -22,13 +23,29 @@ import { useUserStore } from "@/stores/use-user-store";
 
 export default function AdminCultivationPage() {
     const admin = useUserStore((state) => Boolean(state.user?.admin));
+    const { data: configuration, isLoading: configurationLoading } = useQuery({ queryKey: ["admin", "cultivation", "config"], queryFn: fetchCultivationConfiguration, enabled: admin });
+    const previewBreakthrough = () => {
+        const realm = configuration?.realms.find((item) => item.active && item.stages.filter((stage) => stage.active).length > 1);
+        const stages = realm?.stages.filter((stage) => stage.active) || [];
+        if (!realm || stages.length < 2) return;
+        previewCultivationBreakthrough({
+            fromStageName: `${realm.name} ${stages[0].name}`,
+            toStageName: `${realm.name} ${stages[1].name}`,
+            animationPreset: realm.animationPreset,
+        });
+    };
     if (!admin) return <Result status="403" title="无权访问" subTitle="只有管理员可以进入修炼管理。" />;
     return (
         <main className="h-full overflow-y-auto bg-background">
             <div className="mx-auto max-w-7xl px-6 py-8">
-                <header className="mb-6 border-b border-stone-200 pb-6 dark:border-stone-800">
-                    <div className="text-sm text-stone-500">后台管理</div>
-                    <h1 className="mt-1 text-2xl font-semibold">修炼管理</h1>
+                <header className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-stone-200 pb-6 dark:border-stone-800">
+                    <div>
+                        <div className="text-sm text-stone-500">后台管理</div>
+                        <h1 className="mt-1 text-2xl font-semibold">修炼管理</h1>
+                    </div>
+                    <Button icon={<Sparkles className="size-4" />} disabled={configurationLoading || !configuration?.realms.some((realm) => realm.active && realm.stages.filter((stage) => stage.active).length > 1)} onClick={previewBreakthrough}>
+                        预览突破动效
+                    </Button>
                 </header>
                 <Tabs
                     items={[
