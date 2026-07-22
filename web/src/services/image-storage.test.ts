@@ -21,6 +21,14 @@ test("reads generated image files with the active session", async () => {
     expect(request).toEqual({ input: "/api/job-files/job/image.png", init: { credentials: "same-origin" } });
 });
 
+test("recognizes a PNG response when the upstream file uses a generic MIME type", async () => {
+    globalThis.fetch = (async () => new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), { headers: { "Content-Type": "application/octet-stream" } })) as typeof fetch;
+
+    const blob = await readImageBlob("/api/job-files/job/image.png");
+
+    expect(blob.type).toBe("image/png");
+});
+
 test("reports a useful error when the generated image can no longer be read", async () => {
     globalThis.fetch = (async () => new Response(JSON.stringify({ error: { message: "图片不存在" } }), { status: 404, headers: { "Content-Type": "application/json" } })) as typeof fetch;
 

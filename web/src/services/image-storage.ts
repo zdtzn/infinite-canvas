@@ -47,12 +47,32 @@ export async function uploadImage(input: string | Blob): Promise<UploadedImage> 
 }
 
 export async function readImageBlob(input: string | Blob) {
-    if (typeof input !== "string") return input;
-    const response = await fetch(input, { credentials: "same-origin" });
-    if (!response.ok) throw new Error(`读取图片失败（${response.status}）`);
-    const blob = await response.blob();
-    if (!blob.size || !blob.type.startsWith("image/")) throw new Error("读取图片失败：返回内容不是图片");
-    return blob;
+    const blob =
+        typeof input === "string"
+            ? await fetch(input, { credentials: "same-origin" }).then(async (response) => {
+                  if (!response.ok) throw new Error(`读取图片失败（${response.status}）`);
+                  return response.blob();
+              })
+            : input;
+    if (!blob.size) throw new Error("读取图片失败：文件为空");
+    if (blob.type.startsWith("image/")) return blob;
+    const mimeType = await detectImageMimeType(blob);
+    if (!mimeType) throw new Error("读取图片失败：返回内容不是图片");
+    return new Blob([blob], { type: mimeType });
+}
+
+async function detectImageMimeType(blob: Blob) {
+    const bytes = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
+    if (matches(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
+    if (matches(bytes, [0xff, 0xd8, 0xff])) return "image/jpeg";
+    if (matches(bytes, [0x52, 0x49, 0x46, 0x46]) && matches(bytes, [0x57, 0x45, 0x42, 0x50], 8)) return "image/webp";
+    const header = new TextDecoder().decode(bytes);
+    if (header.slice(4, 8) === "ftyp" && (header.includes("avif") || header.includes("avis"))) return "image/avif";
+    return "";
+}
+
+function matches(bytes: Uint8Array, expected: number[], offset = 0) {
+    return expected.every((value, index) => bytes[offset + index] === value);
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
