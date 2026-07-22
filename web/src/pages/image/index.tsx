@@ -246,7 +246,12 @@ export default function ImagePage() {
         savingAssetIdsRef.current.add(image.id);
         setSavingAssetIds((ids) => [...ids, image.id]);
         try {
-            const stored = await uploadImage(image.dataUrl);
+            // Generated results are already persisted by the job flow. Reusing that asset avoids a
+            // duplicate upload and prevents upstream MIME headers from affecting asset registration.
+            const stored =
+                image.storageKey && image.dataUrl.startsWith("/api/assets/")
+                    ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
+                    : await uploadImage(image.dataUrl);
             addAsset({
                 kind: "image",
                 title: `生成结果 ${index + 1}`,

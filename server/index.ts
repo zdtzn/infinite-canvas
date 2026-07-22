@@ -4,6 +4,7 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 
 import { createIdentityToken, createSessionToken, expiredSessionCookie, hashAccessCode, identityCookie, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { decryptSecret, encryptSecret } from "./lib/crypto-store";
+import { resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { buildUuAsyncImageRequest, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
@@ -420,7 +421,7 @@ async function uploadAsset(request: Request, session: SessionPayload) {
     const requestedKey = String(form.get("storageKey") || "").trim();
     const key = requestedKey || `${prefix}:${randomUUID()}`;
     if (!new RegExp(`^${escapeRegExp(prefix)}:[A-Za-z0-9._:-]{1,180}$`).test(key)) throw new HttpError(400, "素材标识无效");
-    const mimeType = String(file.type || "application/octet-stream").toLowerCase();
+    const mimeType = prefix.startsWith("image") ? await resolveImageMimeType(file) : String(file.type || "application/octet-stream").toLowerCase();
     if (prefix.startsWith("image") && !mimeType.startsWith("image/")) throw new HttpError(400, "图片素材格式无效");
     const recordKey = assetKey(session.userId, key);
     const existing = state.assets[recordKey];
