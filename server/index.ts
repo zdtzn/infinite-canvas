@@ -6,6 +6,7 @@ import { createIdentityToken, createSessionToken, expiredSessionCookie, hashAcce
 import { decryptSecret, encryptSecret } from "./lib/crypto-store";
 import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
+import { buildUuAsyncImageRequest, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
 import { assertAllowedUpstreamUrl, buildUpstreamUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
@@ -24,6 +25,8 @@ const MAX_USER_ASSET_BYTES = Math.max(MAX_ASSET_BYTES, positiveInt(process.env.M
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const JOB_CONCURRENCY = Math.max(1, Math.min(4, positiveInt(process.env.JOB_CONCURRENCY, 2)));
 const REQUEST_TIMEOUT_MS = Math.max(30_000, positiveInt(process.env.UPSTREAM_TIMEOUT_MS, 10 * 60_000));
+const UU_ASYNC_REQUEST_TIMEOUT_MS = Math.min(30_000, REQUEST_TIMEOUT_MS);
+const UU_ASYNC_POLL_INTERVAL_MS = 2_500;
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").trim();
 const secureCookies = PUBLIC_BASE_URL.startsWith("https://");
 
@@ -51,10 +54,16 @@ const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
 
 for (const job of Object.values(state.jobs)) {
     if (job.status === "running") {
-        job.status = "failed";
-        job.error = "服务器重启时任务仍在运行，为避免重复扣费，请手动重试";
-        job.finishedAt = Date.now();
-        cultivation?.refundGeneration(job.id, "server restarted while job was running");
+        if (hasUuAsyncTask(job.input)) {
+            job.status = "queued";
+            job.error = undefined;
+            job.finishedAt = undefined;
+        } else {
+            job.status = "failed";
+            job.error = "服务器重启时任务仍在运行，为避免重复扣费，请手动重试";
+            job.finishedAt = Date.now();
+            cultivation?.refundGeneration(job.id, "server restarted while job was running");
+        }
     }
     imageQueue.restore(job);
 }
@@ -506,7 +515,7 @@ function retryJob(session: SessionPayload, id: string) {
     const jobId = randomUUID();
     cultivation?.reserveGeneration({ jobId, userId: session.userId, channelId: source.input.channelId, model: source.input.model, count: source.input.count, quality: source.input.quality, referenceCount: source.input.references.length, hasMask: Boolean(source.input.mask), activeJobs: activeUserJobs(session.userId) });
     try {
-        const job = imageQueue.add({ ...source.input, references: [...source.input.references] }, jobId);
+        const job = imageQueue.add({ ...source.input, references: [...source.input.references], upstream: undefined }, jobId);
         return json({ job: publicJob(job) }, 202);
     } catch (error) {
         cultivation?.refundGeneration(jobId, "retry job creation failed");
@@ -514,10 +523,13 @@ function retryJob(session: SessionPayload, id: string) {
     }
 }
 
-function deleteJob(url: URL, session: SessionPayload, id: string) {
+async function deleteJob(url: URL, session: SessionPayload, id: string) {
     const job = ownedJob(session.userId, id);
     if (["queued", "running"].includes(job.status)) {
-        if (imageQueue.cancel(id)) cultivation?.refundGeneration(id, "user canceled");
+        if (imageQueue.cancel(id)) {
+            cultivation?.refundGeneration(id, "user canceled");
+            void cancelUuImageTask(job.input).catch((error) => console.warn(JSON.stringify({ event: "uu_async_cancel_failed", jobId: id, message: error instanceof Error ? error.message : "unknown error" })));
+        }
         return json({ job: publicJob(imageQueue.get(id)!) });
     }
     if (url.searchParams.get("remove") === "1") {
@@ -548,10 +560,15 @@ function publicJob(job: StoredImageJob) {
 async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: QueueJob<ImageJobInput, ImageJobOutput>) {
     const startedAt = Date.now();
     try {
-        const runtimeInput = await materializeImageInput(input);
         const channel = ownedChannel(input.userId, input.channelId);
         const apiKey = decryptSecret(channel.apiKey, encryptionSecret);
-        const rawImages = input.apiFormat === "gemini" ? await generateGeminiImages(channel, apiKey, runtimeInput, signal) : await generateOpenAiImages(channel, apiKey, runtimeInput, signal);
+        const useUuAsync = input.apiFormat === "openai" && (hasUuAsyncTask(input) || (input.count === 1 && isUuImageAsyncChannel(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))));
+        const rawImages =
+            input.apiFormat === "gemini"
+                ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal)
+                : useUuAsync
+                  ? await generateUuAsyncImages(channel, apiKey, input, job, signal)
+                  : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal);
         const images: ImageJobImage[] = [];
         for (const raw of rawImages) images.push(await persistJobImage(input.userId, job.id, raw, Date.now() - startedAt, signal));
         if (!images.length) throw new Error("上游接口没有返回图片");
@@ -559,7 +576,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         cultivation?.settleGeneration({ jobId: job.id, successCount: result.successCount, failCount: result.failCount, durationMs: result.durationMs });
         return result;
     } catch (error) {
-        cultivation?.refundGeneration(job.id, error instanceof Error ? error.message : "generation failed");
+        if (job.status !== "canceled") cultivation?.refundGeneration(job.id, error instanceof Error ? error.message : "generation failed");
         throw error;
     }
 }
@@ -610,6 +627,92 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
     const payload = await parseUpstreamJson(response);
     const data = Array.isArray(payload.data) ? payload.data : [];
     return data.map((item) => (typeof item?.b64_json === "string" ? `data:image/png;base64,${item.b64_json}` : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
+}
+
+async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal) {
+    if (!hasUuAsyncTask(input)) {
+        const runtimeInput = await materializeImageInput(input);
+        const requestOptions = buildUuAsyncImageRequest({ size: input.size, quality: input.quality, referenceCount: runtimeInput.references.length });
+        const form = new FormData();
+        form.set("model", input.model);
+        form.set("mode", requestOptions.mode);
+        form.set("prompt", input.prompt);
+        form.set("width", String(requestOptions.width));
+        form.set("height", String(requestOptions.height));
+        if (runtimeInput.references[0]) form.set("image", dataUrlBlob(runtimeInput.references[0]), "reference.png");
+
+        const response = await upstreamFetch(
+            buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations/async"),
+            { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Idempotency-Key": randomUUID() }, body: form, signal },
+            true,
+            UU_ASYNC_REQUEST_TIMEOUT_MS,
+        );
+        const task = readUuAsyncTask(await parseUpstreamJson(response));
+        if (!task.taskId) throw new Error(task.message || "UU 异步任务创建成功，但没有返回任务 ID");
+        input.upstream = { provider: "uu-image", taskId: task.taskId, expiresAt: task.expiresAt, status: task.status };
+        await imageQueue.touch(job.id);
+        writeState();
+    }
+    return pollUuImageTask(channel, apiKey, input, signal);
+}
+
+async function pollUuImageTask(channel: ChannelRecord, apiKey: string, input: ImageJobInput, signal: AbortSignal) {
+    if (!hasUuAsyncTask(input)) throw new Error("UU 异步任务 ID 丢失");
+    const taskUrl = buildUpstreamUrl(channel.baseUrl, "openai", `/images/generations/tasks/${encodeURIComponent(input.upstream.taskId)}`);
+    while (!signal.aborted) {
+        const response = await upstreamFetch(taskUrl, { headers: { Authorization: `Bearer ${apiKey}` }, signal }, true, UU_ASYNC_REQUEST_TIMEOUT_MS);
+        const task = readUuAsyncTask(await parseUpstreamJson(response));
+        input.upstream.status = task.status;
+        input.upstream.expiresAt = task.expiresAt || input.upstream.expiresAt;
+        if (task.status === "succeeded") {
+            if (!task.imageUrls.length) throw new Error(task.message || "UU 异步任务完成，但没有返回图片");
+            return task.imageUrls;
+        }
+        if (task.status === "failed") throw new Error(task.message || "UU 异步任务失败");
+        if (task.status === "canceled") throw new Error(task.message || "UU 异步任务已取消");
+        if (task.status === "unknown") throw new Error(task.message || "UU 异步任务返回了无法识别的状态");
+        await waitForAbortableDelay(UU_ASYNC_POLL_INTERVAL_MS, signal);
+    }
+    throw abortError(signal);
+}
+
+async function cancelUuImageTask(input: ImageJobInput) {
+    if (!hasUuAsyncTask(input)) return;
+    const channel = ownedChannel(input.userId, input.channelId);
+    const apiKey = decryptSecret(channel.apiKey, encryptionSecret);
+    const response = await upstreamFetch(
+        buildUpstreamUrl(channel.baseUrl, "openai", `/images/generations/tasks/${encodeURIComponent(input.upstream.taskId)}`),
+        { method: "DELETE", headers: { Authorization: `Bearer ${apiKey}` } },
+        false,
+        UU_ASYNC_REQUEST_TIMEOUT_MS,
+    );
+    await response.body?.cancel();
+}
+
+function hasUuAsyncTask(input: ImageJobInput): input is ImageJobInput & { upstream: NonNullable<ImageJobInput["upstream"]> } {
+    return input.upstream?.provider === "uu-image" && Boolean(input.upstream.taskId);
+}
+
+function waitForAbortableDelay(milliseconds: number, signal: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let timeout: ReturnType<typeof setTimeout>;
+        const finish = (callback: () => void) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            signal.removeEventListener("abort", onAbort);
+            callback();
+        };
+        const onAbort = () => finish(() => reject(abortError(signal)));
+        timeout = setTimeout(() => finish(resolve), milliseconds);
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort, { once: true });
+    });
+}
+
+function abortError(signal: AbortSignal) {
+    return signal.reason instanceof Error ? signal.reason : new Error("任务已取消");
 }
 
 async function generateGeminiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal) {
@@ -722,11 +825,11 @@ function deleteProject(session: SessionPayload, id: string) {
     return new Response(null, { status: 204 });
 }
 
-async function upstreamFetch(url: string, init: RequestInit, retryable: boolean) {
+async function upstreamFetch(url: string, init: RequestInit, retryable: boolean, timeoutMs = REQUEST_TIMEOUT_MS) {
     const attempts = retryable || ["GET", "HEAD"].includes(init.method || "GET") ? 3 : 1;
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-        const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+        const timeout = AbortSignal.timeout(timeoutMs);
         const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
         try {
             const response = await fetchAllowedRedirects(url, { ...init, signal });

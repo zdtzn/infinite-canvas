@@ -51,6 +51,11 @@ export class JobQueue<I, O> {
         return this.jobs.get(id);
     }
 
+    async touch(id: string) {
+        const job = this.jobs.get(id);
+        if (job) await this.changed(job);
+    }
+
     wait(id: string) {
         const job = this.jobs.get(id);
         if (!job) return Promise.reject(new Error("任务不存在"));

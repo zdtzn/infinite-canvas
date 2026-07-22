@@ -47,6 +47,27 @@ describe("persistent job queue runtime", () => {
         await expect(queue.wait(second.id)).rejects.toThrow("取消");
         expect(executed).toEqual([1]);
     });
+
+    test("persists input updates while a job is running", async () => {
+        let release = () => undefined;
+        const changes: Array<{ id: string; input: { taskId?: string } }> = [];
+        const queue = new JobQueue<{ taskId?: string }, number>({
+            concurrency: 1,
+            worker: async (input) => {
+                input.taskId = "remote-task";
+                await new Promise<void>((resolve) => (release = resolve));
+                return 1;
+            },
+            onChange: (job) => changes.push({ id: job.id, input: { ...job.input } }),
+        });
+
+        const job = queue.add({});
+        await waitUntil(() => job.input.taskId === "remote-task");
+        await queue.touch(job.id);
+        expect(changes.at(-1)).toEqual({ id: job.id, input: { taskId: "remote-task" } });
+        release();
+        await queue.wait(job.id);
+    });
 });
 
 async function waitUntil(predicate: () => boolean) {

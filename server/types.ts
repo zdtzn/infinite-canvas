@@ -58,6 +58,12 @@ export type ImageJobInput = {
     nodeId?: string;
     label?: string;
   };
+  upstream?: {
+    provider: "uu-image";
+    taskId: string;
+    expiresAt?: string;
+    status?: "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
+  };
 };
 export type ImageJobImage = {
   id: string;
