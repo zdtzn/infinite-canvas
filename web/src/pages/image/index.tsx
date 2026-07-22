@@ -1,5 +1,6 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
@@ -15,19 +16,13 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
-import {
-    clearImageGenerationJob,
-    getImageGenerationSnapshot,
-    retryImageGeneration,
-    startImageGeneration,
-    subscribeImageGeneration,
-    type GeneratedImage,
-    type GenerationResult,
-} from "@/services/image-generation-runtime";
+import { clearImageGenerationJob, getImageGenerationSnapshot, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
 import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
+import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
+import { cultivationGenerationBlockReason, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 
 type GenerationLog = {
     id: string;
@@ -59,6 +54,8 @@ const logStore = localforage.createInstance({ name: "infinite-canvas", storeName
 
 export default function ImagePage() {
     const { message } = App.useApp();
+    const queryClient = useQueryClient();
+    const { data: cultivationProfile } = useCultivationProfile();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -85,8 +82,19 @@ export default function ImagePage() {
     const generationJob = useSyncExternalStore(subscribeImageGeneration, getImageGenerationSnapshot, getImageGenerationSnapshot);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
-    const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
+    const requiredCapabilities = requiredCultivationCapabilities({ model, quality: effectiveConfig.quality, referenceCount: references.length, hasMask: false });
+    const generationBlockReason = cultivationProfile
+        ? cultivationGenerationBlockReason({
+              remainingToday: cultivationProfile.remainingToday,
+              unlimited: cultivationProfile.unlimited,
+              maxConcurrency: cultivationProfile.maxConcurrency,
+              capabilities: cultivationProfile.capabilities,
+              requestedCount: generationCount,
+              requiredCapabilities,
+          })
+        : null;
+    const canGenerate = Boolean(prompt.trim()) && !generationBlockReason;
     const running = generationJob?.status === "running";
     const elapsedMs = generationJob?.elapsedMs || 0;
     const results: GenerationResult[] = previewLog ? previewLog.images.map((image) => ({ id: image.id, status: "success", image })) : generationJob?.results || [];
@@ -152,6 +160,11 @@ export default function ImagePage() {
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "请输入生图提示词" });
             return;
         }
+        if (generationBlockReason) {
+            message.warning(generationBlockReason);
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: generationBlockReason });
+            return;
+        }
         if (!isAiConfigReady(effectiveConfig, model)) {
             message.warning("请先完成配置");
             openConfigDialog(true);
@@ -168,6 +181,7 @@ export default function ImagePage() {
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
         setPreviewLog(null);
         const jobId = startImageGeneration(snapshot, generationCount, async ({ successImages, successCount, failCount, error, durationMs }) => {
+            void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
             if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
             const logImages = await Promise.all(
                 successImages.map(async (image) => {
@@ -306,26 +320,34 @@ export default function ImagePage() {
     const retryResult = async (index: number) => {
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
+        if (generationBlockReason) {
+            message.warning(generationBlockReason);
+            return;
+        }
         setPreviewLog(null);
         const retryStartedAt = Date.now();
-        const image = await retryImageGeneration(index, snapshot);
-        if (!image) return;
-        const stored = await uploadImage(image.dataUrl);
-        const logImage = { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
-        saveLog(
-            buildLog({
-                prompt: snapshot.text,
-                model,
-                config: { ...snapshot.config, count: "1" },
-                references: snapshot.references,
-                durationMs: Date.now() - retryStartedAt,
-                successCount: 1,
-                failCount: 0,
-                status: "成功",
-                images: [logImage],
-            }),
-        );
-        message.success("重试成功");
+        try {
+            const image = await retryImageGeneration(index, snapshot);
+            if (!image) return;
+            const stored = await uploadImage(image.dataUrl);
+            const logImage = { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+            saveLog(
+                buildLog({
+                    prompt: snapshot.text,
+                    model,
+                    config: { ...snapshot.config, count: "1" },
+                    references: snapshot.references,
+                    durationMs: Date.now() - retryStartedAt,
+                    successCount: 1,
+                    failCount: 0,
+                    status: "成功",
+                    images: [logImage],
+                }),
+            );
+            message.success("重试成功");
+        } finally {
+            void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
+        }
     };
 
     return (
@@ -434,6 +456,11 @@ export default function ImagePage() {
                             <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
                                 开始生成
                             </Button>
+                            {generationBlockReason ? (
+                                <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
+                            ) : cultivationProfile ? (
+                                <div className="mt-2 text-center text-xs text-stone-400">{quotaText(cultivationProfile.remainingToday, cultivationProfile.unlimited)}</div>
+                            ) : null}
                         </div>
                     </div>
 

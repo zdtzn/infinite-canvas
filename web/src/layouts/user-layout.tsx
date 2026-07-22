@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
 
 import { AppTopNav } from "@/components/layout/app-top-nav";
+import { CultivationBreakthroughOverlay } from "@/features/cultivation/breakthrough-overlay";
 
 const AgentPanel = lazy(() => import("@/components/agent/agent-panel").then((module) => ({ default: module.AgentPanel })));
 
@@ -12,6 +13,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
                 <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
             </div>
             <Suspense fallback={null}><AgentPanel /></Suspense>
+            <CultivationBreakthroughOverlay />
         </div>
     );
 }

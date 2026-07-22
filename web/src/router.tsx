@@ -7,6 +7,8 @@ const AssetsPage = lazy(() => import("@/pages/assets"));
 const CanvasPage = lazy(() => import("@/pages/canvas"));
 const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
 const ConfigPage = lazy(() => import("@/pages/config"));
+const CultivationPage = lazy(() => import("@/pages/cultivation"));
+const AdminCultivationPage = lazy(() => import("@/pages/admin/cultivation"));
 const HomePage = lazy(() => import("@/pages/home"));
 const ImagePage = lazy(() => import("@/pages/image"));
 const NotFound = lazy(() => import("@/pages/not-found"));
@@ -34,6 +36,8 @@ export const router = createBrowserRouter([
             { path: "/canvas", element: <RoutePage><CanvasPage /></RoutePage> },
             { path: "/canvas/:id", element: <RoutePage><CanvasProjectPage /></RoutePage> },
             { path: "/config", element: <RoutePage><ConfigPage /></RoutePage> },
+            { path: "/cultivation", element: <RoutePage><CultivationPage /></RoutePage> },
+            { path: "/admin/cultivation", element: <RoutePage><AdminCultivationPage /></RoutePage> },
         ],
     },
     { path: "*", element: <RoutePage><NotFound /></RoutePage> },

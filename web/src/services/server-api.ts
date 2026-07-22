@@ -21,6 +21,42 @@ export type ServerJob = {
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
     result?: { images: ServerJobImage[]; successCount: number; failCount: number; durationMs: number };
 };
+export type CultivationBreakthrough = { id: string; fromStageName: string; toStageName: string; status: string };
+export type CultivationProfile = {
+    userId: string;
+    displayName: string;
+    realmId: string;
+    realmName: string;
+    stageId: string;
+    stageName: string;
+    stageOrder: number;
+    color: string;
+    iconKey: string;
+    animationPreset: string;
+    currentXp: number;
+    totalXp: number;
+    requiredXp: number;
+    xpToNext: number;
+    nextStageName: string | null;
+    pendingStageId: string | null;
+    dailyLimit: number | null;
+    dailyLimitOverride: number | null;
+    unlimited: boolean;
+    usedToday: number;
+    reservedToday: number;
+    remainingToday: number | null;
+    maxConcurrency: number;
+    capabilities: string[];
+    totalImages: number;
+    activeDays: number;
+    publicMessage: string;
+    internalNote?: string;
+    breakthrough: CultivationBreakthrough | null;
+};
+export type CultivationStageConfig = { id: string; name: string; order: number; requiredXp: number; active: boolean; capabilities: string[] };
+export type CultivationRealmConfig = { id: string; code: string; name: string; color: string; iconKey: string; animationPreset: string; sortOrder: number; dailyLimit: number | null; maxConcurrency: number; promotionPolicy: "auto" | "manual" | "boundary_manual"; active: boolean; stages: CultivationStageConfig[] };
+export type CultivationConfiguration = { realms: CultivationRealmConfig[]; capabilities: Array<{ key: string; label: string; category: string; active: boolean }>; rewards: Record<string, number> };
+export type PagedResponse<T> = { items: T[]; page: number; pageSize: number; total: number };
 
 export async function fetchAuthStatus() {
     return serverRequest<AuthStatus>("/api/auth/status", { timeoutMs: 12_000 });
@@ -102,6 +138,51 @@ export async function removeServerJob(id: string) {
 
 export async function retryServerJob(id: string) {
     return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}/retry`, { method: "POST" });
+}
+
+export async function fetchCultivationProfile() {
+    return serverRequest<{ profile: CultivationProfile }>("/api/cultivation/me", { timeoutMs: 12_000 });
+}
+
+export async function markCultivationBreakthroughSeen(id: string) {
+    await serverRequest(`/api/cultivation/breakthroughs/${encodeURIComponent(id)}/seen`, { method: "POST" });
+}
+
+export async function fetchAdminCultivationUsers(page = 1, pageSize = 20, search = "") {
+    return serverRequest<PagedResponse<CultivationProfile & { status: string }>>(`/api/admin/cultivation/users?page=${page}&pageSize=${pageSize}&search=${encodeURIComponent(search)}`);
+}
+
+export async function updateAdminCultivationUser(userId: string, input: Record<string, unknown>) {
+    return serverRequest<{ profile: CultivationProfile }>(`/api/admin/cultivation/users/${encodeURIComponent(userId)}`, { method: "PATCH", body: input });
+}
+
+export async function approveAdminBreakthrough(userId: string, reason: string) {
+    return serverRequest<{ profile: CultivationProfile }>(`/api/admin/cultivation/users/${encodeURIComponent(userId)}/approve`, { method: "POST", body: { reason } });
+}
+
+export async function fetchCultivationConfiguration() {
+    return serverRequest<CultivationConfiguration>("/api/admin/cultivation/config");
+}
+
+export async function updateCultivationRealm(realmId: string, input: Record<string, unknown>) {
+    return serverRequest<CultivationConfiguration>(`/api/admin/cultivation/realms/${encodeURIComponent(realmId)}`, { method: "PATCH", body: input });
+}
+
+export async function updateCultivationStage(stageId: string, input: Record<string, unknown>) {
+    return serverRequest<CultivationConfiguration>(`/api/admin/cultivation/stages/${encodeURIComponent(stageId)}`, { method: "PATCH", body: input });
+}
+
+export async function updateCultivationCapability(capabilityKey: string, input: Record<string, unknown>) {
+    return serverRequest<CultivationConfiguration>(`/api/admin/cultivation/capabilities/${encodeURIComponent(capabilityKey)}`, { method: "PATCH", body: input });
+}
+
+export async function updateCultivationRewards(rewards: Record<string, number>, reason: string) {
+    return serverRequest<CultivationConfiguration>("/api/admin/cultivation/rewards", { method: "PATCH", body: { rewards, reason } });
+}
+
+export async function fetchCultivationLog<T>(kind: "ledger" | "usage" | "audit-logs" | "login-logs" | "breakthroughs", page = 1, pageSize = 20, userId = "") {
+    const user = userId ? `&userId=${encodeURIComponent(userId)}` : "";
+    return serverRequest<PagedResponse<T>>(`/api/admin/cultivation/${kind}?page=${page}&pageSize=${pageSize}${user}`);
 }
 
 export async function waitForServerJob(id: string, options?: { signal?: AbortSignal; onUpdate?: (job: ServerJob) => void }) {

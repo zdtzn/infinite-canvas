@@ -1,55 +1,18 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
 import { createIdentityToken, createSessionToken, expiredSessionCookie, hashAccessCode, identityCookie, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
-import { decryptSecret, encryptSecret, type EncryptedSecret } from "./lib/crypto-store";
+import { decryptSecret, encryptSecret } from "./lib/crypto-store";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { assertAllowedUpstreamUrl, buildUpstreamUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
-
-type UserRecord = SessionPayload & { createdAt: number; disabled?: boolean; loginHash?: string };
-type ChannelRecord = {
-    id: string;
-    userId: string;
-    name: string;
-    baseUrl: string;
-    apiFormat: ProviderProtocol;
-    apiKey: EncryptedSecret;
-    updatedAt: number;
-};
-type StoredProject = { project: Record<string, unknown>; revision: number; updatedAt: number };
-type StoredAsset = { key: string; userId: string; mimeType: string; bytes: number; createdAt: number };
-type ImageJobInput = {
-    userId: string;
-    channelId: string;
-    apiFormat: ProviderProtocol;
-    model: string;
-    prompt: string;
-    count: number;
-    quality?: string;
-    size?: string;
-    background?: string;
-    references: string[];
-    mask?: string;
-    source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
-};
-type ImageJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string };
-type ImageJobOutput = { images: ImageJobImage[]; successCount: number; failCount: number; durationMs: number };
-type StoredImageJob = QueueJob<ImageJobInput, ImageJobOutput>;
-type ServerState = {
-    version: 1;
-    auth: { accessCodeHash: string; sessionSecret: string; adminUserId: string };
-    users: Record<string, UserRecord>;
-    channels: Record<string, ChannelRecord>;
-    assets: Record<string, StoredAsset>;
-    jobs: Record<string, StoredImageJob>;
-    projects: Record<string, Record<string, StoredProject>>;
-};
+import { openAppDatabase, persistReference } from "./db/database";
+import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
+import type { ChannelRecord, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
 
 const PORT = positiveInt(process.env.PORT, 3000);
 const DATA_DIR = resolve(process.env.DATA_DIR || "/data");
 const WEB_ROOT = resolve(process.env.WEB_ROOT || "/app/web");
-const STATE_PATH = join(DATA_DIR, "state.json");
 const JOB_FILE_ROOT = join(DATA_DIR, "job-files");
 const ASSET_ROOT = join(DATA_DIR, "assets");
 const PROMPT_CACHE_ROOT = join(DATA_DIR, "prompt-cache");
@@ -68,7 +31,10 @@ mkdirSync(JOB_FILE_ROOT, { recursive: true });
 mkdirSync(ASSET_ROOT, { recursive: true });
 mkdirSync(PROMPT_CACHE_ROOT, { recursive: true });
 
-let state = loadState();
+const appDatabase = openAppDatabase({ dataDir: DATA_DIR });
+let state = appDatabase.loadState();
+const cultivation = appDatabase.raw ? createCultivationService(appDatabase.raw) : null;
+for (const user of Object.values(state.users)) cultivation?.ensureUser(user.userId, Boolean(user.admin));
 const encryptionSecret = process.env.APP_ENCRYPTION_KEY?.trim() || state.auth.sessionSecret;
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 let stateWriteQueued = false;
@@ -87,6 +53,7 @@ for (const job of Object.values(state.jobs)) {
         job.status = "failed";
         job.error = "服务器重启时任务仍在运行，为避免重复扣费，请手动重试";
         job.finishedAt = Date.now();
+        cultivation?.refundGeneration(job.id, "server restarted while job was running");
     }
     imageQueue.restore(job);
 }
@@ -131,6 +98,27 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/users" && request.method === "GET") return listUsers(session);
         const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
         if (userMatch && request.method === "PUT") return updateUserAccess(request, session, userMatch[1]);
+        if (url.pathname === "/api/cultivation/me" && request.method === "GET") return cultivationProfile(session);
+        const seenBreakthroughMatch = url.pathname.match(/^\/api\/cultivation\/breakthroughs\/([^/]+)\/seen$/);
+        if (seenBreakthroughMatch && request.method === "POST") return markCultivationBreakthroughSeen(session, seenBreakthroughMatch[1]);
+        if (url.pathname === "/api/admin/cultivation/users" && request.method === "GET") return adminCultivationUsers(url, session);
+        const cultivationUserMatch = url.pathname.match(/^\/api\/admin\/cultivation\/users\/([^/]+)$/);
+        if (cultivationUserMatch && request.method === "PATCH") return adminUpdateCultivationUser(request, session, cultivationUserMatch[1]);
+        const approveMatch = url.pathname.match(/^\/api\/admin\/cultivation\/users\/([^/]+)\/approve$/);
+        if (approveMatch && request.method === "POST") return adminApproveBreakthrough(request, session, approveMatch[1]);
+        if (url.pathname === "/api/admin/cultivation/config" && request.method === "GET") return adminCultivationConfiguration(session);
+        const realmMatch = url.pathname.match(/^\/api\/admin\/cultivation\/realms\/([^/]+)$/);
+        if (realmMatch && request.method === "PATCH") return adminUpdateRealm(request, session, realmMatch[1]);
+        const stageMatch = url.pathname.match(/^\/api\/admin\/cultivation\/stages\/([^/]+)$/);
+        if (stageMatch && request.method === "PATCH") return adminUpdateStage(request, session, stageMatch[1]);
+        const capabilityMatch = url.pathname.match(/^\/api\/admin\/cultivation\/capabilities\/([^/]+)$/);
+        if (capabilityMatch && request.method === "PATCH") return adminUpdateCapability(request, session, capabilityMatch[1]);
+        if (url.pathname === "/api/admin/cultivation/rewards" && request.method === "PATCH") return adminUpdateRewards(request, session);
+        if (url.pathname === "/api/admin/cultivation/ledger" && request.method === "GET") return adminCultivationLedger(url, session);
+        if (url.pathname === "/api/admin/cultivation/usage" && request.method === "GET") return adminCultivationUsage(url, session);
+        if (url.pathname === "/api/admin/cultivation/audit-logs" && request.method === "GET") return adminCultivationAuditLogs(url, session);
+        if (url.pathname === "/api/admin/cultivation/login-logs" && request.method === "GET") return adminCultivationLoginLogs(url, session);
+        if (url.pathname === "/api/admin/cultivation/breakthroughs" && request.method === "GET") return adminCultivationBreakthroughs(url, session);
         if (url.pathname === "/api/channels" && request.method === "GET") return listChannels(session);
         const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)$/);
         if (channelMatch && request.method === "PUT") return saveChannel(request, session, decodeURIComponent(channelMatch[1]));
@@ -178,6 +166,8 @@ async function setupAuth(request: Request) {
     state.auth.adminUserId = userId;
     state.users[userId] = { userId, displayName, admin: true, createdAt: Date.now(), loginHash: await hashAccessCode(personalCode) };
     writeState();
+    cultivation?.ensureUser(userId, true);
+    cultivation?.recordLogin({ userId, displayName, result: "setup-success", ip: clientIp(request), userAgent: request.headers.get("user-agent") || "", secret: state.auth.sessionSecret });
     return authenticatedResponse(state.users[userId]);
 }
 
@@ -185,18 +175,30 @@ async function login(request: Request) {
     enforceRateLimit(`login:${clientIp(request)}`, 20);
     if (!state.auth.accessCodeHash) return json({ error: { message: "站点尚未初始化" } }, 409);
     const body = await readJson<{ accessCode?: string; displayName?: string; personalCode?: string }>(request);
-    if (!(await verifyAccessCode(String(body.accessCode || ""), state.auth.accessCodeHash))) return json({ error: { message: "访问口令错误" } }, 401);
-    const displayName = normalizeDisplayName(body.displayName);
+    const rawDisplayName = String(body.displayName || "").trim();
+    if (!(await verifyAccessCode(String(body.accessCode || ""), state.auth.accessCodeHash))) {
+        cultivation?.recordLogin({ displayName: rawDisplayName || "unknown", result: "invalid-access-code", ip: clientIp(request), userAgent: request.headers.get("user-agent") || "", secret: state.auth.sessionSecret });
+        return json({ error: { message: "访问口令错误" } }, 401);
+    }
+    const displayName = normalizeDisplayName(rawDisplayName);
     const personalCode = normalizePersonalCode(body.personalCode);
     const identityUserId = readIdentityToken(readCookie(request, "canvas_identity"), state.auth.sessionSecret);
     const existing = Object.values(state.users).find((user) => user.displayName.toLowerCase() === displayName.toLowerCase());
-    if (existing?.disabled) return json({ error: { message: "当前账号已停用" } }, 403);
-    if (existing?.loginHash && !(await verifyAccessCode(personalCode, existing.loginHash))) return json({ error: { message: "个人密码错误" } }, 401);
+    if (existing?.disabled) {
+        cultivation?.recordLogin({ userId: existing.userId, displayName, result: "disabled", ip: clientIp(request), userAgent: request.headers.get("user-agent") || "", secret: state.auth.sessionSecret });
+        return json({ error: { message: "当前账号已停用" } }, 403);
+    }
+    if (existing?.loginHash && !(await verifyAccessCode(personalCode, existing.loginHash))) {
+        cultivation?.recordLogin({ userId: existing.userId, displayName, result: "invalid-personal-code", ip: clientIp(request), userAgent: request.headers.get("user-agent") || "", secret: state.auth.sessionSecret });
+        return json({ error: { message: "个人密码错误" } }, 401);
+    }
     if (existing && !existing.loginHash && existing.userId !== identityUserId) return json({ error: { message: "该旧账号尚未设置个人密码，请先在原设备登录后完成升级" } }, 409);
     const user = existing || { userId: randomUUID(), displayName, admin: false, createdAt: Date.now(), loginHash: await hashAccessCode(personalCode) };
     if (!user.loginHash) user.loginHash = await hashAccessCode(personalCode);
     state.users[user.userId] = user;
     writeState();
+    cultivation?.ensureUser(user.userId, Boolean(user.admin));
+    cultivation?.recordLogin({ userId: user.userId, displayName: user.displayName, result: "success", ip: clientIp(request), userAgent: request.headers.get("user-agent") || "", secret: state.auth.sessionSecret });
     return authenticatedResponse(user);
 }
 
@@ -248,6 +250,119 @@ function adminMetrics(session: SessionPayload) {
 
 function requireAdmin(session: SessionPayload) {
     if (!state.users[session.userId]?.admin) throw new HttpError(403, "仅管理员可以执行此操作");
+}
+
+function cultivationProfile(session: SessionPayload) {
+    const service = requireCultivation();
+    service.ensureUser(session.userId, Boolean(state.users[session.userId]?.admin));
+    const { internalNote: _internalNote, ...profile } = service.getProfile(session.userId);
+    return json({ profile });
+}
+
+function markCultivationBreakthroughSeen(session: SessionPayload, breakthroughId: string) {
+    requireCultivation().markBreakthroughSeen(session.userId, breakthroughId);
+    return new Response(null, { status: 204 });
+}
+
+function adminCultivationUsers(url: URL, session: SessionPayload) {
+    requireAdmin(session);
+    const { page, pageSize } = readPagination(url);
+    return json(requireCultivation().listUsers(page, pageSize, url.searchParams.get("search") || ""));
+}
+
+async function adminUpdateCultivationUser(request: Request, session: SessionPayload, encodedUserId: string) {
+    requireAdmin(session);
+    const userId = decodeURIComponent(encodedUserId);
+    const body = await readJson<CultivationUserUpdate & { reason?: string }>(request);
+    const profile = requireCultivation().updateUser(session.userId, userId, body, String(body.reason || ""));
+    const user = state.users[userId];
+    if (user) {
+        if (body.status) {
+            user.status = body.status;
+            user.disabled = body.status !== "NORMAL";
+        }
+        if (body.internalNote !== undefined) user.internalNote = body.internalNote;
+        if (body.publicMessage !== undefined) user.publicMessage = body.publicMessage;
+        writeState();
+    }
+    return json({ profile });
+}
+
+async function adminApproveBreakthrough(request: Request, session: SessionPayload, encodedUserId: string) {
+    requireAdmin(session);
+    const body = await readJson<{ reason?: string }>(request);
+    return json({ profile: requireCultivation().approveBreakthrough(session.userId, decodeURIComponent(encodedUserId), String(body.reason || "")) });
+}
+
+function adminCultivationConfiguration(session: SessionPayload) {
+    requireAdmin(session);
+    return json(requireCultivation().getConfiguration());
+}
+
+async function adminUpdateRealm(request: Request, session: SessionPayload, encodedRealmId: string) {
+    requireAdmin(session);
+    const body = await readJson<CultivationRealmUpdate & { reason?: string }>(request);
+    const { reason, ...input } = body;
+    return json(requireCultivation().updateRealm(session.userId, decodeURIComponent(encodedRealmId), input, String(reason || "")));
+}
+
+async function adminUpdateStage(request: Request, session: SessionPayload, encodedStageId: string) {
+    requireAdmin(session);
+    const body = await readJson<CultivationStageUpdate & { reason?: string }>(request);
+    const { reason, ...input } = body;
+    return json(requireCultivation().updateStage(session.userId, decodeURIComponent(encodedStageId), input, String(reason || "")));
+}
+
+async function adminUpdateCapability(request: Request, session: SessionPayload, encodedCapabilityKey: string) {
+    requireAdmin(session);
+    const body = await readJson<CultivationCapabilityUpdate & { reason?: string }>(request);
+    const { reason, ...input } = body;
+    return json(requireCultivation().updateCapability(session.userId, decodeURIComponent(encodedCapabilityKey), input, String(reason || "")));
+}
+
+async function adminUpdateRewards(request: Request, session: SessionPayload) {
+    requireAdmin(session);
+    const body = await readJson<{ rewards?: Record<string, number>; reason?: string }>(request);
+    return json(requireCultivation().updateRewards(session.userId, body.rewards || {}, String(body.reason || "")));
+}
+
+function adminCultivationLedger(url: URL, session: SessionPayload) {
+    requireAdmin(session);
+    const { page, pageSize } = readPagination(url);
+    return json(requireCultivation().listLedger(url.searchParams.get("userId"), page, pageSize));
+}
+
+function adminCultivationUsage(url: URL, session: SessionPayload) {
+    requireAdmin(session);
+    const { page, pageSize } = readPagination(url);
+    return json(requireCultivation().listGenerationUsage(url.searchParams.get("userId"), page, pageSize));
+}
+
+function adminCultivationAuditLogs(url: URL, session: SessionPayload) {
+    requireAdmin(session);
+    const { page, pageSize } = readPagination(url);
+    return json(requireCultivation().listAuditLogs(page, pageSize));
+}
+
+function adminCultivationLoginLogs(url: URL, session: SessionPayload) {
+    requireAdmin(session);
+    const { page, pageSize } = readPagination(url);
+    return json(requireCultivation().listLoginLogs(page, pageSize));
+}
+
+function adminCultivationBreakthroughs(url: URL, session: SessionPayload) {
+    requireAdmin(session);
+    const { page, pageSize } = readPagination(url);
+    return json(requireCultivation().listBreakthroughs(url.searchParams.get("userId"), page, pageSize));
+}
+
+function requireCultivation() {
+    if (!cultivation) throw new HttpError(503, "SQLite 迁移尚未完成，修炼系统暂不可用");
+    return cultivation;
+}
+
+function readPagination(url: URL) {
+    return { page: Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1)), pageSize: Math.max(1, Math.min(50, Math.floor(Number(url.searchParams.get("pageSize")) || 20))) };
 }
 
 function listChannels(session: SessionPayload) {
@@ -348,23 +463,31 @@ async function createImageJob(request: Request, session: SessionPayload) {
         const existing = Object.values(state.jobs).find((job) => job.input.userId === session.userId && job.id === idempotencyKey);
         if (existing) return json({ job: publicJob(existing) }, 200);
     }
-    const input: ImageJobInput = {
-        userId: session.userId,
-        channelId,
-        apiFormat: channel.apiFormat,
-        model: String(body.model || "").trim(),
-        prompt,
-        count,
-        quality: optionalString(body.quality),
-        size: optionalString(body.size),
-        background: optionalString(body.background),
-        references,
-        mask: optionalString(body.mask),
-        source: body.source,
-    };
-    if (!input.model) throw new HttpError(400, "模型不能为空");
-    const job = imageQueue.add(input, idempotencyKey || randomUUID());
-    return json({ job: publicJob(job) }, 202);
+    const model = String(body.model || "").trim();
+    if (!model) throw new HttpError(400, "模型不能为空");
+    const jobId = idempotencyKey || randomUUID();
+    cultivation?.reserveGeneration({ jobId, userId: session.userId, channelId, model, count, quality: optionalString(body.quality), referenceCount: references.length, hasMask: Boolean(body.mask), activeJobs: activeUserJobs(session.userId) });
+    try {
+        const input: ImageJobInput = {
+            userId: session.userId,
+            channelId,
+            apiFormat: channel.apiFormat,
+            model,
+            prompt,
+            count,
+            quality: optionalString(body.quality),
+            size: optionalString(body.size),
+            background: optionalString(body.background),
+            references: references.map((reference, index) => persistReference(DATA_DIR, session.userId, jobId, index, reference)),
+            mask: body.mask ? persistReference(DATA_DIR, session.userId, jobId, 10_000, String(body.mask)) : undefined,
+            source: body.source,
+        };
+        const job = imageQueue.add(input, jobId);
+        return json({ job: publicJob(job) }, 202);
+    } catch (error) {
+        cultivation?.refundGeneration(jobId, "job creation failed");
+        throw error;
+    }
 }
 
 function listJobs(session: SessionPayload) {
@@ -379,14 +502,21 @@ function getJob(session: SessionPayload, id: string) {
 function retryJob(session: SessionPayload, id: string) {
     const source = ownedJob(session.userId, id);
     if (["queued", "running"].includes(source.status)) throw new HttpError(409, "任务仍在运行");
-    const job = imageQueue.add({ ...source.input, references: [...source.input.references] });
-    return json({ job: publicJob(job) }, 202);
+    const jobId = randomUUID();
+    cultivation?.reserveGeneration({ jobId, userId: session.userId, channelId: source.input.channelId, model: source.input.model, count: source.input.count, quality: source.input.quality, referenceCount: source.input.references.length, hasMask: Boolean(source.input.mask), activeJobs: activeUserJobs(session.userId) });
+    try {
+        const job = imageQueue.add({ ...source.input, references: [...source.input.references] }, jobId);
+        return json({ job: publicJob(job) }, 202);
+    } catch (error) {
+        cultivation?.refundGeneration(jobId, "retry job creation failed");
+        throw error;
+    }
 }
 
 function deleteJob(url: URL, session: SessionPayload, id: string) {
     const job = ownedJob(session.userId, id);
     if (["queued", "running"].includes(job.status)) {
-        imageQueue.cancel(id);
+        if (imageQueue.cancel(id)) cultivation?.refundGeneration(id, "user canceled");
         return json({ job: publicJob(imageQueue.get(id)!) });
     }
     if (url.searchParams.get("remove") === "1") {
@@ -416,16 +546,38 @@ function publicJob(job: StoredImageJob) {
 
 async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: QueueJob<ImageJobInput, ImageJobOutput>) {
     const startedAt = Date.now();
-    const channel = ownedChannel(input.userId, input.channelId);
-    const apiKey = decryptSecret(channel.apiKey, encryptionSecret);
-    const rawImages = input.apiFormat === "gemini" ? await generateGeminiImages(channel, apiKey, input, signal) : await generateOpenAiImages(channel, apiKey, input, signal);
-    const images: ImageJobImage[] = [];
-    for (const raw of rawImages) images.push(await persistJobImage(input.userId, job.id, raw, Date.now() - startedAt, signal));
-    if (!images.length) throw new Error("上游接口没有返回图片");
-    return { images, successCount: images.length, failCount: Math.max(0, input.count - images.length), durationMs: Date.now() - startedAt };
+    try {
+        const runtimeInput = await materializeImageInput(input);
+        const channel = ownedChannel(input.userId, input.channelId);
+        const apiKey = decryptSecret(channel.apiKey, encryptionSecret);
+        const rawImages = input.apiFormat === "gemini" ? await generateGeminiImages(channel, apiKey, runtimeInput, signal) : await generateOpenAiImages(channel, apiKey, runtimeInput, signal);
+        const images: ImageJobImage[] = [];
+        for (const raw of rawImages) images.push(await persistJobImage(input.userId, job.id, raw, Date.now() - startedAt, signal));
+        if (!images.length) throw new Error("上游接口没有返回图片");
+        const result = { images, successCount: images.length, failCount: Math.max(0, input.count - images.length), durationMs: Date.now() - startedAt };
+        cultivation?.settleGeneration({ jobId: job.id, successCount: result.successCount, failCount: result.failCount, durationMs: result.durationMs });
+        return result;
+    } catch (error) {
+        cultivation?.refundGeneration(job.id, error instanceof Error ? error.message : "generation failed");
+        throw error;
+    }
 }
 
-async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, signal: AbortSignal) {
+async function materializeImageInput(input: ImageJobInput): Promise<RuntimeImageJobInput> {
+    return { ...input, references: await Promise.all(input.references.map(materializeStoredImage)), mask: input.mask ? await materializeStoredImage(input.mask) : undefined };
+}
+
+async function materializeStoredImage(reference: string | StoredImageReference) {
+    if (typeof reference === "string") return reference;
+    const path = resolve(DATA_DIR, reference.path);
+    if (!(path === DATA_DIR || path.startsWith(`${DATA_DIR}${sep}`)) || !existsSync(path)) throw new HttpError(404, "参考图文件不存在");
+    const bytes = Buffer.from(await Bun.file(path).arrayBuffer());
+    return `data:${reference.mimeType};base64,${bytes.toString("base64")}`;
+}
+
+type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & { references: string[]; mask?: string };
+
+async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal) {
     const headers = { Authorization: `Bearer ${apiKey}`, "Idempotency-Key": randomUUID() };
     let response: Response;
     if (input.references.length) {
@@ -467,7 +619,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
     return data.map((item) => (typeof item?.b64_json === "string" ? `data:image/png;base64,${item.b64_json}` : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
 }
 
-async function generateGeminiImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, signal: AbortSignal) {
+async function generateGeminiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal) {
     const outputs = await Promise.all(
         Array.from({ length: input.count }, async () => {
             const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
@@ -701,7 +853,7 @@ function withSecurityHeaders(response: Response, requestId: string) {
 }
 
 function errorResponse(error: unknown, requestId: string) {
-    const status = error instanceof HttpError ? error.status : error instanceof DOMException && error.name === "TimeoutError" ? 504 : 500;
+    const status = error instanceof HttpError || error instanceof CultivationError ? error.status : error instanceof DOMException && error.name === "TimeoutError" ? 504 : 500;
     const message = error instanceof Error ? error.message : "服务器内部错误";
     console.error(JSON.stringify({ event: "request_error", requestId, status, message, stack: error instanceof Error ? error.stack : undefined }));
     return json({ error: { message }, requestId }, status);
@@ -757,6 +909,10 @@ function ownedJob(userId: string, id: string) {
     return job;
 }
 
+function activeUserJobs(userId: string) {
+    return imageQueue.list().filter((job) => job.input.userId === userId && ["queued", "running"].includes(job.status)).length;
+}
+
 function ownedAsset(userId: string, key: string) {
     const asset = state.assets[assetKey(userId, key)];
     if (!asset) throw new HttpError(404, "素材不存在");
@@ -771,25 +927,6 @@ function channelKey(userId: string, id: string) {
     return `${userId}:${id}`;
 }
 
-function loadState(): ServerState {
-    if (existsSync(STATE_PATH)) {
-        try {
-            const parsed = JSON.parse(readFileSync(STATE_PATH, "utf8")) as ServerState;
-            if (parsed.version === 1) {
-                parsed.assets ||= {};
-                parsed.projects ||= {};
-                parsed.jobs ||= {};
-                parsed.channels ||= {};
-                parsed.users ||= {};
-                return parsed;
-            }
-        } catch (error) {
-            console.error(JSON.stringify({ event: "state_load_failed", message: error instanceof Error ? error.message : String(error) }));
-        }
-    }
-    return { version: 1, auth: { accessCodeHash: "", sessionSecret: randomBytes(32).toString("base64url"), adminUserId: "" }, users: {}, channels: {}, assets: {}, jobs: {}, projects: {} };
-}
-
 function queueStateWrite() {
     if (stateWriteQueued) return;
     stateWriteQueued = true;
@@ -800,9 +937,7 @@ function queueStateWrite() {
 }
 
 function writeState() {
-    const temporary = `${STATE_PATH}.tmp`;
-    writeFileSync(temporary, JSON.stringify(state));
-    renameSync(temporary, STATE_PATH);
+    appDatabase.saveState(state);
 }
 
 function summarizeJobs() {

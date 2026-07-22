@@ -9,6 +9,7 @@ import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { cn } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
 import { useAgentStore } from "@/stores/use-agent-store";
+import { CultivationStatusPill } from "@/features/cultivation/status-pill";
 
 export function AppTopNav() {
     const { pathname } = useLocation();
@@ -81,6 +82,7 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
+                            <CultivationStatusPill />
                             <Tooltip title={panelOpen ? "收起 Agent" : "打开 Agent"}>
                                 <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label="打开 Agent" />
                             </Tooltip>
