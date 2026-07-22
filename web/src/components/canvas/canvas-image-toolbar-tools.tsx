@@ -36,14 +36,14 @@ export type ImageQuickToolsConfig = {
     showLabels: boolean;
 };
 
-export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v6";
+export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v7";
 
-const defaultBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download", "edit"];
+const defaultBaseToolIds: ImageQuickToolId[] = ["download", "edit"];
 
 export const imageToolDefinitions: ImageToolDefinition[] = [
     {
         id: "copyPrompt",
-        defaultVisible: true,
+        defaultVisible: false,
         panelLabel: "复制提示词",
         label: "复制提示词",
         title: "复制生成该图片的提示词",
@@ -52,7 +52,7 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
     },
     {
         id: "reversePrompt",
-        defaultVisible: true,
+        defaultVisible: false,
         panelLabel: "反推提示词",
         label: "反推提示词",
         title: "创建反推提示词的文本和配置节点",
@@ -61,7 +61,7 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
     },
     {
         id: "replace",
-        defaultVisible: true,
+        defaultVisible: false,
         panelLabel: "替换图片",
         label: "替换图片",
         title: "替换图片",
@@ -80,7 +80,7 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
     },
     {
         id: "maskEdit",
-        defaultVisible: true,
+        defaultVisible: false,
         panelLabel: "局部编辑",
         label: "局部编辑",
         title: "添加蒙版遮罩后局部修改",
@@ -89,7 +89,7 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
     },
     {
         id: "crop",
-        defaultVisible: true,
+        defaultVisible: false,
         panelLabel: "裁剪",
         label: "裁剪",
         title: "裁剪并生成新节点",
@@ -98,7 +98,7 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
     },
     {
         id: "split",
-        defaultVisible: true,
+        defaultVisible: false,
         panelLabel: "切图",
         label: "切图",
         title: "按行列切分图片",
@@ -107,7 +107,7 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
     },
     {
         id: "upscale",
-        defaultVisible: true,
+        defaultVisible: false,
         panelLabel: "放大",
         label: "放大",
         title: "放大图片分辨率",
@@ -163,12 +163,12 @@ export function normalizeImageQuickToolIds(value: unknown[]) {
 }
 
 export function readImageQuickToolsConfig(value: unknown): ImageQuickToolsConfig {
-    if (Array.isArray(value)) return { ids: normalizeImageQuickToolIds(value), showLabels: true };
-    if (!value || typeof value !== "object") return { ids: defaultImageQuickToolIds, showLabels: true };
+    if (Array.isArray(value)) return { ids: normalizeImageQuickToolIds(value), showLabels: false };
+    if (!value || typeof value !== "object") return { ids: defaultImageQuickToolIds, showLabels: false };
     const data = value as Partial<ImageQuickToolsConfig>;
     return {
         ids: Array.isArray(data.ids) ? normalizeImageQuickToolIds(data.ids) : defaultImageQuickToolIds,
-        showLabels: data.showLabels !== false,
+        showLabels: data.showLabels === true,
     };
 }
 

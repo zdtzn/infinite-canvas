@@ -52,6 +52,9 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
         const value = item.size || item.value;
         return /^\d+x\d+$/i.test(value) ? capabilities.customSize : capabilities.sizes.includes(value);
     });
+    const ratioAspects = visibleAspects.filter((item) => !item.size && item.value !== "auto");
+    const highResolutionAspects = visibleAspects.filter((item) => Boolean(item.size));
+    const autoAspect = visibleAspects.find((item) => item.value === "auto");
     const effectiveMaxCount = Math.min(maxCount, capabilities.maxOutputs);
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(effectiveMaxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
@@ -84,7 +87,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {showTitle ? <div className="text-lg font-semibold">图像设置</div> : null}
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>质量</SettingTitle>
-                    <div className="grid grid-cols-4 gap-2.5">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         {visibleQualities.map((item) => (
                             <OptionPill key={item.value} selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
                                 {item.label}
@@ -94,7 +97,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </div>
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
-                        <SettingTitle color={theme.node.muted}>尺寸</SettingTitle>
+                        <SettingTitle color={theme.node.muted}>自定义像素</SettingTitle>
                         <div className="flex items-center gap-2">
                             <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
                                 16倍数对齐
@@ -111,13 +114,13 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     </div>
                 </div>
                 <div className="space-y-2.5">
-                    <SettingTitle color={theme.node.muted}>宽高比</SettingTitle>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {visibleAspects.map((item) => (
+                    <SettingTitle color={theme.node.muted}>构图比例</SettingTitle>
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                        {ratioAspects.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
-                                className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
+                                className="flex h-12 cursor-pointer items-center justify-center gap-2 rounded-md border bg-transparent text-sm transition hover:opacity-80"
                                 style={{ borderColor: selectedAspect?.value === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onClick={() => selectAspect(item.value)}
@@ -126,8 +129,25 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 <span>{item.label}</span>
                             </button>
                         ))}
+                        {autoAspect ? (
+                            <OptionPill selected={activeSize === "auto"} theme={theme} onClick={() => selectAspect(autoAspect.value)}>
+                                自动
+                            </OptionPill>
+                        ) : null}
                     </div>
                 </div>
+                {highResolutionAspects.length ? (
+                    <div className="space-y-2.5">
+                        <SettingTitle color={theme.node.muted}>高分辨率预设</SettingTitle>
+                        <div className="grid grid-cols-2 gap-2">
+                            {highResolutionAspects.map((item) => (
+                                <OptionPill key={item.value} selected={selectedAspect?.value === item.value} theme={theme} onClick={() => selectAspect(item.value)}>
+                                    {item.label.replace("(", " · ").replace(")", "")}
+                                </OptionPill>
+                            ))}
+                        </div>
+                    </div>
+                ) : null}
                 <div className="flex items-center justify-between gap-3">
                     <div className="space-y-0.5">
                         <SettingTitle color={theme.node.muted}>透明背景</SettingTitle>
@@ -141,8 +161,8 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </div>
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {Array.from({ length: Math.min(quickCount, effectiveMaxCount) }, (_, index) => index + 1).map((value) => (
+                    <div className="grid grid-cols-4 gap-2">
+                        {[1, 2, 4].filter((value) => value <= Math.min(quickCount, effectiveMaxCount)).map((value) => (
                             <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
                                 {value} 张
                             </OptionPill>
@@ -180,7 +200,7 @@ function OptionPill({ selected, theme, onClick, children }: { selected: boolean;
     return (
         <button
             type="button"
-            className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80"
+            className="h-9 cursor-pointer rounded-md border px-2 text-sm transition hover:opacity-80"
             style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={onClick}
@@ -221,7 +241,7 @@ function DimensionInput({ prefix, value, disabled, theme, alignToStep, onChange 
 
 function CountInput({ value, max, theme, onChange }: { value: number; max: number; theme: CanvasTheme; onChange: (value: number | null) => void }) {
     return (
-        <label className="col-span-2 flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
+        <label className="flex h-9 overflow-hidden rounded-md border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
             <input
                 type="number"
                 min={1}

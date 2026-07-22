@@ -39,3 +39,8 @@ export const navigationTools = [
 ] as const;
 
 export type NavigationToolSlug = (typeof navigationTools)[number]["slug"];
+
+const primaryNavigationSlugs: NavigationToolSlug[] = ["canvas", "image", "assets"];
+
+export const primaryNavigationTools = navigationTools.filter((tool) => primaryNavigationSlugs.includes(tool.slug));
+export const secondaryNavigationTools = navigationTools.filter((tool) => !primaryNavigationSlugs.includes(tool.slug));

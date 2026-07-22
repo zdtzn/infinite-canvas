@@ -1,4 +1,4 @@
-import { App, Badge, Button, Drawer, Empty, Progress, Tag, Tooltip } from "antd";
+import { App, Badge, Button, Drawer, Empty, Tag, Tooltip } from "antd";
 import { Ban, ListTodo, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { cancelServerJob, fetchServerJobs, removeServerJob, retryServerJob, type ServerJob } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { formatDuration } from "@/lib/image-utils";
+import { taskProgressProps } from "./task-progress";
 
 const statusLabels: Record<ServerJob["status"], string> = { queued: "排队中", running: "生成中", succeeded: "已完成", failed: "失败", canceled: "已取消" };
 const statusColors: Record<ServerJob["status"], string> = { queued: "default", running: "processing", succeeded: "success", failed: "error", canceled: "default" };
@@ -58,10 +59,11 @@ export function TaskCenter() {
                     </button>
                 </Badge>
             </Tooltip>
-            <Drawer open={open} width={440} title="生图任务中心" onClose={() => setOpen(false)} styles={{ body: { padding: 16 } }}>
+            <Drawer open={open} width="min(440px, 100vw)" title="生图任务中心" onClose={() => setOpen(false)} styles={{ body: { padding: 16 } }}>
                 <div className="space-y-2">
                     {jobs.map((job) => {
                         const active = job.status === "queued" || job.status === "running";
+                        const progress = taskProgressProps(job.status);
                         const duration = (job.finishedAt || Date.now()) - (job.startedAt || job.createdAt);
                         return (
                             <div key={job.id} className="border-b border-stone-200 py-3 last:border-b-0 dark:border-stone-800">
@@ -81,7 +83,11 @@ export function TaskCenter() {
                                         {statusLabels[job.status]}
                                     </Tag>
                                 </div>
-                                {active ? <Progress className="!mb-0 mt-2" percent={job.status === "queued" ? 12 : 62} showInfo={false} status="active" size="small" /> : null}
+                                {progress ? (
+                                    <div className="mt-2 h-1 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800" role="status" aria-label={job.status === "queued" ? "任务正在排队" : "任务正在生成"}>
+                                        <div className="h-full w-2/5 animate-pulse rounded-full bg-stone-500 dark:bg-stone-300" />
+                                    </div>
+                                ) : null}
                                 <div className="mt-2 flex items-center justify-between gap-3 text-xs text-stone-500">
                                     <span>{job.count} 张 · {formatDuration(Math.max(0, duration))}</span>
                                     <div className="flex items-center gap-1">

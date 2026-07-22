@@ -109,18 +109,18 @@ function UsersPanel() {
                 loading={isFetching}
                 dataSource={data?.items || []}
                 pagination={{ current: page, pageSize: 20, total: data?.total || 0, onChange: setPage, showSizeChanger: false }}
-                scroll={{ x: 1100 }}
                 columns={[
-                    { title: "用户", dataIndex: "displayName", fixed: "left", width: 150 },
+                    { title: "用户", dataIndex: "displayName", ellipsis: true },
                     {
                         title: "境界",
                         render: (_, row) => <span style={{ color: row.color }}>{cultivationStageLabel(row.realmName, row.stageName)}</span>,
-                        width: 180,
+                        ellipsis: true,
+                        responsive: ["sm"],
                     },
-                    { title: "修为", render: (_, row) => `${row.currentXp} / ${row.requiredXp}`, width: 130 },
-                    { title: "今日额度", render: (_, row) => (row.unlimited ? "不限" : `${row.usedToday}/${row.dailyLimit}`), width: 110 },
-                    { title: "累计图片", dataIndex: "totalImages", width: 100 },
-                    { title: "状态", render: (_, row) => <Tag color={row.status === "NORMAL" ? "success" : "error"}>{row.status}</Tag>, width: 100 },
+                    { title: "修为", render: (_, row) => `${row.currentXp} / ${row.requiredXp}`, responsive: ["lg"] },
+                    { title: "今日额度", render: (_, row) => (row.unlimited ? "不限" : `${row.usedToday}/${row.dailyLimit}`), responsive: ["md"] },
+                    { title: "累计图片", dataIndex: "totalImages", responsive: ["xl"] },
+                    { title: "状态", render: (_, row) => <Tag color={row.status === "NORMAL" ? "success" : "error"}>{row.status}</Tag>, responsive: ["xl"] },
                     {
                         title: "突破",
                         render: (_, row) =>
@@ -131,12 +131,11 @@ function UsersPanel() {
                             ) : (
                                 "-"
                             ),
-                        width: 90,
+                        responsive: ["xl"],
                     },
                     {
                         title: "操作",
-                        fixed: "right",
-                        width: 90,
+                        width: 76,
                         render: (_, row) => (
                             <Button type="text" icon={<Edit3 className="size-4" />} onClick={() => setEditing(row)}>
                                 编辑
