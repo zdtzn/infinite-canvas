@@ -1,23 +1,45 @@
 import { Copy, Download, FolderPlus } from "lucide-react";
 import { App, Button, Modal, Space, Tag } from "antd";
 import { saveAs } from "file-saver";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
 import { promptImageCandidates, promptOriginalCandidates, PromptCover } from "@/components/prompts/prompt-cover";
 
-async function downloadPromptCover(prompt: Prompt) {
+const DOWNLOAD_TIMEOUT_MS = 8_000;
+
+async function fetchPromptImage(url: string, signal: AbortSignal) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const timeout = window.setTimeout(abort, DOWNLOAD_TIMEOUT_MS);
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+        const response = await fetch(url, { cache: "force-cache", signal: controller.signal });
+        if (!response.ok) {
+            await response.body?.cancel();
+            return null;
+        }
+        const blob = await response.blob();
+        return blob.size ? blob : null;
+    } finally {
+        window.clearTimeout(timeout);
+        signal.removeEventListener("abort", abort);
+    }
+}
+
+async function downloadPromptCover(prompt: Prompt, signal: AbortSignal) {
     if (!prompt.coverUrl) return;
     for (const url of promptOriginalCandidates(prompt.coverUrl)) {
+        if (signal.aborted) throw new DOMException("下载已取消", "AbortError");
         try {
-            const response = await fetch(url, { cache: "force-cache" });
-            if (!response.ok) continue;
-            const blob = await response.blob();
+            const blob = await fetchPromptImage(url, signal);
+            if (!blob) continue;
             const extension = blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
             const fileName = (prompt.title || "prompt-image").replace(/[\\/:*?"<>|]/g, "_");
             saveAs(blob, `${fileName}.${extension}`);
             return;
         } catch {
+            if (signal.aborted) throw new DOMException("下载已取消", "AbortError");
             // Try the next original-image route.
         }
     }
@@ -27,22 +49,46 @@ async function downloadPromptCover(prompt: Prompt) {
 export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { prompt: Prompt | null; onClose: () => void; onCopy: (prompt: string) => void; onSaveAsset?: (prompt: Prompt) => void }) {
     const { message } = App.useApp();
     const [downloading, setDownloading] = useState(false);
+    const downloadAbortRef = useRef<AbortController | null>(null);
+    const downloadSequenceRef = useRef(0);
+
+    useEffect(() => {
+        downloadAbortRef.current?.abort();
+        downloadAbortRef.current = null;
+        setDownloading(false);
+        return () => downloadAbortRef.current?.abort();
+    }, [prompt?.id]);
 
     const handleDownload = async () => {
         if (!prompt || downloading) return;
+        const controller = new AbortController();
+        const sequence = downloadSequenceRef.current + 1;
+        downloadSequenceRef.current = sequence;
+        downloadAbortRef.current?.abort();
+        downloadAbortRef.current = controller;
         setDownloading(true);
         try {
-            await downloadPromptCover(prompt);
+            await downloadPromptCover(prompt, controller.signal);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "原图下载失败");
+            if (!controller.signal.aborted) message.error(error instanceof Error ? error.message : "原图下载失败");
         } finally {
-            setDownloading(false);
+            if (downloadSequenceRef.current === sequence) {
+                downloadAbortRef.current = null;
+                setDownloading(false);
+            }
         }
+    };
+
+    const handleClose = () => {
+        downloadAbortRef.current?.abort();
+        downloadAbortRef.current = null;
+        setDownloading(false);
+        onClose();
     };
 
     return (
         <>
-            <Modal title={prompt?.title} open={Boolean(prompt)} onCancel={onClose} footer={null} width={860}>
+            <Modal title={prompt?.title} open={Boolean(prompt)} onCancel={handleClose} footer={null} width={860}>
                 {prompt ? (
                     <>
                         <div className="grid gap-5 md:grid-cols-[minmax(360px,1fr)_minmax(0,1fr)]">

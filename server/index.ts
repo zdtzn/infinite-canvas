@@ -888,7 +888,7 @@ async function proxyPromptAsset(request: Request, url: URL, requestId: string) {
     if (existsSync(cachePath) && Date.now() - cached.lastModified < 7 * 24 * 60 * 60 * 1000) {
         return new Response(cached, { headers: { "Content-Type": cached.type || "application/octet-stream", "Cache-Control": "public, max-age=604800, stale-while-revalidate=86400", "x-request-id": requestId } });
     }
-    const response = await upstreamFetch(target, { headers: { "User-Agent": "InfiniteCanvas/1.0" } }, false);
+    const response = await upstreamFetch(target, { headers: { "User-Agent": "InfiniteCanvas/1.0" }, signal: request.signal }, false);
     if (!response.ok) throw new HttpError(response.status, `提示词资源加载失败：${response.status}`);
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength <= 20 * 1024 * 1024) await Bun.write(cachePath, bytes);

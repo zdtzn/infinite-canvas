@@ -1,11 +1,12 @@
 import { ImageOff, RotateCcw } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const PROXY_SOURCE_HOSTS: Record<string, string> = {
     pbs: "pbs.twimg.com",
     awesome: "awesome.re",
     atomgit: "atomgit.com",
 };
+const IMAGE_LOAD_TIMEOUT_MS = 8_000;
 
 export function promptOriginalUrl(value?: string) {
     const input = String(value || "").trim();
@@ -50,21 +51,38 @@ export function promptOriginalCandidates(value?: string) {
 }
 
 export function promptImageCandidates(value?: string, width = 640) {
-    return uniqueUrls([promptServerThumbnailUrl(value, width), promptThumbnailUrl(value, width), ...promptOriginalCandidates(value)]);
+    return uniqueUrls([promptThumbnailUrl(value, width), ...promptOriginalCandidates(value), promptServerThumbnailUrl(value, width)]);
 }
 
 function uniqueUrls(values: Array<string | undefined>) {
     return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
 }
 
-type CoverStatus = { sourceKey: string; index: number; failed: boolean; retry: number };
+type CoverStatus = { sourceKey: string; index: number; failed: boolean; loaded: boolean; retry: number };
 
-export function PromptCover({ sources, alt, className, loading = "lazy", fetchPriority = "auto" }: { sources?: string[]; alt: string; className: string; loading?: "eager" | "lazy"; fetchPriority?: "high" | "low" | "auto" }) {
+function initialCoverStatus(sourceKey: string): CoverStatus {
+    return { sourceKey, index: 0, failed: false, loaded: false, retry: 0 };
+}
+
+export function PromptCover({ sources, alt, className, loading = "lazy", fetchPriority = "auto", timeoutMs = IMAGE_LOAD_TIMEOUT_MS }: { sources?: string[]; alt: string; className: string; loading?: "eager" | "lazy"; fetchPriority?: "high" | "low" | "auto"; timeoutMs?: number }) {
     const candidates = uniqueUrls(sources || []);
     const sourceKey = candidates.join("\n");
-    const [status, setStatus] = useState<CoverStatus>({ sourceKey, index: 0, failed: false, retry: 0 });
-    const activeStatus = status.sourceKey === sourceKey ? status : { sourceKey, index: 0, failed: false, retry: 0 };
+    const [status, setStatus] = useState<CoverStatus>(() => initialCoverStatus(sourceKey));
+    const activeStatus = status.sourceKey === sourceKey ? status : initialCoverStatus(sourceKey);
     const currentSrc = candidates[activeStatus.index];
+    const advanceSource = useCallback(() => {
+        setStatus((current) => {
+            const next = current.sourceKey === sourceKey ? current : initialCoverStatus(sourceKey);
+            if (next.index + 1 < candidates.length) return { ...next, index: next.index + 1, loaded: false };
+            return { ...next, failed: true, loaded: false };
+        });
+    }, [candidates.length, sourceKey]);
+
+    useEffect(() => {
+        if (!currentSrc || activeStatus.failed || activeStatus.loaded) return;
+        const timeout = window.setTimeout(advanceSource, timeoutMs);
+        return () => window.clearTimeout(timeout);
+    }, [activeStatus.failed, activeStatus.index, activeStatus.loaded, advanceSource, currentSrc, timeoutMs]);
 
     if (!currentSrc) {
         return (
@@ -85,7 +103,7 @@ export function PromptCover({ sources, alt, className, loading = "lazy", fetchPr
                     title="重新加载"
                     aria-label="重新加载图片"
                     className="flex size-8 items-center justify-center rounded border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-300 dark:hover:bg-stone-900"
-                    onClick={() => setStatus({ sourceKey, index: 0, failed: false, retry: activeStatus.retry + 1 })}
+                    onClick={() => setStatus({ sourceKey, index: 0, failed: false, loaded: false, retry: activeStatus.retry + 1 })}
                 >
                     <RotateCcw className="size-4" />
                 </button>
@@ -103,13 +121,13 @@ export function PromptCover({ sources, alt, className, loading = "lazy", fetchPr
             fetchPriority={fetchPriority}
             decoding="async"
             referrerPolicy="no-referrer"
-            onError={() => {
-                if (activeStatus.index + 1 < candidates.length) {
-                    setStatus({ ...activeStatus, index: activeStatus.index + 1 });
-                    return;
-                }
-                setStatus({ ...activeStatus, failed: true });
+            onLoad={() => {
+                setStatus((current) => {
+                    const next = current.sourceKey === sourceKey ? current : initialCoverStatus(sourceKey);
+                    return next.index === activeStatus.index && !next.failed ? { ...next, loaded: true } : current;
+                });
             }}
+            onError={advanceSource}
         />
     );
 }
