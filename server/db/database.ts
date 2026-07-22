@@ -39,6 +39,7 @@ export function openAppDatabase({ dataDir }: { dataDir: string }): AppDatabase {
     configure(database);
     createSchema(database);
     if (firstMigration) migrateLegacyState(database, dataDir, statePath);
+    runMigrations(database);
     return sqliteStore(database);
   } catch (error) {
     database?.close();
@@ -87,7 +88,46 @@ function createSchema(database: Database) {
         CREATE INDEX IF NOT EXISTS idx_audit_created ON admin_audit_logs(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_login_created ON login_logs(created_at DESC);
         INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, ${Date.now()});
-    `);
+  `);
+}
+
+function runMigrations(database: Database) {
+  const alreadyApplied = database
+    .query("SELECT 1 FROM schema_migrations WHERE version = 2")
+    .get();
+  if (alreadyApplied) return;
+  database.transaction(() => {
+    const emperorStage = database
+      .query("SELECT id FROM realm_stages WHERE id = ?")
+      .get("realm-dou-emperor-1");
+    if (emperorStage) {
+      database
+        .query("UPDATE realm_stages SET name = ?, active = 1 WHERE id = ?")
+        .run("斗帝", "realm-dou-emperor-1");
+      database
+        .query(
+          "UPDATE realm_stages SET active = 0 WHERE realm_id = ? AND id <> ?",
+        )
+        .run("realm-dou-emperor", "realm-dou-emperor-1");
+      database
+        .query(
+          "UPDATE user_cultivation SET stage_id = ? WHERE stage_id LIKE ? AND stage_id <> ?",
+        )
+        .run(
+          "realm-dou-emperor-1",
+          "realm-dou-emperor-%",
+          "realm-dou-emperor-1",
+        );
+      database
+        .query(
+          "UPDATE user_cultivation SET pending_stage_id = NULL WHERE pending_stage_id LIKE ? AND pending_stage_id <> ?",
+        )
+        .run("realm-dou-emperor-%", "realm-dou-emperor-1");
+    }
+    database
+      .query("INSERT INTO schema_migrations(version, applied_at) VALUES (2, ?)")
+      .run(Date.now());
+  })();
 }
 
 function migrateLegacyState(

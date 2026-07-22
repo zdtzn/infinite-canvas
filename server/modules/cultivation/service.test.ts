@@ -20,6 +20,29 @@ afterEach(() => {
 });
 
 describe("cultivation quota and settlement", () => {
+  test("uses a single terminal Dou Emperor stage", () => {
+    const { store, service } = setup();
+    try {
+      const emperor = service
+        .getConfiguration()
+        .realms.find((realm) => realm.code === "dou-emperor");
+      expect(emperor?.stages).toHaveLength(1);
+      expect(emperor?.stages[0]?.name).toBe("斗帝");
+
+      service.ensureUser("admin", true);
+      service.ensureUser("user", false);
+      service.updateUser(
+        "admin",
+        "user",
+        { stageId: emperor!.stages[0].id },
+        "set terminal stage",
+      );
+      expect(service.getProfile("user").nextStageName).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
   test("reserves quota and settles only successful images", () => {
     const { store, service } = setup();
     try {

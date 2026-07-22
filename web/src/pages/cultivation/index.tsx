@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 
 import { RealmIcon } from "@/features/cultivation/realm-icon";
 import { useCultivationProfile } from "@/features/cultivation/queries";
-import { cultivationProgressPercent } from "@/features/cultivation/utils";
+import { cultivationProgressPercent, cultivationStageLabel } from "@/features/cultivation/utils";
 import { useUserStore } from "@/stores/use-user-store";
 
 export default function CultivationPage() {
@@ -19,6 +19,7 @@ export default function CultivationPage() {
     if (isError || !data) return <Result status="warning" title="修炼信息暂时无法加载" extra={<Button onClick={() => void refetch()}>重新加载</Button>} />;
     const finalStage = !data.nextStageName;
     const percent = finalStage ? 100 : cultivationProgressPercent(data.currentXp, data.requiredXp, Boolean(data.pendingStageId));
+    const stageLabel = cultivationStageLabel(data.realmName, data.stageName);
 
     return (
         <main className="h-full overflow-y-auto bg-background">
@@ -47,9 +48,7 @@ export default function CultivationPage() {
                                 <RealmIcon iconKey={data.iconKey} className="size-5" />
                             </span>
                             <div>
-                                <div className="text-xl font-semibold">
-                                    {data.realmName} · {data.stageName}
-                                </div>
+                                <div className="text-xl font-semibold">{stageLabel}</div>
                                 <div className="mt-1 text-sm text-stone-500">累计修为 {data.totalXp.toLocaleString()}</div>
                             </div>
                         </div>

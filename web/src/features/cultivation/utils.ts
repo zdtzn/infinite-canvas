@@ -4,6 +4,10 @@ export function cultivationProgressPercent(currentXp: number, requiredXp: number
     return Math.max(0, Math.min(100, Math.round((currentXp / requiredXp) * 100)));
 }
 
+export function cultivationStageLabel(realmName: string, stageName: string) {
+    return realmName.trim() === stageName.trim() ? realmName : `${realmName} · ${stageName}`;
+}
+
 export function quotaText(remaining: number | null, unlimited: boolean) {
     return unlimited || remaining === null ? "今日不限次数" : `今日剩余 ${remaining} 次`;
 }

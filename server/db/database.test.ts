@@ -116,6 +116,84 @@ describe("SQLite application database", () => {
     store.close();
   });
 
+  test("normalizes legacy Dou Emperor stars into one terminal stage", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    const database = store.raw;
+    if (!database) throw new Error("Expected SQLite database");
+    try {
+      database
+        .query(
+          "INSERT INTO realms(id, theme_key, code, name, color, icon_key, animation_preset, sort_order, daily_limit, max_concurrency, promotion_policy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          "realm-dou-emperor",
+          "doupo-default",
+          "dou-emperor",
+          "斗帝",
+          "#111827",
+          "Infinity",
+          "minimal-line",
+          13,
+          null,
+          2,
+          "boundary_manual",
+        );
+      database
+        .query(
+          "INSERT INTO realm_stages(id, realm_id, name, stage_order, required_xp, active) VALUES (?, ?, ?, ?, ?, 1)",
+        )
+        .run("realm-dou-emperor-1", "realm-dou-emperor", "一星", 1, 100);
+      database
+        .query(
+          "INSERT INTO realm_stages(id, realm_id, name, stage_order, required_xp, active) VALUES (?, ?, ?, ?, ?, 1)",
+        )
+        .run("realm-dou-emperor-2", "realm-dou-emperor", "二星", 2, 200);
+      database
+        .query(
+          "INSERT INTO users(user_id, display_name, is_admin, status, created_at) VALUES (?, ?, 0, 'NORMAL', ?)",
+        )
+        .run("emperor", "Emperor", 1);
+      database
+        .query(
+          "INSERT INTO user_cultivation(user_id, stage_id, current_xp, total_xp, unlimited_quota, pending_stage_id, started_at, updated_at) VALUES (?, ?, 0, 0, 1, ?, 1, 1)",
+        )
+        .run("emperor", "realm-dou-emperor-2", "realm-dou-emperor-2");
+      database.query("DELETE FROM schema_migrations WHERE version = 2").run();
+    } finally {
+      store.close();
+    }
+
+    const reopened = openAppDatabase({ dataDir });
+    try {
+      const database = reopened.raw;
+      if (!database) throw new Error("Expected SQLite database");
+      expect(
+        database
+          .query("SELECT name FROM realm_stages WHERE id = ?")
+          .get("realm-dou-emperor-1"),
+      ).toMatchObject({ name: "斗帝" });
+      expect(
+        database
+          .query("SELECT active FROM realm_stages WHERE id = ?")
+          .get("realm-dou-emperor-2"),
+      ).toMatchObject({ active: 0 });
+      expect(
+        database
+          .query(
+            "SELECT stage_id, pending_stage_id FROM user_cultivation WHERE user_id = ?",
+          )
+          .get("emperor"),
+      ).toMatchObject({
+        stage_id: "realm-dou-emperor-1",
+        pending_stage_id: null,
+      });
+    } finally {
+      reopened.close();
+    }
+  });
+
   test("falls back to the legacy state when the first SQLite migration fails", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);

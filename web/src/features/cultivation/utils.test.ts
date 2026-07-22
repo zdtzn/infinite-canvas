@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
 
-import { cultivationGenerationBlockReason, cultivationProgressPercent, quotaText, requiredCultivationCapabilities } from "./utils";
+import { cultivationGenerationBlockReason, cultivationProgressPercent, cultivationStageLabel, quotaText, requiredCultivationCapabilities } from "./utils";
 
 describe("cultivation presentation helpers", () => {
     test("clamps experience progress and treats pending breakthroughs as complete", () => {
         expect(cultivationProgressPercent(25, 100, false)).toBe(25);
         expect(cultivationProgressPercent(250, 100, false)).toBe(100);
         expect(cultivationProgressPercent(5, 100, true)).toBe(100);
+    });
+
+    test("does not duplicate a realm name when its terminal stage has no star label", () => {
+        expect(cultivationStageLabel("斗帝", "斗帝")).toBe("斗帝");
+        expect(cultivationStageLabel("斗王", "三星")).toBe("斗王 · 三星");
     });
 
     test("formats finite and unlimited quotas", () => {

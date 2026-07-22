@@ -4,6 +4,7 @@ import { Check, Edit3, RefreshCw, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { previewCultivationBreakthrough } from "@/features/cultivation/breakthrough-overlay";
+import { cultivationStageLabel } from "@/features/cultivation/utils";
 import {
     approveAdminBreakthrough,
     fetchAdminCultivationUsers,
@@ -86,7 +87,7 @@ function UsersPanel() {
         },
         onError: (error) => message.error(error instanceof Error ? error.message : "审批失败"),
     });
-    const stageOptions = useMemo(() => config?.realms.flatMap((realm) => realm.stages.map((stage) => ({ value: stage.id, label: `${realm.name} · ${stage.name}` }))) || [], [config]);
+    const stageOptions = useMemo(() => config?.realms.flatMap((realm) => realm.stages.map((stage) => ({ value: stage.id, label: cultivationStageLabel(realm.name, stage.name) }))) || [], [config]);
     return (
         <section>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -113,11 +114,7 @@ function UsersPanel() {
                     { title: "用户", dataIndex: "displayName", fixed: "left", width: 150 },
                     {
                         title: "境界",
-                        render: (_, row) => (
-                            <span style={{ color: row.color }}>
-                                {row.realmName} · {row.stageName}
-                            </span>
-                        ),
+                        render: (_, row) => <span style={{ color: row.color }}>{cultivationStageLabel(row.realmName, row.stageName)}</span>,
                         width: 180,
                     },
                     { title: "修为", render: (_, row) => `${row.currentXp} / ${row.requiredXp}`, width: 130 },
@@ -195,7 +192,7 @@ function UserDrawer({
             }
         >
             <Form form={form} layout="vertical">
-                <Form.Item label="境界与星级" name="stageId">
+                <Form.Item label="境界与阶段" name="stageId">
                     <Select showSearch optionFilterProp="label" options={stageOptions} />
                 </Form.Item>
                 <div className="grid grid-cols-2 gap-3">
@@ -256,7 +253,7 @@ function ConfigurationPanel() {
             await updateCultivationStage(stage.id, values);
             setStage(null);
             await refresh();
-            message.success("星级配置已保存");
+            message.success("阶段配置已保存");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存失败");
         }
@@ -283,7 +280,7 @@ function ConfigurationPanel() {
                         ),
                         width: 130,
                     },
-                    { title: "星级数", render: (_, row) => row.stages.length, width: 90 },
+                    { title: "阶段数", render: (_, row) => row.stages.length, width: 90 },
                     {
                         title: "操作",
                         render: (_, row) => (
@@ -358,7 +355,7 @@ function RealmDrawer({ realm, onClose, onSubmit }: { realm: CultivationRealmConf
                         options={[
                             { value: "auto", label: "全自动" },
                             { value: "manual", label: "全人工" },
-                            { value: "boundary_manual", label: "星级自动、跨境界审批" },
+                            { value: "boundary_manual", label: "同一境界内自动、跨境界审批" },
                         ]}
                     />
                 </Form.Item>
@@ -377,7 +374,7 @@ function StageDrawer({ stage, capabilities, onClose, onSubmit }: { stage: Cultiv
     const [form] = Form.useForm();
     return (
         <Drawer
-            title="编辑星级"
+            title="编辑阶段"
             open={Boolean(stage)}
             width={440}
             onClose={onClose}

@@ -160,8 +160,8 @@ export const DEFAULT_REALMS: RealmSeed[] = [
   {
     code: "dou-emperor",
     name: "斗帝",
-    stageCount: 9,
-    stageSuffix: "星",
+    stageCount: 1,
+    stageSuffix: "none",
     color: "#111827",
     iconKey: "Infinity",
     dailyLimit: null,

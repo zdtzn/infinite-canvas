@@ -387,9 +387,9 @@ export function createCultivationService(
       stages: (
         database
           .query(
-            "SELECT * FROM realm_stages WHERE realm_id = ? ORDER BY stage_order",
+            "SELECT * FROM realm_stages WHERE realm_id = ? AND (active = 1 OR ? <> 'dou-emperor') ORDER BY stage_order",
           )
-          .all(realm.id) as Array<Record<string, unknown>>
+          .all(realm.id, realm.code) as Array<Record<string, unknown>>
       ).map((stage) => ({
         id: String(stage.id),
         name: String(stage.name),
@@ -706,7 +706,7 @@ export function createCultivationService(
         .query("SELECT * FROM realm_stages WHERE id = ?")
         .get(stageId) as Record<string, unknown> | null;
       if (!before)
-        throw new CultivationError("星级不存在", 404, "STAGE_NOT_FOUND");
+        throw new CultivationError("阶段不存在", 404, "STAGE_NOT_FOUND");
       database
         .query(
           "UPDATE realm_stages SET name=?, required_xp=?, active=? WHERE id=?",
