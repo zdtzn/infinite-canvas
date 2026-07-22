@@ -7,6 +7,24 @@ const QUALITY_BASE: Record<string, number> = {
 };
 const DIMENSION_STEP = 16;
 
+type OpenAiImageRequestOptionsInput = {
+    count: number;
+    quality?: string;
+    size?: string;
+    background?: string;
+};
+
+/** Keep the common Images API payload compatible with strict OpenAI-style gateways. */
+export function buildOpenAiImageRequestOptions({ count, quality, size, background }: OpenAiImageRequestOptionsInput) {
+    return {
+        ...(count > 1 ? { n: count } : {}),
+        ...(quality ? { quality } : {}),
+        ...(size ? { size } : {}),
+        ...(background ? { background } : {}),
+        response_format: "b64_json",
+    };
+}
+
 /** Convert the workbench's ratio presets to OpenAI-compatible pixel dimensions. */
 export function resolveOpenAiImageSize(size?: string, quality?: string) {
     const value = String(size || "").trim();

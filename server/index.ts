@@ -4,7 +4,7 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 
 import { createIdentityToken, createSessionToken, expiredSessionCookie, hashAccessCode, identityCookie, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { decryptSecret, encryptSecret } from "./lib/crypto-store";
-import { resolveOpenAiImageSize } from "./lib/image-request";
+import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { assertAllowedUpstreamUrl, buildUpstreamUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { openAppDatabase, persistReference } from "./db/database";
@@ -581,17 +581,13 @@ type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & { refer
 async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal) {
     const headers = { Authorization: `Bearer ${apiKey}`, "Idempotency-Key": randomUUID() };
     const size = resolveOpenAiImageSize(input.size, input.quality);
+    const requestOptions = buildOpenAiImageRequestOptions({ count: input.count, quality: input.quality, size, background: input.background });
     let response: Response;
     if (input.references.length) {
         const form = new FormData();
         form.set("model", input.model);
         form.set("prompt", input.prompt);
-        form.set("n", String(input.count));
-        form.set("response_format", "b64_json");
-        form.set("output_format", "png");
-        if (input.quality) form.set("quality", input.quality);
-        if (size) form.set("size", size);
-        if (input.background) form.set("background", input.background);
+        Object.entries(requestOptions).forEach(([key, value]) => form.set(key, String(value)));
         input.references.forEach((dataUrl, index) => form.append("image", dataUrlBlob(dataUrl), `reference-${index + 1}.png`));
         if (input.mask) form.set("mask", dataUrlBlob(input.mask), "mask.png");
         response = await upstreamFetch(buildUpstreamUrl(channel.baseUrl, "openai", "/images/edits"), { method: "POST", headers, body: form, signal }, true);
@@ -604,12 +600,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
                 body: JSON.stringify({
                     model: input.model,
                     prompt: input.prompt,
-                    n: input.count,
-                    response_format: "b64_json",
-                    output_format: "png",
-                    ...(input.quality ? { quality: input.quality } : {}),
-                    ...(size ? { size } : {}),
-                    ...(input.background ? { background: input.background } : {}),
+                    ...requestOptions,
                 }),
                 signal,
             },

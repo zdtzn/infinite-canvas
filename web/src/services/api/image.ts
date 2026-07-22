@@ -115,8 +115,6 @@ const IMAGE_MIN_PIXELS = 655360;
 const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
-const IMAGE_OUTPUT_FORMAT = "png";
-
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 const GEMINI_IMAGE_SIZE_BY_QUALITY: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
 
@@ -695,12 +693,11 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             {
                 model: requestConfig.model,
                 prompt: withSystemPrompt(requestConfig, prompt),
-                n,
+                ...(n > 1 ? { n } : {}),
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(background ? { background } : {}),
                 response_format: "b64_json",
-                output_format: IMAGE_OUTPUT_FORMAT,
             },
             {
                 headers: aiHeaders(requestConfig, "application/json"),
@@ -754,9 +751,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const formData = new FormData();
     formData.set("model", requestConfig.model);
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
-    formData.set("n", String(n));
+    if (n > 1) formData.set("n", String(n));
     formData.set("response_format", "b64_json");
-    formData.set("output_format", IMAGE_OUTPUT_FORMAT);
     if (quality) {
         formData.set("quality", quality);
     }
