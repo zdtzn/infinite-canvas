@@ -21,7 +21,7 @@ const store = localforage.createInstance({ name: "infinite-canvas", storeName: "
 const objectUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
-    const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+    const blob = await readImageBlob(input);
     const previewUrl = URL.createObjectURL(blob);
     const meta = await readImageMeta(previewUrl);
     URL.revokeObjectURL(previewUrl);
@@ -44,6 +44,15 @@ export async function uploadImage(input: string | Blob): Promise<UploadedImage> 
         objectUrls.set(thumbnailKey, URL.createObjectURL(thumbnail));
     }
     return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType, thumbnailKey, thumbnailUrl: thumbnailKey ? objectUrls.get(thumbnailKey) : undefined };
+}
+
+export async function readImageBlob(input: string | Blob) {
+    if (typeof input !== "string") return input;
+    const response = await fetch(input, { credentials: "same-origin" });
+    if (!response.ok) throw new Error(`读取图片失败（${response.status}）`);
+    const blob = await response.blob();
+    if (!blob.size || !blob.type.startsWith("image/")) throw new Error("读取图片失败：返回内容不是图片");
+    return blob;
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
