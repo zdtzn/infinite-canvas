@@ -25,4 +25,11 @@ describe("image model capabilities", () => {
         assert.doesNotThrow(() => validateImageRequest(capabilities, { resolution: "medium", imageQuality: "high", imageOutputFormat: "webp", size: "1:1", background: "", referenceCount: 0 }));
         assert.throws(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "transparent", referenceCount: 0 }), /JPEG/);
     });
+
+    test("UU async GPT Image keeps quality automatic but allows a locally encoded output format", () => {
+        const capabilities = deriveImageModelCapabilities("uuapi::gpt-image-2", "openai", "https://uuapi.net/v1");
+        assert.deepEqual(capabilities.generationQualities, ["auto"]);
+        assert.deepEqual(capabilities.outputFormats, ["auto"]);
+        assert.doesNotThrow(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "", referenceCount: 0 }));
+    });
 });

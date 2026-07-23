@@ -121,6 +121,22 @@ export function clearImageGenerationJob() {
     return true;
 }
 
+/** Replace a temporary upstream URL after the final image file has been persisted. */
+export function replaceImageGenerationResult(image: GeneratedImage) {
+    if (!currentJob) return false;
+    let replaced = false;
+    const results = currentJob.results.map((result) => {
+        if (result.image?.id !== image.id) return result;
+        replaced = true;
+        return { ...result, image };
+    });
+    if (!replaced) return false;
+    currentJob = { ...currentJob, results };
+    emit();
+    persistCurrentJob();
+    return true;
+}
+
 async function runGeneration(jobId: string, snapshot: ImageGenerationSnapshot, onComplete: CompletionHandler | undefined, slotRunner: SlotRunner) {
     const job = currentJob;
     if (!job || job.id !== jobId) return;

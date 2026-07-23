@@ -11,12 +11,12 @@ import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, resolveModelChannel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { clearImageGenerationJob, getImageGenerationSnapshot, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
+import { convertImageOutput, deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { clearImageGenerationJob, getImageGenerationSnapshot, replaceImageGenerationResult, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
@@ -83,6 +83,9 @@ export default function ImagePage() {
     const generationJob = useSyncExternalStore(subscribeImageGeneration, getImageGenerationSnapshot, getImageGenerationSnapshot);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
+    const activeChannel = resolveModelChannel(effectiveConfig, model);
+    const activeImageCapabilities = deriveImageModelCapabilities(model, activeChannel.apiFormat, activeChannel.baseUrl);
+    const appliedImageQuality = activeImageCapabilities.generationQualities.includes(effectiveConfig.imageQuality) ? effectiveConfig.imageQuality : "auto";
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const requiredCapabilities = requiredCultivationCapabilities({ model, quality: effectiveConfig.quality, referenceCount: references.length, hasMask: false });
     const generationBlockReason = cultivationProfile
@@ -113,8 +116,7 @@ export default function ImagePage() {
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
-        const channel = effectiveConfig.channels.find((item) => model.startsWith(`${item.id}::`)) || effectiveConfig.channels[0];
-        const maxReferences = deriveImageModelCapabilities(model, channel?.apiFormat || effectiveConfig.apiFormat).maxReferences;
+        const maxReferences = activeImageCapabilities.maxReferences;
         if (references.length + imageFiles.length > maxReferences) {
             message.error(`当前模型最多支持 ${maxReferences} 张参考图`);
             return;
@@ -187,10 +189,11 @@ export default function ImagePage() {
             if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
             const logImages = await Promise.all(
                 successImages.map(async (image) => {
-                    const stored = await uploadImage(image.dataUrl);
+                    const stored = await uploadImage(image.dataUrl, { outputFormat: snapshot.config.imageOutputFormat });
                     return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
                 }),
             );
+            logImages.forEach(replaceImageGenerationResult);
             saveLog(
                 buildLog({
                     prompt: text,
@@ -231,13 +234,20 @@ export default function ImagePage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoRunToken]);
 
-    const downloadImage = (image: GeneratedImage, index: number) => {
-        saveAs(image.dataUrl, `image-${index + 1}.png`);
+    const downloadImage = async (image: GeneratedImage, index: number) => {
+        try {
+            const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
+            const blob = await convertImageOutput(image.dataUrl, outputFormat);
+            saveAs(blob, `image-${index + 1}.${imageFileExtension(blob.type)}`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "下载图片失败");
+        }
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
-        const stored = await uploadImage(image.dataUrl);
-        setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+        const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
+        const stored = await uploadImage(image.dataUrl, { outputFormat });
+        setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.${imageFileExtension(stored.mimeType)}`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
         message.success("已加入参考图");
     };
 
@@ -251,7 +261,7 @@ export default function ImagePage() {
             const stored =
                 image.storageKey && image.dataUrl.startsWith("/api/assets/")
                     ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
-                    : await uploadImage(image.dataUrl);
+                    : await uploadImage(image.dataUrl, { outputFormat: previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat });
             addAsset({
                 kind: "image",
                 title: `生成结果 ${index + 1}`,
@@ -349,8 +359,9 @@ export default function ImagePage() {
         try {
             const image = await retryImageGeneration(index, snapshot);
             if (!image) return;
-            const stored = await uploadImage(image.dataUrl);
+            const stored = await uploadImage(image.dataUrl, { outputFormat: snapshot.config.imageOutputFormat });
             const logImage = { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+            replaceImageGenerationResult(logImage);
             saveLog(
                 buildLog({
                     prompt: snapshot.text,
@@ -452,7 +463,7 @@ export default function ImagePage() {
                                                 高级参数
                                             </span>
                                             <span className="flex min-w-0 items-center gap-1.5 text-stone-500 dark:text-stone-400">
-                                                <span className="truncate text-xs font-normal">{modelOptionLabel(effectiveConfig, model)} · {effectiveConfig.size} · {imageResolutionLabel(effectiveConfig.quality)} · {imageGenerationQualityLabel(effectiveConfig.imageQuality)} · {imageOutputFormatLabel(effectiveConfig.imageOutputFormat)}</span>
+                                                <span className="truncate text-xs font-normal">{modelOptionLabel(effectiveConfig, model)} · {effectiveConfig.size} · {imageResolutionLabel(effectiveConfig.quality)} · {imageGenerationQualityLabel(appliedImageQuality)} · {imageOutputFormatLabel(effectiveConfig.imageOutputFormat)}</span>
                                                 <ChevronDown className="size-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
                                             </span>
                                         </summary>
@@ -589,7 +600,7 @@ function ResultImageCard({
                         </Button>
                     </Tooltip>
                     <Tooltip title="下载">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => void onDownload(image, index)}>
                             下载
                         </Button>
                     </Tooltip>
@@ -826,6 +837,10 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
             <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
         </div>
     );
+}
+
+function imageFileExtension(mimeType: string) {
+    return ({ "image/jpeg": "jpg", "image/webp": "webp", "image/png": "png", "image/avif": "avif" } as Record<string, string>)[mimeType.toLowerCase()] || "png";
 }
 
 function buildLog({

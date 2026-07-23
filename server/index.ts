@@ -8,7 +8,7 @@ import { decryptSecret, encryptSecret } from "./lib/crypto-store";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
-import { buildUuAsyncImageRequest, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
+import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
@@ -588,8 +588,9 @@ async function createImageJob(request: Request, session: SessionPayload) {
     const model = String(body.model || "").trim();
     if (!model) throw new HttpError(400, "模型不能为空");
     const resolution = optionalString(body.quality);
-    const imageQuality = normalizeImageQuality(body.imageQuality);
-    const imageOutputFormat = isUuImageAsyncChannel(channel.baseUrl, model, references.length, Boolean(body.mask)) ? undefined : normalizeImageOutputFormat(body.imageOutputFormat, model);
+    const isUuGptImage2 = isUuAsyncGptImage2Channel(channel.baseUrl, model);
+    const imageQuality = isUuGptImage2 ? undefined : normalizeImageQuality(body.imageQuality);
+    const imageOutputFormat = isUuGptImage2 ? undefined : normalizeImageOutputFormat(body.imageOutputFormat, model);
     cultivation?.reserveGeneration({ jobId, userId: session.userId, channelId, model, count, quality: resolution, referenceCount: references.length, hasMask: Boolean(body.mask), activeJobs: activeUserJobs(session.userId) });
     try {
         const input: ImageJobInput = {
@@ -761,7 +762,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
     const payload = await parseUpstreamJson(response, { maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES, tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试" });
     const data = Array.isArray(payload.data) ? payload.data : [];
     const mimeType = imageOutputFormatMimeType(input.imageOutputFormat);
-    return data.map((item) => (typeof item?.b64_json === "string" ? `data:${mimeType};base64,${item.b64_json}` : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
+    return data.map((item) => (typeof item?.b64_json === "string" ? base64ImageDataUrl(item.b64_json, mimeType) : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
 }
 
 async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal) {
@@ -1448,6 +1449,12 @@ function normalizeImageOutputFormat(value: unknown, model: string) {
 
 function imageOutputFormatMimeType(format?: string) {
     return ({ jpeg: "image/jpeg", webp: "image/webp", png: "image/png" } as Record<string, string>)[String(format || "").toLowerCase()] || "image/png";
+}
+
+function base64ImageDataUrl(base64: string, fallbackMimeType: string) {
+    const sample = Buffer.from(base64.slice(0, 256), "base64");
+    const mimeType = detectImageMimeFromBytes(sample) || fallbackMimeType;
+    return `data:${mimeType};base64,${base64}`;
 }
 
 function normalizeJobSource(value: unknown): ImageJobInput["source"] {

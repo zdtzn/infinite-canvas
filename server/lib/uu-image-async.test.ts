@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { buildUuAsyncImageRequest, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
+import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
 
 test("uses the UU async API only for compatible gpt-image-2 jobs", () => {
     expect(isUuImageAsyncChannel("https://uuapi.cc/v1", "gpt-image-2", 0, false)).toBe(true);
@@ -9,6 +9,11 @@ test("uses the UU async API only for compatible gpt-image-2 jobs", () => {
     expect(isUuImageAsyncChannel("https://uuapi.cc", "gpt-image-1", 0, false)).toBe(false);
     expect(isUuImageAsyncChannel("https://uuapi.cc", "gpt-image-2", 2, false)).toBe(false);
     expect(isUuImageAsyncChannel("https://uuapi.cc", "gpt-image-2", 1, true)).toBe(false);
+});
+
+test("identifies the UU gpt-image-2 channel independently of job mode", () => {
+    expect(isUuAsyncGptImage2Channel("https://uuapi.net/v1", "gpt-image-2")).toBe(true);
+    expect(isUuAsyncGptImage2Channel("https://uuapi.net/v1", "gpt-image-1")).toBe(false);
 });
 
 test("converts workbench sizing into UU async width and height", () => {

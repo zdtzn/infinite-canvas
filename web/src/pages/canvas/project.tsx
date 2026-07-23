@@ -307,7 +307,7 @@ function InfiniteCanvasPage() {
             const job = await waitForServerJob(jobId, { signal });
             const image = job.result?.images[0];
             if (!image) throw new Error(job.error || "任务没有返回图片");
-            const uploaded = await uploadImage(image.dataUrl);
+            const uploaded = await uploadImage(image.dataUrl, { outputFormat: node.metadata?.imageOutputFormat });
             if (signal.aborted) return;
             setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, width: uploaded.width, height: uploaded.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), status: NODE_STATUS_SUCCESS, errorDetails: undefined, jobId } } : item)));
         } catch (error) {
@@ -1614,7 +1614,7 @@ function InfiniteCanvasPage() {
 
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
-        saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.content)}`);
+        saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.mimeType || node.metadata.content)}`);
     }, []);
 
     const saveNodeAsset = useCallback(
@@ -1799,7 +1799,7 @@ function InfiniteCanvasPage() {
             const controller = startGenerationRequest(childId, node.id, childId);
             try {
                 const image = await requestEdit(generationConfig, prompt, [source], { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, imageRequestOptions(childId, controller)).then((items) => items[0]);
-                const uploaded = await uploadImage(image.dataUrl);
+                const uploaded = await uploadImage(image.dataUrl, { outputFormat: generationConfig.imageOutputFormat });
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
@@ -1881,7 +1881,7 @@ function InfiniteCanvasPage() {
                     undefined,
                     imageRequestOptions(childId, controller),
                 ).then((items) => items[0]);
-                const uploaded = await uploadImage(image.dataUrl);
+                const uploaded = await uploadImage(image.dataUrl, { outputFormat: generationConfig.imageOutputFormat });
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
@@ -2072,7 +2072,7 @@ function InfiniteCanvasPage() {
                     const image = refs.length
                         ? await requestEdit({ ...generationConfig, count: "1" }, fullPrompt, refs, undefined, imageRequestOptions(nodeId, controller)).then((items) => items[0])
                         : await requestGeneration({ ...generationConfig, count: "1" }, fullPrompt, imageRequestOptions(nodeId, controller)).then((items) => items[0]);
-                    const uploaded = await uploadImage(image.dataUrl);
+                    const uploaded = await uploadImage(image.dataUrl, { outputFormat: generationConfig.imageOutputFormat });
                     setNodes((prev) =>
                         prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
                     );
@@ -2219,7 +2219,7 @@ function InfiniteCanvasPage() {
                                 const image = referenceImages.length
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, imageRequestOptions(nodeId, controller)).then((items) => items[0])
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, imageRequestOptions(nodeId, controller)).then((items) => items[0]);
-                                const uploaded = await uploadImage(image.dataUrl);
+                                const uploaded = await uploadImage(image.dataUrl, { outputFormat: generationConfig.imageOutputFormat });
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 setNodes((prev) => {
                                     const root = prev.find((node) => node.id === rootId);
@@ -2552,7 +2552,7 @@ function InfiniteCanvasPage() {
                 const image = useReferenceImages
                     ? await requestEdit(generationConfig, prompt, retryImages, undefined, imageRequestOptions(node.id, controller)).then((items) => items[0])
                     : await requestGeneration(generationConfig, prompt, imageRequestOptions(node.id, controller)).then((items) => items[0]);
-                const uploadedImage = await uploadImage(image.dataUrl);
+                const uploadedImage = await uploadImage(image.dataUrl, { outputFormat: generationConfig.imageOutputFormat });
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                 const generationMetadata = savedImageMetadata?.generationType

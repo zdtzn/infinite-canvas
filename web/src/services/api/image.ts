@@ -137,18 +137,18 @@ function normalizeImageOutputFormat(format: string | undefined) {
 }
 
 /** Do not leak a stale model-quality setting into channels that do not support it. */
-function resolveSupportedImageQuality(config: Pick<AiConfig, "model" | "apiFormat" | "imageQuality">) {
+function resolveSupportedImageQuality(config: Pick<AiConfig, "model" | "apiFormat" | "baseUrl" | "imageQuality">) {
     const quality = normalizeImageQuality(config.imageQuality);
     if (!quality) return undefined;
-    const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat);
+    const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat, config.baseUrl);
     return capabilities.generationQualities.includes(quality) ? quality : undefined;
 }
 
 /** Only forward output_format when the selected model documents that capability. */
-function resolveSupportedImageOutputFormat(config: Pick<AiConfig, "model" | "apiFormat" | "imageOutputFormat" | "background">) {
+function resolveSupportedImageOutputFormat(config: Pick<AiConfig, "model" | "apiFormat" | "baseUrl" | "imageOutputFormat" | "background">) {
     const format = normalizeImageOutputFormat(config.imageOutputFormat);
     if (!format || (format === "jpeg" && normalizeBackground(config.background) === "transparent")) return undefined;
-    const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat);
+    const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat, config.baseUrl);
     return capabilities.outputFormats.includes(format) ? format : undefined;
 }
 
@@ -887,7 +887,7 @@ export async function fetchChannelModels(channel: ModelChannel) {
 }
 
 async function requestServerImageJob(requestConfig: ManagedAiConfig & { channelId: string; serverManaged: true }, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, count: number, options?: RequestOptions) {
-    const capabilities = deriveImageModelCapabilities(requestConfig.model, requestConfig.apiFormat);
+    const capabilities = deriveImageModelCapabilities(requestConfig.model, requestConfig.apiFormat, requestConfig.baseUrl);
     const resolution = normalizeResolution(requestConfig.quality) || "low";
     const imageQuality = resolveSupportedImageQuality(requestConfig);
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);

@@ -10,14 +10,18 @@ export type UuImageAsyncTask = {
     message?: string;
 };
 
-export function isUuImageAsyncChannel(baseUrl: string, model: string, referenceCount: number, hasMask: boolean) {
+export function isUuAsyncGptImage2Channel(baseUrl: string, model: string) {
     try {
         const hostname = new URL(baseUrl).hostname.toLowerCase();
         const isUuHost = ["uuapi.cc", "uuapi.net"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
-        return isUuHost && model.trim().toLowerCase() === "gpt-image-2" && referenceCount <= 1 && !hasMask;
+        return isUuHost && model.trim().toLowerCase() === "gpt-image-2";
     } catch {
         return false;
     }
+}
+
+export function isUuImageAsyncChannel(baseUrl: string, model: string, referenceCount: number, hasMask: boolean) {
+    return isUuAsyncGptImage2Channel(baseUrl, model) && referenceCount <= 1 && !hasMask;
 }
 
 export function resolveUuAsyncImageSize(size?: string, quality?: string) {

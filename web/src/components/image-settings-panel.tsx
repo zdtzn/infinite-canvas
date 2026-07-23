@@ -56,14 +56,15 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
     const selectedModel = config.model || config.imageModel;
     const channel = resolveModelChannel(config, selectedModel);
-    const capabilities = deriveImageModelCapabilities(modelOptionName(selectedModel), channel.apiFormat);
+    const capabilities = deriveImageModelCapabilities(modelOptionName(selectedModel), channel.apiFormat, channel.baseUrl);
     const visibleResolutions = resolutionOptions.filter((item) => capabilities.resolutions.includes(item.value));
     const selectedModelName = modelOptionName(selectedModel);
     const isUuAsyncModel = isUuAsyncImageModel(channel.baseUrl, selectedModelName);
     const visibleGenerationQualities = generationQualityOptions.filter((item) => capabilities.generationQualities.includes(item.value));
     const canChooseGenerationQuality = !isUuAsyncModel && visibleGenerationQualities.some((item) => item.value !== "auto");
-    const visibleOutputFormats = outputFormatOptions.filter((item) => capabilities.outputFormats.includes(item.value));
-    const canChooseOutputFormat = !isUuAsyncModel && visibleOutputFormats.some((item) => item.value !== "auto");
+    // A selected output type is enforced while saving/downloading, even when a gateway ignores output_format.
+    const visibleOutputFormats = outputFormatOptions;
+    const canChooseOutputFormat = true;
     const visibleAspects = aspectOptions.filter((item) => {
         const value = item.value;
         return /^\d+x\d+$/i.test(value) ? capabilities.customSize : capabilities.sizes.includes(value);
@@ -173,7 +174,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <div className="space-y-0.5">
                         <SettingTitle color={theme.node.muted}>输出格式</SettingTitle>
                         <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                            PNG 保留透明，JPEG 与 WebP 通常文件更小
+                            自动保留渠道原格式；指定格式会在保存与下载时转换
                         </div>
                     </div>
                     {canChooseOutputFormat ? (

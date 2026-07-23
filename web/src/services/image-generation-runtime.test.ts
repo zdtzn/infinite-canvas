@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
     clearImageGenerationJob,
     getImageGenerationSnapshot,
+    replaceImageGenerationResult,
     startImageGeneration,
     subscribeImageGeneration,
     type GeneratedImage,
@@ -41,5 +42,23 @@ test("keeps an image task running while the workbench page is unsubscribed", asy
     assert.equal(restored?.status, "succeeded");
     assert.equal(restored?.results[0]?.status, "success");
     assert.ok(notifications >= 1);
+    assert.equal(clearImageGenerationJob(), true);
+});
+
+test("replaces a displayed result with the persisted output format", async () => {
+    clearImageGenerationJob();
+    let resolveCompletion: () => void = () => undefined;
+    const completed = new Promise<void>((resolve) => {
+        resolveCompletion = resolve;
+    });
+    const snapshot = { text: "format conversion", config: {} as ImageGenerationSnapshot["config"], references: [] };
+    startImageGeneration(snapshot, 1, resolveCompletion, async () => ({ id: "image-format", dataUrl: "/api/job-files/job/image.png", durationMs: 10, width: 1, height: 1, bytes: 1, mimeType: "image/png" }));
+
+    await completed;
+    replaceImageGenerationResult({ id: "image-format", dataUrl: "/api/assets/image.jpg", storageKey: "image:jpeg", durationMs: 10, width: 1, height: 1, bytes: 2, mimeType: "image/jpeg" });
+
+    const image = getImageGenerationSnapshot()?.results[0]?.image;
+    assert.equal(image?.dataUrl, "/api/assets/image.jpg");
+    assert.equal(image?.mimeType, "image/jpeg");
     assert.equal(clearImageGenerationJob(), true);
 });
