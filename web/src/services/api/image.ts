@@ -115,6 +115,7 @@ const IMAGE_MIN_PIXELS = 655360;
 const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
+const UU_RATIO_MIN_LONG_SIDE = 2048;
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 const GEMINI_IMAGE_SIZE_BY_QUALITY: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
 
@@ -130,7 +131,7 @@ function normalizeBackground(background: string | undefined) {
 }
 
 /** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
-function resolveSize(quality: string | undefined, ratio: string): string {
+function resolveSize(quality: string | undefined, ratio: string, minimumLongSide = 0): string {
     const parsedRatio = parseImageRatio(ratio);
     const basePixels = quality ? QUALITY_BASE[quality] : undefined;
     const isLandscape = parsedRatio.width >= parsedRatio.height;
@@ -146,6 +147,10 @@ function resolveSize(quality: string | undefined, ratio: string): string {
     } else {
         shortSide = DEFAULT_IMAGE_SHORT_SIDE;
         longSide = Math.round((shortSide * longRatio) / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
+    }
+    if (minimumLongSide > longSide) {
+        shortSide = Math.max(IMAGE_SIZE_STEP, Math.round((shortSide * minimumLongSide) / longSide / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP);
+        longSide = minimumLongSide;
     }
 
     const width = isLandscape ? longSide : shortSide;
@@ -184,7 +189,11 @@ function validateImageSize(width: number, height: number) {
     if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error("图像总像素需在 655360 到 8294400 之间，请调整尺寸");
 }
 
-function resolveRequestSize(quality: string | undefined, size: string) {
+export function resolveImageRequestSize(config: Pick<AiConfig, "baseUrl" | "model" | "quality" | "size">) {
+    return resolveRequestSize(normalizeQuality(config.quality), config.size, isUuGptImage2Channel(config) ? UU_RATIO_MIN_LONG_SIDE : 0);
+}
+
+function resolveRequestSize(quality: string | undefined, size: string, minimumLongSide = 0) {
     const value = size.trim();
     if (!value || value.toLowerCase() === "auto") return undefined;
     const dimensions = parseImageDimensions(value);
@@ -192,8 +201,18 @@ function resolveRequestSize(quality: string | undefined, size: string) {
         validateImageSize(dimensions.width, dimensions.height);
         return `${dimensions.width}x${dimensions.height}`;
     }
-    if (value.includes(":")) return resolveSize(quality, value);
+    if (value.includes(":")) return resolveSize(quality, value, minimumLongSide);
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
+}
+
+function isUuGptImage2Channel(config: Pick<AiConfig, "baseUrl" | "model">) {
+    if (config.model.trim().toLowerCase() !== "gpt-image-2") return false;
+    try {
+        const hostname = new URL(config.baseUrl).hostname.toLowerCase();
+        return ["uuapi.cc", "uuapi.net"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+    } catch {
+        return false;
+    }
 }
 
 function resolveGeminiImageConfig(config: AiConfig) {
@@ -660,7 +679,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = resolveImageRequestSize(requestConfig);
         const background = normalizeBackground(config.background);
         try {
             const result = await runModelPlugin({
@@ -685,7 +704,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         }
     }
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size);
+    const requestSize = resolveImageRequestSize(requestConfig);
     const background = normalizeBackground(config.background);
     try {
         const response = await axios.post<ImageApiResponse>(
@@ -719,7 +738,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = resolveImageRequestSize(requestConfig);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -746,7 +765,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         }
     }
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size);
+    const requestSize = resolveImageRequestSize(requestConfig);
     const background = normalizeBackground(config.background);
     const formData = new FormData();
     formData.set("model", requestConfig.model);

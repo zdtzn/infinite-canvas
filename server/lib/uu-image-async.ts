@@ -1,5 +1,8 @@
 import { resolveOpenAiImageSize } from "./image-request";
 
+const UU_RATIO_MIN_LONG_SIDE = 2048;
+const DIMENSION_STEP = 16;
+
 export type UuImageAsyncTaskStatus = "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
 
 export type UuImageAsyncTask = {
@@ -21,12 +24,15 @@ export function isUuImageAsyncChannel(baseUrl: string, model: string, referenceC
 }
 
 export function resolveUuAsyncImageSize(size?: string, quality?: string) {
-    const resolved = resolveOpenAiImageSize(size, quality) || "1024x1024";
+    const source = String(size || "").trim();
+    const resolved = resolveOpenAiImageSize(source, quality) || "1024x1024";
     const match = resolved.match(/^(\d+)x(\d+)$/i);
     if (!match) return { width: 1024, height: 1024 };
     const width = Number(match[1]);
     const height = Number(match[2]);
-    return Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0 ? { width, height } : { width: 1024, height: 1024 };
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return { width: 1024, height: 1024 };
+    if (!/^\d+\s*:\s*\d+$/.test(source)) return { width, height };
+    return scaleRatioToMinimumLongSide(width, height, UU_RATIO_MIN_LONG_SIDE);
 }
 
 export function buildUuAsyncImageRequest({ size, quality, referenceCount }: { size?: string; quality?: string; referenceCount: number }) {
@@ -111,6 +117,14 @@ function normalizeStatus(value?: string): UuImageAsyncTaskStatus {
         default:
             return "unknown";
     }
+}
+
+function scaleRatioToMinimumLongSide(width: number, height: number, minimumLongSide: number) {
+    const longSide = Math.max(width, height);
+    if (longSide >= minimumLongSide) return { width, height };
+    const shortSide = Math.min(width, height);
+    const scaledShortSide = Math.max(DIMENSION_STEP, Math.round((shortSide * minimumLongSide) / longSide / DIMENSION_STEP) * DIMENSION_STEP);
+    return width >= height ? { width: minimumLongSide, height: scaledShortSide } : { width: scaledShortSide, height: minimumLongSide };
 }
 
 function collectImageUrls(...records: Array<Record<string, unknown> | undefined>) {
