@@ -145,6 +145,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         model,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         imageQuality: node.metadata?.imageQuality ?? globalConfig.imageQuality ?? defaultConfig.imageQuality,
+        imageOutputFormat: node.metadata?.imageOutputFormat ?? globalConfig.imageOutputFormat ?? defaultConfig.imageOutputFormat,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
         background: node.metadata?.background ?? globalConfig.background ?? defaultConfig.background,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,

@@ -1,5 +1,5 @@
 import { type ReactNode, useState } from "react";
-import { ConfigProvider, Switch } from "antd";
+import { ConfigProvider, Select, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
@@ -18,6 +18,12 @@ const generationQualityOptions = [
     { value: "standard", label: "标准" },
     { value: "hd", label: "高清" },
 ];
+const outputFormatOptions = [
+    { value: "auto", label: "自动" },
+    { value: "png", label: "PNG" },
+    { value: "jpeg", label: "JPEG" },
+    { value: "webp", label: "WebP" },
+];
 const DIMENSION_STEP = 16;
 
 const aspectOptions = [
@@ -33,11 +39,12 @@ const aspectOptions = [
 
 export const imageResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
 export const imageGenerationQualityOptions = generationQualityOptions.map((item) => ({ value: item.value, label: item.label }));
+export const imageOutputFormatOptions = outputFormatOptions.map((item) => ({ value: item.value, label: item.label }));
 export const imageAspectOptions = aspectOptions.map((item) => ({ value: item.value, label: item.label }));
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "imageQuality" | "size" | "count" | "background", value: string) => void;
+    onConfigChange: (key: "quality" | "imageQuality" | "imageOutputFormat" | "size" | "count" | "background", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -55,6 +62,8 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const isUuAsyncModel = isUuAsyncImageModel(channel.baseUrl, selectedModelName);
     const visibleGenerationQualities = generationQualityOptions.filter((item) => capabilities.generationQualities.includes(item.value));
     const canChooseGenerationQuality = !isUuAsyncModel && visibleGenerationQualities.some((item) => item.value !== "auto");
+    const visibleOutputFormats = outputFormatOptions.filter((item) => capabilities.outputFormats.includes(item.value));
+    const canChooseOutputFormat = !isUuAsyncModel && visibleOutputFormats.some((item) => item.value !== "auto");
     const visibleAspects = aspectOptions.filter((item) => {
         const value = item.value;
         return /^\d+x\d+$/i.test(value) ? capabilities.customSize : capabilities.sizes.includes(value);
@@ -64,6 +73,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const effectiveMaxCount = Math.min(maxCount, capabilities.maxOutputs);
     const resolution = resolutionOptions.some((item) => item.value === config.quality) ? config.quality : "low";
     const imageQuality = generationQualityOptions.some((item) => item.value === config.imageQuality) ? config.imageQuality : "auto";
+    const imageOutputFormat = outputFormatOptions.some((item) => item.value === config.imageOutputFormat) ? config.imageOutputFormat : "auto";
     const count = Math.max(1, Math.min(effectiveMaxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const transparentBackground = config.background === "transparent";
@@ -79,6 +89,14 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
         const width = key === "width" ? next : dimensions.width;
         const height = key === "height" ? next : dimensions.height;
         onConfigChange("size", `${alignDimension(width, snapDimensionToStep)}x${alignDimension(height, snapDimensionToStep)}`);
+    };
+    const selectOutputFormat = (value: string) => {
+        if (value === "jpeg" && transparentBackground) onConfigChange("background", "");
+        onConfigChange("imageOutputFormat", value);
+    };
+    const updateTransparentBackground = (checked: boolean) => {
+        if (checked && imageOutputFormat === "jpeg") onConfigChange("imageOutputFormat", "png");
+        onConfigChange("background", checked ? "transparent" : "");
     };
 
     return (
@@ -152,6 +170,24 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     )}
                 </div>
                 <div className="space-y-2.5">
+                    <div className="space-y-0.5">
+                        <SettingTitle color={theme.node.muted}>输出格式</SettingTitle>
+                        <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
+                            PNG 保留透明，JPEG 与 WebP 通常文件更小
+                        </div>
+                    </div>
+                    {canChooseOutputFormat ? (
+                        <span className="block" onMouseDown={(event) => event.stopPropagation()}>
+                            <Select value={imageOutputFormat} options={visibleOutputFormats} className="w-full" onChange={selectOutputFormat} />
+                        </span>
+                    ) : (
+                        <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                            <span>自动</span>
+                            <span className="min-w-0 truncate">{isUuAsyncModel ? "当前异步渠道未开放输出格式参数" : "当前模型由接口决定输出格式"}</span>
+                        </div>
+                    )}
+                </div>
+                <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <div className="space-y-0.5">
                             <SettingTitle color={theme.node.muted}>实际请求尺寸</SettingTitle>
@@ -184,7 +220,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </div>
                     </div>
                     <span onMouseDown={(event) => event.stopPropagation()}>
-                        <Switch size="small" checked={transparentBackground && capabilities.transparentBackground} disabled={!capabilities.transparentBackground} onChange={(checked) => onConfigChange("background", checked ? "transparent" : "")} />
+                        <Switch size="small" checked={transparentBackground && capabilities.transparentBackground} disabled={!capabilities.transparentBackground} onChange={updateTransparentBackground} />
                     </span>
                 </div>
                 <div className="space-y-2.5">
@@ -227,6 +263,10 @@ export function imageQualityLabel(value: string) {
 
 export function imageGenerationQualityLabel(value: string) {
     return ({ auto: "自动", low: "低", medium: "中", high: "高", standard: "标准", hd: "高清" } as Record<string, string>)[value] || value;
+}
+
+export function imageOutputFormatLabel(value: string) {
+    return ({ auto: "自动", png: "PNG", jpeg: "JPEG", webp: "WebP" } as Record<string, string>)[value] || value;
 }
 
 export function imageSizeLabel(size: string) {

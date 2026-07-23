@@ -3,6 +3,7 @@ import type { ApiCallFormat } from "./use-config-store";
 export type ImageModelCapabilities = {
     resolutions: string[];
     generationQualities: string[];
+    outputFormats: string[];
     sizes: string[];
     customSize: boolean;
     transparentBackground: boolean;
@@ -19,6 +20,7 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
         return {
             resolutions: OUTPUT_RESOLUTIONS,
             generationQualities: ["auto"],
+            outputFormats: ["auto"],
             sizes: [...COMMON_SIZES, "1:4", "4:1", "1:8", "8:1", "4:5", "5:4", "21:9"],
             customSize: false,
             transparentBackground: false,
@@ -30,6 +32,7 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
         return {
             resolutions: OUTPUT_RESOLUTIONS,
             generationQualities: ["auto", "low", "medium", "high"],
+            outputFormats: ["auto", "png", "jpeg", "webp"],
             sizes: COMMON_SIZES,
             customSize: true,
             transparentBackground: true,
@@ -41,6 +44,7 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
         return {
             resolutions: OUTPUT_RESOLUTIONS,
             generationQualities: ["auto", "standard", "hd"],
+            outputFormats: ["auto"],
             sizes: COMMON_SIZES,
             customSize: true,
             transparentBackground: true,
@@ -51,6 +55,7 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
     return {
         resolutions: OUTPUT_RESOLUTIONS,
         generationQualities: ["auto"],
+        outputFormats: ["auto"],
         sizes: COMMON_SIZES,
         customSize: true,
         transparentBackground: false,
@@ -61,14 +66,16 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
 
 export function validateImageRequest(
     capabilities: ImageModelCapabilities,
-    request: { resolution: string; imageQuality?: string; size: string; background: string; referenceCount: number; count?: number },
+    request: { resolution: string; imageQuality?: string; imageOutputFormat?: string; size: string; background: string; referenceCount: number; count?: number },
 ) {
     if (request.resolution && !capabilities.resolutions.includes(request.resolution)) throw new Error(`当前模型不支持“${request.resolution}”输出分辨率`);
     if (request.imageQuality && request.imageQuality !== "auto" && !capabilities.generationQualities.includes(request.imageQuality)) throw new Error(`当前模型不支持“${request.imageQuality}”生成质量`);
+    if (request.imageOutputFormat && request.imageOutputFormat !== "auto" && !capabilities.outputFormats.includes(request.imageOutputFormat)) throw new Error(`当前模型不支持“${request.imageOutputFormat}”输出格式`);
     const customSize = /^\d+x\d+$/i.test(request.size);
     if (request.size && !customSize && !capabilities.sizes.includes(request.size)) throw new Error(`当前模型不支持“${request.size}”尺寸`);
     if (customSize && !capabilities.customSize) throw new Error("当前模型不支持自定义像素尺寸");
     if (request.background === "transparent" && !capabilities.transparentBackground) throw new Error("当前模型不支持透明背景");
+    if (request.background === "transparent" && request.imageOutputFormat === "jpeg") throw new Error("JPEG 不支持透明背景");
     if (request.referenceCount > capabilities.maxReferences) throw new Error(`当前模型最多支持 ${capabilities.maxReferences} 张参考图`);
     if ((request.count || 1) > capabilities.maxOutputs) throw new Error(`当前模型单次最多生成 ${capabilities.maxOutputs} 张图片`);
 }

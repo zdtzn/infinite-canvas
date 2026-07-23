@@ -10,15 +10,17 @@ const DIMENSION_STEP = 16;
 type OpenAiImageRequestOptionsInput = {
     count: number;
     quality?: string;
+    outputFormat?: string;
     size?: string;
     background?: string;
 };
 
 /** Keep the common Images API payload compatible with strict OpenAI-style gateways. */
-export function buildOpenAiImageRequestOptions({ count, quality, size, background }: OpenAiImageRequestOptionsInput) {
+export function buildOpenAiImageRequestOptions({ count, quality, outputFormat, size, background }: OpenAiImageRequestOptionsInput) {
     return {
         ...(count > 1 ? { n: count } : {}),
         ...(quality ? { quality } : {}),
+        ...(outputFormat ? { output_format: outputFormat } : {}),
         ...(size ? { size } : {}),
         ...(background ? { background } : {}),
         response_format: "b64_json",

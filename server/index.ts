@@ -74,6 +74,7 @@ const MAX_ASSET_UPLOAD_BYTES = MAX_ASSET_BYTES + 256 * 1024;
 const MAX_USER_ASSET_BYTES = Math.max(MAX_ASSET_BYTES, positiveInt(process.env.MAX_USER_ASSET_BYTES, 2 * 1024 * 1024 * 1024));
 const MAX_UPSTREAM_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_UPSTREAM_IMAGE_BYTES = 32 * 1024 * 1024;
+const MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES = Math.max(MAX_UPSTREAM_JSON_BYTES, Math.min(48 * 1024 * 1024, positiveInt(process.env.MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES, 48 * 1024 * 1024)));
 const MAX_PROMPT_PROXY_BYTES = 20 * 1024 * 1024;
 const MAX_PROXY_BODY_BYTES = 16 * 1024 * 1024;
 const JOB_RETENTION_MS = Math.max(60 * 60_000, positiveInt(process.env.JOB_RETENTION_MS, 30 * 24 * 60 * 60_000));
@@ -588,6 +589,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
     if (!model) throw new HttpError(400, "模型不能为空");
     const resolution = optionalString(body.quality);
     const imageQuality = normalizeImageQuality(body.imageQuality);
+    const imageOutputFormat = isUuImageAsyncChannel(channel.baseUrl, model, references.length, Boolean(body.mask)) ? undefined : normalizeImageOutputFormat(body.imageOutputFormat, model);
     cultivation?.reserveGeneration({ jobId, userId: session.userId, channelId, model, count, quality: resolution, referenceCount: references.length, hasMask: Boolean(body.mask), activeJobs: activeUserJobs(session.userId) });
     try {
         const input: ImageJobInput = {
@@ -599,6 +601,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
             count,
             quality: resolution,
             imageQuality,
+            imageOutputFormat,
             size: optionalString(body.size),
             background: optionalString(body.background),
             references: references.map((reference, index) => persistReference(DATA_DIR, session.userId, jobId, index, reference)),
@@ -729,7 +732,7 @@ type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & { refer
 async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal) {
     const headers = { Authorization: `Bearer ${apiKey}`, "Idempotency-Key": randomUUID() };
     const size = resolveOpenAiImageSize(input.size, input.quality);
-    const requestOptions = buildOpenAiImageRequestOptions({ count: input.count, quality: input.imageQuality, size, background: input.background });
+    const requestOptions = buildOpenAiImageRequestOptions({ count: input.count, quality: input.imageQuality, outputFormat: input.imageOutputFormat, size, background: input.background });
     let response: Response;
     if (input.references.length) {
         const form = new FormData();
@@ -755,9 +758,10 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
             true,
         );
     }
-    const payload = await parseUpstreamJson(response);
+    const payload = await parseUpstreamJson(response, { maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES, tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试" });
     const data = Array.isArray(payload.data) ? payload.data : [];
-    return data.map((item) => (typeof item?.b64_json === "string" ? `data:image/png;base64,${item.b64_json}` : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
+    const mimeType = imageOutputFormatMimeType(input.imageOutputFormat);
+    return data.map((item) => (typeof item?.b64_json === "string" ? `data:${mimeType};base64,${item.b64_json}` : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
 }
 
 async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal) {
@@ -871,7 +875,7 @@ async function generateGeminiImages(channel: ChannelRecord, apiKey: string, inpu
                 },
                 true,
             );
-            const payload = await parseUpstreamJson(response);
+            const payload = await parseUpstreamJson(response, { maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES, tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试" });
             return (Array.isArray(payload.candidates) ? payload.candidates : [])
                 .flatMap((candidate) => candidate?.content?.parts || [])
                 .map((part) => {
@@ -1032,8 +1036,10 @@ async function fetchAllowedRedirects(url: string, init: RequestInit) {
     throw new HttpError(502, "上游接口重定向次数过多");
 }
 
-async function parseUpstreamJson(response: Response): Promise<any> {
-    const text = new TextDecoder().decode(await readResponseBytes(response, MAX_UPSTREAM_JSON_BYTES, "上游 JSON 响应过大"));
+async function parseUpstreamJson(response: Response, options: { maxBytes?: number; tooLargeMessage?: string } = {}): Promise<any> {
+    const maxBytes = options.maxBytes || MAX_UPSTREAM_JSON_BYTES;
+    const tooLargeMessage = options.tooLargeMessage || "上游 JSON 响应过大";
+    const text = new TextDecoder().decode(await readResponseBytes(response, maxBytes, tooLargeMessage));
     let payload: any = {};
     try {
         payload = text ? JSON.parse(text) : {};
@@ -1431,6 +1437,17 @@ function normalizeImageQuality(value: unknown) {
     if (!quality || quality === "auto") return undefined;
     if (["low", "medium", "high", "standard", "hd"].includes(quality)) return quality;
     throw new HttpError(400, "生成质量参数无效");
+}
+
+function normalizeImageOutputFormat(value: unknown, model: string) {
+    const format = optionalString(value)?.toLowerCase();
+    if (!format || format === "auto") return undefined;
+    if (!["png", "jpeg", "webp"].includes(format)) throw new HttpError(400, "输出格式参数无效");
+    return model.toLowerCase().includes("gpt-image") ? format : undefined;
+}
+
+function imageOutputFormatMimeType(format?: string) {
+    return ({ jpeg: "image/jpeg", webp: "image/webp", png: "image/png" } as Record<string, string>)[String(format || "").toLowerCase()] || "image/png";
 }
 
 function normalizeJobSource(value: unknown): ImageJobInput["source"] {

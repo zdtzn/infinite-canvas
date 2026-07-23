@@ -21,6 +21,8 @@ describe("image model capabilities", () => {
     test("allows GPT Image output resolution and generation quality to be selected independently", () => {
         const capabilities = deriveImageModelCapabilities("gpt-image-2", "openai");
         assert.deepEqual(capabilities.generationQualities, ["auto", "low", "medium", "high"]);
-        assert.doesNotThrow(() => validateImageRequest(capabilities, { resolution: "medium", imageQuality: "high", size: "1:1", background: "", referenceCount: 0 }));
+        assert.deepEqual(capabilities.outputFormats, ["auto", "png", "jpeg", "webp"]);
+        assert.doesNotThrow(() => validateImageRequest(capabilities, { resolution: "medium", imageQuality: "high", imageOutputFormat: "webp", size: "1:1", background: "", referenceCount: 0 }));
+        assert.throws(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "transparent", referenceCount: 0 }), /JPEG/);
     });
 });

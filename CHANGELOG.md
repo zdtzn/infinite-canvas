@@ -3,6 +3,7 @@
 ## Unreleased
 
 + [调整] 生图设置将输出分辨率与模型生成质量拆分；普通 OpenAI 兼容渠道可独立设置质量，UU `gpt-image-2` 异步渠道按模型默认策略执行。
++ [修复] 服务端可受控接收内嵌 Base64 生图结果，避免高分辨率图片超过通用 JSON 上限后丢失；支持在兼容 GPT Image 模型中选择 PNG、JPEG 或 WebP 输出格式。
 
 + [Fixed] Hardened persistent image jobs, project sync, prompt-image caching, archive imports, and public upstream validation; added automated quality checks.
 

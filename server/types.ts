@@ -55,6 +55,8 @@ export type ImageJobInput = {
   quality?: string;
   /** Upstream generation-quality option, separate from image dimensions. */
   imageQuality?: string;
+  /** Preferred image encoding for providers that expose output_format. */
+  imageOutputFormat?: string;
   size?: string;
   background?: string;
   references: Array<string | StoredImageReference>;

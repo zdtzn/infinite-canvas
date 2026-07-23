@@ -130,12 +130,30 @@ function normalizeImageQuality(quality: string | undefined) {
     return ["low", "medium", "high", "standard", "hd"].includes(value) ? value : undefined;
 }
 
+function normalizeImageOutputFormat(format: string | undefined) {
+    const value = String(format || "auto").trim().toLowerCase();
+    if (!value || value === "auto") return undefined;
+    return ["png", "jpeg", "webp"].includes(value) ? value : undefined;
+}
+
 /** Do not leak a stale model-quality setting into channels that do not support it. */
 function resolveSupportedImageQuality(config: Pick<AiConfig, "model" | "apiFormat" | "imageQuality">) {
     const quality = normalizeImageQuality(config.imageQuality);
     if (!quality) return undefined;
     const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat);
     return capabilities.generationQualities.includes(quality) ? quality : undefined;
+}
+
+/** Only forward output_format when the selected model documents that capability. */
+function resolveSupportedImageOutputFormat(config: Pick<AiConfig, "model" | "apiFormat" | "imageOutputFormat" | "background">) {
+    const format = normalizeImageOutputFormat(config.imageOutputFormat);
+    if (!format || (format === "jpeg" && normalizeBackground(config.background) === "transparent")) return undefined;
+    const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat);
+    return capabilities.outputFormats.includes(format) ? format : undefined;
+}
+
+function imageOutputFormatMimeType(format?: string) {
+    return ({ jpeg: "image/jpeg", webp: "image/webp", png: "image/png" } as Record<string, string>)[String(format || "").toLowerCase()] || "image/png";
 }
 
 /** Only "transparent" is forwarded; any other value (incl. empty) means keep the default opaque background. */
@@ -246,9 +264,9 @@ function supportsGeminiImageSize(model: string) {
     return value.includes("gemini-3") || value.includes("3.1") || value.includes("3-pro");
 }
 
-function resolveImageDataUrl(item: Record<string, unknown>) {
+function resolveImageDataUrl(item: Record<string, unknown>, mimeType: string) {
     if (typeof item.b64_json === "string" && item.b64_json) {
-        return `data:image/png;base64,${item.b64_json}`;
+        return `data:${mimeType};base64,${item.b64_json}`;
     }
     if (typeof item.url === "string" && item.url) {
         return item.url;
@@ -256,13 +274,13 @@ function resolveImageDataUrl(item: Record<string, unknown>) {
     return null;
 }
 
-function parseImagePayload(payload: ImageApiResponse) {
+function parseImagePayload(payload: ImageApiResponse, mimeType = "image/png") {
     if (typeof payload.code === "number" && payload.code !== 0) {
         throw new Error(payload.msg || "请求失败");
     }
     const images =
         payload.data
-            ?.map(resolveImageDataUrl)
+            ?.map((item) => resolveImageDataUrl(item, mimeType))
             .filter((value): value is string => Boolean(value))
             .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
 
@@ -675,6 +693,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     if (script) {
         const resolution = normalizeResolution(config.quality);
         const imageQuality = normalizeImageQuality(config.imageQuality);
+        const imageOutputFormat = normalizeImageOutputFormat(config.imageOutputFormat);
         const requestSize = resolveImageRequestSize(resolution, config.size);
         const background = normalizeBackground(config.background);
         try {
@@ -684,7 +703,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, prompt),
                 images: [],
-                params: { size: requestSize, resolution, quality: imageQuality, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, resolution, quality: imageQuality, outputFormat: imageOutputFormat, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -701,6 +720,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
     const resolution = normalizeResolution(config.quality);
     const imageQuality = resolveSupportedImageQuality(requestConfig);
+    const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
     const requestSize = resolveImageRequestSize(resolution, config.size);
     const background = normalizeBackground(config.background);
     try {
@@ -711,6 +731,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 prompt: withSystemPrompt(requestConfig, prompt),
                 ...(n > 1 ? { n } : {}),
                 ...(imageQuality ? { quality: imageQuality } : {}),
+                ...(imageOutputFormat ? { output_format: imageOutputFormat } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(background ? { background } : {}),
                 response_format: "b64_json",
@@ -720,7 +741,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 signal: options?.signal,
             },
         );
-        const images = parseImagePayload(response.data);
+        const images = parseImagePayload(response.data, imageOutputFormatMimeType(imageOutputFormat));
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
@@ -736,6 +757,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (script) {
         const resolution = normalizeResolution(config.quality);
         const imageQuality = normalizeImageQuality(config.imageQuality);
+        const imageOutputFormat = normalizeImageOutputFormat(config.imageOutputFormat);
         const requestSize = resolveImageRequestSize(resolution, config.size);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
@@ -746,7 +768,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, requestPrompt),
                 images: refs,
-                params: { size: requestSize, resolution, quality: imageQuality, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, resolution, quality: imageQuality, outputFormat: imageOutputFormat, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -764,6 +786,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
     const resolution = normalizeResolution(config.quality);
     const imageQuality = resolveSupportedImageQuality(requestConfig);
+    const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
     const requestSize = resolveImageRequestSize(resolution, config.size);
     const background = normalizeBackground(config.background);
     const formData = new FormData();
@@ -773,6 +796,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     formData.set("response_format", "b64_json");
     if (imageQuality) {
         formData.set("quality", imageQuality);
+    }
+    if (imageOutputFormat) {
+        formData.set("output_format", imageOutputFormat);
     }
     if (requestSize) {
         formData.set("size", requestSize);
@@ -786,7 +812,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal });
-        const images = parseImagePayload(response.data);
+        const images = parseImagePayload(response.data, imageOutputFormatMimeType(imageOutputFormat));
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
@@ -864,7 +890,8 @@ async function requestServerImageJob(requestConfig: ManagedAiConfig & { channelI
     const capabilities = deriveImageModelCapabilities(requestConfig.model, requestConfig.apiFormat);
     const resolution = normalizeResolution(requestConfig.quality) || "low";
     const imageQuality = resolveSupportedImageQuality(requestConfig);
-    validateImageRequest(capabilities, { resolution, imageQuality: imageQuality || "auto", size: requestConfig.size || "auto", background: requestConfig.background || "", referenceCount: references.length, count });
+    const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
+    validateImageRequest(capabilities, { resolution, imageQuality: imageQuality || "auto", imageOutputFormat: imageOutputFormat || "auto", size: requestConfig.size || "auto", background: requestConfig.background || "", referenceCount: references.length, count });
     const referenceData = await Promise.all(references.map(imageToDataUrl));
     const maskData = mask ? await imageToDataUrl(mask) : undefined;
     const { job } = await submitImageJob({
@@ -875,6 +902,7 @@ async function requestServerImageJob(requestConfig: ManagedAiConfig & { channelI
         count,
         quality: resolution,
         imageQuality,
+        imageOutputFormat,
         size: requestConfig.size || undefined,
         background: normalizeBackground(requestConfig.background),
         references: referenceData,

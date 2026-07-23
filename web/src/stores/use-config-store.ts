@@ -48,6 +48,8 @@ export type AiConfig = {
     quality: string;
     /** Provider generation-quality setting, independent from output resolution. */
     imageQuality: string;
+    /** Provider output encoding. "auto" lets the provider choose its default. */
+    imageOutputFormat: string;
     size: string;
     background: string;
     count: string;
@@ -106,6 +108,7 @@ export const defaultConfig: AiConfig = {
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
     quality: "low",
     imageQuality: "auto",
+    imageOutputFormat: "auto",
     size: "1:1",
     background: "",
     count: "1",
@@ -249,6 +252,7 @@ export const useConfigStore = create<ConfigStore>()(
                         videoWatermark: config.videoWatermark || "false",
                         canvasImageCount: config.canvasImageCount || "3",
                         imageQuality: normalizeImageQuality(config.imageQuality),
+                        imageOutputFormat: normalizeImageOutputFormat(config.imageOutputFormat),
                     },
                 };
             },
@@ -386,6 +390,11 @@ function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
 function normalizeImageQuality(value: unknown) {
     const quality = String(value || "auto").trim().toLowerCase();
     return ["auto", "low", "medium", "high", "standard", "hd"].includes(quality) ? quality : "auto";
+}
+
+function normalizeImageOutputFormat(value: unknown) {
+    const format = String(value || "auto").trim().toLowerCase();
+    return ["auto", "png", "jpeg", "webp"].includes(format) ? format : "auto";
 }
 
 function uniqueModelOptions(models: string[]) {

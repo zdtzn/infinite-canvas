@@ -164,7 +164,7 @@ export const PLUGIN_VARIABLES: PluginVariable[] = [
     { name: "prompt", type: "string", desc: "用户输入的提示词（已拼接系统提示词）", capabilities: ["image", "video", "audio"] },
     { name: "images", type: "string[]", desc: "参考图，dataURL 数组（改图 / 图生视频时有值）", capabilities: ["image", "video"] },
     { name: "messages", type: "{ role, content }[]", desc: "对话消息数组，含系统消息", capabilities: ["text"] },
-    { name: "params", type: "object", desc: "生成参数：生图 {size,resolution,quality,count}（size 为实际像素尺寸，quality 为模型质量参数）、视频 {seconds,size,resolution,ratio,generateAudio,watermark}、音频 {voice,format,speed,instructions}" },
+    { name: "params", type: "object", desc: "生成参数：生图 {size,resolution,quality,outputFormat,count}（size 为实际像素尺寸，quality 为模型质量参数，outputFormat 为 png/jpeg/webp）、视频 {seconds,size,resolution,ratio,generateAudio,watermark}、音频 {voice,format,speed,instructions}" },
     { name: "model", type: "string", desc: "模型名称（不含渠道前缀）" },
     { name: "baseUrl", type: "string", desc: "渠道接口地址（原样，未拼 /v1）" },
     { name: "apiKey", type: "string", desc: "渠道 API Key，请求头里自己带上" },
@@ -191,16 +191,17 @@ export const PLUGIN_TEMPLATES: Record<ModelCapability, PluginTemplate[]> = {
         {
             label: "OpenAI 规范",
             script: `// 生图 / 改图：两者接口不同，用 images 是否为空来区分。
-// 可用：prompt、images(dataURL[])、params{size,resolution,quality,count}、model、baseUrl、apiKey
+// 可用：prompt、images(dataURL[])、params{size,resolution,quality,outputFormat,count}、model、baseUrl、apiKey
+const imageMime = params.outputFormat === "jpeg" ? "image/jpeg" : params.outputFormat === "webp" ? "image/webp" : "image/png";
 if (images.length === 0) {
   // 文生图：/images/generations（JSON）
   const data = await request({
     method: "post",
     url: \`\${baseUrl}/v1/images/generations\`,
     headers: { "Content-Type": "application/json", Authorization: \`Bearer \${apiKey}\` },
-    data: { model, prompt, n: params.count, size: params.size, ...(params.quality ? { quality: params.quality } : {}), response_format: "b64_json" },
+    data: { model, prompt, n: params.count, size: params.size, ...(params.quality ? { quality: params.quality } : {}), ...(params.outputFormat ? { output_format: params.outputFormat } : {}), response_format: "b64_json" },
   });
-  return (data.data || []).map((item) => item.b64_json ? \`data:image/png;base64,\${item.b64_json}\` : item.url);
+  return (data.data || []).map((item) => item.b64_json ? \`data:\${imageMime};base64,\${item.b64_json}\` : item.url);
 }
 
 // 图生图：/images/edits（multipart/form-data，参考图作为文件上传）
@@ -210,6 +211,7 @@ form.set("prompt", prompt);
 form.set("n", String(params.count));
 form.set("response_format", "b64_json");
 if (params.quality) form.set("quality", params.quality);
+if (params.outputFormat) form.set("output_format", params.outputFormat);
 for (const dataUrl of images) {
   form.append("image", await (await fetch(dataUrl)).blob(), "ref.png");
 }
@@ -219,7 +221,7 @@ const edited = await request({
   headers: { Authorization: \`Bearer \${apiKey}\` }, // 不要手动设 Content-Type，交给浏览器带 boundary
   data: form,
 });
-return (edited.data || []).map((item) => item.b64_json ? \`data:image/png;base64,\${item.b64_json}\` : item.url);`,
+return (edited.data || []).map((item) => item.b64_json ? \`data:\${imageMime};base64,\${item.b64_json}\` : item.url);`,
         },
         {
             label: "Gemini 规范",
