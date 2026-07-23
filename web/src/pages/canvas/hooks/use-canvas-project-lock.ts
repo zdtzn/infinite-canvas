@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { randomId } from "@/lib/utils";
+
 const LOCK_TTL_MS = 12_000;
 const HEARTBEAT_MS = 4_000;
 
@@ -43,7 +45,7 @@ function getTabId() {
     const key = "infinite-canvas:tab-id";
     const existing = sessionStorage.getItem(key);
     if (existing) return existing;
-    const id = crypto.randomUUID();
+    const id = randomId();
     sessionStorage.setItem(key, id);
     return id;
 }
