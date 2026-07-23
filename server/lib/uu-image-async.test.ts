@@ -44,3 +44,27 @@ test("reads completed UU task images and task failures", () => {
         }),
     ).toEqual({ taskId: "task-failed", status: "failed", expiresAt: undefined, imageUrls: [], message: "upstream rejected the prompt" });
 });
+
+test("does not treat an outer success acknowledgement as a completed task", () => {
+    expect(
+        readUuAsyncTask({
+            status: "success",
+            message: "success",
+            data: { task_id: "task-created", status: "success" },
+        }),
+    ).toEqual({ taskId: "task-created", status: "pending", expiresAt: undefined, imageUrls: [], message: undefined });
+});
+
+test("reads UU image results from common completed task payloads", () => {
+    expect(
+        readUuAsyncTask({
+            status: "success",
+            message: "success",
+            data: {
+                task_id: "task-result",
+                status: "completed",
+                result: { data: [{ image_url: "https://cdn.example.com/result.webp" }] },
+            },
+        }),
+    ).toEqual({ taskId: "task-result", status: "succeeded", expiresAt: undefined, imageUrls: ["https://cdn.example.com/result.webp"], message: undefined });
+});
