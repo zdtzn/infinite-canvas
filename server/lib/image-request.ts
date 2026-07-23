@@ -1,7 +1,7 @@
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
     medium: 2048,
-    high: 2880,
+    high: 3840,
     standard: 1024,
     hd: 2048,
 };
@@ -38,16 +38,17 @@ export function resolveOpenAiImageSize(size?: string, quality?: string) {
     const height = Number(match[2]);
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return value;
 
-    const longRatio = Math.max(width, height) / Math.min(width, height);
-    const base = QUALITY_BASE[String(quality || "").trim().toLowerCase()];
-    let longSide: number;
-    let shortSide: number;
-    if (base) {
-        longSide = Math.floor(Math.sqrt(base * base * longRatio) / DIMENSION_STEP) * DIMENSION_STEP;
-        shortSide = Math.round((longSide / longRatio) / DIMENSION_STEP) * DIMENSION_STEP;
-    } else {
-        shortSide = 1024;
-        longSide = Math.round((shortSide * longRatio) / DIMENSION_STEP) * DIMENSION_STEP;
-    }
-    return width >= height ? `${longSide}x${shortSide}` : `${shortSide}x${longSide}`;
+    const requestedLongSide = QUALITY_BASE[String(quality || "").trim().toLowerCase()] || QUALITY_BASE.low;
+    const divisor = greatestCommonDivisor(width, height);
+    const ratioWidth = width / divisor;
+    const ratioHeight = height / divisor;
+    const scale = Math.max(1, Math.round(requestedLongSide / (Math.max(ratioWidth, ratioHeight) * DIMENSION_STEP)));
+    return `${ratioWidth * DIMENSION_STEP * scale}x${ratioHeight * DIMENSION_STEP * scale}`;
+}
+
+function greatestCommonDivisor(left: number, right: number) {
+    let a = Math.abs(left);
+    let b = Math.abs(right);
+    while (b) [a, b] = [b, a % b];
+    return a || 1;
 }

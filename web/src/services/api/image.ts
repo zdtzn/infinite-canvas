@@ -100,7 +100,7 @@ export type RequestOptions = { signal?: AbortSignal; onJobCreated?: (jobId: stri
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
     medium: 2048,
-    high: 2880,
+    high: 3840,
     standard: 1024,
     hd: 2048,
 };
@@ -109,18 +109,17 @@ const QUALITY_ALIASES: Record<string, string> = {
     "2k": "medium",
     "4k": "high",
 };
-const DEFAULT_IMAGE_SHORT_SIDE = 1024;
 const IMAGE_SIZE_STEP = 16;
-const IMAGE_MIN_PIXELS = 655360;
-const IMAGE_MAX_PIXELS = 8294400;
+const IMAGE_MIN_PIXELS = 262144;
+const IMAGE_MAX_PIXELS = 14745600;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
-const UU_RATIO_MIN_LONG_SIDE = 2048;
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 const GEMINI_IMAGE_SIZE_BY_QUALITY: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
 
-function normalizeQuality(quality: string) {
-    const value = quality.trim().toLowerCase();
+function normalizeQuality(quality: string | undefined) {
+    const value = String(quality || "low").trim().toLowerCase();
+    if (!value || value === "auto") return "low";
     const normalized = QUALITY_ALIASES[value] || value;
     return QUALITY_BASE[normalized] ? normalized : undefined;
 }
@@ -130,33 +129,25 @@ function normalizeBackground(background: string | undefined) {
     return background?.trim().toLowerCase() === "transparent" ? "transparent" : undefined;
 }
 
-/** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
-function resolveSize(quality: string | undefined, ratio: string, minimumLongSide = 0): string {
+/** Map a selected resolution and ratio to an explicit request dimension. */
+function resolveSize(quality: string | undefined, ratio: string): string {
     const parsedRatio = parseImageRatio(ratio);
-    const basePixels = quality ? QUALITY_BASE[quality] : undefined;
-    const isLandscape = parsedRatio.width >= parsedRatio.height;
-    const longRatio = isLandscape ? parsedRatio.width / parsedRatio.height : parsedRatio.height / parsedRatio.width;
-    let longSide: number;
-    let shortSide: number;
-
-    if (basePixels) {
-        const targetPixels = basePixels * basePixels;
-        const longSideRaw = Math.sqrt(targetPixels * longRatio);
-        longSide = Math.floor(longSideRaw / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-        shortSide = Math.round(longSide / longRatio / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    } else {
-        shortSide = DEFAULT_IMAGE_SHORT_SIDE;
-        longSide = Math.round((shortSide * longRatio) / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    }
-    if (minimumLongSide > longSide) {
-        shortSide = Math.max(IMAGE_SIZE_STEP, Math.round((shortSide * minimumLongSide) / longSide / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP);
-        longSide = minimumLongSide;
-    }
-
-    const width = isLandscape ? longSide : shortSide;
-    const height = isLandscape ? shortSide : longSide;
+    const basePixels = (quality && QUALITY_BASE[quality]) || QUALITY_BASE.low;
+    const divisor = greatestCommonDivisor(parsedRatio.width, parsedRatio.height);
+    const ratioWidth = parsedRatio.width / divisor;
+    const ratioHeight = parsedRatio.height / divisor;
+    const scale = Math.max(1, Math.round(basePixels / (Math.max(ratioWidth, ratioHeight) * IMAGE_SIZE_STEP)));
+    const width = ratioWidth * IMAGE_SIZE_STEP * scale;
+    const height = ratioHeight * IMAGE_SIZE_STEP * scale;
     validateImageSize(width, height);
     return `${width}x${height}`;
+}
+
+function greatestCommonDivisor(left: number, right: number) {
+    let a = Math.abs(left);
+    let b = Math.abs(right);
+    while (b) [a, b] = [b, a % b];
+    return a || 1;
 }
 
 function parseRatioValue(value: string) {
@@ -186,14 +177,14 @@ function validateImageSize(width: number, height: number) {
     if (Math.max(width, height) > IMAGE_MAX_EDGE) throw new Error("图像尺寸最长边不能超过 3840px，请调整尺寸");
     if (Math.max(width, height) / Math.min(width, height) > IMAGE_MAX_RATIO) throw new Error("图像宽高比不能超过 3:1，请调整尺寸");
     const pixels = width * height;
-    if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error("图像总像素需在 655360 到 8294400 之间，请调整尺寸");
+    if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error(`图像总像素需在 ${IMAGE_MIN_PIXELS} 到 ${IMAGE_MAX_PIXELS} 之间，请调整尺寸`);
 }
 
-export function resolveImageRequestSize(config: Pick<AiConfig, "baseUrl" | "model" | "quality" | "size">) {
-    return resolveRequestSize(normalizeQuality(config.quality), config.size, isUuGptImage2Channel(config) ? UU_RATIO_MIN_LONG_SIDE : 0);
+export function resolveImageRequestSize(quality: string | undefined, size: string) {
+    return resolveRequestSize(normalizeQuality(quality), size);
 }
 
-function resolveRequestSize(quality: string | undefined, size: string, minimumLongSide = 0) {
+function resolveRequestSize(quality: string | undefined, size: string) {
     const value = size.trim();
     if (!value || value.toLowerCase() === "auto") return undefined;
     const dimensions = parseImageDimensions(value);
@@ -201,18 +192,8 @@ function resolveRequestSize(quality: string | undefined, size: string, minimumLo
         validateImageSize(dimensions.width, dimensions.height);
         return `${dimensions.width}x${dimensions.height}`;
     }
-    if (value.includes(":")) return resolveSize(quality, value, minimumLongSide);
+    if (value.includes(":")) return resolveSize(quality, value);
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
-}
-
-function isUuGptImage2Channel(config: Pick<AiConfig, "baseUrl" | "model">) {
-    if (config.model.trim().toLowerCase() !== "gpt-image-2") return false;
-    try {
-        const hostname = new URL(config.baseUrl).hostname.toLowerCase();
-        return ["uuapi.cc", "uuapi.net"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
-    } catch {
-        return false;
-    }
 }
 
 function resolveGeminiImageConfig(config: AiConfig) {
@@ -679,7 +660,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveImageRequestSize(requestConfig);
+        const requestSize = resolveImageRequestSize(quality, config.size);
         const background = normalizeBackground(config.background);
         try {
             const result = await runModelPlugin({
@@ -704,7 +685,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         }
     }
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveImageRequestSize(requestConfig);
+    const requestSize = resolveImageRequestSize(quality, config.size);
     const background = normalizeBackground(config.background);
     try {
         const response = await axios.post<ImageApiResponse>(
@@ -738,7 +719,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveImageRequestSize(requestConfig);
+        const requestSize = resolveImageRequestSize(quality, config.size);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -765,7 +746,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         }
     }
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveImageRequestSize(requestConfig);
+    const requestSize = resolveImageRequestSize(quality, config.size);
     const background = normalizeBackground(config.background);
     const formData = new FormData();
     formData.set("model", requestConfig.model);
