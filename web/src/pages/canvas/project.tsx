@@ -42,7 +42,7 @@ import { useAgentStore } from "@/stores/use-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
-import { buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { buildCanvasResourceIndex, buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { findContainingGroupId, findGroupDropTarget, getConnectionTargetAnchor, isHiddenBatchChild, isHiddenBatchConnectionEndpoint, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
@@ -258,6 +258,7 @@ function InfiniteCanvasPage() {
     const selectionBoxRef = useRef(selectionBox);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
+    const restoreAbortRef = useRef<AbortController | null>(null);
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -299,16 +300,18 @@ function InfiniteCanvasPage() {
         [projectId],
     );
 
-    const resumeCanvasImageJob = useCallback(async (node: CanvasNodeData) => {
+    const resumeCanvasImageJob = useCallback(async (node: CanvasNodeData, signal: AbortSignal) => {
         const jobId = node.metadata?.jobId;
         if (!jobId) return;
         try {
-            const job = await waitForServerJob(jobId);
+            const job = await waitForServerJob(jobId, { signal });
             const image = job.result?.images[0];
             if (!image) throw new Error(job.error || "任务没有返回图片");
             const uploaded = await uploadImage(image.dataUrl);
+            if (signal.aborted) return;
             setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, width: uploaded.width, height: uploaded.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), status: NODE_STATUS_SUCCESS, errorDetails: undefined, jobId } } : item)));
         } catch (error) {
+            if (signal.aborted) return;
             setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "任务恢复失败" } } : item)));
         }
     }, []);
@@ -343,16 +346,24 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!hydrated) return;
+        const controller = new AbortController();
+        restoreAbortRef.current?.abort();
+        restoreAbortRef.current = controller;
+        const cleanup = () => {
+            controller.abort();
+            if (restoreAbortRef.current === controller) restoreAbortRef.current = null;
+        };
         setProjectLoaded(false);
         const project = openProject(projectId);
         if (!project) {
             navigate("/canvas", { replace: true });
-            return;
+            return cleanup;
         }
 
         const restore = async () => {
             const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
             const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+            if (controller.signal.aborted) return;
             setNodes(restoredNodes);
             setConnections(project.connections);
             setChatSessions(restoredSessions);
@@ -375,9 +386,12 @@ function InfiniteCanvasPage() {
             };
             setHistoryState({ canUndo: false, canRedo: false });
             setProjectLoaded(true);
-            restoredNodes.filter((node) => node.metadata?.status === NODE_STATUS_LOADING && node.metadata.jobId).forEach((node) => void resumeCanvasImageJob(node));
+            restoredNodes
+                .filter((node) => node.metadata?.status === NODE_STATUS_LOADING && node.metadata.jobId)
+                .forEach((node) => void resumeCanvasImageJob(node, controller.signal));
         };
         void restore();
+        return cleanup;
     }, [hydrated, navigate, openProject, projectId, resumeCanvasImageJob]);
 
     useEffect(() => {
@@ -435,10 +449,26 @@ function InfiniteCanvasPage() {
             updateProject(projectId, { viewport: viewportRef.current });
             viewportSaveTimerRef.current = null;
         }, 500);
-        return () => {
-            if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
-        };
     }, [projectId, projectLoaded, updateProject, viewport]);
+
+    useEffect(
+        () => () => {
+            if (viewportSaveTimerRef.current) {
+                clearTimeout(viewportSaveTimerRef.current);
+                viewportSaveTimerRef.current = null;
+                updateProject(projectId, { viewport: viewportRef.current });
+            }
+        },
+        [projectId, updateProject],
+    );
+
+    useEffect(
+        () => () => {
+            generationRequestsRef.current.forEach((request) => request.controller.abort());
+            generationRequestsRef.current.clear();
+        },
+        [],
+    );
 
     useLayoutEffect(() => {
         nodesRef.current = nodes;
@@ -664,19 +694,20 @@ function InfiniteCanvasPage() {
         return { nodeIds, connectionIds };
     }, [activeNodeId, connections]);
 
+    const resourceIndex = useMemo(() => buildCanvasResourceIndex(nodes, connections), [connections, nodes]);
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
         nodes.forEach((node) => {
             if (node.type !== CanvasNodeType.Config) return;
-            map.set(node.id, buildNodeGenerationInputs(node.id, nodes, connections));
+            map.set(node.id, buildNodeGenerationInputs(node.id, nodes, connections, resourceIndex));
         });
         return map;
-    }, [connections, nodes]);
+    }, [connections, nodes, resourceIndex]);
     const mentionReferencesByNodeId = useMemo(() => {
         const map = new Map<string, ReturnType<typeof buildNodeMentionReferences>>();
-        nodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, nodes, connections)));
+        nodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, nodes, connections, resourceIndex)));
         return map;
-    }, [connections, nodes]);
+    }, [connections, nodes, resourceIndex]);
     const { applyAgentOps } = useAgentBridge({
         projectId,
         title: currentProject?.title,

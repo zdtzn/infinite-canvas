@@ -16,35 +16,60 @@ export type CanvasResourceReference = {
     active: boolean;
 };
 
-export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    return labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections), true);
+export type CanvasResourceIndex = {
+    nodesById: Map<string, CanvasNodeData>;
+    contextByNodeId: Map<string, CanvasNodeData[]>;
+    configTargetByNodeId: Map<string, string>;
+};
+
+export function buildCanvasResourceIndex(nodes: CanvasNodeData[], connections: CanvasConnection[]): CanvasResourceIndex {
+    const nodesById = new Map(nodes.map((node) => [node.id, node]));
+    const contextByNodeId = new Map<string, CanvasNodeData[]>();
+    const configTargetByNodeId = new Map<string, string>();
+    connections.forEach((connection) => {
+        const source = nodesById.get(connection.fromNodeId);
+        const target = nodesById.get(connection.toNodeId);
+        if (!source || !target) return;
+        const context = contextByNodeId.get(target.id) || [];
+        context.push(source);
+        contextByNodeId.set(target.id, context);
+        if (target.type === CanvasNodeType.Config && !configTargetByNodeId.has(source.id)) configTargetByNodeId.set(source.id, target.id);
+    });
+    return { nodesById, contextByNodeId, configTargetByNodeId };
 }
 
-export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    const configInputs = getConnectedConfigResourceNodes(nodeId, nodes, connections);
+export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[], index?: CanvasResourceIndex) {
+    return labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections, index), true);
+}
+
+export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], index?: CanvasResourceIndex) {
+    const configInputs = getConnectedConfigResourceNodes(nodeId, nodes, connections, index);
     if (configInputs.length) return configInputs;
-    const ownInputs = getContextResourceNodes(nodeId, nodes, connections);
+    const ownInputs = getContextResourceNodes(nodeId, nodes, connections, index);
     if (ownInputs.length) return ownInputs;
-    const node = nodes.find((item) => item.id === nodeId);
+    const node = index?.nodesById.get(nodeId) || nodes.find((item) => item.id === nodeId);
     return node && isResourceNode(node) ? [node] : [];
 }
 
-export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    const configInputs = getConnectedConfigResourceNodes(nodeId, nodes, connections);
+export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], index?: CanvasResourceIndex) {
+    const configInputs = getConnectedConfigResourceNodes(nodeId, nodes, connections, index);
     if (configInputs.length) return configInputs;
-    const ownInputs = getContextResourceNodes(nodeId, nodes, connections);
+    const ownInputs = getContextResourceNodes(nodeId, nodes, connections, index);
     if (ownInputs.length) return ownInputs;
     return [];
 }
 
-function getContextResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+function getContextResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], index?: CanvasResourceIndex) {
+    if (index) return (index.contextByNodeId.get(nodeId) || []).filter(isResourceNode);
     return connections
         .filter((connection) => connection.toNodeId === nodeId)
         .map((connection) => nodes.find((node) => node.id === connection.fromNodeId))
         .filter((node): node is CanvasNodeData => Boolean(node && isResourceNode(node)));
 }
 
-function getConnectedConfigResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+function getConnectedConfigResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], index?: CanvasResourceIndex) {
+    const configTargetId = index?.configTargetByNodeId.get(nodeId);
+    if (configTargetId) return getContextResourceNodes(configTargetId, nodes, connections, index).filter((node) => node.id !== nodeId);
     const configConnection = connections.find((connection) => connection.fromNodeId === nodeId && nodes.find((node) => node.id === connection.toNodeId)?.type === CanvasNodeType.Config);
     if (!configConnection) return [];
     return getContextResourceNodes(configConnection.toNodeId, nodes, connections).filter((node) => node.id !== nodeId);

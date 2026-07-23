@@ -4,12 +4,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { extname, join } from "node:path";
 
+import { decodeImageDataUrl } from "../lib/image-mime";
 import type {
   ImageJobInput,
   ServerState,
@@ -43,10 +43,10 @@ export function openAppDatabase({ dataDir }: { dataDir: string }): AppDatabase {
     return sqliteStore(database);
   } catch (error) {
     database?.close();
-    if (!firstMigration) throw error;
-    for (const suffix of ["", "-wal", "-shm"])
-      rmSync(`${databasePath}${suffix}`, { force: true });
-    return legacyStore(statePath);
+    if (firstMigration)
+      for (const suffix of ["", "-wal", "-shm"])
+        rmSync(`${databasePath}${suffix}`, { force: true });
+    throw error;
   }
 }
 
@@ -70,6 +70,7 @@ function createSchema(database: Database) {
         CREATE TABLE IF NOT EXISTS assets (asset_key TEXT NOT NULL, user_id TEXT NOT NULL, mime_type TEXT NOT NULL, bytes INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, asset_key), FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, payload_json TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS projects (user_id TEXT NOT NULL, project_id TEXT NOT NULL, payload_json TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (user_id, project_id), FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS project_tombstones (user_id TEXT NOT NULL, project_id TEXT NOT NULL, revision INTEGER NOT NULL, deleted_at INTEGER NOT NULL, PRIMARY KEY (user_id, project_id), FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS realms (id TEXT PRIMARY KEY, theme_key TEXT NOT NULL, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, color TEXT NOT NULL, icon_key TEXT NOT NULL, animation_preset TEXT NOT NULL, sort_order INTEGER NOT NULL, daily_limit INTEGER, max_concurrency INTEGER NOT NULL, promotion_policy TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS realm_stages (id TEXT PRIMARY KEY, realm_id TEXT NOT NULL, name TEXT NOT NULL, stage_order INTEGER NOT NULL UNIQUE, required_xp INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1, FOREIGN KEY (realm_id) REFERENCES realms(id));
         CREATE TABLE IF NOT EXISTS user_cultivation (user_id TEXT PRIMARY KEY, stage_id TEXT NOT NULL, current_xp INTEGER NOT NULL DEFAULT 0, total_xp INTEGER NOT NULL DEFAULT 0, daily_limit_override INTEGER, unlimited_quota INTEGER NOT NULL DEFAULT 0, pending_stage_id TEXT, started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE, FOREIGN KEY (stage_id) REFERENCES realm_stages(id), FOREIGN KEY (pending_stage_id) REFERENCES realm_stages(id));
@@ -202,10 +203,8 @@ export function persistReference(
   index: number,
   dataUrl: string,
 ): StoredImageReference {
-  const match = dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/is);
-  if (!match) throw new Error("Invalid image reference");
-  const bytes = Buffer.from(match[2], "base64");
-  const extension = mimeExtension(match[1]);
+  const { bytes, mimeType } = decodeImageDataUrl(dataUrl);
+  const extension = mimeExtension(mimeType);
   const relativePath = join(
     "job-references",
     safeSegment(userId),
@@ -220,7 +219,7 @@ export function persistReference(
   writeFileSync(absolutePath, bytes);
   return {
     path: relativePath.replaceAll("\\", "/"),
-    mimeType: match[1],
+    mimeType,
     bytes: bytes.byteLength,
   };
 }
@@ -251,34 +250,14 @@ function sqliteStore(database: Database): AppDatabase {
   };
 }
 
-function legacyStore(statePath: string): AppDatabase {
-  return {
-    mode: "legacy",
-    raw: null,
-    loadState: () =>
-      normalizeState(
-        JSON.parse(readFileSync(statePath, "utf8")) as ServerState,
-      ),
-    saveState: (state) => {
-      const temporary = `${statePath}.tmp`;
-      writeFileSync(temporary, JSON.stringify(state));
-      renameSync(temporary, statePath);
-    },
-    countRows: () => 0,
-    pragma: () => 0,
-    transaction: (operation) => operation(),
-    close: () => undefined,
-  };
-}
-
 function replaceState(database: Database, state: ServerState) {
+  // State snapshots created before project tombstones existed are still valid.
+  // Treat the missing field as empty instead of failing an otherwise atomic write.
+  const projectTombstones = state.projectTombstones || {};
   database.transaction(() => {
-    database.exec(
-      "DELETE FROM projects; DELETE FROM jobs; DELETE FROM assets; DELETE FROM channels;",
-    );
     database
       .query(
-        "INSERT INTO app_auth(id, access_code_hash, session_secret, admin_user_id) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET access_code_hash=excluded.access_code_hash, session_secret=excluded.session_secret, admin_user_id=excluded.admin_user_id",
+        "INSERT INTO app_auth(id, access_code_hash, session_secret, admin_user_id) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET access_code_hash=excluded.access_code_hash, session_secret=excluded.session_secret, admin_user_id=excluded.admin_user_id WHERE app_auth.access_code_hash IS NOT excluded.access_code_hash OR app_auth.session_secret IS NOT excluded.session_secret OR app_auth.admin_user_id IS NOT excluded.admin_user_id",
       )
       .run(
         state.auth.accessCodeHash,
@@ -286,7 +265,7 @@ function replaceState(database: Database, state: ServerState) {
         state.auth.adminUserId,
       );
     const insertUser = database.query(
-      "INSERT INTO users(user_id, display_name, is_admin, status, created_at, login_hash, internal_note, public_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name, is_admin=excluded.is_admin, status=excluded.status, login_hash=excluded.login_hash, internal_note=excluded.internal_note, public_message=excluded.public_message",
+      "INSERT INTO users(user_id, display_name, is_admin, status, created_at, login_hash, internal_note, public_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name, is_admin=excluded.is_admin, status=excluded.status, login_hash=excluded.login_hash, internal_note=excluded.internal_note, public_message=excluded.public_message WHERE users.display_name IS NOT excluded.display_name OR users.is_admin IS NOT excluded.is_admin OR users.status IS NOT excluded.status OR users.login_hash IS NOT excluded.login_hash OR users.internal_note IS NOT excluded.internal_note OR users.public_message IS NOT excluded.public_message",
     );
     for (const user of Object.values(state.users))
       insertUser.run(
@@ -300,12 +279,12 @@ function replaceState(database: Database, state: ServerState) {
         user.publicMessage || "",
       );
     const insertChannel = database.query(
-      "INSERT INTO channels(id, user_id, payload_json) VALUES (?, ?, ?)",
+      "INSERT INTO channels(id, user_id, payload_json) VALUES (?, ?, ?) ON CONFLICT(user_id, id) DO UPDATE SET payload_json=excluded.payload_json WHERE channels.payload_json IS NOT excluded.payload_json",
     );
     for (const channel of Object.values(state.channels))
       insertChannel.run(channel.id, channel.userId, JSON.stringify(channel));
     const insertAsset = database.query(
-      "INSERT INTO assets(asset_key, user_id, mime_type, bytes, created_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO assets(asset_key, user_id, mime_type, bytes, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, asset_key) DO UPDATE SET mime_type=excluded.mime_type, bytes=excluded.bytes, created_at=excluded.created_at WHERE assets.mime_type IS NOT excluded.mime_type OR assets.bytes IS NOT excluded.bytes OR assets.created_at IS NOT excluded.created_at",
     );
     for (const asset of Object.values(state.assets))
       insertAsset.run(
@@ -316,7 +295,7 @@ function replaceState(database: Database, state: ServerState) {
         asset.createdAt,
       );
     const insertJob = database.query(
-      "INSERT INTO jobs(id, user_id, payload_json, created_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO jobs(id, user_id, payload_json, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, payload_json=excluded.payload_json, created_at=excluded.created_at WHERE jobs.user_id IS NOT excluded.user_id OR jobs.payload_json IS NOT excluded.payload_json OR jobs.created_at IS NOT excluded.created_at",
     );
     for (const job of Object.values(state.jobs))
       insertJob.run(
@@ -326,7 +305,7 @@ function replaceState(database: Database, state: ServerState) {
         job.createdAt,
       );
     const insertProject = database.query(
-      "INSERT INTO projects(user_id, project_id, payload_json, revision, updated_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO projects(user_id, project_id, payload_json, revision, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, project_id) DO UPDATE SET payload_json=excluded.payload_json, revision=excluded.revision, updated_at=excluded.updated_at WHERE projects.payload_json IS NOT excluded.payload_json OR projects.revision IS NOT excluded.revision OR projects.updated_at IS NOT excluded.updated_at",
     );
     for (const [userId, projects] of Object.entries(state.projects))
       for (const [projectId, project] of Object.entries(projects))
@@ -337,6 +316,30 @@ function replaceState(database: Database, state: ServerState) {
           project.revision,
           project.updatedAt,
         );
+    const deleteChannel = database.query("DELETE FROM channels WHERE user_id = ? AND id = ?");
+    for (const row of database.query("SELECT user_id, id FROM channels").all() as Array<{ user_id: string; id: string }>)
+      if (!state.channels[`${row.user_id}:${row.id}`]) deleteChannel.run(row.user_id, row.id);
+    const deleteAsset = database.query("DELETE FROM assets WHERE user_id = ? AND asset_key = ?");
+    for (const row of database.query("SELECT user_id, asset_key FROM assets").all() as Array<{ user_id: string; asset_key: string }>)
+      if (!state.assets[`${row.user_id}:${row.asset_key}`]) deleteAsset.run(row.user_id, row.asset_key);
+    const deleteJob = database.query("DELETE FROM jobs WHERE id = ?");
+    for (const row of database.query("SELECT id FROM jobs").all() as Array<{ id: string }>)
+      if (!state.jobs[row.id]) deleteJob.run(row.id);
+    const deleteProject = database.query("DELETE FROM projects WHERE user_id = ? AND project_id = ?");
+    for (const row of database.query("SELECT user_id, project_id FROM projects").all() as Array<{ user_id: string; project_id: string }>)
+      if (!state.projects[row.user_id]?.[row.project_id]) deleteProject.run(row.user_id, row.project_id);
+    const insertProjectTombstone = database.query(
+      "INSERT INTO project_tombstones(user_id, project_id, revision, deleted_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, project_id) DO UPDATE SET revision=excluded.revision, deleted_at=excluded.deleted_at WHERE project_tombstones.revision IS NOT excluded.revision OR project_tombstones.deleted_at IS NOT excluded.deleted_at",
+    );
+    for (const [userId, tombstones] of Object.entries(projectTombstones))
+      for (const [projectId, tombstone] of Object.entries(tombstones))
+        insertProjectTombstone.run(userId, projectId, tombstone.revision, tombstone.deletedAt);
+    const deleteProjectTombstone = database.query("DELETE FROM project_tombstones WHERE user_id = ? AND project_id = ?");
+    for (const row of database.query("SELECT user_id, project_id FROM project_tombstones").all() as Array<{ user_id: string; project_id: string }>)
+      if (!projectTombstones[row.user_id]?.[row.project_id]) deleteProjectTombstone.run(row.user_id, row.project_id);
+    const deleteUser = database.query("DELETE FROM users WHERE user_id = ?");
+    for (const row of database.query("SELECT user_id FROM users").all() as Array<{ user_id: string }>)
+      if (!state.users[row.user_id]) deleteUser.run(row.user_id);
   })();
 }
 
@@ -403,6 +406,12 @@ function loadState(database: Database): ServerState {
       revision: Number(row.revision),
       updatedAt: Number(row.updated_at),
     };
+  const projectTombstones: ServerState["projectTombstones"] = {};
+  for (const row of database.query("SELECT * FROM project_tombstones").all() as Array<Record<string, unknown>>)
+    (projectTombstones[String(row.user_id)] ||= {})[String(row.project_id)] = {
+      revision: Number(row.revision),
+      deletedAt: Number(row.deleted_at),
+    };
   return {
     version: 1,
     auth: {
@@ -415,6 +424,7 @@ function loadState(database: Database): ServerState {
     assets,
     jobs,
     projects,
+    projectTombstones,
   };
 }
 
@@ -424,6 +434,7 @@ function normalizeState(state: ServerState): ServerState {
   state.assets ||= {};
   state.jobs ||= {};
   state.projects ||= {};
+  state.projectTombstones ||= {};
   return state;
 }
 

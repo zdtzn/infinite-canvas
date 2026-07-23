@@ -171,8 +171,8 @@ export default function AssetsPage() {
                 addAsset(payload as Parameters<typeof addAsset>[0]);
             });
             message.success(`已导入 ${importedAssets.length} 个资产`);
-        } catch {
-            message.error("导入失败，请选择有效的资产压缩包");
+        } catch (error) {
+            message.error(error instanceof Error ? `导入失败：${error.message}` : "导入失败，请选择有效的资产压缩包");
         } finally {
             if (assetInputRef.current) assetInputRef.current.value = "";
         }

@@ -32,7 +32,7 @@ describe("SQLite application database", () => {
   test("migrates legacy state atomically and stores reference images as files", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
-    const reference = `data:image/png;base64,${Buffer.from("reference-image").toString("base64")}`;
+    const reference = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
     writeFileSync(
       join(dataDir, "state.json"),
       JSON.stringify({
@@ -92,7 +92,7 @@ describe("SQLite application database", () => {
       if (typeof storedReference === "string")
         throw new Error("Reference was not migrated");
       expect(readFileSync(join(dataDir, storedReference.path))).toEqual(
-        Buffer.from("reference-image"),
+        Buffer.from(reference.split(",")[1], "base64"),
       );
       expect(store.countRows("users")).toBe(1);
       expect(store.countRows("jobs")).toBe(1);
@@ -114,6 +114,23 @@ describe("SQLite application database", () => {
     expect(Number(store.pragma("foreign_keys"))).toBe(1);
     expect(Number(store.pragma("busy_timeout"))).toBeGreaterThanOrEqual(5_000);
     store.close();
+  });
+
+  test("accepts state snapshots created before project tombstones existed", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      const legacyState = store.loadState() as ReturnType<typeof store.loadState> & {
+        projectTombstones?: ReturnType<typeof store.loadState>["projectTombstones"];
+      };
+      delete legacyState.projectTombstones;
+
+      expect(() => store.saveState(legacyState)).not.toThrow();
+      expect(store.loadState().projectTombstones).toEqual({});
+    } finally {
+      store.close();
+    }
   });
 
   test("normalizes legacy Dou Emperor stars into one terminal stage", () => {
@@ -194,10 +211,10 @@ describe("SQLite application database", () => {
     }
   });
 
-  test("falls back to the legacy state when the first SQLite migration fails", () => {
+  test("fails closed and preserves the legacy state when the first SQLite migration fails", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
-    const reference = `data:image/png;base64,${Buffer.from("reference-image").toString("base64")}`;
+    const reference = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
     writeFileSync(
       join(dataDir, "state.json"),
       JSON.stringify({
@@ -231,13 +248,8 @@ describe("SQLite application database", () => {
     );
     writeFileSync(join(dataDir, "job-references"), "blocks directory creation");
 
-    const store = openAppDatabase({ dataDir });
-    try {
-      expect(store.mode).toBe("legacy");
-      expect(store.loadState().jobs.job1.input.references[0]).toBe(reference);
-      expect(existsSync(join(dataDir, "app.sqlite"))).toBe(false);
-    } finally {
-      store.close();
-    }
+    expect(() => openAppDatabase({ dataDir })).toThrow();
+    expect(JSON.parse(readFileSync(join(dataDir, "state.json"), "utf8"))).toMatchObject({ jobs: { job1: { input: { references: [reference] } } } });
+    expect(existsSync(join(dataDir, "app.sqlite"))).toBe(false);
   });
 });

@@ -47,11 +47,11 @@ export function promptServerThumbnailUrl(value?: string, width = 640) {
 
 export function promptOriginalCandidates(value?: string) {
     const input = String(value || "").trim();
-    return uniqueUrls([promptOriginalUrl(input), input]);
+    return uniqueUrls([input, promptOriginalUrl(input)]);
 }
 
 export function promptImageCandidates(value?: string, width = 640) {
-    return uniqueUrls([promptThumbnailUrl(value, width), ...promptOriginalCandidates(value), promptServerThumbnailUrl(value, width)]);
+    return uniqueUrls([promptServerThumbnailUrl(value, width), ...promptOriginalCandidates(value), promptThumbnailUrl(value, width)]);
 }
 
 function uniqueUrls(values: Array<string | undefined>) {

@@ -68,6 +68,44 @@ describe("persistent job queue runtime", () => {
         release();
         await queue.wait(job.id);
     });
+
+    test("releases the worker slot when the running-state callback rejects", async () => {
+        let rejectFirstRunningChange = true;
+        const queue = new JobQueue<number, number>({
+            concurrency: 1,
+            worker: async (value) => value,
+            onChange: (job) => {
+                if (job.status === "running" && rejectFirstRunningChange) {
+                    rejectFirstRunningChange = false;
+                    throw new Error("temporary persistence failure");
+                }
+            },
+        });
+
+        const first = queue.add(1);
+        const second = queue.add(2);
+        await expect(queue.wait(first.id)).rejects.toThrow("temporary persistence failure");
+        expect(await queue.wait(second.id)).toBe(2);
+    });
+
+    test("does not run a job whose initial persistence failed", async () => {
+        let executed = false;
+        const queue = new JobQueue<number, number>({
+            concurrency: 1,
+            worker: async (value) => {
+                executed = true;
+                return value;
+            },
+            onChange: () => {
+                throw new Error("initial persistence failure");
+            },
+        });
+
+        const job = queue.add(1);
+        await expect(queue.wait(job.id)).rejects.toThrow("initial persistence failure");
+        expect(executed).toBe(false);
+        expect(queue.get(job.id)?.status).toBe("failed");
+    });
 });
 
 async function waitUntil(predicate: () => boolean) {

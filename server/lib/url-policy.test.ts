@@ -9,7 +9,7 @@ describe("upstream URL policy", () => {
     });
 
     test("rejects local and private-network targets", () => {
-        for (const value of ["http://127.0.0.1:8080", "http://localhost:3000", "http://10.0.0.2", "http://192.168.1.8", "file:///etc/passwd"]) {
+        for (const value of ["http://127.0.0.1:8080", "http://localhost:3000", "http://10.0.0.2", "http://192.168.1.8", "http://169.254.169.254", "http://0.0.0.0", "https://[::1]", "https://[fc00::1]", "file:///etc/passwd"]) {
             expect(() => assertAllowedUpstreamUrl(value)).toThrow();
         }
     });

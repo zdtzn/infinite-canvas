@@ -203,11 +203,11 @@ export async function saveServerProject(project: Record<string, unknown>, revisi
 }
 
 export async function fetchServerProjects() {
-    return serverRequest<{ items: Array<{ project: Record<string, unknown>; revision: number; updatedAt: number }> }>("/api/projects", { timeoutMs: 20_000 });
+    return serverRequest<{ items: Array<{ project: Record<string, unknown>; revision: number; updatedAt: number }>; deleted: Array<{ projectId: string; revision: number; deletedAt: number }> }>("/api/projects", { timeoutMs: 20_000 });
 }
 
-export async function deleteServerProject(projectId: string) {
-    await serverRequest(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+export async function deleteServerProject(projectId: string, revision: number) {
+    await serverRequest(`/api/projects/${encodeURIComponent(projectId)}?revision=${encodeURIComponent(String(revision))}`, { method: "DELETE" });
 }
 
 export async function fetchServerMembers() {

@@ -11,6 +11,7 @@ export type CanvasProject = {
     title: string;
     createdAt: string;
     updatedAt: string;
+    serverRevision?: number;
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
     chatSessions: CanvasAssistantSession[];
@@ -29,6 +30,7 @@ type CanvasStore = {
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[]) => void;
+    setProjectServerRevision: (id: string, revision: number) => void;
     updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
 };
 
@@ -37,6 +39,28 @@ const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
 type PersistedCanvasState = Pick<CanvasStore, "projects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
+let queuedPersistValue: StorageValue<CanvasStore> | null = null;
+let queuedPersistName = CANVAS_STORE_KEY;
+
+async function flushCanvasPersistence() {
+    if (!queuedPersistValue) return;
+    if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+    }
+    const value = queuedPersistValue;
+    const name = queuedPersistName;
+    queuedPersistValue = null;
+    await localForageStorage.setItem(name, JSON.stringify(value));
+}
+
+if (typeof window !== "undefined") {
+    const flushOnBackground = () => void flushCanvasPersistence().catch(() => undefined);
+    window.addEventListener("pagehide", flushOnBackground);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") flushOnBackground();
+    });
+}
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
@@ -50,11 +74,13 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         const nextState = value.state as PersistedCanvasState;
         if (queuedPersistState && queuedPersistState.projects === nextState.projects) return;
         queuedPersistState = nextState;
+        queuedPersistValue = value;
+        queuedPersistName = name;
         if (saveTimer) clearTimeout(saveTimer);
         saveTimer = setTimeout(() => {
             saveTimer = null;
-            void localForageStorage.setItem(name, JSON.stringify(value));
-        }, 400);
+            void flushCanvasPersistence().catch(() => undefined);
+        }, 200);
     },
     removeItem: (name) => localForageStorage.removeItem(name),
 };
@@ -114,6 +140,10 @@ export const useCanvasStore = create<CanvasStore>()(
                     return { projects };
                 }),
             replaceProjects: (projects) => set({ projects: projects.map(normalizeCanvasProject).filter((project): project is CanvasProject => Boolean(project)) }),
+            setProjectServerRevision: (id, revision) =>
+                set((state) => ({
+                    projects: state.projects.map((project) => (project.id === id ? { ...project, serverRevision: revision } : project)),
+                })),
             updateProject: (id, patch) =>
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)),
@@ -150,6 +180,7 @@ export function normalizeCanvasProject(source: unknown): CanvasProject | null {
         title: typeof value.title === "string" && value.title.trim() ? value.title : "未命名画布",
         createdAt: validDate(value.createdAt) ? value.createdAt! : now,
         updatedAt: validDate(value.updatedAt) ? value.updatedAt! : now,
+        serverRevision: Number.isInteger(value.serverRevision) && Number(value.serverRevision) >= 0 ? Number(value.serverRevision) : undefined,
         nodes: Array.isArray(value.nodes) ? value.nodes.map(normalizeCanvasNode).filter((node): node is CanvasNodeData => Boolean(node)) : [],
         connections: Array.isArray(value.connections) ? value.connections.filter(isCanvasConnection) : [],
         chatSessions: Array.isArray(value.chatSessions) ? value.chatSessions : [],

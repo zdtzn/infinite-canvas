@@ -30,8 +30,7 @@ export class JobQueue<I, O> {
         const job: QueueJob<I, O> = { id, input, status: "queued", createdAt: Date.now() };
         this.jobs.set(id, job);
         this.ensureCompletion(id);
-        void this.changed(job);
-        queueMicrotask(() => this.drain());
+        void this.initialize(job);
         return job;
     }
 
@@ -73,7 +72,7 @@ export class JobQueue<I, O> {
         job.finishedAt = Date.now();
         job.error = "任务已取消";
         this.completions.get(id)?.reject(new Error(job.error));
-        void this.changed(job);
+        void this.changed(job).catch(() => undefined);
         return true;
     }
 
@@ -93,14 +92,29 @@ export class JobQueue<I, O> {
         }
     }
 
+    private async initialize(job: QueueJob<I, O>) {
+        try {
+            await this.changed(job);
+        } catch (error) {
+            if (job.status !== "queued") return;
+            job.status = "failed";
+            job.error = error instanceof Error ? error.message : "任务持久化失败";
+            job.finishedAt = Date.now();
+            this.completions.get(job.id)?.reject(new Error(job.error));
+            await this.changed(job).catch(() => undefined);
+            return;
+        }
+        this.drain();
+    }
+
     private async run(job: QueueJob<I, O>) {
         this.active += 1;
         const controller = new AbortController();
         this.controllers.set(job.id, controller);
-        job.status = "running";
-        job.startedAt = Date.now();
-        await this.changed(job);
         try {
+            job.status = "running";
+            job.startedAt = Date.now();
+            await this.changed(job);
             const result = await this.options.worker(job.input, controller.signal, job);
             if (job.status === "canceled") return;
             job.status = "succeeded";
@@ -116,7 +130,11 @@ export class JobQueue<I, O> {
         } finally {
             this.controllers.delete(job.id);
             this.active -= 1;
-            await this.changed(job);
+            try {
+                await this.changed(job);
+            } catch {
+                // Persistence errors must not strand a queue worker slot.
+            }
             this.drain();
         }
     }

@@ -28,6 +28,10 @@ export type StoredProject = {
   revision: number;
   updatedAt: number;
 };
+export type ProjectTombstone = {
+  revision: number;
+  deletedAt: number;
+};
 export type StoredAsset = {
   key: string;
   userId: string;
@@ -87,4 +91,5 @@ export type ServerState = {
   assets: Record<string, StoredAsset>;
   jobs: Record<string, StoredImageJob>;
   projects: Record<string, Record<string, StoredProject>>;
+  projectTombstones: Record<string, Record<string, ProjectTombstone>>;
 };

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [Fixed] Hardened persistent image jobs, project sync, prompt-image caching, archive imports, and public upstream validation; added automated quality checks.
+
 + [修复] 生图工作台的“添加到资产”补上通用 MIME 图片内容识别、保存中状态和失败原因提示，避免上传异常被静默忽略。
 + [新增] UU API 的 `gpt-image-2` 单图任务支持异步提交与轮询，任务 ID 会持久化，可在刷新、跨页面和服务重启后恢复，并支持远端取消。
 + [优化] 收敛全站导航和画布工具栏，生图工作台改为主流程优先并将高级参数折叠展示。

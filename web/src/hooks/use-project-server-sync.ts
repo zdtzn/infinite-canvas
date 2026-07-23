@@ -5,6 +5,25 @@ import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteServerProject, fetchServerProjects, saveServerProject } from "@/services/server-api";
 import { normalizeCanvasProject, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 
+type RemoteProject = { project: Record<string, unknown>; revision: number; updatedAt: number };
+
+export function shouldUploadLocalProject(local: CanvasProject, remote: RemoteProject, remoteProject: CanvasProject) {
+    if (local.serverRevision === undefined) return projectTimestamp(local.updatedAt) > projectTimestamp(remoteProject.updatedAt, remote.updatedAt);
+    if (local.serverRevision > remote.revision) return true;
+    if (local.serverRevision < remote.revision) return false;
+    return projectTimestamp(local.updatedAt) > projectTimestamp(remoteProject.updatedAt, remote.updatedAt);
+}
+
+function projectTimestamp(value: string, fallback = 0) {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? timestamp : fallback;
+}
+
+function isProjectConflict(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes("其他标签页") || message.includes("画布已删除");
+}
+
 export function useProjectServerSync() {
     const { message } = App.useApp();
 
@@ -12,27 +31,78 @@ export function useProjectServerSync() {
         if (!PUBLIC_MODE) return;
         const revisions = new Map<string, number>();
         const timers = new Map<string, number>();
+        const deletionTimers = new Map<string, number>();
         let active = true;
         let initialized = false;
 
+        const showSaveError = (error: unknown) => {
+            if (!active) return;
+            message.error(`云端保存失败：${error instanceof Error ? error.message : "请检查网络后重试"}`);
+        };
+
+        const deleteRemote = (id: string, revision: number) => {
+            void deleteServerProject(id, revision)
+                .then(() => deletionTimers.delete(id))
+                .catch((error) => {
+                    if (isProjectConflict(error)) {
+                        message.warning("画布已在其他位置更新或删除，本次删除未覆盖云端版本");
+                        return;
+                    }
+                    showSaveError(error);
+                    if (!active) return;
+                    const existing = deletionTimers.get(id);
+                    if (existing) window.clearTimeout(existing);
+                    deletionTimers.set(id, window.setTimeout(() => deleteRemote(id, revision), 5_000));
+                });
+        };
+
         void waitForCanvasHydration(() => active)
             .then(() => fetchServerProjects())
-            .then(({ items }) => {
+            .then(({ items, deleted }) => {
                 const localProjects = useCanvasStore.getState().projects;
                 const remoteById = new Map(items.map((item) => [String(item.project.id || ""), item]));
-                const merged = localProjects.map((project) => {
+                const deletedById = new Map(deleted.map((item) => [item.projectId, item]));
+                const projectsToSave = new Set<string>();
+                const merged: CanvasProject[] = [];
+
+                for (const project of localProjects) {
+                    const tombstone = deletedById.get(project.id);
+                    if (tombstone) {
+                        revisions.set(project.id, tombstone.revision);
+                        continue;
+                    }
                     const remote = remoteById.get(project.id);
-                    const remoteProject = normalizeCanvasProject(remote?.project);
-                    if (!remote || !remoteProject) return project;
-                    return remote.updatedAt > Date.parse(project.updatedAt || "") ? remoteProject : project;
-                });
+                    if (!remote) {
+                        projectsToSave.add(project.id);
+                        merged.push(project);
+                        continue;
+                    }
+                    revisions.set(project.id, remote.revision);
+                    const remoteProject = normalizeCanvasProject({ ...remote.project, serverRevision: remote.revision });
+                    if (!remoteProject) {
+                        projectsToSave.add(project.id);
+                        merged.push(project);
+                        continue;
+                    }
+                    if (shouldUploadLocalProject(project, remote, remoteProject)) {
+                        projectsToSave.add(project.id);
+                        merged.push(project);
+                    } else {
+                        merged.push(remoteProject);
+                    }
+                }
+
                 const localIds = new Set(localProjects.map((project) => project.id));
-                const recovered = items.map((item) => normalizeCanvasProject(item.project)).filter((project): project is CanvasProject => Boolean(project && !localIds.has(project.id)));
-                items.forEach((item) => revisions.set(String(item.project.id || ""), item.revision));
-                if (recovered.length || merged.some((project, index) => project !== localProjects[index])) useCanvasStore.getState().replaceProjects([...recovered, ...merged]);
+                const recovered = items
+                    .map((item) => normalizeCanvasProject({ ...item.project, serverRevision: item.revision }))
+                    .filter((project): project is CanvasProject => Boolean(project && !localIds.has(project.id)));
+                useCanvasStore.getState().replaceProjects([...recovered, ...merged]);
+                recovered.forEach((project) => revisions.set(project.id, project.serverRevision || 0));
+                initialized = true;
+                useCanvasStore.getState().projects.filter((project) => projectsToSave.has(project.id)).forEach(schedule);
             })
-            .catch(() => undefined)
-            .finally(() => {
+            .catch((error) => {
+                showSaveError(error);
                 initialized = true;
                 useCanvasStore.getState().projects.forEach(schedule);
             });
@@ -42,8 +112,9 @@ export function useProjectServerSync() {
             previous.projects
                 .filter((project) => !state.projects.some((item) => item.id === project.id))
                 .forEach((project) => {
-                    revisions.delete(project.id);
-                    void deleteServerProject(project.id).catch(() => undefined);
+                    const revision = revisions.get(project.id) ?? project.serverRevision ?? 0;
+                    revisions.set(project.id, revision + 1);
+                    deleteRemote(project.id, revision);
                 });
             state.projects.forEach((project) => {
                 const before = previous.projects.find((item) => item.id === project.id);
@@ -58,12 +129,20 @@ export function useProjectServerSync() {
                 project.id,
                 window.setTimeout(() => {
                     timers.delete(project.id);
-                    void saveServerProject(project as unknown as Record<string, unknown>, revisions.get(project.id) || 0)
-                        .then((saved) => revisions.set(project.id, saved.revision))
+                    const revision = revisions.get(project.id) ?? project.serverRevision ?? 0;
+                    void saveServerProject(project as unknown as Record<string, unknown>, revision)
+                        .then((saved) => {
+                            revisions.set(project.id, saved.revision);
+                            useCanvasStore.getState().setProjectServerRevision(project.id, saved.revision);
+                        })
                         .catch((error) => {
-                            if (String(error).includes("其他标签页")) message.warning("画布已在其他位置更新，本次云端备份未覆盖旧版本");
+                            if (isProjectConflict(error)) {
+                                message.warning("画布已在其他位置更新或删除，当前本地修改未覆盖云端版本");
+                                return;
+                            }
+                            showSaveError(error);
                         });
-                }, 1200),
+                }, 1_200),
             );
         }
 
@@ -71,6 +150,7 @@ export function useProjectServerSync() {
             active = false;
             unsubscribe();
             timers.forEach((timer) => window.clearTimeout(timer));
+            deletionTimers.forEach((timer) => window.clearTimeout(timer));
         };
     }, [message]);
 }

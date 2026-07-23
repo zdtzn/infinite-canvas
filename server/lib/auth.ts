@@ -86,6 +86,10 @@ export function identityCookie(token: string, secure: boolean) {
     return `canvas_identity=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${secure ? "; Secure" : ""}`;
 }
 
+export function expiredIdentityCookie(secure: boolean) {
+    return `canvas_identity=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`;
+}
+
 function sign(value: string, secret: string) {
     return createHmac("sha256", secret).update(value).digest("base64url");
 }

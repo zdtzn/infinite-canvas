@@ -352,6 +352,7 @@ function setup() {
     assets: {},
     jobs: {},
     projects: {},
+    projectTombstones: {},
   };
   store.saveState(state);
   const now = new Date("2026-07-22T08:00:00+08:00");
