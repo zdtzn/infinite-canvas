@@ -5,7 +5,7 @@ import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
-import { ImageSettingsPanel } from "@/components/image-settings-panel";
+import { ImageSettingsPanel, imageGenerationQualityLabel, imageResolutionLabel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
@@ -44,7 +44,7 @@ type GenerationLog = {
     thumbnails: string[];
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "imageQuality" | "size" | "count">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -317,6 +317,7 @@ export default function ImagePage() {
         setReferences(log.references || []);
         if (log.config.imageModel || log.model) updateConfig("imageModel", log.config.imageModel || log.model);
         if (log.config.quality) updateConfig("quality", log.config.quality);
+        updateConfig("imageQuality", log.config.imageQuality || "auto");
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.count) updateConfig("count", log.config.count);
     };
@@ -450,7 +451,7 @@ export default function ImagePage() {
                                                 高级参数
                                             </span>
                                             <span className="flex min-w-0 items-center gap-1.5 text-stone-500 dark:text-stone-400">
-                                                <span className="truncate text-xs font-normal">{modelOptionLabel(effectiveConfig, model)} · {effectiveConfig.size} · {effectiveConfig.quality}</span>
+                                                <span className="truncate text-xs font-normal">{modelOptionLabel(effectiveConfig, model)} · {effectiveConfig.size} · {imageResolutionLabel(effectiveConfig.quality)} · {imageGenerationQualityLabel(effectiveConfig.imageQuality)}</span>
                                                 <ChevronDown className="size-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
                                             </span>
                                         </summary>
@@ -801,6 +802,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         model: log.config?.model || log.model || "",
         imageModel: log.config?.imageModel || log.model || "",
         quality: log.config?.quality || log.quality || "",
+        imageQuality: log.config?.imageQuality || "auto",
         size: log.config?.size || log.size || "",
         count: log.config?.count || String(log.imageCount || log.successCount || 1),
     };
@@ -849,6 +851,7 @@ function buildLog({
         model: config.model,
         imageModel: config.imageModel,
         quality: config.quality,
+        imageQuality: config.imageQuality,
         size: config.size,
         count: config.count,
     };

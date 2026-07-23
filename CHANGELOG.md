@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [调整] 生图设置将输出分辨率与模型生成质量拆分；普通 OpenAI 兼容渠道可独立设置质量，UU `gpt-image-2` 异步渠道按模型默认策略执行。
+
 + [Fixed] Hardened persistent image jobs, project sync, prompt-image caching, archive imports, and public upstream validation; added automated quality checks.
 
 + [修复] 生图工作台的“添加到资产”补上通用 MIME 图片内容识别、保存中状态和失败原因提示，避免上传异常被静默忽略。

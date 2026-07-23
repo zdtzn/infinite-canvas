@@ -111,6 +111,7 @@ export async function submitImageJob(input: {
     prompt: string;
     count: number;
     quality?: string;
+    imageQuality?: string;
     size?: string;
     background?: string;
     references: string[];

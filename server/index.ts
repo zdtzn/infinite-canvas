@@ -586,7 +586,9 @@ async function createImageJob(request: Request, session: SessionPayload) {
     }
     const model = String(body.model || "").trim();
     if (!model) throw new HttpError(400, "模型不能为空");
-    cultivation?.reserveGeneration({ jobId, userId: session.userId, channelId, model, count, quality: optionalString(body.quality), referenceCount: references.length, hasMask: Boolean(body.mask), activeJobs: activeUserJobs(session.userId) });
+    const resolution = optionalString(body.quality);
+    const imageQuality = normalizeImageQuality(body.imageQuality);
+    cultivation?.reserveGeneration({ jobId, userId: session.userId, channelId, model, count, quality: resolution, referenceCount: references.length, hasMask: Boolean(body.mask), activeJobs: activeUserJobs(session.userId) });
     try {
         const input: ImageJobInput = {
             userId: session.userId,
@@ -595,7 +597,8 @@ async function createImageJob(request: Request, session: SessionPayload) {
             model,
             prompt,
             count,
-            quality: optionalString(body.quality),
+            quality: resolution,
+            imageQuality,
             size: optionalString(body.size),
             background: optionalString(body.background),
             references: references.map((reference, index) => persistReference(DATA_DIR, session.userId, jobId, index, reference)),
@@ -726,7 +729,7 @@ type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & { refer
 async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal) {
     const headers = { Authorization: `Bearer ${apiKey}`, "Idempotency-Key": randomUUID() };
     const size = resolveOpenAiImageSize(input.size, input.quality);
-    const requestOptions = buildOpenAiImageRequestOptions({ count: input.count, quality: input.quality, size, background: input.background });
+    const requestOptions = buildOpenAiImageRequestOptions({ count: input.count, quality: input.imageQuality, size, background: input.background });
     let response: Response;
     if (input.references.length) {
         const form = new FormData();
@@ -1421,6 +1424,13 @@ function normalizePersonalCode(value: unknown, minimumLength = 6) {
 function optionalString(value: unknown) {
     const text = typeof value === "string" ? value.trim() : "";
     return text || undefined;
+}
+
+function normalizeImageQuality(value: unknown) {
+    const quality = optionalString(value)?.toLowerCase();
+    if (!quality || quality === "auto") return undefined;
+    if (["low", "medium", "high", "standard", "hd"].includes(quality)) return quality;
+    throw new HttpError(400, "生成质量参数无效");
 }
 
 function normalizeJobSource(value: unknown): ImageJobInput["source"] {

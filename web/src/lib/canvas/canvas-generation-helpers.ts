@@ -95,6 +95,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         ...config,
         model: node?.metadata?.model || defaultModel || (mode === "audio" ? defaultConfig.audioModel : config.model || defaultConfig.model),
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
+        imageQuality: node?.metadata?.imageQuality ?? config.imageQuality ?? defaultConfig.imageQuality,
         size: node?.metadata?.size || config.size || defaultConfig.size,
         background: node?.metadata?.background ?? config.background ?? defaultConfig.background,
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,

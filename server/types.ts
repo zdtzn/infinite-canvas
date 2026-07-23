@@ -51,7 +51,10 @@ export type ImageJobInput = {
   model: string;
   prompt: string;
   count: number;
+  /** Output resolution tier: low=1K, medium=2K, high=4K. */
   quality?: string;
+  /** Upstream generation-quality option, separate from image dimensions. */
+  imageQuality?: string;
   size?: string;
   background?: string;
   references: Array<string | StoredImageReference>;

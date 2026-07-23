@@ -22,3 +22,9 @@ test("uses the documented minimal request body for a single image", () => {
     expect(buildOpenAiImageRequestOptions({ count: 1, size: "1024x1024" })).toEqual({ size: "1024x1024", response_format: "b64_json" });
     expect(buildOpenAiImageRequestOptions({ count: 2, quality: "high", size: "2048x2048" })).toEqual({ n: 2, quality: "high", size: "2048x2048", response_format: "b64_json" });
 });
+
+test("keeps output resolution independent from provider generation quality", () => {
+    const size = resolveOpenAiImageSize("1:1", "medium");
+    expect(size).toBe("2048x2048");
+    expect(buildOpenAiImageRequestOptions({ count: 1, quality: "high", size })).toEqual({ quality: "high", size: "2048x2048", response_format: "b64_json" });
+});

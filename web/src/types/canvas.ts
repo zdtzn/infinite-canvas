@@ -38,6 +38,7 @@ export type CanvasNodeMetadata = {
     model?: string;
     size?: string;
     quality?: string;
+    imageQuality?: string;
     background?: string;
     count?: number;
     seconds?: string;

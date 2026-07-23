@@ -44,7 +44,10 @@ export type AiConfig = {
     videoWatermark: string;
     systemPrompt: string;
     models: string[];
+    /** Output resolution tier: low=1K, medium=2K, high=4K. */
     quality: string;
+    /** Provider generation-quality setting, independent from output resolution. */
+    imageQuality: string;
     size: string;
     background: string;
     count: string;
@@ -102,6 +105,7 @@ export const defaultConfig: AiConfig = {
     systemPrompt: "",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
     quality: "low",
+    imageQuality: "auto",
     size: "1:1",
     background: "",
     count: "1",
@@ -244,6 +248,7 @@ export const useConfigStore = create<ConfigStore>()(
                         videoGenerateAudio: config.videoGenerateAudio || "true",
                         videoWatermark: config.videoWatermark || "false",
                         canvasImageCount: config.canvasImageCount || "3",
+                        imageQuality: normalizeImageQuality(config.imageQuality),
                     },
                 };
             },
@@ -376,6 +381,11 @@ export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
     return apiFormat === "gemini" ? "gemini" : "openai";
+}
+
+function normalizeImageQuality(value: unknown) {
+    const quality = String(value || "auto").trim().toLowerCase();
+    return ["auto", "low", "medium", "high", "standard", "hd"].includes(quality) ? quality : "auto";
 }
 
 function uniqueModelOptions(models: string[]) {

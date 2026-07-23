@@ -5,10 +5,18 @@ import { type CanvasTheme } from "@/lib/canvas-theme";
 import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
 
-const qualityOptions = [
+const resolutionOptions = [
     { value: "low", label: "1K" },
     { value: "medium", label: "2K" },
     { value: "high", label: "4K" },
+];
+const generationQualityOptions = [
+    { value: "auto", label: "自动" },
+    { value: "low", label: "低" },
+    { value: "medium", label: "中" },
+    { value: "high", label: "高" },
+    { value: "standard", label: "标准" },
+    { value: "hd", label: "高清" },
 ];
 const DIMENSION_STEP = 16;
 
@@ -23,12 +31,13 @@ const aspectOptions = [
     { value: "auto", label: "auto", width: 0, height: 0, icon: "auto" },
 ];
 
-export const imageQualityOptions = qualityOptions.map((item) => ({ value: item.value, label: item.label }));
+export const imageResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
+export const imageGenerationQualityOptions = generationQualityOptions.map((item) => ({ value: item.value, label: item.label }));
 export const imageAspectOptions = aspectOptions.map((item) => ({ value: item.value, label: item.label }));
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "count" | "background", value: string) => void;
+    onConfigChange: (key: "quality" | "imageQuality" | "size" | "count" | "background", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -41,7 +50,11 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const selectedModel = config.model || config.imageModel;
     const channel = resolveModelChannel(config, selectedModel);
     const capabilities = deriveImageModelCapabilities(modelOptionName(selectedModel), channel.apiFormat);
-    const visibleQualities = qualityOptions.filter((item) => capabilities.qualities.includes(item.value));
+    const visibleResolutions = resolutionOptions.filter((item) => capabilities.resolutions.includes(item.value));
+    const selectedModelName = modelOptionName(selectedModel);
+    const isUuAsyncModel = isUuAsyncImageModel(channel.baseUrl, selectedModelName);
+    const visibleGenerationQualities = generationQualityOptions.filter((item) => capabilities.generationQualities.includes(item.value));
+    const canChooseGenerationQuality = !isUuAsyncModel && visibleGenerationQualities.some((item) => item.value !== "auto");
     const visibleAspects = aspectOptions.filter((item) => {
         const value = item.value;
         return /^\d+x\d+$/i.test(value) ? capabilities.customSize : capabilities.sizes.includes(value);
@@ -49,12 +62,13 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const ratioAspects = visibleAspects.filter((item) => item.value !== "auto");
     const autoAspect = visibleAspects.find((item) => item.value === "auto");
     const effectiveMaxCount = Math.min(maxCount, capabilities.maxOutputs);
-    const quality = qualityOptions.some((item) => item.value === config.quality) ? config.quality : "low";
+    const resolution = resolutionOptions.some((item) => item.value === config.quality) ? config.quality : "low";
+    const imageQuality = generationQualityOptions.some((item) => item.value === config.imageQuality) ? config.imageQuality : "auto";
     const count = Math.max(1, Math.min(effectiveMaxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const transparentBackground = config.background === "transparent";
     const selectedAspect = aspectOptions.find((item) => item.value === activeSize);
-    const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0], quality);
+    const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0], resolution);
     const customSizeActive = /^\d+x\d+$/i.test(activeSize);
     const selectAspect = (value: string) => {
         const option = aspectOptions.find((item) => item.value === value);
@@ -108,12 +122,34 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>输出分辨率</SettingTitle>
                     <div className="grid grid-cols-3 gap-2">
-                        {visibleQualities.map((item) => (
-                            <OptionPill key={item.value} selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
+                        {visibleResolutions.map((item) => (
+                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
                     </div>
+                </div>
+                <div className="space-y-2.5">
+                    <div className="space-y-0.5">
+                        <SettingTitle color={theme.node.muted}>生成质量</SettingTitle>
+                        <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
+                            影响模型的细节策略与耗时，不改变输出像素尺寸
+                        </div>
+                    </div>
+                    {canChooseGenerationQuality ? (
+                        <div className="grid grid-cols-4 gap-2">
+                            {visibleGenerationQualities.map((item) => (
+                                <OptionPill key={item.value} selected={imageQuality === item.value} theme={theme} onClick={() => onConfigChange("imageQuality", item.value)}>
+                                    {item.label}
+                                </OptionPill>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                            <span>自动</span>
+                            <span className="min-w-0 truncate">{isUuAsyncModel ? "当前异步渠道由模型自动控制" : "当前模型未开放独立质量参数"}</span>
+                        </div>
+                    )}
                 </div>
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
@@ -180,8 +216,17 @@ export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; ch
     );
 }
 
-export function imageQualityLabel(value: string) {
+export function imageResolutionLabel(value: string) {
     return ({ auto: "1K", high: "4K", medium: "2K", low: "1K" } as Record<string, string>)[value] || value;
+}
+
+/** Kept for existing canvas summary callers; it represents output resolution. */
+export function imageQualityLabel(value: string) {
+    return imageResolutionLabel(value);
+}
+
+export function imageGenerationQualityLabel(value: string) {
+    return ({ auto: "自动", low: "低", medium: "中", high: "高", standard: "标准", hd: "高清" } as Record<string, string>)[value] || value;
 }
 
 export function imageSizeLabel(size: string) {
@@ -268,23 +313,23 @@ function SettingTitle({ children, color }: { children: string; color: string }) 
     );
 }
 
-function readSizeDimensions(size: string, fallback: { value?: string; width: number; height: number }, quality: string) {
+function readSizeDimensions(size: string, fallback: { value?: string; width: number; height: number }, resolution: string) {
     const match = size?.match(/^(\d+)x(\d+)$/);
     if (match) return { width: Number(match[1]), height: Number(match[2]) };
-    const ratioDimensions = ratioSizeDimensions(size, quality) || ratioSizeDimensions(fallback.value || "1:1", quality);
+    const ratioDimensions = ratioSizeDimensions(size, resolution) || ratioSizeDimensions(fallback.value || "1:1", resolution);
     return {
         width: ratioDimensions?.width || fallback.width,
         height: ratioDimensions?.height || fallback.height,
     };
 }
 
-function ratioSizeDimensions(value: string, quality: string) {
+function ratioSizeDimensions(value: string, resolution: string) {
     const match = value.match(/^(\d+)\s*:\s*(\d+)$/);
     if (!match) return null;
     const ratioWidth = Number(match[1]);
     const ratioHeight = Number(match[2]);
     if (!Number.isFinite(ratioWidth) || !Number.isFinite(ratioHeight) || ratioWidth <= 0 || ratioHeight <= 0) return null;
-    const requestedLongSide = ({ low: 1024, medium: 2048, high: 3840 } as Record<string, number>)[quality] || 1024;
+    const requestedLongSide = ({ low: 1024, medium: 2048, high: 3840 } as Record<string, number>)[resolution] || 1024;
     const divisor = greatestCommonDivisor(ratioWidth, ratioHeight);
     const normalizedWidth = ratioWidth / divisor;
     const normalizedHeight = ratioHeight / divisor;
@@ -301,4 +346,14 @@ function greatestCommonDivisor(left: number, right: number) {
 
 function alignDimension(value: number, enabled: boolean) {
     return enabled ? Math.ceil(value / DIMENSION_STEP) * DIMENSION_STEP : value;
+}
+
+function isUuAsyncImageModel(baseUrl: string, model: string) {
+    try {
+        const hostname = new URL(baseUrl).hostname.toLowerCase();
+        const isUuHost = ["uuapi.cc", "uuapi.net"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+        return isUuHost && model.trim().toLowerCase() === "gpt-image-2";
+    } catch {
+        return false;
+    }
 }

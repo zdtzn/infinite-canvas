@@ -2,7 +2,7 @@ import type { NavigateFunction } from "react-router-dom";
 
 import { fetchPrompts } from "@/services/api/prompts";
 import { uploadImage } from "@/services/image-storage";
-import { imageAspectOptions, imageQualityOptions } from "@/components/image-settings-panel";
+import { imageAspectOptions, imageGenerationQualityOptions, imageResolutionOptions } from "@/components/image-settings-panel";
 import { videoResolutionOptions, videoSecondOptions, videoSizeOptions } from "@/components/video-settings-panel";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -144,9 +144,10 @@ function getImageConfig() {
     const { config } = useConfigStore.getState();
     const model = config.imageModel || config.model;
     return {
-        current: { model, modelName: modelOptionName(model), quality: config.quality || "auto", size: config.size || "1:1", count: config.count || "1" },
+        current: { model, modelName: modelOptionName(model), resolution: config.quality || "low", quality: config.imageQuality || "auto", size: config.size || "1:1", count: config.count || "1" },
         models: selectableModelsByCapability(config, "image").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        qualityOptions: imageQualityOptions,
+        resolutionOptions: imageResolutionOptions,
+        qualityOptions: imageGenerationQualityOptions,
         sizeOptions: imageAspectOptions,
         countRange: { min: 1, max: 15 },
     };
@@ -160,8 +161,12 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
         configStore.updateConfig("imageModel", value);
         applied.model = value;
     }
+    if (typeof input.resolution === "string" && input.resolution.trim()) {
+        configStore.updateConfig("quality", input.resolution);
+        applied.resolution = input.resolution;
+    }
     if (typeof input.quality === "string" && input.quality.trim()) {
-        configStore.updateConfig("quality", input.quality);
+        configStore.updateConfig("imageQuality", input.quality);
         applied.quality = input.quality;
     }
     if (typeof input.size === "string" && input.size.trim()) {
