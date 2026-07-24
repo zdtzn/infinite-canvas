@@ -2802,7 +2802,10 @@ function InfiniteCanvasPage() {
                 <section className="w-full max-w-md rounded-lg border border-stone-200 bg-white p-6 text-center dark:border-stone-800 dark:bg-stone-900">
                     <h1 className="text-lg font-semibold">这个画布已在另一个标签页编辑</h1>
                     <p className="mt-2 text-sm leading-6 text-stone-500">为避免两个标签互相覆盖，当前页面已进入只读保护。关闭另一个标签页，或确认接管编辑。</p>
-                    <Button className="mt-5" type="primary" onClick={projectLock.takeOver}>接管编辑</Button>
+                    <div className="mt-5 flex items-center justify-center gap-2">
+                        <Button onClick={() => navigate("/")}>返回首页</Button>
+                        <Button type="primary" onClick={projectLock.takeOver}>接管编辑</Button>
+                    </div>
                 </section>
             </main>
         );

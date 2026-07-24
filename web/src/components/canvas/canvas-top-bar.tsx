@@ -84,11 +84,22 @@ export function CanvasTopBar({
                             {sidePanelOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
                         </button>
                     </Tooltip>
+                    <Tooltip title="返回首页">
+                        <button
+                            type="button"
+                            onClick={onHome}
+                            className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10"
+                            style={{ color: theme.node.text }}
+                            aria-label="返回首页"
+                        >
+                            <Home className="size-4" />
+                            <span className="hidden sm:inline">首页</span>
+                        </button>
+                    </Tooltip>
                     <Dropdown
                         trigger={["click"]}
                         menu={{
                             items: [
-                                { key: "home", icon: <Home className="size-4" />, label: "主页", onClick: onHome },
                                 { key: "docs", icon: <BookOpen className="size-4" />, label: "文档", onClick: () => window.open(DOCS_URL, "_blank", "noopener,noreferrer") },
                                 { key: "projects", icon: <Images className="size-4" />, label: "我的画布", onClick: onProjects },
                                 { type: "divider" },
