@@ -3,6 +3,7 @@ import { BookOpen, Bot, Download, Home, Images, Menu, PanelLeftClose, PanelLeftO
 import { Button, Dropdown, Modal, Tooltip } from "antd";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
+import { ImperialModeBadge } from "@/features/cultivation/imperial-mode";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -85,13 +86,7 @@ export function CanvasTopBar({
                         </button>
                     </Tooltip>
                     <Tooltip title="返回首页">
-                        <button
-                            type="button"
-                            onClick={onHome}
-                            className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10"
-                            style={{ color: theme.node.text }}
-                            aria-label="返回首页"
-                        >
+                        <button type="button" onClick={onHome} className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="返回首页">
                             <Home className="size-4" />
                             <span className="hidden sm:inline">首页</span>
                         </button>
@@ -148,6 +143,7 @@ export function CanvasTopBar({
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
+                    <ImperialModeBadge />
                     <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
                     <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
                     <Button

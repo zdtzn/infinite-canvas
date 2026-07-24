@@ -10,9 +10,21 @@ import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webd
 import { deleteServerChannel, saveServerChannel } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { ConfigMembers } from "@/components/layout/config-members";
+import { ImperialModePreferences } from "@/features/cultivation/imperial-mode";
 import { useUserStore } from "@/stores/use-user-store";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import {
+    createModelChannel,
+    modelOptionsFromChannels,
+    normalizeModelOptionValue,
+    selectableModelsByCapability,
+    useConfigStore,
+    type AiConfig,
+    type ApiCallFormat,
+    type ConfigTabKey,
+    type ModelCapability,
+    type ModelChannel,
+} from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -248,6 +260,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 <Form.Item label="系统提示词" className="mb-0">
                                     <Input.TextArea rows={4} value={config.systemPrompt} placeholder="例如：你是一位擅长电影感写实摄影的视觉导演。" onChange={(event) => updateConfig("systemPrompt", event.target.value)} />
                                 </Form.Item>
+                                <ImperialModePreferences />
                             </Form>
                         ),
                     },

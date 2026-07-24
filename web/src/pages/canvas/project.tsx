@@ -69,6 +69,7 @@ import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
 import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
+import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
 import {
     CanvasNodeType,
@@ -148,6 +149,7 @@ export default function CanvasPage() {
 
 function InfiniteCanvasPage() {
     const { message, modal } = App.useApp();
+    const { isDouEmperor, generationSuccessMessage } = useImperialMode();
     // 订阅节点注册表版本,插件动态注册/卸载后驱动画布重渲染
     const nodeRegistryVersion = useNodeRegistryVersion((state) => state.version);
     const params = useParams<{ id: string }>();
@@ -308,7 +310,9 @@ function InfiniteCanvasPage() {
             if (!image) throw new Error(job.error || "任务没有返回图片");
             const uploaded = await uploadImage(image.dataUrl, { outputFormat: node.metadata?.imageOutputFormat });
             if (signal.aborted) return;
-            setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, width: uploaded.width, height: uploaded.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), status: NODE_STATUS_SUCCESS, errorDetails: undefined, jobId } } : item)));
+            setNodes((current) =>
+                current.map((item) => (item.id === node.id ? { ...item, width: uploaded.width, height: uploaded.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), status: NODE_STATUS_SUCCESS, errorDetails: undefined, jobId } } : item)),
+            );
         } catch (error) {
             if (signal.aborted) return;
             setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "任务恢复失败" } } : item)));
@@ -385,9 +389,7 @@ function InfiniteCanvasPage() {
             };
             setHistoryState({ canUndo: false, canRedo: false });
             setProjectLoaded(true);
-            restoredNodes
-                .filter((node) => node.metadata?.status === NODE_STATUS_LOADING && node.metadata.jobId)
-                .forEach((node) => void resumeCanvasImageJob(node, controller.signal));
+            restoredNodes.filter((node) => node.metadata?.status === NODE_STATUS_LOADING && node.metadata.jobId).forEach((node) => void resumeCanvasImageJob(node, controller.signal));
         };
         void restore();
         return cleanup;
@@ -1641,7 +1643,10 @@ function InfiniteCanvasPage() {
 
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
-        saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.mimeType || node.metadata.content)}`);
+        saveAs(
+            node.metadata.content,
+            `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.mimeType || node.metadata.content)}`,
+        );
     }, []);
 
     const saveNodeAsset = useCallback(
@@ -2291,6 +2296,7 @@ function InfiniteCanvasPage() {
                         setNodes((prev) => prev.map((node) => (node.id === nodeId && isConfigNode && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
                         return;
                     }
+                    if (hasSuccess && isDouEmperor) message.success(generationSuccessMessage("图片已生成"));
                     if (hasFailure) message.error(hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
                     setNodes((prev) =>
                         prev.map((node) =>
@@ -2804,7 +2810,9 @@ function InfiniteCanvasPage() {
                     <p className="mt-2 text-sm leading-6 text-stone-500">为避免两个标签互相覆盖，当前页面已进入只读保护。关闭另一个标签页，或确认接管编辑。</p>
                     <div className="mt-5 flex items-center justify-center gap-2">
                         <Button onClick={() => navigate("/")}>返回首页</Button>
-                        <Button type="primary" onClick={projectLock.takeOver}>接管编辑</Button>
+                        <Button type="primary" onClick={projectLock.takeOver}>
+                            接管编辑
+                        </Button>
                     </div>
                 </section>
             </main>

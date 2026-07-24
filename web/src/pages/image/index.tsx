@@ -22,6 +22,7 @@ import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
 import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
+import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationGenerationBlockReason, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 
 type GenerationLog = {
@@ -56,6 +57,7 @@ export default function ImagePage() {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const { data: cultivationProfile } = useCultivationProfile();
+    const { generationSuccessMessage } = useImperialMode();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -207,7 +209,7 @@ export default function ImagePage() {
                     images: logImages,
                 }),
             );
-            successCount ? message.success("图片已生成") : message.error(error || "生成失败");
+            successCount ? message.success(generationSuccessMessage("图片已生成")) : message.error(error || "生成失败");
         });
         if (!jobId && agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生图工作台已有任务正在运行" });
     };
@@ -446,8 +448,15 @@ export default function ImagePage() {
                                             event.preventDefault();
                                             event.currentTarget.scrollLeft += event.deltaY;
                                         }}
-                                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                                        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files); }}
+                                        onDragOver={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                        }}
+                                        onDrop={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files);
+                                        }}
                                     >
                                         {references.map((item, index) => (
                                             <div key={item.id} className="group relative size-16 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800 sm:size-20">
@@ -483,7 +492,9 @@ export default function ImagePage() {
                                                 高级参数
                                             </span>
                                             <span className="flex min-w-0 items-center gap-1.5 text-stone-500 dark:text-stone-400">
-                                                <span className="truncate text-xs font-normal">{effectiveConfig.size} · {imageResolutionLabel(effectiveConfig.quality)} · {imageGenerationQualityLabel(appliedImageQuality)} · {imageOutputFormatLabel(effectiveConfig.imageOutputFormat)}</span>
+                                                <span className="truncate text-xs font-normal">
+                                                    {effectiveConfig.size} · {imageResolutionLabel(effectiveConfig.quality)} · {imageGenerationQualityLabel(appliedImageQuality)} · {imageOutputFormatLabel(effectiveConfig.imageOutputFormat)}
+                                                </span>
                                                 <ChevronDown className="size-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
                                             </span>
                                         </summary>
@@ -517,7 +528,15 @@ export default function ImagePage() {
                                 <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                     {results.map((result, index) =>
                                         result.status === "success" && result.image ? (
-                                            <ResultImageCard key={result.id} image={result.image} index={index} savingAsset={savingAssetIds.includes(result.image.id)} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
+                                            <ResultImageCard
+                                                key={result.id}
+                                                image={result.image}
+                                                index={index}
+                                                savingAsset={savingAssetIds.includes(result.image.id)}
+                                                onEdit={addResultToReferences}
+                                                onDownload={downloadImage}
+                                                onSaveAsset={saveResultToAssets}
+                                            />
                                         ) : result.status === "failed" ? (
                                             <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
                                         ) : (

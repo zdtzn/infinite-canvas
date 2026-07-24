@@ -6,8 +6,10 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { RealmIcon } from "@/features/cultivation/realm-icon";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
+import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationRealmHero } from "@/features/cultivation/realm-hero";
 import { cultivationAccentColor, cultivationCapabilityLabel, cultivationProgressPercent, cultivationStageLabel } from "@/features/cultivation/utils";
+import { cn } from "@/lib/utils";
 import type { CultivationProfile } from "@/services/server-api";
 import { uploadProfileAvatar } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
@@ -21,6 +23,7 @@ export default function CultivationPage() {
     const { data, isLoading, isError, refetch } = useCultivationProfile();
     const user = useUserStore((state) => state.user);
     const setSession = useUserStore((state) => state.setSession);
+    const { isDouEmperor, isImperialMode, imperialHeroQuote } = useImperialMode();
     const avatarInputRef = useRef<HTMLInputElement>(null);
     const [avatarUploading, setAvatarUploading] = useState(false);
 
@@ -71,6 +74,7 @@ export default function CultivationPage() {
     const capabilityPreview = data.capabilities.slice(0, 3).map(cultivationCapabilityLabel);
     const capabilityTail = Math.max(0, data.capabilities.length - capabilityPreview.length);
     const realmHero = cultivationRealmHero(data.realmId);
+    const emperorFinalStage = isDouEmperor && finalStage;
     const heroProgressLabel = data.realmId === "realm-dou-emperor" ? "手握日月摘星辰，世间无我这般人！" : "当前修为";
     const nextStageSummary = finalStage ? "已抵达当前主题的最高境界" : data.pendingStageId ? "下一阶段正在等待管理员审批" : `距离 ${data.nextStageName} 还需 ${data.xpToNext.toLocaleString()} 修为`;
 
@@ -101,14 +105,14 @@ export default function CultivationPage() {
                     </div>
                 </header>
 
-                <section className="cultivation-hero mt-6" aria-label={`${data.realmName} 境界意境`}>
+                <section className={cn("cultivation-hero mt-6", isImperialMode && "is-imperial")} aria-label={`${data.realmName} 境界意境`}>
                     <img src={realmHero.imageSrc} alt={`${data.realmName} 境界意境`} width={1600} height={900} className="cultivation-hero-art" decoding="async" fetchPriority="high" />
                     <div className="cultivation-hero-scrim" aria-hidden="true" />
                     <div className="cultivation-hero-content">
                         <div>
                             <div className="cultivation-hero-profile">
                                 <div className="relative shrink-0">
-                                    <div className="cultivation-hero-avatar">
+                                    <div className={cn("cultivation-hero-avatar", isDouEmperor && "is-imperial")}>
                                         {avatarUrl ? <img src={avatarUrl} alt={`${data.displayName} 的头像`} width={48} height={48} className="size-full object-cover" /> : data.displayName.slice(0, 1).toUpperCase()}
                                     </div>
                                     <Tooltip title="上传头像">
@@ -152,7 +156,19 @@ export default function CultivationPage() {
                                     <span className="cultivation-hero-progress-label">{heroProgressLabel}</span>
                                     <span className="cultivation-hero-progress-value cultivation-count">{finalStage ? data.totalXp.toLocaleString() : `${data.currentXp.toLocaleString()} / ${data.requiredXp.toLocaleString()}`}</span>
                                 </div>
-                                {finalStage ? (
+                                {emperorFinalStage ? (
+                                    <>
+                                        <div className="imperial-hero-final-state">
+                                            <CheckCircle2 className="size-4" />
+                                            <div>
+                                                <span>已登临斗帝之境。</span>
+                                                <span>天地已无更高境界。</span>
+                                                <span>创作永无止境。</span>
+                                            </div>
+                                        </div>
+                                        <p className="cultivation-hero-progress-message imperial-hero-quote">{imperialHeroQuote}</p>
+                                    </>
+                                ) : finalStage ? (
                                     <>
                                         <div className="cultivation-hero-complete-state">
                                             <CheckCircle2 className="size-4" />

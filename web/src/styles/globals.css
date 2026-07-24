@@ -1247,3 +1247,464 @@
         }
     }
 }
+
+@layer components {
+    html[data-imperial-mode="true"] {
+        --background: #07111f;
+        --foreground: #eaf0f8;
+        --border: rgb(148 163 184 / 18%);
+        --ring: rgb(218 188 119 / 72%);
+        --card: #0b1727;
+        --card-foreground: #eaf0f8;
+        --popover: #0d1a2b;
+        --popover-foreground: #eaf0f8;
+        --primary: #ead7a6;
+        --primary-foreground: #111a29;
+        --secondary: #112239;
+        --secondary-foreground: #eaf0f8;
+        --muted: #102035;
+        --muted-foreground: #a4b2c7;
+        --accent: #172a43;
+        --accent-foreground: #f6ead0;
+        --input: rgb(148 163 184 / 21%);
+        --sidebar: #091525;
+        --sidebar-foreground: #eaf0f8;
+        --sidebar-primary: #ead7a6;
+        --sidebar-primary-foreground: #111a29;
+        --sidebar-accent: #14243a;
+        --sidebar-accent-foreground: #f6ead0;
+        --sidebar-border: rgb(148 163 184 / 18%);
+        --sidebar-ring: rgb(218 188 119 / 72%);
+        color-scheme: dark;
+    }
+
+    .imperial-app-shell.is-imperial {
+        position: relative;
+        isolation: isolate;
+    }
+
+    .imperial-app-shell.is-imperial::before {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        content: "";
+        opacity: 0.045;
+        background-image:
+            radial-gradient(circle at 14% 22%, #fff 0 1px, transparent 1.4px), radial-gradient(circle at 76% 18%, #f5dc9c 0 0.8px, transparent 1.3px), radial-gradient(circle at 61% 72%, #fff 0 0.7px, transparent 1.2px),
+            radial-gradient(circle at 32% 82%, #d8e8ff 0 0.8px, transparent 1.3px);
+        background-size:
+            173px 211px,
+            263px 181px,
+            197px 257px,
+            311px 229px;
+    }
+
+    .imperial-app-shell.is-imperial > *:not(.imperial-welcome) {
+        position: relative;
+        z-index: 1;
+    }
+
+    .imperial-app-shell.is-imperial > .imperial-welcome {
+        z-index: 70;
+    }
+
+    .app-logo-mark {
+        background-position: 0% 50%;
+        background-size: 160% 100%;
+    }
+
+    html[data-imperial-mode="true"] .app-logo-mark {
+        background-image: linear-gradient(105deg, #d7bd7d 0%, #fff4d3 48%, #c8a75e 100%);
+        animation: imperial-logo-breathe 3.8s ease-in-out infinite;
+    }
+
+    .imperial-mode-badge {
+        display: inline-flex;
+        height: 2rem;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0 0.5625rem;
+        border: 1px solid rgb(154 132 79 / 34%);
+        border-radius: 0.375rem;
+        color: #9b7a35;
+        background: rgb(173 142 72 / 7%);
+        font-size: 0.75rem;
+        font-weight: 650;
+        line-height: 1;
+        transition:
+            border-color 160ms ease,
+            color 160ms ease,
+            background-color 160ms ease,
+            box-shadow 160ms ease;
+    }
+
+    .dark .imperial-mode-badge {
+        color: #e6cc91;
+        background: rgb(228 201 139 / 8%);
+    }
+
+    .imperial-mode-badge:hover {
+        border-color: rgb(202 168 94 / 66%);
+        color: #a47d2d;
+        background: rgb(196 158 76 / 13%);
+    }
+
+    .dark .imperial-mode-badge:hover {
+        color: #f4dfad;
+        background: rgb(228 201 139 / 14%);
+    }
+
+    .imperial-mode-badge:focus-visible {
+        outline: 2px solid rgb(209 178 107 / 76%);
+        outline-offset: 2px;
+    }
+
+    .imperial-mode-badge-indicator {
+        width: 0.375rem;
+        height: 0.375rem;
+        border-radius: 999px;
+        background: currentColor;
+        opacity: 0.34;
+        transition:
+            opacity 160ms ease,
+            box-shadow 160ms ease;
+    }
+
+    .imperial-mode-badge[aria-checked="true"] .imperial-mode-badge-indicator {
+        opacity: 1;
+        box-shadow: 0 0 0 3px rgb(226 193 120 / 15%);
+    }
+
+    .imperial-mode-preferences {
+        margin-top: 1.5rem;
+        padding-top: 1.25rem;
+        border-top: 1px solid var(--border);
+    }
+
+    .imperial-mode-preferences-heading {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        color: #9b7a35;
+    }
+
+    .dark .imperial-mode-preferences-heading {
+        color: #e6cc91;
+    }
+
+    .imperial-mode-preferences-heading p,
+    .imperial-mode-preference-row p {
+        margin: 0.25rem 0 0;
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+        line-height: 1.3rem;
+    }
+
+    .imperial-mode-preference-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.875rem 0;
+        border-bottom: 1px solid var(--border);
+    }
+
+    html[data-imperial-mode="true"] .ant-btn-primary:not(.ant-btn-dangerous) {
+        position: relative;
+        overflow: hidden;
+    }
+
+    html[data-imperial-mode="true"] .ant-btn-primary:not(.ant-btn-dangerous):hover:not(:disabled) {
+        border-color: #d7b96e;
+        box-shadow: 0 8px 22px rgb(189 151 69 / 20%);
+    }
+
+    html[data-imperial-mode="true"] .ant-btn-primary:not(.ant-btn-dangerous)::after {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        content: "";
+        opacity: 0;
+        background: linear-gradient(105deg, transparent 34%, rgb(255 247 211 / 68%) 50%, transparent 66%);
+        transform: translateX(-115%);
+    }
+
+    html[data-imperial-mode="true"] .ant-btn-primary:not(.ant-btn-dangerous):active::after {
+        animation: imperial-button-sweep 260ms ease-out;
+    }
+
+    .cultivation-hero-content {
+        position: relative;
+        z-index: 1;
+    }
+
+    .cultivation-hero.is-imperial {
+        border-color: rgb(220 188 116 / 42%);
+        box-shadow: 0 18px 46px rgb(1 7 18 / 32%);
+    }
+
+    .cultivation-hero.is-imperial::after {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        content: "";
+        opacity: 0.22;
+        background-image:
+            radial-gradient(circle at 76% 26%, rgb(255 244 207 / 82%) 0 1px, transparent 1.6px), radial-gradient(circle at 63% 60%, rgb(178 209 255 / 58%) 0 1px, transparent 1.5px),
+            radial-gradient(circle at 91% 74%, rgb(255 231 169 / 48%) 0 0.8px, transparent 1.4px);
+        background-size:
+            180px 180px,
+            230px 230px,
+            310px 310px;
+        animation: imperial-star-shimmer 6s ease-in-out infinite alternate;
+    }
+
+    .cultivation-hero.is-imperial .cultivation-hero-art {
+        animation-duration: 72s;
+    }
+
+    .cultivation-hero-avatar.is-imperial {
+        border-color: rgb(229 197 119 / 86%);
+        box-shadow:
+            0 0 0 3px rgb(225 188 103 / 12%),
+            0 0 18px rgb(225 188 103 / 18%);
+        animation: imperial-avatar-breathe 3.6s ease-in-out infinite;
+    }
+
+    .imperial-hero-final-state {
+        display: inline-flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        margin-top: 0.625rem;
+        color: #f2daa1;
+        font-size: 0.75rem;
+        line-height: 1.25rem;
+    }
+
+    .imperial-hero-final-state > div {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0 0.5rem;
+    }
+
+    .imperial-hero-final-state > div > span + span::before {
+        margin-right: 0.5rem;
+        color: rgb(255 255 255 / 36%);
+        content: "·";
+    }
+
+    .imperial-hero-quote {
+        color: rgb(255 238 198 / 82%);
+    }
+
+    .imperial-welcome {
+        position: fixed;
+        top: 4.5rem;
+        left: 50%;
+        display: inline-flex;
+        width: max-content;
+        max-width: calc(100vw - 2rem);
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+        border: 1px solid rgb(224 191 113 / 38%);
+        border-radius: 0.5rem;
+        color: #f5e1ad;
+        background: rgb(7 16 30 / 90%);
+        box-shadow: 0 18px 46px rgb(0 0 0 / 24%);
+        backdrop-filter: blur(16px);
+        transform: translateX(-50%);
+    }
+
+    .imperial-welcome > svg {
+        color: #e4c778;
+    }
+
+    .imperial-welcome strong,
+    .imperial-welcome span {
+        display: block;
+    }
+
+    .imperial-welcome strong {
+        font-size: 0.8125rem;
+        font-weight: 650;
+        line-height: 1.2rem;
+    }
+
+    .imperial-welcome span {
+        margin-top: 0.0625rem;
+        color: rgb(255 244 216 / 68%);
+        font-size: 0.75rem;
+        line-height: 1.15rem;
+    }
+
+    .imperial-breakthrough {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 0.875rem;
+        overflow: hidden;
+        padding: 1rem 1.125rem;
+        border: 1px solid rgb(224 191 113 / 48%);
+        border-radius: 0.5rem;
+        color: #f8e7ba;
+        background: linear-gradient(112deg, rgb(7 16 30 / 97%), rgb(20 32 51 / 94%));
+        box-shadow: 0 18px 52px rgb(0 0 0 / 30%);
+    }
+
+    .imperial-breakthrough::after {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        content: "";
+        opacity: 0.42;
+        background: linear-gradient(105deg, transparent 22%, rgb(255 244 206 / 25%) 50%, transparent 76%);
+        animation: imperial-breakthrough-sweep 1.2s ease-out both;
+    }
+
+    .imperial-breakthrough-symbol {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        width: 2.5rem;
+        height: 2.5rem;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid rgb(229 197 119 / 46%);
+        border-radius: 999px;
+        color: #f0d690;
+        background: rgb(230 197 119 / 9%);
+    }
+
+    .imperial-breakthrough > div {
+        position: relative;
+        z-index: 1;
+    }
+
+    .imperial-breakthrough p,
+    .imperial-breakthrough h2 {
+        margin: 0;
+    }
+
+    .imperial-breakthrough p,
+    .imperial-breakthrough > div > span {
+        color: rgb(255 242 209 / 67%);
+        font-size: 0.75rem;
+        line-height: 1.15rem;
+    }
+
+    .imperial-breakthrough h2 {
+        margin-top: 0.0625rem;
+        color: #fff0c9;
+        font-size: 1.25rem;
+        font-weight: 650;
+        line-height: 1.45rem;
+    }
+
+    @keyframes imperial-logo-breathe {
+        0%,
+        100% {
+            background-position: 0% 50%;
+            filter: drop-shadow(0 0 0 rgb(230 201 126 / 0%));
+        }
+
+        50% {
+            background-position: 100% 50%;
+            filter: drop-shadow(0 0 7px rgb(230 201 126 / 22%));
+        }
+    }
+
+    @keyframes imperial-button-sweep {
+        from {
+            opacity: 0;
+            transform: translateX(-115%);
+        }
+
+        25% {
+            opacity: 1;
+        }
+
+        to {
+            opacity: 0;
+            transform: translateX(115%);
+        }
+    }
+
+    @keyframes imperial-star-shimmer {
+        from {
+            opacity: 0.1;
+            transform: scale(1);
+        }
+
+        to {
+            opacity: 0.28;
+            transform: scale(1.015);
+        }
+    }
+
+    @keyframes imperial-avatar-breathe {
+        0%,
+        100% {
+            box-shadow:
+                0 0 0 3px rgb(225 188 103 / 10%),
+                0 0 12px rgb(225 188 103 / 12%);
+        }
+
+        50% {
+            box-shadow:
+                0 0 0 3px rgb(225 188 103 / 17%),
+                0 0 20px rgb(225 188 103 / 20%);
+        }
+    }
+
+    @keyframes imperial-breakthrough-sweep {
+        from {
+            transform: translateX(-112%);
+        }
+
+        to {
+            transform: translateX(112%);
+        }
+    }
+
+    @media (max-width: 640px) {
+        .imperial-mode-badge {
+            padding: 0 0.5rem;
+        }
+
+        .imperial-mode-badge > span:not(.imperial-mode-badge-indicator) {
+            display: none;
+        }
+
+        .imperial-hero-final-state > div {
+            display: block;
+        }
+
+        .imperial-hero-final-state > div > span {
+            display: block;
+        }
+
+        .imperial-hero-final-state > div > span + span::before {
+            display: none;
+        }
+
+        .imperial-welcome {
+            top: 4rem;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        html[data-imperial-mode="true"] .app-logo-mark,
+        .cultivation-hero.is-imperial::after,
+        .cultivation-hero.is-imperial .cultivation-hero-art,
+        .cultivation-hero-avatar.is-imperial,
+        .imperial-breakthrough::after,
+        html[data-imperial-mode="true"] .ant-btn-primary:not(.ant-btn-dangerous):active::after {
+            animation: none;
+        }
+    }
+}

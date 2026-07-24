@@ -6,6 +6,7 @@ import { primaryNavigationTools, secondaryNavigationTools, type NavigationToolSl
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { TaskCenter } from "@/components/layout/task-center";
+import { ImperialModeBadge } from "@/features/cultivation/imperial-mode";
 import { CultivationStatusPill } from "@/features/cultivation/status-pill";
 import { cn } from "@/lib/utils";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -61,7 +62,7 @@ export function AppTopNav() {
                         <div className="flex min-w-0 items-center">
                             <Link to="/" className="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
                                 <span
-                                    className="size-5 shrink-0 bg-current"
+                                    className="app-logo-mark size-5 shrink-0 bg-current"
                                     style={{
                                         mask: "url(/logo.svg) center / contain no-repeat",
                                         WebkitMask: "url(/logo.svg) center / contain no-repeat",
@@ -130,6 +131,7 @@ export function AppTopNav() {
                                     <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label="打开 Agent" />
                                 </Tooltip>
                             </span>
+                            <ImperialModeBadge />
                             <CultivationStatusPill />
                             <TaskCenter />
                             <UserStatusActions showTaskCenter={false} />
