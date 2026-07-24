@@ -71,6 +71,7 @@ export default function CultivationPage() {
     const capabilityPreview = data.capabilities.slice(0, 3).map(cultivationCapabilityLabel);
     const capabilityTail = Math.max(0, data.capabilities.length - capabilityPreview.length);
     const realmHero = cultivationRealmHero(data.realmId);
+    const heroProgressLabel = data.realmId === "realm-dou-emperor" ? "手握日月摘星辰，世间无我这般人！" : "当前修为";
     const nextStageSummary = finalStage ? "已抵达当前主题的最高境界" : data.pendingStageId ? "下一阶段正在等待管理员审批" : `距离 ${data.nextStageName} 还需 ${data.xpToNext.toLocaleString()} 修为`;
 
     return (
@@ -148,7 +149,7 @@ export default function CultivationPage() {
                         <div className="cultivation-hero-footer">
                             <div className="cultivation-hero-progress">
                                 <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                                    <span className="cultivation-hero-progress-label">当前修为</span>
+                                    <span className="cultivation-hero-progress-label">{heroProgressLabel}</span>
                                     <span className="cultivation-hero-progress-value cultivation-count">{finalStage ? data.totalXp.toLocaleString() : `${data.currentXp.toLocaleString()} / ${data.requiredXp.toLocaleString()}`}</span>
                                 </div>
                                 {finalStage ? (
