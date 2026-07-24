@@ -27,7 +27,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             .then((status) => {
                 if (!active) return;
                 setConfigured(status.configured);
-                if (status.user) setSession({ id: status.user.userId, username: status.user.displayName, displayName: status.user.displayName, avatarUrl: "", admin: status.user.admin });
+                if (status.user) setSession({ id: status.user.userId, username: status.user.displayName, displayName: status.user.displayName, avatarUrl: status.user.avatarUrl || "", admin: status.user.admin });
                 else clearSession();
             })
             .catch((reason) => active && setError(reason instanceof Error ? reason.message : "无法连接服务端"))
@@ -52,7 +52,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setError("");
         try {
             const result = configured ? await loginAccess(values) : await setupAccess(values);
-            setSession({ id: result.user.userId, username: result.user.displayName, displayName: result.user.displayName, avatarUrl: "", admin: result.user.admin });
+            setSession({ id: result.user.userId, username: result.user.displayName, displayName: result.user.displayName, avatarUrl: result.user.avatarUrl || "", admin: result.user.admin });
         } catch (reason) {
             setError(reason instanceof Error ? reason.message : "登录失败");
         } finally {

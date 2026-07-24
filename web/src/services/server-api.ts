@@ -2,7 +2,7 @@ import { nanoid } from "nanoid";
 
 import type { ApiCallFormat, ModelChannel } from "@/stores/use-config-store";
 
-export type AuthUser = { userId: string; displayName: string; admin?: boolean };
+export type AuthUser = { userId: string; displayName: string; admin?: boolean; avatarUrl?: string };
 export type AuthStatus = { configured: boolean; authenticated: boolean; user: AuthUser | null; publicMode: boolean };
 export type ServerMember = AuthUser & { createdAt: number; disabled: boolean };
 export type ServerAsset = { key: string; url: string; mimeType: string; bytes: number; createdAt: number };
@@ -25,6 +25,7 @@ export type CultivationBreakthrough = { id: string; fromStageName: string; toSta
 export type CultivationProfile = {
     userId: string;
     displayName: string;
+    avatarUrl?: string;
     realmId: string;
     realmName: string;
     stageId: string;
@@ -54,7 +55,20 @@ export type CultivationProfile = {
     breakthrough: CultivationBreakthrough | null;
 };
 export type CultivationStageConfig = { id: string; name: string; order: number; requiredXp: number; active: boolean; capabilities: string[] };
-export type CultivationRealmConfig = { id: string; code: string; name: string; color: string; iconKey: string; animationPreset: string; sortOrder: number; dailyLimit: number | null; maxConcurrency: number; promotionPolicy: "auto" | "manual" | "boundary_manual"; active: boolean; stages: CultivationStageConfig[] };
+export type CultivationRealmConfig = {
+    id: string;
+    code: string;
+    name: string;
+    color: string;
+    iconKey: string;
+    animationPreset: string;
+    sortOrder: number;
+    dailyLimit: number | null;
+    maxConcurrency: number;
+    promotionPolicy: "auto" | "manual" | "boundary_manual";
+    active: boolean;
+    stages: CultivationStageConfig[];
+};
 export type CultivationConfiguration = { realms: CultivationRealmConfig[]; capabilities: Array<{ key: string; label: string; category: string; active: boolean }>; rewards: Record<string, number> };
 export type PagedResponse<T> = { items: T[]; page: number; pageSize: number; total: number };
 
@@ -102,6 +116,17 @@ export async function fetchServerAssetBlob(storageKey: string) {
 
 export async function deleteServerAsset(storageKey: string) {
     await serverRequest(`/api/assets/${encodeURIComponent(storageKey)}`, { method: "DELETE" });
+}
+
+export async function uploadProfileAvatar(file: File) {
+    const form = new FormData();
+    form.set("file", file, file.name || `avatar.${mimeExtension(file.type)}`);
+    const response = await fetch("/api/profile/avatar", { method: "POST", body: form, credentials: "same-origin" });
+    return readJsonResponse<{ asset: ServerAsset; avatarUrl: string }>(response);
+}
+
+export async function deleteProfileAvatar() {
+    return serverRequest<{ avatarUrl: string }>("/api/profile/avatar", { method: "DELETE" });
 }
 
 export async function submitImageJob(input: {

@@ -71,6 +71,9 @@ const MAX_IMAGE_JOB_JSON_BYTES = 32 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const MAX_ASSET_BYTES = 16 * 1024 * 1024;
 const MAX_ASSET_UPLOAD_BYTES = MAX_ASSET_BYTES + 256 * 1024;
+const AVATAR_ASSET_KEY = "image:avatar";
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const MAX_AVATAR_UPLOAD_BYTES = MAX_AVATAR_BYTES + 256 * 1024;
 const MAX_USER_ASSET_BYTES = Math.max(MAX_ASSET_BYTES, positiveInt(process.env.MAX_USER_ASSET_BYTES, 2 * 1024 * 1024 * 1024));
 const MAX_UPSTREAM_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_UPSTREAM_IMAGE_BYTES = 32 * 1024 * 1024;
@@ -193,6 +196,8 @@ async function route(request: Request, requestId: string) {
         const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
         if (userMatch && request.method === "PUT") return updateUserAccess(request, session, userMatch[1]);
         if (url.pathname === "/api/cultivation/me" && request.method === "GET") return cultivationProfile(session);
+        if (url.pathname === "/api/profile/avatar" && request.method === "POST") return uploadProfileAvatar(request, session);
+        if (url.pathname === "/api/profile/avatar" && request.method === "DELETE") return deleteProfileAvatar(session);
         const seenBreakthroughMatch = url.pathname.match(/^\/api\/cultivation\/breakthroughs\/([^/]+)\/seen$/);
         if (seenBreakthroughMatch && request.method === "POST") return markCultivationBreakthroughSeen(session, seenBreakthroughMatch[1]);
         if (url.pathname === "/api/admin/cultivation/users" && request.method === "GET") return adminCultivationUsers(url, session);
@@ -245,7 +250,7 @@ async function authStatus(request: Request) {
     const candidate = optionalSession(request);
     const user = candidate ? state.users[candidate.userId] : undefined;
     const session = candidate && user && !isUserDisabled(user) ? candidate : null;
-    return json({ configured: Boolean(state.auth.accessCodeHash), authenticated: Boolean(session), user: session || null, publicMode: true });
+    return json({ configured: Boolean(state.auth.accessCodeHash), authenticated: Boolean(session), user: session && user ? publicAuthUser(user) : null, publicMode: true });
 }
 
 async function setupAuth(request: Request) {
@@ -309,7 +314,11 @@ function authenticatedResponse(user: UserRecord) {
     const headers = new Headers();
     headers.append("Set-Cookie", sessionCookie(token, secureCookies));
     headers.append("Set-Cookie", identityCookie(identity, secureCookies));
-    return json({ authenticated: true, user: { userId: user.userId, displayName: user.displayName, admin: Boolean(user.admin) } }, 200, headers);
+    return json({ authenticated: true, user: publicAuthUser(user) }, 200, headers);
+}
+
+function publicAuthUser(user: UserRecord) {
+    return { userId: user.userId, displayName: user.displayName, admin: Boolean(user.admin), avatarUrl: avatarUrlFor(user.userId) };
 }
 
 function logout() {
@@ -361,7 +370,7 @@ function cultivationProfile(session: SessionPayload) {
     const service = requireCultivation();
     service.ensureUser(session.userId, Boolean(state.users[session.userId]?.admin));
     const { internalNote: _internalNote, ...profile } = service.getProfile(session.userId);
-    return json({ profile });
+    return json({ profile: { ...profile, avatarUrl: avatarUrlFor(session.userId) } });
 }
 
 function markCultivationBreakthroughSeen(session: SessionPayload, breakthroughId: string) {
@@ -507,8 +516,34 @@ function deleteChannel(session: SessionPayload, id: string) {
 }
 
 async function uploadAsset(request: Request, session: SessionPayload) {
+    const { form, file } = await readAssetUploadForm(request, MAX_ASSET_UPLOAD_BYTES, MAX_ASSET_BYTES, "上传请求不能超过 16 MB", "单个素材不能超过 16 MB");
+    const prefix = normalizeAssetPrefix(form.get("prefix"));
+    const requestedKey = String(form.get("storageKey") || "").trim();
+    const key = requestedKey || `${prefix}:${randomUUID()}`;
+    if (!new RegExp(`^${escapeRegExp(prefix)}:[A-Za-z0-9._:-]{1,180}$`).test(key)) throw new HttpError(400, "素材标识无效");
+    if (key === AVATAR_ASSET_KEY) throw new HttpError(400, "请通过个人头像入口上传头像");
+    const mimeType = prefix.startsWith("image") ? await resolveImageMimeType(file) : String(file.type || "application/octet-stream").toLowerCase();
+    if (prefix.startsWith("image") && !isAllowedImageMimeType(mimeType)) throw new HttpError(400, "图片素材格式无效，仅支持 PNG、JPEG、WebP 或 AVIF");
+    const { asset, replaced } = await storeAsset(session, key, file, mimeType);
+    return json({ asset: publicAsset(asset) }, replaced ? 200 : 201);
+}
+
+async function uploadProfileAvatar(request: Request, session: SessionPayload) {
+    const { file } = await readAssetUploadForm(request, MAX_AVATAR_UPLOAD_BYTES, MAX_AVATAR_BYTES, "头像文件不能超过 2 MB", "头像文件不能超过 2 MB");
+    const mimeType = await resolveImageMimeType(file);
+    if (!isAllowedImageMimeType(mimeType)) throw new HttpError(400, "头像格式无效，仅支持 PNG、JPEG、WebP 或 AVIF");
+    const { asset, replaced } = await storeAsset(session, AVATAR_ASSET_KEY, file, mimeType, true);
+    return json({ asset: publicAsset(asset), avatarUrl: avatarUrlFor(session.userId) }, replaced ? 200 : 201);
+}
+
+async function deleteProfileAvatar(session: SessionPayload) {
+    await removeAsset(session, AVATAR_ASSET_KEY);
+    return json({ avatarUrl: "" });
+}
+
+async function readAssetUploadForm(request: Request, maxUploadBytes: number, maxFileBytes: number, uploadLimitMessage: string, fileLimitMessage: string) {
     const declaredLength = Number(request.headers.get("content-length") || 0);
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_ASSET_UPLOAD_BYTES) throw new HttpError(413, "上传请求不能超过 16 MB");
+    if (Number.isFinite(declaredLength) && declaredLength > maxUploadBytes) throw new HttpError(413, uploadLimitMessage);
     let form: FormData;
     try {
         form = await request.formData();
@@ -517,13 +552,11 @@ async function uploadAsset(request: Request, session: SessionPayload) {
     }
     const file = form.get("file");
     if (!file || typeof file === "string" || file.size <= 0) throw new HttpError(400, "请选择需要上传的文件");
-    if (file.size > MAX_ASSET_BYTES) throw new HttpError(413, "单个素材不能超过 16 MB");
-    const prefix = normalizeAssetPrefix(form.get("prefix"));
-    const requestedKey = String(form.get("storageKey") || "").trim();
-    const key = requestedKey || `${prefix}:${randomUUID()}`;
-    if (!new RegExp(`^${escapeRegExp(prefix)}:[A-Za-z0-9._:-]{1,180}$`).test(key)) throw new HttpError(400, "素材标识无效");
-    const mimeType = prefix.startsWith("image") ? await resolveImageMimeType(file) : String(file.type || "application/octet-stream").toLowerCase();
-    if (prefix.startsWith("image") && !isAllowedImageMimeType(mimeType)) throw new HttpError(400, "图片素材格式无效，仅支持 PNG、JPEG、WebP 或 AVIF");
+    if (file.size > maxFileBytes) throw new HttpError(413, fileLimitMessage);
+    return { form, file };
+}
+
+async function storeAsset(session: SessionPayload, key: string, file: File, mimeType: string, refreshCreatedAt = false) {
     return withAssetMutation(async () => {
         const recordKey = assetKey(session.userId, key);
         const existing = state.assets[recordKey];
@@ -532,11 +565,11 @@ async function uploadAsset(request: Request, session: SessionPayload) {
         const directory = join(ASSET_ROOT, safeSegment(session.userId));
         mkdirSync(directory, { recursive: true });
         await Bun.write(join(directory, safeSegment(key)), file);
-        const asset: StoredAsset = { key, userId: session.userId, mimeType, bytes: file.size, createdAt: existing?.createdAt || Date.now() };
+        const asset: StoredAsset = { key, userId: session.userId, mimeType, bytes: file.size, createdAt: refreshCreatedAt || !existing ? Date.now() : existing.createdAt };
         state.assets[recordKey] = asset;
         writeState();
         assetBytesByUser.set(session.userId, usedBytes - (existing?.bytes || 0) + asset.bytes);
-        return json({ asset: publicAsset(asset) }, existing ? 200 : 201);
+        return { asset, replaced: Boolean(existing) };
     });
 }
 
@@ -544,10 +577,15 @@ function serveAsset(session: SessionPayload, key: string) {
     const asset = ownedAsset(session.userId, key);
     const path = join(ASSET_ROOT, safeSegment(session.userId), safeSegment(asset.key));
     if (!existsSync(path)) throw new HttpError(404, "素材文件不存在");
-    return new Response(Bun.file(path), { headers: { "Content-Type": asset.mimeType, "Content-Length": String(asset.bytes), "Cache-Control": "private, max-age=31536000, immutable" } });
+    return new Response(Bun.file(path), { headers: { "Content-Type": asset.mimeType, "Content-Length": String(asset.bytes), "Cache-Control": asset.key === AVATAR_ASSET_KEY ? "private, no-cache" : "private, max-age=31536000, immutable" } });
 }
 
 async function deleteAsset(session: SessionPayload, key: string) {
+    await removeAsset(session, key);
+    return new Response(null, { status: 204 });
+}
+
+async function removeAsset(session: SessionPayload, key: string) {
     const asset = ownedAsset(session.userId, key);
     const path = join(ASSET_ROOT, safeSegment(session.userId), safeSegment(asset.key));
     return withAssetMutation(async () => {
@@ -559,12 +597,20 @@ async function deleteAsset(session: SessionPayload, key: string) {
         } catch (error) {
             console.warn(JSON.stringify({ event: "asset_file_cleanup_failed", key: asset.key, message: error instanceof Error ? error.message : "unknown error" }));
         }
-        return new Response(null, { status: 204 });
     });
 }
 
 function publicAsset(asset: StoredAsset) {
-    return { key: asset.key, url: `/api/assets/${encodeURIComponent(asset.key)}`, mimeType: asset.mimeType, bytes: asset.bytes, createdAt: asset.createdAt };
+    return { key: asset.key, url: assetUrl(asset.key), mimeType: asset.mimeType, bytes: asset.bytes, createdAt: asset.createdAt };
+}
+
+function avatarUrlFor(userId: string) {
+    const asset = state.assets[assetKey(userId, AVATAR_ASSET_KEY)];
+    return asset ? `${assetUrl(asset.key)}?v=${asset.createdAt}` : "";
+}
+
+function assetUrl(key: string) {
+    return `/api/assets/${encodeURIComponent(key)}`;
 }
 
 async function createImageJob(request: Request, session: SessionPayload) {
