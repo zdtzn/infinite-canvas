@@ -21,6 +21,8 @@ import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } f
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { useCultivationProfile } from "@/features/cultivation/queries";
+import { cultivationGenerationBlockReason, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 
 type GeneratedVideo = {
     id: string;
@@ -70,7 +72,10 @@ const logStore = localforage.createInstance({ name: "infinite-canvas", storeName
 
 export default function VideoPage() {
     const { message } = App.useApp();
+    const { data: cultivationProfile } = useCultivationProfile();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const videoInputRef = useRef<HTMLInputElement>(null);
+    const audioInputRef = useRef<HTMLInputElement>(null);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -102,7 +107,18 @@ export default function VideoPage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
-    const canGenerate = Boolean(prompt.trim());
+    const requiredCapabilities = requiredCultivationCapabilities({ model, quality: effectiveConfig.quality, referenceCount: references.length, hasMask: false });
+    const generationBlockReason = cultivationProfile
+        ? cultivationGenerationBlockReason({
+              remainingToday: cultivationProfile.remainingToday,
+              unlimited: cultivationProfile.unlimited,
+              maxConcurrency: cultivationProfile.maxConcurrency,
+              capabilities: cultivationProfile.capabilities,
+              requestedCount: 1,
+              requiredCapabilities,
+          })
+        : null;
+    const canGenerate = Boolean(prompt.trim()) && !generationBlockReason;
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -247,7 +263,11 @@ export default function VideoPage() {
     };
 
     const downloadVideo = (video: GeneratedVideo) => {
-        saveAs(video.url, "video.mp4");
+        const ext = video.mimeType ? video.mimeType.split("/")[1]?.split(";")[0] || "mp4" : "mp4";
+        const safeExt = ["mp4", "webm", "mov", "avi"].includes(ext) ? ext : "mp4";
+        const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+        const slug = prompt.trim().slice(0, 40).replace(/\s+/g, "_").replace(/[^\w一-鿿-]/g, "") || "video";
+        saveAs(video.url, `${slug}_${ts}.${safeExt}`);
     };
 
     const saveResultToAssets = (video: GeneratedVideo) => {
@@ -416,7 +436,18 @@ export default function VideoPage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格" />
+                                <Input.TextArea
+                                    value={prompt}
+                                    onChange={(event) => setPrompt(event.target.value)}
+                                    onKeyDown={(event) => {
+                                        if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && canGenerate && !running) {
+                                            event.preventDefault();
+                                            void generate();
+                                        }
+                                    }}
+                                    rows={7}
+                                    placeholder="描述镜头运动、主体动作、场景氛围和画面风格（Ctrl+Enter 快速生成）"
+                                />
                             </div>
 
                             <div className="min-w-0">
@@ -431,7 +462,7 @@ export default function VideoPage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
+                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700" onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files); }}>
                                     {references.map((item, index) => (
                                         <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
                                             <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
@@ -449,11 +480,11 @@ export default function VideoPage() {
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考视频</span>
-                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => videoInputRef.current?.click()}>
                                         上传
                                     </Button>
                                 </div>
-                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
+                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700" onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files); }}>
                                     {videoReferences.map((item, index) => (
                                         <div key={item.id} className="group relative h-20 w-32 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-black dark:border-stone-800">
                                             <video src={item.url} className="size-full object-cover" muted preload="metadata" />
@@ -471,11 +502,11 @@ export default function VideoPage() {
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考音频</span>
-                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => audioInputRef.current?.click()}>
                                         上传
                                     </Button>
                                 </div>
-                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
+                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700" onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files); }}>
                                     {audioReferences.map((item, index) => (
                                         <div key={item.id} className="group relative flex h-20 w-48 shrink-0 flex-col justify-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-2 dark:border-stone-800 dark:bg-stone-900">
                                             <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
@@ -512,6 +543,11 @@ export default function VideoPage() {
                             <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
                                 开始生成
                             </Button>
+                            {generationBlockReason ? (
+                                <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
+                            ) : cultivationProfile ? (
+                                <div className="mt-2 text-center text-xs text-stone-400">{quotaText(cultivationProfile.remainingToday, cultivationProfile.unlimited)}</div>
+                            ) : null}
                         </div>
                     </div>
 
@@ -536,7 +572,7 @@ export default function VideoPage() {
             <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,video/mp4,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav"
+                accept="image/*"
                 multiple
                 className="hidden"
                 onChange={(event) => {
@@ -544,6 +580,8 @@ export default function VideoPage() {
                     event.target.value = "";
                 }}
             />
+            <input ref={videoInputRef} type="file" accept="video/mp4,video/quicktime" multiple className="hidden" onChange={(e) => { void addReferences(e.target.files); e.target.value = ""; }} />
+            <input ref={audioInputRef} type="file" accept="audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" multiple className="hidden" onChange={(e) => { void addReferences(e.target.files); e.target.value = ""; }} />
             <Drawer title="生成记录" placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
                 <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
             </Drawer>

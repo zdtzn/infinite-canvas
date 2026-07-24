@@ -1,4 +1,4 @@
-import { App, Badge, Button, Drawer, Empty, Tag, Tooltip } from "antd";
+import { App, Badge, Button, Drawer, Empty, Progress, Tag, Tooltip } from "antd";
 import { Ban, ListTodo, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -84,9 +84,19 @@ export function TaskCenter() {
                                     </Tag>
                                 </div>
                                 {progress ? (
-                                    <div className="mt-2 h-1 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800" role="status" aria-label={job.status === "queued" ? "任务正在排队" : "任务正在生成"}>
-                                        <div className="h-full w-2/5 animate-pulse rounded-full bg-stone-500 dark:bg-stone-300" />
-                                    </div>
+                                    job.result && job.result.successCount > 0 ? (
+                                        <Progress
+                                            className="mt-2"
+                                            percent={Math.round((job.result.successCount / job.count) * 100)}
+                                            size="small"
+                                            showInfo={false}
+                                            status="active"
+                                        />
+                                    ) : (
+                                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800" role="status" aria-label={job.status === "queued" ? "任务正在排队" : "任务正在生成"}>
+                                            <div className="animate-[shimmer_1.6s_ease-in-out_infinite] h-full w-1/3 rounded-full bg-stone-400 dark:bg-stone-400" style={{ backgroundImage: "linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent)" }} />
+                                        </div>
+                                    )
                                 ) : null}
                                 <div className="mt-2 flex items-center justify-between gap-3 text-xs text-stone-500">
                                     <span>{job.count} 张 · {formatDuration(Math.max(0, duration))}</span>

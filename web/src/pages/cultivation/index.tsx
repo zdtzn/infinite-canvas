@@ -30,7 +30,10 @@ export default function CultivationPage() {
                             {data.displayName.slice(0, 1).toUpperCase()}
                         </div>
                         <div className="min-w-0">
-                            <div className="text-sm text-stone-500 dark:text-stone-400">我的修炼</div>
+                            <div className="text-sm text-stone-500 dark:text-stone-400">
+                                等级与额度
+                                <span className="ml-1.5 text-xs text-stone-400 dark:text-stone-500">· 等级越高，每日生成次数和并发上限越高</span>
+                            </div>
                             <h1 className="mt-1 truncate text-2xl font-semibold text-stone-950 dark:text-stone-100">{data.displayName}</h1>
                         </div>
                     </div>

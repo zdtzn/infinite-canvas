@@ -1,23 +1,10 @@
 import { ArrowRight } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { App, Button, Image, Tag } from "antd";
 import { useNavigate } from "react-router-dom";
 
 import { fetchPrompts, type Prompt } from "@/services/api/prompts";
 import { cn } from "@/lib/utils";
-
-function Highlighter({ action, color, children }: { action: "highlight" | "underline"; color: string; children: ReactNode }) {
-    return (
-        <span className="relative inline-block px-1">
-            {action === "highlight" ? (
-                <span className="absolute inset-x-0 bottom-0 top-1 rounded-sm opacity-45" style={{ backgroundColor: color }} />
-            ) : (
-                <span className="absolute inset-x-0 bottom-0 h-1 rounded-full opacity-80" style={{ backgroundColor: color }} />
-            )}
-            <span className="relative font-medium text-stone-800 dark:text-stone-200">{children}</span>
-        </span>
-    );
-}
 
 export default function IndexPage() {
     const { message } = App.useApp();
@@ -38,15 +25,7 @@ export default function IndexPage() {
                 <div className="flex min-h-[440px] flex-col items-center justify-center border-b border-stone-200 py-16 text-center dark:border-stone-800">
                     <h1 className="max-w-4xl text-balance text-4xl font-semibold tracking-normal sm:text-5xl">无限画布</h1>
                     <p className="mt-5 max-w-2xl text-balance text-base leading-7 text-stone-500 dark:text-stone-400">
-                        在
-                        <Highlighter action="underline" color="#FF9800">
-                            无限画布
-                        </Highlighter>
-                        中生成、连接和重组
-                        <Highlighter action="highlight" color="#87CEFA">
-                            图片、文字与图形
-                        </Highlighter>
-                        ，让创作从单次生成变成连续推演。
+                        在<strong className="font-semibold text-stone-950 dark:text-stone-100">无限画布</strong>中生成、连接和重组<strong className="font-semibold text-stone-950 dark:text-stone-100">图片、文字与图形</strong>，让创作从单次生成变成连续推演。
                     </p>
                     <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
                         <Button type="primary" size="large" onClick={() => navigate("/canvas?mode=new")} icon={<ArrowRight className="size-4" />} iconPlacement="end">

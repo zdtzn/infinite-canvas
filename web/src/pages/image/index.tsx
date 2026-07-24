@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
@@ -11,7 +11,7 @@ import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { modelOptionLabel, resolveModelChannel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { resolveModelChannel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -410,7 +410,18 @@ export default function ImagePage() {
                                             </Button>
                                         </div>
                                     </div>
-                                    <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={6} placeholder="描述画面主体、风格、构图、光线和用途" />
+                                    <Input.TextArea
+                                        value={prompt}
+                                        onChange={(event) => setPrompt(event.target.value)}
+                                        onKeyDown={(event) => {
+                                            if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && canGenerate && !running) {
+                                                event.preventDefault();
+                                                void generate();
+                                            }
+                                        }}
+                                        rows={6}
+                                        placeholder="描述画面主体、风格、构图、光线和用途（Ctrl+Enter 快速生成）"
+                                    />
                                 </div>
 
                                 <div className="min-w-0">
@@ -435,6 +446,8 @@ export default function ImagePage() {
                                             event.preventDefault();
                                             event.currentTarget.scrollLeft += event.deltaY;
                                         }}
+                                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                                        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files); }}
                                     >
                                         {references.map((item, index) => (
                                             <div key={item.id} className="group relative size-16 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800 sm:size-20">
@@ -455,6 +468,13 @@ export default function ImagePage() {
                                     </div>
                                 </div>
 
+                                <div>
+                                    <label className="block min-w-0">
+                                        <span className="mb-1.5 block text-sm font-medium text-stone-600 dark:text-stone-400">模型</span>
+                                        <ModelPicker config={effectiveConfig} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+                                    </label>
+                                </div>
+
                                 <div className="rounded-lg border border-stone-200 dark:border-stone-800">
                                     <details className="group">
                                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium marker:content-none">
@@ -463,7 +483,7 @@ export default function ImagePage() {
                                                 高级参数
                                             </span>
                                             <span className="flex min-w-0 items-center gap-1.5 text-stone-500 dark:text-stone-400">
-                                                <span className="truncate text-xs font-normal">{modelOptionLabel(effectiveConfig, model)} · {effectiveConfig.size} · {imageResolutionLabel(effectiveConfig.quality)} · {imageGenerationQualityLabel(appliedImageQuality)} · {imageOutputFormatLabel(effectiveConfig.imageOutputFormat)}</span>
+                                                <span className="truncate text-xs font-normal">{effectiveConfig.size} · {imageResolutionLabel(effectiveConfig.quality)} · {imageGenerationQualityLabel(appliedImageQuality)} · {imageOutputFormatLabel(effectiveConfig.imageOutputFormat)}</span>
                                                 <ChevronDown className="size-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
                                             </span>
                                         </summary>
@@ -595,7 +615,7 @@ function ResultImageCard({
                         </Button>
                     </Tooltip>
                     <Tooltip title="加入参考图">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<PenLine className="size-3.5" />} onClick={() => void onEdit(image, index)}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<ImagePlus className="size-3.5" />} onClick={() => void onEdit(image, index)}>
                             加入参考图
                         </Button>
                     </Tooltip>

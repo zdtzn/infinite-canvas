@@ -267,7 +267,19 @@ export default function AssetsPage() {
                         ))}
                     </div>
 
-                    {!visibleAssets.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有找到资产" className="py-20" /> : null}
+                    {!visibleAssets.length && (
+                        validAssets.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
+                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="text-stone-500">素材库还是空的</span>} />
+                                <Button type="primary" onClick={openCreate}>新增第一个素材</Button>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
+                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="text-stone-500">当前筛选条件下没有结果</span>} />
+                                <Button onClick={() => { setKeyword(""); setKindFilter("all"); }}>清除筛选条件</Button>
+                            </div>
+                        )
+                    )}
 
                     <div className="flex justify-center">
                         <Pagination

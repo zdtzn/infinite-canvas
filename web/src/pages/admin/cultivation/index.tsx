@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Drawer, Empty, Form, Input, InputNumber, Modal, Result, Select, Switch, Table, Tabs, Tag } from "antd";
 import { Check, Edit3, RefreshCw, Sparkles } from "lucide-react";
-import { useMemo, useState } from "react";
+import { createRef, forwardRef, useImperativeHandle, useMemo, useState } from "react";
 
 import { previewCultivationBreakthrough } from "@/features/cultivation/breakthrough-overlay";
 import { cultivationStageLabel } from "@/features/cultivation/utils";
@@ -273,8 +273,7 @@ function ConfigurationPanel() {
                         title: "颜色",
                         render: (_, row) => (
                             <span className="inline-flex items-center gap-2">
-                                <span className="size-4 rounded-sm border" style={{ background: row.color }} />
-                                {row.color}
+                                <span className="size-4 rounded-sm border" style={{ background: row.color }} title={row.color} />
                             </span>
                         ),
                         width: 130,
@@ -495,14 +494,90 @@ function LogsPanel() {
     );
 }
 
+function formatLogValue(value: unknown, key: string): string {
+    if (value === null || value === undefined) return "-";
+    if (typeof value === "boolean") return value ? "是" : "否";
+    if (typeof value === "number") {
+        if (key.endsWith("_at")) return new Date(value).toLocaleString("zh-CN", { hour12: false });
+        return value.toLocaleString("zh-CN");
+    }
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+}
+
+function getLogColumns(kind: string) {
+    const col = (title: string, key: string, width?: number) => ({
+        title,
+        dataIndex: key,
+        key,
+        width,
+        ellipsis: true,
+        render: (value: unknown) => formatLogValue(value, key),
+    });
+
+    if (kind === "ledger") {
+        return [
+            col("用户", "display_name", 130),
+            col("修为变化", "delta", 100),
+            col("余额", "balance_after", 100),
+            col("来源", "source", 120),
+            col("备注", "note"),
+            col("时间", "created_at", 160),
+        ];
+    }
+    if (kind === "usage") {
+        return [
+            col("用户", "display_name", 130),
+            col("操作", "action", 130),
+            col("图片数", "images", 80),
+            col("任务", "job_id"),
+            col("时间", "created_at", 160),
+        ];
+    }
+    if (kind === "audit-logs") {
+        return [
+            col("管理员", "admin_name", 130),
+            col("操作", "action", 150),
+            col("目标用户", "target_name", 130),
+            col("原因", "reason"),
+            col("时间", "created_at", 160),
+        ];
+    }
+    if (kind === "login-logs") {
+        return [
+            col("用户", "display_name", 130),
+            col("方式", "method", 100),
+            col("时间", "created_at", 160),
+        ];
+    }
+    if (kind === "breakthroughs") {
+        return [
+            col("用户", "display_name", 130),
+            col("当前境界", "from_stage", 130),
+            col("目标境界", "to_stage", 130),
+            col("状态", "status", 90),
+            col("审批人", "approved_by", 110),
+            col("原因", "reason"),
+            col("时间", "created_at", 160),
+        ];
+    }
+    // Unknown kind: render all non-internal fields as a single summary cell
+    return [
+        {
+            title: "内容",
+            key: "fallback",
+            render: (_: unknown, row: Record<string, unknown>) =>
+                Object.entries(row)
+                    .filter(([k]) => !k.endsWith("_json") && k !== "ip_hash")
+                    .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+                    .join(" | "),
+        },
+    ];
+}
+
 function LogPanel({ kind }: { kind: "ledger" | "usage" | "audit-logs" | "login-logs" | "breakthroughs" }) {
     const [page, setPage] = useState(1);
     const { data, isFetching } = useQuery({ queryKey: ["admin", "cultivation", kind, page], queryFn: () => fetchCultivationLog<Record<string, unknown>>(kind, page, 20) });
-    const keys = data?.items.length
-        ? Object.keys(data.items[0])
-              .filter((key) => !key.endsWith("_json") && key !== "ip_hash")
-              .slice(0, 8)
-        : [];
     return (
         <Table
             rowKey={(row) => String(row.id || row.job_id || JSON.stringify(row))}
@@ -510,35 +585,47 @@ function LogPanel({ kind }: { kind: "ledger" | "usage" | "audit-logs" | "login-l
             dataSource={data?.items || []}
             scroll={{ x: 900 }}
             pagination={{ current: page, pageSize: 20, total: data?.total || 0, onChange: setPage, showSizeChanger: false }}
-            columns={keys.map((key) => ({
-                title: key.replaceAll("_", " "),
-                dataIndex: key,
-                ellipsis: true,
-                render: (value: unknown) => (typeof value === "number" && key.endsWith("_at") ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : String(value ?? "-")),
-            }))}
+            columns={getLogColumns(kind)}
         />
     );
 }
 
+interface ReasonFormHandle {
+    validate: () => Promise<string>;
+}
+
+const ReasonFormContent = forwardRef<ReasonFormHandle, object>(function ReasonFormContent(_, ref) {
+    const [form] = Form.useForm<{ reason: string }>();
+    useImperativeHandle(ref, () => ({
+        validate: () => form.validateFields().then((values) => values.reason.trim()),
+    }));
+    return (
+        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
+            <Form.Item
+                name="reason"
+                rules={[
+                    { required: true, message: "请填写操作原因" },
+                    { min: 5, message: "原因至少需要5个字符" },
+                ]}
+            >
+                <Input.TextArea autoFocus rows={3} placeholder="请输入操作原因" />
+            </Form.Item>
+        </Form>
+    );
+});
+
 function promptReason(title: string, onConfirm: (reason: string) => void) {
-    let reason = "";
+    const contentRef = createRef<ReasonFormHandle>();
     Modal.confirm({
         title,
-        content: (
-            <Input.TextArea
-                autoFocus
-                rows={3}
-                placeholder="请输入操作原因"
-                onChange={(event) => {
-                    reason = event.target.value;
-                }}
-            />
-        ),
+        icon: null,
+        content: <ReasonFormContent ref={contentRef} />,
         okText: "确认",
         cancelText: "取消",
-        onOk: () => {
-            if (reason.trim().length < 2) return Promise.reject(new Error("请填写原因"));
-            onConfirm(reason.trim());
+        onOk: async () => {
+            if (!contentRef.current) return Promise.reject();
+            const reason = await contentRef.current.validate();
+            onConfirm(reason);
         },
     });
 }
