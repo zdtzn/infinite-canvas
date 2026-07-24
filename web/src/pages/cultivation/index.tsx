@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { RealmIcon } from "@/features/cultivation/realm-icon";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
+import { cultivationRealmHero } from "@/features/cultivation/realm-hero";
 import { cultivationAccentColor, cultivationCapabilityLabel, cultivationProgressPercent, cultivationStageLabel } from "@/features/cultivation/utils";
 import type { CultivationProfile } from "@/services/server-api";
 import { uploadProfileAvatar } from "@/services/server-api";
@@ -69,9 +70,11 @@ export default function CultivationPage() {
     const cultivationPercent = cultivationProgressPercent(data.currentXp, data.requiredXp, Boolean(data.pendingStageId));
     const capabilityPreview = data.capabilities.slice(0, 3).map(cultivationCapabilityLabel);
     const capabilityTail = Math.max(0, data.capabilities.length - capabilityPreview.length);
+    const realmHero = cultivationRealmHero(data.realmId);
+    const nextStageSummary = finalStage ? "已抵达当前主题的最高境界" : data.pendingStageId ? "下一阶段正在等待管理员审批" : `距离 ${data.nextStageName} 还需 ${data.xpToNext.toLocaleString()} 修为`;
 
     return (
-        <main className="cultivation-page h-full overflow-y-auto bg-background" style={{ "--cultivation-accent": accentColor } as CSSProperties}>
+        <main className="cultivation-page h-full overflow-y-auto bg-background" style={{ "--cultivation-accent": accentColor, "--cultivation-hero-position": realmHero.imagePosition || "center" } as CSSProperties}>
             <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
                 <header className="flex flex-wrap items-end justify-between gap-4">
                     <div>
@@ -97,60 +100,76 @@ export default function CultivationPage() {
                     </div>
                 </header>
 
-                <section className="cultivation-hero mt-6">
-                    <div className="cultivation-hero-main">
-                        <div className="flex min-w-0 items-center gap-4">
-                            <div className="relative shrink-0">
-                                <div className="grid size-16 place-items-center overflow-hidden rounded-full border bg-stone-50 text-xl font-semibold dark:bg-stone-900" style={{ borderColor: "var(--cultivation-accent)" }}>
-                                    {avatarUrl ? <img src={avatarUrl} alt={`${data.displayName} 的头像`} width={64} height={64} className="size-full object-cover" /> : data.displayName.slice(0, 1).toUpperCase()}
+                <section className="cultivation-hero mt-6" aria-label={`${data.realmName} 境界意境`}>
+                    <img src={realmHero.imageSrc} alt={`${data.realmName} 境界意境`} width={1600} height={900} className="cultivation-hero-art" decoding="async" fetchPriority="high" />
+                    <div className="cultivation-hero-scrim" aria-hidden="true" />
+                    <div className="cultivation-hero-content">
+                        <div>
+                            <div className="cultivation-hero-profile">
+                                <div className="relative shrink-0">
+                                    <div className="cultivation-hero-avatar">
+                                        {avatarUrl ? <img src={avatarUrl} alt={`${data.displayName} 的头像`} width={48} height={48} className="size-full object-cover" /> : data.displayName.slice(0, 1).toUpperCase()}
+                                    </div>
+                                    <Tooltip title="上传头像">
+                                        <button
+                                            type="button"
+                                            className="cultivation-avatar-trigger absolute -bottom-1 -right-1 grid size-7 place-items-center rounded-full border"
+                                            onClick={() => avatarInputRef.current?.click()}
+                                            disabled={avatarUploading}
+                                            aria-label="上传头像"
+                                        >
+                                            {avatarUploading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Camera className="size-3.5" />}
+                                        </button>
+                                    </Tooltip>
+                                    <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/avif" className="hidden" onChange={(event) => void uploadAvatar(event)} />
                                 </div>
-                                <Tooltip title="上传头像">
-                                    <button
-                                        type="button"
-                                        className="cultivation-avatar-trigger absolute -bottom-1 -right-1 grid size-9 place-items-center rounded-full border border-stone-200 bg-white text-stone-700 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300"
-                                        onClick={() => avatarInputRef.current?.click()}
-                                        disabled={avatarUploading}
-                                        aria-label="上传头像"
-                                    >
-                                        {avatarUploading ? <LoaderCircle className="size-4 animate-spin" /> : <Camera className="size-4" />}
-                                    </button>
-                                </Tooltip>
-                                <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/avif" className="hidden" onChange={(event) => void uploadAvatar(event)} />
+                                <div className="min-w-0">
+                                    <div className="truncate text-sm font-semibold text-white">{data.displayName}</div>
+                                    <div className="mt-0.5 text-xs text-white/60">UID {data.userId.slice(0, 8)}</div>
+                                </div>
                             </div>
-                            <div className="min-w-0">
-                                <div className="truncate text-base font-semibold text-stone-950 dark:text-stone-100">{data.displayName}</div>
-                                <div className="mt-1 text-sm text-stone-500 dark:text-stone-400">UID {data.userId.slice(0, 8)}</div>
+
+                            <div className="cultivation-hero-stage">
+                                <div className="cultivation-hero-realm-label">
+                                    <RealmIcon iconKey={data.iconKey} className="size-4" />
+                                    <span>当前境界</span>
+                                </div>
+                                <h2>{stageLabel}</h2>
+                                <p>{realmHero.description}</p>
+                                {capabilityPreview.length ? (
+                                    <div className="cultivation-hero-capabilities">
+                                        已开放：{capabilityPreview.join("、")}
+                                        {capabilityTail ? ` 等 ${data.capabilities.length} 项能力` : ""}
+                                    </div>
+                                ) : null}
                             </div>
                         </div>
 
-                        <div className="cultivation-stage-block">
-                            <div className="cultivation-realm-mark" aria-hidden="true">
-                                <RealmIcon iconKey={data.iconKey} className="size-5" />
+                        <div className="cultivation-hero-footer">
+                            <div className="cultivation-hero-progress">
+                                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                                    <span className="cultivation-hero-progress-label">当前修为</span>
+                                    <span className="cultivation-hero-progress-value cultivation-count">{finalStage ? data.totalXp.toLocaleString() : `${data.currentXp.toLocaleString()} / ${data.requiredXp.toLocaleString()}`}</span>
+                                </div>
+                                {finalStage ? (
+                                    <div className="cultivation-hero-complete-state">
+                                        <CheckCircle2 className="size-4" />
+                                        <span>当前主题已完成，持续创作会沉淀累计修为</span>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="cultivation-hero-progress-track" role="progressbar" aria-label="本阶段修为进度" aria-valuemin={0} aria-valuemax={data.requiredXp} aria-valuenow={Math.min(data.currentXp, data.requiredXp)}>
+                                            <span style={{ width: `${cultivationPercent}%` }} />
+                                        </div>
+                                        <p className="cultivation-hero-next-stage">{nextStageSummary}</p>
+                                    </>
+                                )}
                             </div>
-                            <div className="min-w-0">
-                                <div className="cultivation-eyebrow">当前境界</div>
-                                <h2 className="mt-1 truncate text-4xl font-semibold text-stone-950 dark:text-stone-50">{stageLabel}</h2>
-                                <p className="mt-2 text-sm text-stone-500 dark:text-stone-400">{finalStage ? "已达当前主题最高境界" : data.pendingStageId ? "下一阶段正在等待管理员审批" : `下一阶段：${data.nextStageName}`}</p>
-                            </div>
-                        </div>
-
-                        {capabilityPreview.length ? (
-                            <p className="cultivation-capability-summary">
-                                已开放：{capabilityPreview.join("、")}
-                                {capabilityTail ? ` 等 ${data.capabilities.length} 项能力` : ""}
-                            </p>
-                        ) : null}
-                    </div>
-
-                    <div className="cultivation-hero-total">
-                        <span className="cultivation-eyebrow">累计修为</span>
-                        <div className="mt-3 flex items-baseline gap-2">
-                            <strong className="cultivation-hero-total-value">{data.totalXp.toLocaleString()}</strong>
-                            <span className="text-sm text-stone-500 dark:text-stone-400">修为</span>
-                        </div>
-                        <div className="mt-5 flex items-center gap-2 text-sm text-stone-600 dark:text-stone-300">
-                            {finalStage ? <CheckCircle2 className="size-4" /> : <ArrowUpRight className="size-4" />}
-                            <span>{finalStage ? "成长已沉淀为长期创作积累" : `距离下一阶段还需 ${data.xpToNext.toLocaleString()} 修为`}</span>
+                            <Link to="/image" className="cultivation-hero-cta">
+                                <ImagePlus className="size-4" />
+                                继续创作
+                                <ArrowUpRight className="size-4" />
+                            </Link>
                         </div>
                     </div>
                 </section>
