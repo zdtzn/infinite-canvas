@@ -652,6 +652,15 @@
         gap: 0.5rem;
     }
 
+    .cultivation-hero-progress-message {
+        max-width: 37rem;
+        margin: 0.375rem 0 0;
+        color: rgb(255 255 255 / 78%);
+        font-size: 0.75rem;
+        font-weight: 600;
+        line-height: 1.35rem;
+    }
+
     .cultivation-hero-cta {
         display: inline-flex;
         min-height: 2.625rem;

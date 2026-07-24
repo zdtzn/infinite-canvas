@@ -153,16 +153,20 @@ export default function CultivationPage() {
                                     <span className="cultivation-hero-progress-value cultivation-count">{finalStage ? data.totalXp.toLocaleString() : `${data.currentXp.toLocaleString()} / ${data.requiredXp.toLocaleString()}`}</span>
                                 </div>
                                 {finalStage ? (
-                                    <div className="cultivation-hero-complete-state">
-                                        <CheckCircle2 className="size-4" />
-                                        <span>当前主题已完成，持续创作会沉淀累计修为</span>
-                                    </div>
+                                    <>
+                                        <div className="cultivation-hero-complete-state">
+                                            <CheckCircle2 className="size-4" />
+                                            <span>当前主题已完成，持续创作会沉淀累计修为</span>
+                                        </div>
+                                        <p className="cultivation-hero-progress-message">{realmHero.completedProgressMessage || realmHero.progressMessage}</p>
+                                    </>
                                 ) : (
                                     <>
                                         <div className="cultivation-hero-progress-track" role="progressbar" aria-label="本阶段修为进度" aria-valuemin={0} aria-valuemax={data.requiredXp} aria-valuenow={Math.min(data.currentXp, data.requiredXp)}>
                                             <span style={{ width: `${cultivationPercent}%` }} />
                                         </div>
                                         <p className="cultivation-hero-next-stage">{nextStageSummary}</p>
+                                        <p className="cultivation-hero-progress-message">{realmHero.progressMessage}</p>
                                     </>
                                 )}
                             </div>
