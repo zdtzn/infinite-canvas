@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { BookOpen, Keyboard, LogOut, MoreHorizontal, Puzzle, Settings2 } from "lucide-react";
+import { BookOpen, Crown, Keyboard, LogOut, MoreHorizontal, Puzzle, Settings2 } from "lucide-react";
 import { Dropdown, type MenuProps } from "antd";
 
 import { VersionReleaseModal } from "@/components/layout/version-release-modal";
@@ -11,6 +11,8 @@ import { TaskCenter } from "@/components/layout/task-center";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { logoutAccess } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { useImperialMode } from "@/features/cultivation/imperial-mode";
+import { cn } from "@/lib/utils";
 
 type UserStatusActionsProps = {
     showConfig?: boolean;
@@ -23,7 +25,9 @@ type UserStatusActionsProps = {
 export function UserStatusActions({ showConfig = true, showTaskCenter = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
+    const user = useUserStore((state) => state.user);
     const clearSession = useUserStore((state) => state.clearSession);
+    const { isDouEmperor, isImperialMode } = useImperialMode();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const canvasTheme = canvasThemes[theme];
     const naturalIconClass = "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white [&_svg]:size-4";
@@ -85,8 +89,8 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, va
         <div className="inline-flex shrink-0 items-center gap-1">
             {showTaskCenter ? <TaskCenter /> : null}
             <Dropdown menu={{ items: menuItems }} trigger={["click"]}>
-                <button type="button" className={naturalIconClass} style={iconStyle} aria-label="打开应用菜单" title="应用菜单">
-                    <MoreHorizontal className="size-4" />
+                <button type="button" className={cn(naturalIconClass, isDouEmperor && "imperial-avatar-menu-trigger", isImperialMode && "is-active")} style={iconStyle} aria-label="打开应用菜单" title="应用菜单">
+                    {isDouEmperor ? user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="size-6 rounded-full object-cover" /> : <Crown className="size-4" /> : <MoreHorizontal className="size-4" />}
                 </button>
             </Dropdown>
             <VersionReleaseModal style={versionStyle} />

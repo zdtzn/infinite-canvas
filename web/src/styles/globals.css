@@ -1300,6 +1300,19 @@
             311px 229px;
     }
 
+    .imperial-app-shell.is-imperial::after {
+        position: fixed;
+        inset: -6%;
+        z-index: 0;
+        pointer-events: none;
+        content: "";
+        opacity: 0.04;
+        background-image:
+            radial-gradient(ellipse 44% 14% at 17% 82%, rgb(173 202 236 / 58%), transparent 72%), radial-gradient(ellipse 52% 16% at 76% 16%, rgb(234 215 166 / 44%), transparent 74%),
+            repeating-radial-gradient(circle at 84% 18%, transparent 0 72px, rgb(232 215 172 / 36%) 73px, transparent 75px 112px), linear-gradient(118deg, transparent 22%, rgb(158 191 226 / 18%) 48%, transparent 72%);
+        transform: translateZ(0);
+    }
+
     .imperial-app-shell.is-imperial > *:not(.imperial-welcome) {
         position: relative;
         z-index: 1;
@@ -1317,6 +1330,10 @@
     html[data-imperial-mode="true"] .app-logo-mark {
         background-image: linear-gradient(105deg, #d7bd7d 0%, #fff4d3 48%, #c8a75e 100%);
         animation: imperial-logo-breathe 3.8s ease-in-out infinite;
+    }
+
+    html[data-imperial-mode="true"] a:hover .app-logo-mark {
+        filter: drop-shadow(0 0 8px rgb(230 201 126 / 32%));
     }
 
     .imperial-mode-badge {
@@ -1372,9 +1389,96 @@
             box-shadow 160ms ease;
     }
 
-    .imperial-mode-badge[aria-checked="true"] .imperial-mode-badge-indicator {
+    .imperial-mode-badge[data-active="true"] .imperial-mode-badge-indicator {
         opacity: 1;
         box-shadow: 0 0 0 3px rgb(226 193 120 / 15%);
+    }
+
+    .imperial-identity-card {
+        display: grid;
+        width: 14rem;
+        grid-template-columns: 2.5rem minmax(0, 1fr);
+        gap: 0.75rem;
+        padding: 0.25rem;
+        color: var(--popover-foreground);
+    }
+
+    .imperial-identity-card-mark {
+        display: grid;
+        width: 2.5rem;
+        height: 2.5rem;
+        place-items: center;
+        border: 1px solid rgb(219 186 108 / 36%);
+        border-radius: 999px;
+        color: #e6ca88;
+        background: rgb(219 186 108 / 8%);
+    }
+
+    .imperial-identity-card-eyebrow {
+        color: #b99a55;
+        font-size: 0.6875rem;
+        font-weight: 650;
+        line-height: 1rem;
+    }
+
+    .imperial-identity-card strong,
+    .imperial-identity-card p,
+    .imperial-identity-card span {
+        display: block;
+    }
+
+    .imperial-identity-card strong {
+        margin-top: 0.125rem;
+        color: #f2dfad;
+        font-size: 1rem;
+        font-weight: 650;
+        line-height: 1.4rem;
+    }
+
+    .imperial-identity-card p {
+        margin: 0;
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+        line-height: 1.15rem;
+    }
+
+    .imperial-identity-card span {
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+        line-height: 1.25rem;
+    }
+
+    .imperial-identity-card-divider {
+        height: 1px;
+        margin: 0.625rem 0;
+        background: linear-gradient(90deg, rgb(219 186 108 / 32%), transparent);
+    }
+
+    .cultivation-status-pill.is-imperial-identity {
+        border-color: rgb(209 177 102 / 38%);
+        color: #e4ca8b;
+        background: rgb(214 180 99 / 7%);
+    }
+
+    .cultivation-status-pill.is-imperial-identity:hover {
+        border-color: rgb(220 187 110 / 62%);
+        color: #f3dfad;
+        background: rgb(214 180 99 / 12%);
+    }
+
+    .imperial-avatar-menu-trigger {
+        position: relative;
+        border-radius: 999px;
+    }
+
+    .imperial-avatar-menu-trigger.is-active::before {
+        position: absolute;
+        inset: -2px;
+        pointer-events: none;
+        border: 1px solid rgb(229 197 119 / 68%);
+        border-radius: inherit;
+        content: "";
+        animation: imperial-avatar-breathe 3.8s ease-in-out infinite;
     }
 
     .imperial-mode-preferences {
@@ -1412,17 +1516,17 @@
         border-bottom: 1px solid var(--border);
     }
 
-    html[data-imperial-mode="true"] .ant-btn-primary:not(.ant-btn-dangerous) {
+    html[data-imperial-mode="true"] .imperial-generate-button.ant-btn-primary:not(.ant-btn-dangerous) {
         position: relative;
         overflow: hidden;
     }
 
-    html[data-imperial-mode="true"] .ant-btn-primary:not(.ant-btn-dangerous):hover:not(:disabled) {
+    html[data-imperial-mode="true"] .imperial-generate-button.ant-btn-primary:not(.ant-btn-dangerous):hover:not(:disabled) {
         border-color: #d7b96e;
         box-shadow: 0 8px 22px rgb(189 151 69 / 20%);
     }
 
-    html[data-imperial-mode="true"] .ant-btn-primary:not(.ant-btn-dangerous)::after {
+    html[data-imperial-mode="true"] .imperial-generate-button.ant-btn-primary:not(.ant-btn-dangerous)::after {
         position: absolute;
         inset: 0;
         pointer-events: none;
@@ -1432,8 +1536,58 @@
         transform: translateX(-115%);
     }
 
-    html[data-imperial-mode="true"] .ant-btn-primary:not(.ant-btn-dangerous):active::after {
+    html[data-imperial-mode="true"] .imperial-generate-button.ant-btn-primary:not(.ant-btn-dangerous):active::after {
         animation: imperial-button-sweep 260ms ease-out;
+    }
+
+    .imperial-success-message {
+        display: grid;
+        gap: 0.125rem;
+        text-align: left;
+    }
+
+    .imperial-success-message > span + span {
+        color: #b99a55;
+        font-size: 0.75rem;
+        line-height: 1.1rem;
+    }
+
+    html[data-imperial-mode="true"] .imperial-route-loading {
+        color: rgb(227 205 152 / 78%);
+    }
+
+    .imperial-not-found main {
+        position: relative;
+        isolation: isolate;
+        background-image:
+            radial-gradient(circle at 18% 22%, rgb(255 255 255 / 12%) 0 1px, transparent 1.4px), radial-gradient(circle at 78% 30%, rgb(229 198 125 / 12%) 0 1px, transparent 1.4px),
+            radial-gradient(ellipse at 50% 100%, rgb(90 124 166 / 15%), transparent 58%) !important;
+        background-size:
+            197px 223px,
+            281px 247px,
+            100% 100% !important;
+    }
+
+    .imperial-not-found main::before {
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        content: "";
+        opacity: 0.04;
+        background: repeating-radial-gradient(circle at 50% 42%, transparent 0 84px, rgb(232 215 172 / 42%) 85px, transparent 87px 126px);
+    }
+
+    .imperial-not-found main > section > div:first-child {
+        border-color: rgb(219 186 108 / 38%);
+        color: #e6ca88;
+        background: rgb(12 24 40 / 86%);
+        box-shadow: 0 14px 34px rgb(0 0 0 / 20%);
+    }
+
+    .imperial-not-found h1 {
+        color: #f1e5c7;
+        line-height: 1.28;
     }
 
     .cultivation-hero-content {
@@ -1702,8 +1856,9 @@
         .cultivation-hero.is-imperial::after,
         .cultivation-hero.is-imperial .cultivation-hero-art,
         .cultivation-hero-avatar.is-imperial,
+        .imperial-avatar-menu-trigger.is-active::before,
         .imperial-breakthrough::after,
-        html[data-imperial-mode="true"] .ant-btn-primary:not(.ant-btn-dangerous):active::after {
+        html[data-imperial-mode="true"] .imperial-generate-button.ant-btn-primary:not(.ant-btn-dangerous):active::after {
             animation: none;
         }
     }

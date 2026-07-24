@@ -1,8 +1,7 @@
 import { Crown } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Switch, Tooltip } from "antd";
+import { Popover, Switch, Tooltip } from "antd";
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
 
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -22,7 +21,30 @@ export const imperialHeroQuotes = [
     "手握日月摘星辰，世间无我这般人。",
 ] as const;
 
-const imperialGenerationQuotes = ["诸天万界，再添一幅画卷。", "创作已铭刻于天地。", "斗帝之笔，再落一卷。", "天地法则，为你记录此次创作。"] as const;
+export const imperialGenerationQuotes = [
+    "诸天再添一卷。",
+    "天地法则已记录此次创作。",
+    "万象已成。",
+    "一念落笔，可绘山河。",
+    "创作再次铭刻天地。",
+    "星河为卷，此作已成。",
+    "诸界灵感，于此刻凝形。",
+    "一笔既落，万象自生。",
+    "山河入画，天地留痕。",
+    "此念已化作画卷。",
+    "万法归于一幅新作。",
+    "灵感越过星海而来。",
+    "诸天万界，再添一景。",
+    "这一笔，已被天地记住。",
+    "画卷展开，万象归位。",
+    "星辰见证了这次创作。",
+    "天地辽阔，灵感无界。",
+    "万象由心，此刻成真。",
+    "规则交汇，新作已成。",
+    "斗帝之笔，再落一卷。",
+] as const;
+
+export const imperialLoadingMessages = ["演化天地法则……", "推演万象……", "绘制诸天画卷……", "重构世界……", "演算天地……"] as const;
 
 type ImperialModeContextValue = {
     isDouEmperor: boolean;
@@ -31,7 +53,7 @@ type ImperialModeContextValue = {
     imperialHeroQuote: string;
     setImperialModeEnabled: (enabled: boolean) => void;
     setImperialWelcomeEnabled: (enabled: boolean) => void;
-    generationSuccessMessage: (message: string) => string;
+    generationSuccessMessage: (message: string) => ReactNode;
 };
 
 const ImperialModeContext = createContext<ImperialModeContextValue | null>(null);
@@ -127,10 +149,16 @@ export function ImperialModeProvider({ children }: { children: ReactNode }) {
 
     const generationSuccessMessage = useCallback(
         (message: string) => {
-            if (!isDouEmperor) return message;
-            return `${message} · ${imperialQuoteFor(`${userId}:${Date.now()}`, imperialGenerationQuotes)}`;
+            if (!isImperialMode) return message;
+            const quote = imperialQuoteFor(`${userId}:${Date.now()}`, imperialGenerationQuotes);
+            return (
+                <span className="imperial-success-message">
+                    <span>{message}</span>
+                    <span>{quote}</span>
+                </span>
+            );
         },
-        [isDouEmperor, userId],
+        [isImperialMode, userId],
     );
 
     const value = useMemo(
@@ -155,18 +183,76 @@ export function useImperialMode() {
     return value;
 }
 
+export function useImperialGenerationCue() {
+    const { isImperialMode } = useImperialMode();
+    const [active, setActive] = useState(false);
+    const timeoutRef = useRef<number | null>(null);
+
+    useEffect(
+        () => () => {
+            if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
+        },
+        [],
+    );
+
+    const trigger = useCallback(() => {
+        if (!isImperialMode) return;
+        if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
+        setActive(true);
+        timeoutRef.current = window.setTimeout(() => {
+            timeoutRef.current = null;
+            setActive(false);
+        }, 300);
+    }, [isImperialMode]);
+
+    return { active: isImperialMode && active, trigger };
+}
+
+export function useImperialLoadingText(fallback: string, scope: string) {
+    const { isImperialMode } = useImperialMode();
+    const userId = useUserStore((state) => state.user?.id || "guest");
+    const seed = useMemo(() => `${userId}:${scope}:${Date.now()}`, [scope, userId]);
+    return isImperialMode ? imperialQuoteFor(seed, imperialLoadingMessages) : fallback;
+}
+
 export function ImperialModeBadge() {
-    const { isDouEmperor, isImperialMode, setImperialModeEnabled } = useImperialMode();
+    const { isDouEmperor, isImperialMode } = useImperialMode();
     if (!isDouEmperor) return null;
 
     return (
-        <Tooltip title="诸天至尊">
-            <button type="button" role="switch" aria-checked={isImperialMode} aria-label={isImperialMode ? "关闭帝临模式" : "开启帝临模式"} className="imperial-mode-badge" onClick={() => setImperialModeEnabled(!isImperialMode)}>
-                <Crown className="size-3.5 shrink-0" />
-                <span className="hidden xl:inline">斗帝</span>
-                <span>帝临模式</span>
-                <span className="imperial-mode-badge-indicator" aria-hidden="true" />
-            </button>
+        <Tooltip
+            title={
+                <span className="block py-0.5">
+                    <span className="block font-medium">当前世界最高境界</span>
+                    <span className="mt-0.5 block text-xs opacity-70">诸天万界皆可入画</span>
+                </span>
+            }
+        >
+            <Popover
+                placement="bottomRight"
+                trigger="click"
+                content={
+                    <div className="imperial-identity-card">
+                        <div className="imperial-identity-card-mark" aria-hidden="true">
+                            <Crown className="size-4" />
+                        </div>
+                        <div>
+                            <div className="imperial-identity-card-eyebrow">最高身份</div>
+                            <strong>斗帝</strong>
+                            <p>诸天至尊</p>
+                            <div className="imperial-identity-card-divider" />
+                            <span>已登临修炼终点</span>
+                            <span>创作永无止境</span>
+                        </div>
+                    </div>
+                }
+            >
+                <button type="button" data-active={isImperialMode} aria-label="查看斗帝身份" className="imperial-mode-badge">
+                    <Crown className="size-3.5 shrink-0" />
+                    <span className="imperial-mode-badge-label">帝临模式</span>
+                    <span className="imperial-mode-badge-indicator" aria-hidden="true" />
+                </button>
+            </Popover>
         </Tooltip>
     );
 }
@@ -196,7 +282,7 @@ export function ImperialModePreferences() {
             <div className="imperial-mode-preference-row">
                 <div>
                     <div className="text-sm font-medium">首页欢迎</div>
-                    <p>每天首次进入首页时显示一次斗帝欢迎提示。</p>
+                    <p>每天首次进入网站时显示一次斗帝欢迎提示。</p>
                 </div>
                 <Switch size="small" checked={imperialWelcomeEnabled} onChange={setImperialWelcomeEnabled} />
             </div>
@@ -205,7 +291,6 @@ export function ImperialModePreferences() {
 }
 
 export function ImperialWelcome() {
-    const { pathname } = useLocation();
     const reducedMotion = useReducedMotion();
     const { isDouEmperor, imperialWelcomeEnabled } = useImperialMode();
     const userId = useUserStore((state) => state.user?.id || "");
@@ -213,7 +298,7 @@ export function ImperialWelcome() {
     const handledKey = useRef("");
 
     useEffect(() => {
-        if (!isDouEmperor || !imperialWelcomeEnabled || pathname !== "/" || !userId) {
+        if (!isDouEmperor || !imperialWelcomeEnabled || !userId) {
             setVisible(false);
             return;
         }
@@ -229,7 +314,7 @@ export function ImperialWelcome() {
         setVisible(true);
         const timeout = window.setTimeout(() => setVisible(false), reducedMotion ? 650 : 2_000);
         return () => window.clearTimeout(timeout);
-    }, [imperialWelcomeEnabled, isDouEmperor, pathname, reducedMotion, userId]);
+    }, [imperialWelcomeEnabled, isDouEmperor, reducedMotion, userId]);
 
     return (
         <AnimatePresence>

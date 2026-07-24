@@ -3,11 +3,14 @@ import { LoaderCircle } from "lucide-react";
 
 import { formatDuration } from "@/lib/image-utils";
 import { cn } from "@/lib/utils";
+import { imperialLoadingMessages, useImperialMode } from "@/features/cultivation/imperial-mode";
 
 const pendingMessages = ["正在创建图片", "马上就好了", "再等等", "正在整理细节"];
 
 export function ImageGenerationPending({ className, label, compact = false }: { className?: string; label?: string; compact?: boolean }) {
     const [tick, setTick] = useState(0);
+    const [imperialMessageOffset] = useState(() => Math.floor(Math.random() * imperialLoadingMessages.length));
+    const { isImperialMode } = useImperialMode();
 
     useEffect(() => {
         const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
@@ -15,6 +18,7 @@ export function ImageGenerationPending({ className, label, compact = false }: { 
     }, []);
 
     const index = Math.floor(tick / 2) % pendingMessages.length;
+    const loadingMessage = isImperialMode ? imperialLoadingMessages[(imperialMessageOffset + Math.floor(tick / 2)) % imperialLoadingMessages.length] : pendingMessages[index];
     const progress = Math.min(98, 10 + (1 - Math.exp(-tick / 28)) * 88);
 
     return (
@@ -29,7 +33,7 @@ export function ImageGenerationPending({ className, label, compact = false }: { 
             />
             <div className="absolute left-4 top-4 flex items-center gap-2 text-[15px] font-medium text-stone-500 dark:text-stone-300">
                 <LoaderCircle className="size-4 animate-spin" />
-                <span>{label || pendingMessages[index]}</span>
+                <span>{label || loadingMessage}</span>
             </div>
             <div className="absolute bottom-4 left-4 right-4">
                 <div className="mb-2 flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">

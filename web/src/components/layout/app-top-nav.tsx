@@ -6,7 +6,7 @@ import { primaryNavigationTools, secondaryNavigationTools, type NavigationToolSl
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { TaskCenter } from "@/components/layout/task-center";
-import { ImperialModeBadge } from "@/features/cultivation/imperial-mode";
+import { ImperialModeBadge, useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 import { CultivationStatusPill } from "@/features/cultivation/status-pill";
 import { cn } from "@/lib/utils";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -17,13 +17,14 @@ const AppConfigModal = lazy(() => import("@/components/layout/app-config-modal")
 
 function DeferredAppConfigModal() {
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
+    const loadingLabel = useImperialLoadingText("正在打开配置...", "config");
     if (!isConfigOpen) return null;
 
     return (
         <Suspense
             fallback={
                 <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/10 backdrop-blur-[1px]" aria-live="polite">
-                    <span className="rounded-md border border-stone-200 bg-background px-3 py-2 text-sm text-stone-600 shadow-lg dark:border-stone-700 dark:text-stone-300">正在打开配置...</span>
+                    <span className="rounded-md border border-stone-200 bg-background px-3 py-2 text-sm text-stone-600 shadow-lg dark:border-stone-700 dark:text-stone-300">{loadingLabel}</span>
                 </div>
             }
         >

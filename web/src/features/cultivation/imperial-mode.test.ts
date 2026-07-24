@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { DOU_EMPEROR_REALM_ID, imperialHeroQuotes, imperialQuoteFor, isDouEmperorRealm, localDayKey } from "./imperial-mode";
+import { DOU_EMPEROR_REALM_ID, imperialGenerationQuotes, imperialHeroQuotes, imperialLoadingMessages, imperialQuoteFor, isDouEmperorRealm, localDayKey } from "./imperial-mode";
 
 test("recognizes only the configured Dou Emperor realm", () => {
     expect(isDouEmperorRealm(DOU_EMPEROR_REALM_ID)).toBe(true);
@@ -12,4 +12,10 @@ test("uses a stable local-day key and quote for one user-day", () => {
     expect(localDayKey(new Date(2026, 6, 24))).toBe("2026-07-24");
     expect(imperialQuoteFor("user-1:2026-07-24")).toBe(imperialQuoteFor("user-1:2026-07-24"));
     expect(imperialHeroQuotes).toContain(imperialQuoteFor("user-1:2026-07-24"));
+});
+
+test("provides a varied but bounded imperial feedback vocabulary", () => {
+    expect(imperialGenerationQuotes.length).toBeGreaterThanOrEqual(20);
+    expect(new Set(imperialGenerationQuotes).size).toBe(imperialGenerationQuotes.length);
+    expect(imperialLoadingMessages).toContain(imperialQuoteFor("loading:canvas", imperialLoadingMessages));
 });

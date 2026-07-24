@@ -22,7 +22,7 @@ import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
 import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
-import { useImperialMode } from "@/features/cultivation/imperial-mode";
+import { useImperialGenerationCue, useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationGenerationBlockReason, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 
 type GenerationLog = {
@@ -58,6 +58,7 @@ export default function ImagePage() {
     const queryClient = useQueryClient();
     const { data: cultivationProfile } = useCultivationProfile();
     const { generationSuccessMessage } = useImperialMode();
+    const imperialGenerationCue = useImperialGenerationCue();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -507,8 +508,20 @@ export default function ImagePage() {
                         </div>
 
                         <div className="shrink-0 border-t border-stone-200 bg-card p-4 dark:border-stone-800">
-                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
-                                开始生成
+                            <Button
+                                type="primary"
+                                size="large"
+                                block
+                                className="imperial-generate-button"
+                                icon={<Sparkles className="size-4" />}
+                                loading={running}
+                                disabled={!canGenerate || running}
+                                onClick={() => {
+                                    imperialGenerationCue.trigger();
+                                    generate();
+                                }}
+                            >
+                                {imperialGenerationCue.active ? "天地法则演化中……" : "开始生成"}
                             </Button>
                             {generationBlockReason ? (
                                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
