@@ -586,16 +586,6 @@
         line-height: 1.6rem;
     }
 
-    .cultivation-hero-capabilities {
-        max-width: 38rem;
-        margin-top: 1rem;
-        padding-left: 0.75rem;
-        border-left: 1px solid rgb(255 255 255 / 30%);
-        color: rgb(255 255 255 / 62%);
-        font-size: 0.75rem;
-        line-height: 1.35rem;
-    }
-
     .cultivation-hero-footer {
         display: flex;
         align-items: flex-end;
@@ -607,16 +597,13 @@
         width: min(100%, 37rem);
     }
 
-    .cultivation-hero-progress-label {
-        color: rgb(255 255 255 / 66%);
-        font-size: 0.8125rem;
-        font-weight: 600;
-    }
-
-    .cultivation-hero-progress-value {
-        color: white;
-        font-size: 0.875rem;
+    .cultivation-hero-emperor-motto {
+        width: min(100%, 37rem);
+        margin: 0;
+        color: rgb(255 255 255 / 82%);
+        font-size: 0.9375rem;
         font-weight: 650;
+        line-height: 1.5rem;
     }
 
     .cultivation-hero-progress-track {
@@ -752,6 +739,30 @@
         font-weight: 600;
     }
 
+    .imperial-growth-final-state {
+        display: grid;
+        gap: 0.875rem;
+        margin-top: 1rem;
+        padding-left: 1rem;
+        border-left: 2px solid color-mix(in srgb, var(--cultivation-accent) 62%, transparent);
+    }
+
+    .imperial-growth-final-state > div {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem 0.75rem;
+        color: var(--muted-foreground);
+        font-size: 0.8125rem;
+        line-height: 1.35rem;
+    }
+
+    .imperial-growth-final-state strong {
+        color: color-mix(in srgb, var(--cultivation-accent) 74%, var(--foreground));
+        font-size: 0.9375rem;
+        font-weight: 650;
+        line-height: 1.4rem;
+    }
+
     .cultivation-stats-grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -785,6 +796,28 @@
 
     .cultivation-notice-accent {
         border-left-color: var(--cultivation-accent);
+    }
+
+    .cultivation-capabilities-footer {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        margin-top: 1.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+        line-height: 1.35rem;
+    }
+
+    .cultivation-capabilities-footer-label {
+        flex: 0 0 auto;
+        color: var(--foreground);
+        font-weight: 600;
+    }
+
+    .cultivation-capabilities-footer p {
+        margin: 0;
     }
 
     .cultivation-avatar-trigger {
@@ -1629,32 +1662,6 @@
         animation: imperial-avatar-breathe 3.6s ease-in-out infinite;
     }
 
-    .imperial-hero-final-state {
-        display: inline-flex;
-        align-items: flex-start;
-        gap: 0.5rem;
-        margin-top: 0.625rem;
-        color: #f2daa1;
-        font-size: 0.75rem;
-        line-height: 1.25rem;
-    }
-
-    .imperial-hero-final-state > div {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0 0.5rem;
-    }
-
-    .imperial-hero-final-state > div > span + span::before {
-        margin-right: 0.5rem;
-        color: rgb(255 255 255 / 36%);
-        content: "·";
-    }
-
-    .imperial-hero-quote {
-        color: rgb(255 238 198 / 82%);
-    }
-
     .imperial-welcome {
         position: fixed;
         top: 4.5rem;
@@ -1831,18 +1838,6 @@
         }
 
         .imperial-mode-badge > span:not(.imperial-mode-badge-indicator) {
-            display: none;
-        }
-
-        .imperial-hero-final-state > div {
-            display: block;
-        }
-
-        .imperial-hero-final-state > div > span {
-            display: block;
-        }
-
-        .imperial-hero-final-state > div > span + span::before {
             display: none;
         }
 

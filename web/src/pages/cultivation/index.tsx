@@ -23,7 +23,7 @@ export default function CultivationPage() {
     const { data, isLoading, isError, refetch } = useCultivationProfile();
     const user = useUserStore((state) => state.user);
     const setSession = useUserStore((state) => state.setSession);
-    const { isDouEmperor, isImperialMode, imperialHeroQuote } = useImperialMode();
+    const { isDouEmperor, isImperialMode } = useImperialMode();
     const avatarInputRef = useRef<HTMLInputElement>(null);
     const [avatarUploading, setAvatarUploading] = useState(false);
 
@@ -75,7 +75,6 @@ export default function CultivationPage() {
     const capabilityTail = Math.max(0, data.capabilities.length - capabilityPreview.length);
     const realmHero = cultivationRealmHero(data.realmId);
     const emperorFinalStage = isDouEmperor && finalStage;
-    const heroProgressLabel = data.realmId === "realm-dou-emperor" ? "手握日月摘星辰，世间无我这般人！" : "当前修为";
     const nextStageSummary = finalStage ? "已抵达当前主题的最高境界" : data.pendingStageId ? "下一阶段正在等待管理员审批" : `距离 ${data.nextStageName} 还需 ${data.xpToNext.toLocaleString()} 修为`;
 
     return (
@@ -141,51 +140,33 @@ export default function CultivationPage() {
                                 </div>
                                 <h2>{stageLabel}</h2>
                                 <p>{realmHero.description}</p>
-                                {capabilityPreview.length ? (
-                                    <div className="cultivation-hero-capabilities">
-                                        已开放：{capabilityPreview.join("、")}
-                                        {capabilityTail ? ` 等 ${data.capabilities.length} 项能力` : ""}
-                                    </div>
-                                ) : null}
                             </div>
                         </div>
 
                         <div className="cultivation-hero-footer">
-                            <div className="cultivation-hero-progress">
-                                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                                    <span className="cultivation-hero-progress-label">{heroProgressLabel}</span>
-                                    <span className="cultivation-hero-progress-value cultivation-count">{finalStage ? data.totalXp.toLocaleString() : `${data.currentXp.toLocaleString()} / ${data.requiredXp.toLocaleString()}`}</span>
-                                </div>
-                                {emperorFinalStage ? (
-                                    <>
-                                        <div className="imperial-hero-final-state">
-                                            <CheckCircle2 className="size-4" />
-                                            <div>
-                                                <span>已登临斗帝之境。</span>
-                                                <span>天地已无更高境界。</span>
-                                                <span>创作永无止境。</span>
+                            {emperorFinalStage ? (
+                                <p className="cultivation-hero-emperor-motto">手握日月摘星辰，世间无我这般人！</p>
+                            ) : (
+                                <div className="cultivation-hero-progress">
+                                    {finalStage ? (
+                                        <>
+                                            <div className="cultivation-hero-complete-state">
+                                                <CheckCircle2 className="size-4" />
+                                                <span>当前主题已完成，持续创作会沉淀累计修为</span>
                                             </div>
-                                        </div>
-                                        <p className="cultivation-hero-progress-message imperial-hero-quote">{imperialHeroQuote}</p>
-                                    </>
-                                ) : finalStage ? (
-                                    <>
-                                        <div className="cultivation-hero-complete-state">
-                                            <CheckCircle2 className="size-4" />
-                                            <span>当前主题已完成，持续创作会沉淀累计修为</span>
-                                        </div>
-                                        <p className="cultivation-hero-progress-message">{realmHero.completedProgressMessage || realmHero.progressMessage}</p>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div className="cultivation-hero-progress-track" role="progressbar" aria-label="本阶段修为进度" aria-valuemin={0} aria-valuemax={data.requiredXp} aria-valuenow={Math.min(data.currentXp, data.requiredXp)}>
-                                            <span style={{ width: `${cultivationPercent}%` }} />
-                                        </div>
-                                        <p className="cultivation-hero-next-stage">{nextStageSummary}</p>
-                                        <p className="cultivation-hero-progress-message">{realmHero.progressMessage}</p>
-                                    </>
-                                )}
-                            </div>
+                                            <p className="cultivation-hero-progress-message">{realmHero.completedProgressMessage || realmHero.progressMessage}</p>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="cultivation-hero-progress-track" role="progressbar" aria-label="本阶段修为进度" aria-valuemin={0} aria-valuemax={data.requiredXp} aria-valuenow={Math.min(data.currentXp, data.requiredXp)}>
+                                                <span style={{ width: `${cultivationPercent}%` }} />
+                                            </div>
+                                            <p className="cultivation-hero-next-stage">{nextStageSummary}</p>
+                                            <p className="cultivation-hero-progress-message">{realmHero.progressMessage}</p>
+                                        </>
+                                    )}
+                                </div>
+                            )}
                             <Link to="/image" className="cultivation-hero-cta">
                                 <ImagePlus className="size-4" />
                                 继续创作
@@ -196,13 +177,17 @@ export default function CultivationPage() {
                 </section>
 
                 <section className="cultivation-growth-section" aria-label="成长进度">
-                    <GrowthMetric
-                        label="修为成长"
-                        value={finalStage ? "最高境界" : `${data.currentXp.toLocaleString()} / ${data.requiredXp.toLocaleString()}`}
-                        helper={finalStage ? "当前主题已完成，不再显示重复的满进度条" : data.pendingStageId ? "修为已满足突破条件，等待审批" : `还需 ${data.xpToNext.toLocaleString()} 修为`}
-                        percent={cultivationPercent}
-                        complete={finalStage}
-                    />
+                    {emperorFinalStage ? (
+                        <EmperorGrowthMetric totalXp={data.totalXp} />
+                    ) : (
+                        <GrowthMetric
+                            label="修为成长"
+                            value={finalStage ? "最高境界" : `${data.currentXp.toLocaleString()} / ${data.requiredXp.toLocaleString()}`}
+                            helper={finalStage ? "已抵达该主题定义的最高阶段" : data.pendingStageId ? "修为已满足突破条件，等待审批" : `还需 ${data.xpToNext.toLocaleString()} 修为`}
+                            percent={cultivationPercent}
+                            complete={finalStage}
+                        />
+                    )}
                     <GrowthMetric
                         label="今日创作"
                         value={data.unlimited ? "不限次数" : `剩余 ${remainingQuota} 次`}
@@ -224,8 +209,37 @@ export default function CultivationPage() {
                         {data.publicMessage ? <Notice label="来自管理员" text={data.publicMessage} /> : null}
                     </section>
                 ) : null}
+
+                {capabilityPreview.length ? (
+                    <section className="cultivation-capabilities-footer" aria-label="已开放能力">
+                        <span className="cultivation-capabilities-footer-label">能力权限</span>
+                        <p>
+                            已开放：{capabilityPreview.join("、")}
+                            {capabilityTail ? ` 等 ${data.capabilities.length} 项能力` : ""}
+                        </p>
+                    </section>
+                ) : null}
             </div>
         </main>
+    );
+}
+
+function EmperorGrowthMetric({ totalXp }: { totalXp: number }) {
+    return (
+        <div className="cultivation-growth-metric imperial-growth-metric">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                <span className="text-sm font-medium text-stone-800 dark:text-stone-200">修为成长</span>
+                <span className="cultivation-count text-sm text-stone-700 dark:text-stone-300">累计 {totalXp.toLocaleString()} 修为</span>
+            </div>
+            <div className="imperial-growth-final-state">
+                <div>
+                    <span>已登临斗帝之境。</span>
+                    <span>天地已无更高境界。</span>
+                    <span>创作永无止境。</span>
+                </div>
+                <strong>万法归一，诸天俯首。</strong>
+            </div>
+        </div>
     );
 }
 
@@ -248,7 +262,7 @@ function GrowthMetric({ label, value, helper, percent, complete, quota }: { labe
             {complete ? (
                 <div className="cultivation-complete-state mt-3">
                     <CheckCircle2 className="size-4" />
-                    <span>已完成当前主题成长</span>
+                    <span>已抵达最高阶段</span>
                 </div>
             ) : (
                 <div className="cultivation-progress-track mt-3" aria-hidden="true">

@@ -57,7 +57,7 @@ export default function ImagePage() {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const { data: cultivationProfile } = useCultivationProfile();
-    const { generationSuccessMessage } = useImperialMode();
+    const { generationSuccessMessage, isImperialMode } = useImperialMode();
     const imperialGenerationCue = useImperialGenerationCue();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const config = useConfigStore((state) => state.config);
@@ -521,7 +521,7 @@ export default function ImagePage() {
                                     generate();
                                 }}
                             >
-                                {imperialGenerationCue.active ? "天地法则演化中……" : "开始生成"}
+                                {isImperialMode && (running || imperialGenerationCue.active) ? "天地法则演化中……" : "开始生成"}
                             </Button>
                             {generationBlockReason ? (
                                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
