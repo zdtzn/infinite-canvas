@@ -6,6 +6,7 @@ import { primaryNavigationTools, secondaryNavigationTools, type NavigationToolSl
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { TaskCenter } from "@/components/layout/task-center";
+import { CultivationStatusPill } from "@/features/cultivation/status-pill";
 import { cn } from "@/lib/utils";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useAgentStore } from "@/stores/use-agent-store";
@@ -129,6 +130,7 @@ export function AppTopNav() {
                                     <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label="打开 Agent" />
                                 </Tooltip>
                             </span>
+                            <CultivationStatusPill />
                             <TaskCenter />
                             <UserStatusActions showTaskCenter={false} />
                         </div>

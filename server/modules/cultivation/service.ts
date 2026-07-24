@@ -854,29 +854,49 @@ export function createCultivationService(
   }
 
   function listLedger(userId: string | null, page = 1, pageSize = 20) {
-    return paginated(
+    return paginatedQuery(
       database,
-      "cultivation_ledger",
-      userId ? "WHERE user_id = ?" : "",
+      `SELECT l.*, u.display_name
+       FROM cultivation_ledger l
+       LEFT JOIN users u ON u.user_id = l.user_id`,
+      "cultivation_ledger l",
+      userId ? "WHERE l.user_id = ?" : "",
       userId ? [userId] : [],
+      "l.created_at",
       page,
       pageSize,
     );
   }
 
   function listGenerationUsage(userId: string | null, page = 1, pageSize = 20) {
-    return paginated(
+    return paginatedQuery(
       database,
-      "generation_usage",
-      userId ? "WHERE user_id = ?" : "",
+      `SELECT g.*, u.display_name
+       FROM generation_usage g
+       LEFT JOIN users u ON u.user_id = g.user_id`,
+      "generation_usage g",
+      userId ? "WHERE g.user_id = ?" : "",
       userId ? [userId] : [],
+      "g.created_at",
       page,
       pageSize,
     );
   }
 
   function listAuditLogs(page = 1, pageSize = 20) {
-    return paginated(database, "admin_audit_logs", "", [], page, pageSize);
+    return paginatedQuery(
+      database,
+      `SELECT a.*, admin.display_name AS admin_name, target.display_name AS target_name
+       FROM admin_audit_logs a
+       LEFT JOIN users admin ON admin.user_id = a.admin_user_id
+       LEFT JOIN users target ON target.user_id = a.target_user_id`,
+      "admin_audit_logs a",
+      "",
+      [],
+      "a.created_at",
+      page,
+      pageSize,
+    );
   }
 
   function listLoginLogs(page = 1, pageSize = 20) {
@@ -884,11 +904,18 @@ export function createCultivationService(
   }
 
   function listBreakthroughs(userId: string | null, page = 1, pageSize = 20) {
-    return paginated(
+    return paginatedQuery(
       database,
-      "breakthrough_history",
-      userId ? "WHERE user_id = ?" : "",
+      `SELECT h.*, u.display_name, source.name AS from_stage, target.name AS to_stage, approver.display_name AS approved_name
+       FROM breakthrough_history h
+       LEFT JOIN users u ON u.user_id = h.user_id
+       LEFT JOIN realm_stages source ON source.id = h.from_stage_id
+       LEFT JOIN realm_stages target ON target.id = h.to_stage_id
+       LEFT JOIN users approver ON approver.user_id = h.approved_by`,
+      "breakthrough_history h",
+      userId ? "WHERE h.user_id = ?" : "",
       userId ? [userId] : [],
+      "h.created_at",
       page,
       pageSize,
     );
@@ -1186,26 +1213,29 @@ function requireReason(reason: string) {
     throw new CultivationError("请填写调整原因", 400, "REASON_REQUIRED");
 }
 
-function paginated(
+function paginatedQuery(
   database: Database,
-  table: string,
+  selectFrom: string,
+  countFrom: string,
   where: string,
   params: Array<string | number>,
+  orderColumn: string,
   page: number,
   pageSize: number,
 ) {
-  if (!/^[a-z_]+$/i.test(table)) throw new Error("Invalid table");
+  if (!/^[a-z_.\s]+$/i.test(orderColumn))
+    throw new Error("Invalid order column");
   const safePage = Math.max(1, Math.floor(page));
   const safeSize = Math.max(1, Math.min(50, Math.floor(pageSize)));
   const items = database
     .query(
-      `SELECT * FROM ${table} ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      `${selectFrom} ${where} ORDER BY ${orderColumn} DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, safeSize, (safePage - 1) * safeSize);
   const total = Number(
     (
       database
-        .query(`SELECT COUNT(*) AS value FROM ${table} ${where}`)
+        .query(`SELECT COUNT(*) AS value FROM ${countFrom} ${where}`)
         .get(...params) as { value: number }
     ).value,
   );

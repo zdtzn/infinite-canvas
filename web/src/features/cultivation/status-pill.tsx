@@ -1,18 +1,20 @@
+import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
 
 import { RealmIcon } from "./realm-icon";
 import { useCultivationProfile } from "./queries";
-import { cultivationStageLabel, quotaText } from "./utils";
+import { cultivationAccentColor, cultivationStageLabel, quotaText } from "./utils";
 
 export function CultivationStatusPill() {
     const { data } = useCultivationProfile();
     if (!data) return null;
     const label = cultivationStageLabel(data.realmName, data.stageName);
+    const accentColor = cultivationAccentColor(data.color);
     return (
         <Link
             to="/cultivation"
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border text-xs transition hover:bg-stone-50 lg:h-8 lg:w-auto lg:min-w-0 lg:gap-2 lg:px-2.5 dark:hover:bg-stone-900"
-            style={{ borderColor: `${data.color}55`, color: data.color }}
+            className="cultivation-status-pill inline-flex size-8 shrink-0 items-center justify-center rounded-md border text-xs lg:h-8 lg:w-auto lg:min-w-0 lg:gap-2 lg:px-2.5"
+            style={{ "--cultivation-accent": accentColor } as CSSProperties}
             title={`${label} · ${quotaText(data.remainingToday, data.unlimited)}`}
             aria-label={`打开我的修炼：${label}`}
         >

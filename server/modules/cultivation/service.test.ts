@@ -166,10 +166,13 @@ describe("cultivation quota and settlement", () => {
       expect(profile.dailyLimit).toBe(25);
       expect(profile.publicMessage).toBe("keep creating");
 
-      expect(service.listLedger("user", 1, 20).items[0].amount).toBe(50);
-      expect(service.listAuditLogs(1, 20).items[0].reason).toBe(
-        "manual adjustment",
-      );
+      const ledger = service.listLedger("user", 1, 20).items[0];
+      const auditLog = service.listAuditLogs(1, 20).items[0];
+      expect(ledger.amount).toBe(50);
+      expect(ledger.display_name).toBe("User");
+      expect(auditLog.reason).toBe("manual adjustment");
+      expect(auditLog.admin_name).toBe("Admin");
+      expect(auditLog.target_name).toBe("User");
       expect(() =>
         service.updateUser("admin", "user", { xpDelta: 1 }, ""),
       ).toThrow("原因");

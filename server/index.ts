@@ -381,7 +381,8 @@ function markCultivationBreakthroughSeen(session: SessionPayload, breakthroughId
 function adminCultivationUsers(url: URL, session: SessionPayload) {
     requireAdmin(session);
     const { page, pageSize } = readPagination(url);
-    return json(requireCultivation().listUsers(page, pageSize, url.searchParams.get("search") || ""));
+    const result = requireCultivation().listUsers(page, pageSize, url.searchParams.get("search") || "");
+    return json({ ...result, items: result.items.map((item) => ({ ...item, avatarUrl: avatarUrlFor(item.userId) })) });
 }
 
 async function adminUpdateCultivationUser(request: Request, session: SessionPayload, encodedUserId: string) {
