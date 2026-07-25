@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Group, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
@@ -70,6 +71,8 @@ import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-mana
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
+import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
+import { runWithConcurrency } from "@/lib/async-pool";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
 import {
     CanvasNodeType,
@@ -150,6 +153,8 @@ export default function CanvasPage() {
 function InfiniteCanvasPage() {
     const { message, modal } = App.useApp();
     const { isDouEmperor, generationSuccessMessage } = useImperialMode();
+    const queryClient = useQueryClient();
+    const { data: cultivationProfile } = useCultivationProfile();
     // 订阅节点注册表版本,插件动态注册/卸载后驱动画布重渲染
     const nodeRegistryVersion = useNodeRegistryVersion((state) => state.version);
     const params = useParams<{ id: string }>();
@@ -2245,8 +2250,10 @@ function InfiniteCanvasPage() {
                     if (count > 1) startGenerationRequest(rootId, nodeId, nodeId, controller);
                     let hasSuccess = false;
                     let hasFailure = false;
-                    await Promise.all(
-                        targetIds.map(async (targetId) => {
+                    await runWithConcurrency(
+                        targetIds,
+                        cultivationProfile?.maxConcurrency || 1,
+                        async (targetId) => {
                             try {
                                 const image = referenceImages.length
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, imageRequestOptions(nodeId, controller)).then((items) => items[0])
@@ -2289,8 +2296,9 @@ function InfiniteCanvasPage() {
                                 finishGenerationRequest(targetId, controller);
                             }
                             return false;
-                        }),
+                        },
                     );
+                    void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
                     if (count > 1) finishGenerationRequest(rootId, controller);
                     if (controller.signal.aborted) {
                         setNodes((prev) => prev.map((node) => (node.id === nodeId && isConfigNode && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
@@ -2481,7 +2489,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
+        [cultivationProfile?.maxConcurrency, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, queryClient, startGenerationRequest],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;

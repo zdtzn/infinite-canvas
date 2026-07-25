@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Drawer, Empty, Form, Input, InputNumber, Modal, Result, Select, Switch, Table, Tabs, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Check, Edit3, Eye, Info, RefreshCw, Sparkles } from "lucide-react";
-import { createRef, forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { createRef, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useSearchParams } from "react-router-dom";
 
@@ -25,20 +25,11 @@ import {
     type CultivationStageConfig,
 } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { buildCultivationUserPatch, type CultivationUserFormValues, type CultivationUserPatch } from "./user-update";
 
 type AdminCultivationUser = CultivationProfile & { status: string };
 type AdminTabKey = "users" | "config" | "usage" | "logs";
-type UserFormValues = {
-    stageId: string;
-    currentXp?: number;
-    xpDelta?: number;
-    dailyLimitOverride?: number | null;
-    unlimited?: boolean;
-    status?: string;
-    internalNote?: string;
-    publicMessage?: string;
-    reason: string;
-};
+type UserFormValues = CultivationUserFormValues;
 type RealmFormValues = {
     name: string;
     color: string;
@@ -183,7 +174,7 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
     }, [searchFromUrl]);
 
     const mutation = useMutation({
-        mutationFn: ({ userId, values }: { userId: string; values: UserFormValues }) => updateAdminCultivationUser(userId, values),
+        mutationFn: ({ userId, values }: { userId: string; values: CultivationUserPatch }) => updateAdminCultivationUser(userId, values),
         onSuccess: () => {
             setEditing(null);
             void queryClient.invalidateQueries({ queryKey: ["admin", "cultivation"] });
@@ -203,9 +194,9 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
 
     const stageOptions = useMemo(
         () =>
-            config?.realms.map((realm) => ({
+            config?.realms.filter((realm) => realm.active).map((realm) => ({
                 label: realm.name,
-                options: realm.stages.map((stage) => ({ value: stage.id, label: cultivationStageLabel(realm.name, stage.name) })),
+                options: realm.stages.filter((stage) => stage.active).map((stage) => ({ value: stage.id, label: cultivationStageLabel(realm.name, stage.name) })),
             })) || [],
         [config],
     );
@@ -341,29 +332,31 @@ function UserDrawer({
     stageOptions: Array<{ label: string; options: Array<{ value: string; label: string }> }>;
     loading: boolean;
     onClose: () => void;
-    onSubmit: (values: UserFormValues) => void;
+    onSubmit: (values: CultivationUserPatch) => void;
 }) {
     const [form] = Form.useForm<UserFormValues>();
     const [dirty, setDirty] = useState(false);
+    const initialValuesRef = useRef<UserFormValues | null>(null);
     const requestClose = () => {
         if (!dirty || loading) return onClose();
         confirmDiscard(onClose);
     };
     const save = async () => {
         const values = await form.validateFields();
-        if (values.status && values.status !== "NORMAL" && values.status !== user?.status) {
+        const patch = buildCultivationUserPatch(initialValuesRef.current || values, values);
+        if (patch.status && patch.status !== "NORMAL" && patch.status !== user?.status) {
             Modal.confirm({
-                title: values.status === "BANNED" ? "确认封禁该账号？" : "确认停用该账号？",
+                title: patch.status === "BANNED" ? "确认封禁该账号？" : "确认停用该账号？",
                 icon: null,
                 content: "账号将无法继续登录和创建任务。该操作会记录到管理员日志。",
                 okText: "确认更改",
                 cancelText: "取消",
                 okButtonProps: { danger: true },
-                onOk: () => onSubmit(values),
+                onOk: () => onSubmit(patch),
             });
             return;
         }
-        onSubmit(values);
+        onSubmit(patch);
     };
 
     return (
@@ -376,7 +369,7 @@ function UserDrawer({
             destroyOnHidden
             afterOpenChange={(open) => {
                 if (!open || !user) return;
-                form.setFieldsValue({
+                const initialValues: UserFormValues = {
                     stageId: user.stageId,
                     currentXp: user.currentXp,
                     xpDelta: 0,
@@ -386,7 +379,9 @@ function UserDrawer({
                     internalNote: user.internalNote,
                     publicMessage: user.publicMessage,
                     reason: "",
-                });
+                };
+                initialValuesRef.current = initialValues;
+                form.setFieldsValue(initialValues);
                 setDirty(false);
             }}
             footer={

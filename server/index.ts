@@ -4,6 +4,7 @@ import { isIP } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
+import { canAccessUserAvatar } from "./lib/avatar-access";
 import { decryptSecret, encryptSecret } from "./lib/crypto-store";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
@@ -146,6 +147,11 @@ for (const job of Object.values(state.jobs)) {
     }
     imageQueue.restore(job);
 }
+cultivation?.reconcileReservations(
+    Object.values(state.jobs)
+        .filter((job) => ["queued", "running"].includes(job.status))
+        .map((job) => job.id),
+);
 pruneTerminalJobs();
 writeState();
 
@@ -196,6 +202,8 @@ async function route(request: Request, requestId: string) {
         const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
         if (userMatch && request.method === "PUT") return updateUserAccess(request, session, userMatch[1]);
         if (url.pathname === "/api/cultivation/me" && request.method === "GET") return cultivationProfile(session);
+        const profileAvatarMatch = url.pathname.match(/^\/api\/profile\/avatar\/([^/]+)$/);
+        if (profileAvatarMatch && request.method === "GET") return serveProfileAvatar(session, decodeURIComponent(profileAvatarMatch[1]));
         if (url.pathname === "/api/profile/avatar" && request.method === "POST") return uploadProfileAvatar(request, session);
         if (url.pathname === "/api/profile/avatar" && request.method === "DELETE") return deleteProfileAvatar(session);
         const seenBreakthroughMatch = url.pathname.match(/^\/api\/cultivation\/breakthroughs\/([^/]+)\/seen$/);
@@ -576,7 +584,17 @@ async function storeAsset(session: SessionPayload, key: string, file: File, mime
 
 function serveAsset(session: SessionPayload, key: string) {
     const asset = ownedAsset(session.userId, key);
-    const path = join(ASSET_ROOT, safeSegment(session.userId), safeSegment(asset.key));
+    return serveStoredAsset(asset);
+}
+
+function serveProfileAvatar(session: SessionPayload, userId: string) {
+    const requesterIsAdmin = Boolean(state.users[session.userId]?.admin);
+    if (!canAccessUserAvatar(session.userId, userId, requesterIsAdmin)) throw new HttpError(403, "无权查看该用户头像");
+    return serveStoredAsset(ownedAsset(userId, AVATAR_ASSET_KEY));
+}
+
+function serveStoredAsset(asset: StoredAsset) {
+    const path = join(ASSET_ROOT, safeSegment(asset.userId), safeSegment(asset.key));
     if (!existsSync(path)) throw new HttpError(404, "素材文件不存在");
     return new Response(Bun.file(path), { headers: { "Content-Type": asset.mimeType, "Content-Length": String(asset.bytes), "Cache-Control": asset.key === AVATAR_ASSET_KEY ? "private, no-cache" : "private, max-age=31536000, immutable" } });
 }
@@ -607,7 +625,7 @@ function publicAsset(asset: StoredAsset) {
 
 function avatarUrlFor(userId: string) {
     const asset = state.assets[assetKey(userId, AVATAR_ASSET_KEY)];
-    return asset ? `${assetUrl(asset.key)}?v=${asset.createdAt}` : "";
+    return asset ? `/api/profile/avatar/${encodeURIComponent(userId)}?v=${asset.createdAt}` : "";
 }
 
 function assetUrl(key: string) {

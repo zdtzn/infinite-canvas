@@ -23,11 +23,11 @@ describe("cultivation presentation helpers", () => {
         expect(requiredCultivationCapabilities({ model: "gpt-image-1", quality: "high", referenceCount: 2, hasMask: false })).toEqual(["generation.hd", "generation.references", "model.gpt-image"]);
     });
 
-    test("explains capability, quota and concurrency blocks before generation", () => {
+    test("explains capability and quota blocks without treating image count as job concurrency", () => {
         const base = { remainingToday: 3, unlimited: false, maxConcurrency: 2, capabilities: ["model.gpt-image"], requestedCount: 1, requiredCapabilities: ["model.gpt-image"] };
         expect(cultivationGenerationBlockReason({ ...base, requiredCapabilities: ["generation.hd", "model.gpt-image"] })).toBe("当前境界尚未开放高清生成");
         expect(cultivationGenerationBlockReason({ ...base, requestedCount: 4 })).toBe("今日仅剩 3 次，请减少生成数量");
-        expect(cultivationGenerationBlockReason({ ...base, remainingToday: 10, requestedCount: 3 })).toBe("当前境界最多同时生成 2 张图片");
+        expect(cultivationGenerationBlockReason({ ...base, remainingToday: 10, requestedCount: 3 })).toBeNull();
         expect(cultivationGenerationBlockReason(base)).toBeNull();
     });
 });

@@ -333,6 +333,234 @@ describe("cultivation quota and settlement", () => {
       store.close();
     }
   });
+
+  test("does not restore a stage capability removed by an administrator after restart", () => {
+    const { store, service, dataDir } = setup();
+    const firstStage = service.getConfiguration().realms[0].stages[0];
+    const removedCapability = firstStage.capabilities[0];
+    service.updateStage(
+      "admin",
+      firstStage.id,
+      {
+        capabilities: firstStage.capabilities.filter(
+          (capability) => capability !== removedCapability,
+        ),
+      },
+      "remove default capability",
+    );
+    store.close();
+
+    const reopened = openAppDatabase({ dataDir });
+    try {
+      const reopenedService = createCultivationService(reopened.raw!, {
+        now: () => new Date("2026-07-22T08:00:00+08:00"),
+      });
+      const reopenedStage = reopenedService
+        .getConfiguration()
+        .realms.flatMap((realm) => realm.stages)
+        .find((stage) => stage.id === firstStage.id);
+      expect(reopenedStage?.capabilities).not.toContain(removedCapability);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  test("allocates new users only to active stages in active realms", () => {
+    const { store, service } = setup();
+    try {
+      const realms = service.getConfiguration().realms;
+      service.updateRealm(
+        "admin",
+        realms[0].id,
+        { active: false },
+        "disable empty realm",
+      );
+
+      service.ensureUser("user", false);
+      expect(service.getProfile("user").realmId).toBe(realms[1].id);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("rejects disabling stages and realms assigned to current or pending users", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      const profile = service.getProfile("user");
+
+      expect(() =>
+        service.updateStage(
+          "admin",
+          profile.stageId,
+          { active: false },
+          "disable assigned stage",
+        ),
+      ).toThrow("正在使用");
+      expect(() =>
+        service.updateRealm(
+          "admin",
+          profile.realmId,
+          { active: false },
+          "disable assigned realm",
+        ),
+      ).toThrow("正在使用");
+
+      const configuration = service.getConfiguration();
+      const source = configuration.realms[0].stages.at(-1)!;
+      const target = configuration.realms[1].stages[0];
+      service.updateUser(
+        "admin",
+        "user",
+        {
+          stageId: source.id,
+          currentXp: source.requiredXp,
+          xpDelta: 1,
+        },
+        "prepare pending target",
+      );
+      expect(service.getProfile("user").pendingStageId).toBe(target.id);
+      expect(() =>
+        service.updateStage(
+          "admin",
+          target.id,
+          { active: false },
+          "disable pending stage",
+        ),
+      ).toThrow("正在使用");
+      expect(() =>
+        service.updateRealm(
+          "admin",
+          configuration.realms[1].id,
+          { active: false },
+          "disable pending realm",
+        ),
+      ).toThrow("正在使用");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("rejects assigning a user to an inactive stage or inactive realm", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      const target = service.getConfiguration().realms[1].stages[0];
+      service.updateStage(
+        "admin",
+        target.id,
+        { active: false },
+        "disable unused target",
+      );
+
+      expect(() =>
+        service.updateUser(
+          "admin",
+          "user",
+          { stageId: target.id },
+          "assign inactive target",
+        ),
+      ).toThrow("未启用");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("revalidates XP and the immediate active target before approving a breakthrough", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("admin", true);
+      service.ensureUser("user", false);
+      const configuration = service.getConfiguration();
+      const source = configuration.realms[0].stages.at(-1)!;
+      const target = configuration.realms[1].stages[0];
+      service.updateUser(
+        "admin",
+        "user",
+        {
+          stageId: source.id,
+          currentXp: source.requiredXp,
+          xpDelta: 1,
+        },
+        "prepare pending breakthrough",
+      );
+      expect(service.getProfile("user").pendingStageId).toBe(target.id);
+
+      service.updateUser(
+        "admin",
+        "user",
+        { currentXp: source.requiredXp - 1 },
+        "reduce progress below requirement",
+      );
+      expect(() =>
+        service.approveBreakthrough("admin", "user", "approve too early"),
+      ).toThrow("修为不足");
+
+      service.updateUser(
+        "admin",
+        "user",
+        { currentXp: source.requiredXp },
+        "restore progress",
+      );
+      store.raw!
+        .query("UPDATE realm_stages SET active = 0 WHERE id = ?")
+        .run(target.id);
+      expect(() =>
+        service.approveBreakthrough("admin", "user", "approve stale target"),
+      ).toThrow("待突破目标");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("reconciles orphaned reservations after restart and preserves resumable jobs", () => {
+    const { store, service, dataDir } = setup();
+    service.ensureUser("user", false);
+    for (const [jobId, count] of [
+      ["orphan-job", 2],
+      ["active-job", 1],
+    ] as const)
+      service.reserveGeneration({
+        jobId,
+        userId: "user",
+        channelId: "channel",
+        model: "gpt-image-1",
+        count,
+        quality: "auto",
+        referenceCount: 0,
+        hasMask: false,
+        activeJobs: 0,
+      });
+    expect(service.getProfile("user").remainingToday).toBe(7);
+    store.close();
+
+    const reopened = openAppDatabase({ dataDir });
+    try {
+      const reopenedService = createCultivationService(reopened.raw!, {
+        now: () => new Date("2026-07-22T08:00:00+08:00"),
+      });
+      expect(
+        reopenedService.reconcileReservations(new Set(["active-job"])),
+      ).toEqual(["orphan-job"]);
+      expect(reopenedService.getProfile("user").remainingToday).toBe(9);
+      expect(
+        reopened.raw!
+          .query("SELECT status FROM generation_usage WHERE job_id = ?")
+          .get("orphan-job"),
+      ).toEqual({ status: "refunded" });
+      expect(
+        reopened.raw!
+          .query("SELECT status FROM generation_usage WHERE job_id = ?")
+          .get("active-job"),
+      ).toEqual({ status: "reserved" });
+      expect(
+        reopenedService.reconcileReservations(new Set(["active-job"])),
+      ).toEqual([]);
+      expect(reopenedService.getProfile("user").remainingToday).toBe(9);
+    } finally {
+      reopened.close();
+    }
+  });
 });
 
 function setup() {

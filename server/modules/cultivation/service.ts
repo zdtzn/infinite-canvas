@@ -79,9 +79,15 @@ export function createCultivationService(
     if (existing) return;
     const stage = database
       .query(
-        `SELECT id FROM realm_stages WHERE active = 1 ORDER BY stage_order ${isAdmin ? "DESC" : "ASC"} LIMIT 1`,
+        `SELECT s.id FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.active = 1 AND r.active = 1 ORDER BY s.stage_order ${isAdmin ? "DESC" : "ASC"} LIMIT 1`,
       )
-      .get() as { id: string };
+      .get() as { id: string } | null;
+    if (!stage)
+      throw new CultivationError(
+        "当前没有可用的修炼阶段，请联系管理员检查境界配置",
+        503,
+        "NO_ACTIVE_STAGE",
+      );
     const timestamp = now().getTime();
     database
       .query(
@@ -113,7 +119,7 @@ export function createCultivationService(
     const unlimited = Boolean(row.unlimited_quota) || dailyLimit == null;
     const nextStage = database
       .query(
-        "SELECT id, name FROM realm_stages WHERE active = 1 AND stage_order > ? ORDER BY stage_order LIMIT 1",
+        "SELECT s.id, s.name FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.active = 1 AND r.active = 1 AND s.stage_order > ? ORDER BY s.stage_order LIMIT 1",
       )
       .get(row.stage_order) as { id: string; name: string } | null;
     const totalImages = Number(
@@ -347,24 +353,40 @@ export function createCultivationService(
         .get(jobId) as Record<string, unknown> | null;
       if (!usage || usage.status !== "reserved")
         return usage ? getProfile(String(usage.user_id)) : null;
-      const requested = Number(usage.requested_count);
-      database
-        .query(
-          "UPDATE daily_usage SET reserved_count = MAX(0, reserved_count - ?), refunded_count = refunded_count + ? WHERE user_id = ? AND usage_date = ?",
-        )
-        .run(requested, requested, usage.user_id, usage.usage_date);
-      database
-        .query(
-          "UPDATE generation_usage SET fail_count = requested_count, status = 'refunded', settled_at = ? WHERE job_id = ?",
-        )
-        .run(now().getTime(), jobId);
-      database
-        .query(
-          "UPDATE generation_usage SET estimated_cost_micros = estimated_cost_micros WHERE job_id = ?",
-        )
-        .run(jobId);
+      refundReservedUsage(usage);
       return getProfile(String(usage.user_id));
     })();
+  }
+
+  function reconcileReservations(activeJobIds: Iterable<string>) {
+    const activeJobs = new Set(activeJobIds);
+    return database.transaction(() => {
+      const orphaned: string[] = [];
+      const reservations = database
+        .query("SELECT * FROM generation_usage WHERE status = 'reserved'")
+        .all() as Array<Record<string, unknown>>;
+      for (const usage of reservations) {
+        const jobId = String(usage.job_id);
+        if (activeJobs.has(jobId)) continue;
+        refundReservedUsage(usage);
+        orphaned.push(jobId);
+      }
+      return orphaned;
+    })();
+  }
+
+  function refundReservedUsage(usage: Record<string, unknown>) {
+    const requested = Number(usage.requested_count);
+    database
+      .query(
+        "UPDATE daily_usage SET reserved_count = MAX(0, reserved_count - ?), refunded_count = refunded_count + ? WHERE user_id = ? AND usage_date = ?",
+      )
+      .run(requested, requested, usage.user_id, usage.usage_date);
+    database
+      .query(
+        "UPDATE generation_usage SET fail_count = requested_count, status = 'refunded', settled_at = ? WHERE job_id = ? AND status = 'reserved'",
+      )
+      .run(now().getTime(), usage.job_id);
   }
 
   function getConfiguration() {
@@ -448,10 +470,16 @@ export function createCultivationService(
       };
       if (input.stageId !== undefined) {
         const target = database
-          .query("SELECT id FROM realm_stages WHERE id = ? AND active = 1")
+          .query(
+            "SELECT s.id FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.id = ? AND s.active = 1 AND r.active = 1",
+          )
           .get(input.stageId);
         if (!target)
-          throw new CultivationError("目标境界不存在", 404, "STAGE_NOT_FOUND");
+          throw new CultivationError(
+            "目标修炼阶段不存在或未启用",
+            409,
+            "STAGE_INACTIVE",
+          );
         database
           .query(
             "UPDATE user_cultivation SET stage_id = ?, pending_stage_id = NULL, updated_at = ? WHERE user_id = ?",
@@ -562,8 +590,22 @@ export function createCultivationService(
           "NO_PENDING_BREAKTHROUGH",
         );
       const stage = database
-        .query("SELECT required_xp FROM realm_stages WHERE id = ?")
-        .get(current.stage_id) as { required_xp: number };
+        .query(
+          "SELECT s.required_xp FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.id = ? AND s.active = 1 AND r.active = 1",
+        )
+        .get(current.stage_id) as { required_xp: number } | null;
+      if (!stage)
+        throw new CultivationError(
+          "当前修炼阶段已停用，无法审批突破",
+          409,
+          "CURRENT_STAGE_INACTIVE",
+        );
+      if (current.current_xp < stage.required_xp)
+        throw new CultivationError(
+          "当前修为不足，无法批准突破",
+          409,
+          "BREAKTHROUGH_XP_INSUFFICIENT",
+        );
       const stages = database
         .query(
           "SELECT s.id, s.realm_id, s.stage_order, s.required_xp, r.promotion_policy FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.active = 1 AND r.active = 1 ORDER BY s.stage_order",
@@ -582,6 +624,20 @@ export function createCultivationService(
         requiredXp: item.required_xp,
         promotionPolicy: item.promotion_policy,
       }));
+      const currentStageIndex = progressStages.findIndex(
+        (item) => item.id === current.stage_id,
+      );
+      const expectedTarget = progressStages[currentStageIndex + 1];
+      if (
+        currentStageIndex < 0 ||
+        !expectedTarget ||
+        expectedTarget.id !== current.pending_stage_id
+      )
+        throw new CultivationError(
+          "待突破目标已失效或不再是下一阶段，请先检查境界配置",
+          409,
+          "BREAKTHROUGH_TARGET_STALE",
+        );
       const advanced = advanceProgress(
         {
           stageId: current.pending_stage_id,
@@ -648,50 +704,65 @@ export function createCultivationService(
     reason: string,
   ) {
     requireReason(reason);
-    const before = database
-      .query("SELECT * FROM realms WHERE id = ?")
-      .get(realmId) as Record<string, unknown> | null;
-    if (!before)
-      throw new CultivationError("境界不存在", 404, "REALM_NOT_FOUND");
-    const dailyLimit =
-      input.dailyLimit === undefined
-        ? before.daily_limit
-        : input.dailyLimit == null
-          ? null
-          : Math.max(0, Math.floor(input.dailyLimit));
-    const maxConcurrency =
-      input.maxConcurrency === undefined
-        ? before.max_concurrency
-        : Math.max(1, Math.floor(input.maxConcurrency));
-    database
-      .query(
-        "UPDATE realms SET name=?, color=?, icon_key=?, animation_preset=?, daily_limit=?, max_concurrency=?, promotion_policy=?, active=? WHERE id=?",
-      )
-      .run(
-        input.name ?? before.name,
-        input.color ?? before.color,
-        input.iconKey ?? before.icon_key,
-        input.animationPreset ?? before.animation_preset,
-        dailyLimit,
-        maxConcurrency,
-        input.promotionPolicy ?? before.promotion_policy,
-        input.active === undefined ? before.active : input.active ? 1 : 0,
-        realmId,
+    return database.transaction(() => {
+      const before = database
+        .query("SELECT * FROM realms WHERE id = ?")
+        .get(realmId) as Record<string, unknown> | null;
+      if (!before)
+        throw new CultivationError("境界不存在", 404, "REALM_NOT_FOUND");
+      if (input.active === false && Boolean(before.active)) {
+        const usage = database
+          .query(
+            "SELECT COUNT(*) AS value FROM user_cultivation uc JOIN realm_stages current_stage ON current_stage.id = uc.stage_id LEFT JOIN realm_stages pending_stage ON pending_stage.id = uc.pending_stage_id WHERE current_stage.realm_id = ? OR pending_stage.realm_id = ?",
+          )
+          .get(realmId, realmId) as { value: number };
+        if (Number(usage.value) > 0)
+          throw new CultivationError(
+            "该境界正在使用或等待突破，不能停用",
+            409,
+            "REALM_IN_USE",
+          );
+      }
+      const dailyLimit =
+        input.dailyLimit === undefined
+          ? before.daily_limit
+          : input.dailyLimit == null
+            ? null
+            : Math.max(0, Math.floor(input.dailyLimit));
+      const maxConcurrency =
+        input.maxConcurrency === undefined
+          ? before.max_concurrency
+          : Math.max(1, Math.floor(input.maxConcurrency));
+      database
+        .query(
+          "UPDATE realms SET name=?, color=?, icon_key=?, animation_preset=?, daily_limit=?, max_concurrency=?, promotion_policy=?, active=? WHERE id=?",
+        )
+        .run(
+          input.name ?? before.name,
+          input.color ?? before.color,
+          input.iconKey ?? before.icon_key,
+          input.animationPreset ?? before.animation_preset,
+          dailyLimit,
+          maxConcurrency,
+          input.promotionPolicy ?? before.promotion_policy,
+          input.active === undefined ? before.active : input.active ? 1 : 0,
+          realmId,
+        );
+      const after = database
+        .query("SELECT * FROM realms WHERE id = ?")
+        .get(realmId);
+      audit(
+        database,
+        adminUserId,
+        null,
+        "cultivation.realm.update",
+        reason,
+        before,
+        after,
+        now().getTime(),
       );
-    const after = database
-      .query("SELECT * FROM realms WHERE id = ?")
-      .get(realmId);
-    audit(
-      database,
-      adminUserId,
-      null,
-      "cultivation.realm.update",
-      reason,
-      before,
-      after,
-      now().getTime(),
-    );
-    return getConfiguration();
+      return getConfiguration();
+    })();
   }
 
   function updateStage(
@@ -707,6 +778,19 @@ export function createCultivationService(
         .get(stageId) as Record<string, unknown> | null;
       if (!before)
         throw new CultivationError("阶段不存在", 404, "STAGE_NOT_FOUND");
+      if (input.active === false && Boolean(before.active)) {
+        const usage = database
+          .query(
+            "SELECT COUNT(*) AS value FROM user_cultivation WHERE stage_id = ? OR pending_stage_id = ?",
+          )
+          .get(stageId, stageId) as { value: number };
+        if (Number(usage.value) > 0)
+          throw new CultivationError(
+            "该阶段正在使用或等待突破，不能停用",
+            409,
+            "STAGE_IN_USE",
+          );
+      }
       database
         .query(
           "UPDATE realm_stages SET name=?, required_xp=?, active=? WHERE id=?",
@@ -954,6 +1038,7 @@ export function createCultivationService(
     reserveGeneration,
     settleGeneration,
     refundGeneration,
+    reconcileReservations,
     getConfiguration,
     updateUser,
     approveBreakthrough,
@@ -980,6 +1065,7 @@ function seedDefaults(database: Database) {
     const insertStage = database.query(
       "INSERT OR IGNORE INTO realm_stages(id, realm_id, name, stage_order, required_xp) VALUES (?, ?, ?, ?, ?)",
     );
+    const createdStages: Array<{ id: string; stageOrder: number }> = [];
     let stageOrder = 1;
     for (const [realmIndex, realm] of DEFAULT_REALMS.entries()) {
       const realmId = `realm-${realm.code}`;
@@ -999,13 +1085,15 @@ function seedDefaults(database: Database) {
         stageIndex <= realm.stageCount;
         stageIndex += 1
       ) {
-        insertStage.run(
-          `${realmId}-${stageIndex}`,
+        const stageId = `${realmId}-${stageIndex}`;
+        const result = insertStage.run(
+          stageId,
           realmId,
           stageLabel(realm, stageIndex),
           stageOrder,
           requiredXp(realmIndex, stageIndex),
         );
+        if (result.changes > 0) createdStages.push({ id: stageId, stageOrder });
         stageOrder += 1;
       }
     }
@@ -1014,13 +1102,10 @@ function seedDefaults(database: Database) {
     );
     for (const capability of DEFAULT_CAPABILITIES)
       insertCapability.run(...capability);
-    const allStages = database
-      .query("SELECT id, stage_order FROM realm_stages ORDER BY stage_order")
-      .all() as Array<{ id: string; stage_order: number }>;
     const insertGrant = database.query(
       "INSERT OR IGNORE INTO stage_capabilities(stage_id, capability_key, enabled) VALUES (?, ?, 1)",
     );
-    for (const stage of allStages) {
+    for (const stage of createdStages) {
       for (const key of [
         "generation.references",
         "model.gpt-image",
@@ -1028,11 +1113,11 @@ function seedDefaults(database: Database) {
         "model.flux",
       ])
         insertGrant.run(stage.id, key);
-      if (stage.stage_order >= 19) insertGrant.run(stage.id, "generation.hd");
-      if (stage.stage_order >= 28)
+      if (stage.stageOrder >= 19) insertGrant.run(stage.id, "generation.hd");
+      if (stage.stageOrder >= 28)
         for (const key of ["generation.inpaint", "generation.outpaint"])
           insertGrant.run(stage.id, key);
-      if (stage.stage_order >= 37)
+      if (stage.stageOrder >= 37)
         for (const key of ["feature.lora", "feature.controlnet"])
           insertGrant.run(stage.id, key);
     }

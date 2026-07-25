@@ -74,6 +74,5 @@ export function cultivationGenerationBlockReason(input: { remainingToday: number
     if (!input.unlimited && input.remainingToday !== null && input.remainingToday < input.requestedCount) {
         return input.remainingToday > 0 ? `今日仅剩 ${input.remainingToday} 次，请减少生成数量` : "今日斗气已经耗尽";
     }
-    if (input.requestedCount > input.maxConcurrency) return `当前境界最多同时生成 ${input.maxConcurrency} 张图片`;
     return null;
 }
