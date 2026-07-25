@@ -23,9 +23,13 @@ export function usePromptSourceScheduler() {
             try {
                 await refreshAllSources();
                 updateSchedule("lastFetchedAt", new Date().toISOString());
-                await queryClient.invalidateQueries({ queryKey: ["prompts"] });
+                await Promise.all([
+                    queryClient.invalidateQueries({ queryKey: ["prompts"] }),
+                    queryClient.invalidateQueries({ queryKey: ["side-panel-prompts"] }),
+                    queryClient.invalidateQueries({ queryKey: ["prompt-source-statuses"] }),
+                ]);
             } catch {
-                // 拉取失败时静默重试，等待下一个检查周期。
+                // 来源错误会写入各自状态，下一个周期继续尝试。
             } finally {
                 running = false;
             }

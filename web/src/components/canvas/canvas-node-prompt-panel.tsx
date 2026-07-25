@@ -41,9 +41,11 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const [prompt, setPrompt] = useState(isEditingExistingContent ? "" : node.metadata?.prompt || "");
     const imperialGenerationCue = useImperialGenerationCue();
 
+    // Reset only when switching nodes so a completed generation does not erase the user's prompt.
     useEffect(() => {
         setPrompt(isEditingExistingContent ? "" : node.metadata?.prompt || "");
-    }, [isEditingExistingContent, node.id]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [node.id]);
 
     const updatePrompt = (value: string) => {
         setPrompt(value);
@@ -55,7 +57,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         if (!text || isRunning) return;
         imperialGenerationCue.trigger();
         onGenerate(node.id, mode, text);
-        setPrompt("");
     };
 
     return (

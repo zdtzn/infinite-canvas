@@ -115,7 +115,30 @@ for (const file of files) {
 
 return items;`;
 
+const bananaPromptQuickerScript = `// Banana Prompt Quicker：读取 Image Prompts 标准 JSON。
+const url = "https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources/banana-prompt-quicker.json";
+const data = await fetchJson(url);
+return data.flatMap((item, index) => {
+  const title = String(item.title || "").trim();
+  const prompt = String(item.prompt || "").trim();
+  if (!title || !prompt) return [];
+  const images = Array.isArray(item.referenceImageUrls) ? item.referenceImageUrls.map((image) => absoluteUrl(url, String(image))).filter(Boolean) : [];
+  const coverUrl = absoluteUrl(url, String(item.coverUrl || "")) || images[0] || "";
+  const preview = [item.description, markdownPreview(images)].filter(Boolean).join("\\n\\n");
+  return [makePrompt({
+    id: String(item.id || \`banana-prompt-quicker-\${leftPad(index + 1)}\`),
+    title,
+    prompt,
+    coverUrl,
+    tags: Array.isArray(item.tags) ? item.tags.map(String).filter(Boolean) : [],
+    preview,
+    createdAt: String(item.createdAt || ""),
+    updatedAt: String(item.updatedAt || ""),
+  })];
+});`;
+
 export const DEFAULT_PROMPT_SOURCES: PromptSource[] = [
+    { id: "banana-prompt-quicker", name: "Banana Prompt Quicker", githubUrl: "https://glidea.github.io/banana-prompt-quicker/", enabled: true, trusted: true, script: bananaPromptQuickerScript },
     { id: "davidwu-gpt-image2-prompts", name: "davidwu-gpt-image2-prompts", githubUrl: "https://github.com/davidwuw0811-boop/awesome-gpt-image2-prompts", enabled: true, trusted: true, script: davidWuGptImage2Script },
     { id: "freestylefly-awesome-gpt-image-2", name: "freestylefly/awesome-gpt-image-2", githubUrl: "https://github.com/freestylefly/awesome-gpt-image-2", enabled: true, trusted: true, script: freestyleflyAwesomeGptImage2Script },
     { id: "awesome-gpt-image", name: "awesome-gpt-image", githubUrl: "https://github.com/ZeroLu/awesome-gpt-image", enabled: true, trusted: true, script: awesomeGptImageScript },

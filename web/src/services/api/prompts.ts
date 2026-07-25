@@ -19,10 +19,17 @@ export type PromptListResponse = {
     total: number;
 };
 
+export type PromptSourceStatus = {
+    sourceId: string;
+    count: number;
+    lastSuccessAt: string;
+    lastError: string;
+};
+
 const cacheTtlMs = 1000 * 60 * 60;
 const promptCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "prompt_cache" });
 
-type SourceCache = { items: Prompt[]; fetchedAt: number; signature: string };
+type SourceCache = PromptSourceStatus & { items: Prompt[]; fetchedAt: number; signature: string };
 
 const loadingSources = new Map<string, Promise<Prompt[]>>();
 
@@ -61,7 +68,16 @@ function withSourceMeta(source: PromptSource, items: RawPrompt[]): Prompt[] {
 async function runSource(source: PromptSource): Promise<Prompt[]> {
     const items = PUBLIC_MODE ? await runTrustedPromptSource(source.id) : await runPromptSource(source.script);
     const prompts = withSourceMeta(source, items);
-    await promptCacheStore.setItem<SourceCache>(promptSourceCacheKey(source.id), { items: prompts, fetchedAt: Date.now(), signature: sourceSignature(source) });
+    const fetchedAt = Date.now();
+    await promptCacheStore.setItem<SourceCache>(promptSourceCacheKey(source.id), {
+        sourceId: source.id,
+        items: prompts,
+        count: prompts.length,
+        fetchedAt,
+        lastSuccessAt: new Date(fetchedAt).toISOString(),
+        lastError: "",
+        signature: sourceSignature(source),
+    });
     return prompts;
 }
 
@@ -73,8 +89,18 @@ async function getSourcePrompts(source: PromptSource, force = false): Promise<Pr
     }
     if (!force && loadingSources.has(source.id)) return loadingSources.get(source.id)!;
     const loading = runSource(source)
-        .catch((error) => {
-            if (cached?.items?.length && cached.signature === signature) return cached.items.map(normalizePromptAssets);
+        .catch(async (error) => {
+            const lastError = error instanceof Error ? error.message : String(error);
+            await promptCacheStore.setItem<SourceCache>(promptSourceCacheKey(source.id), {
+                sourceId: source.id,
+                items: cached?.signature === signature ? cached.items || [] : [],
+                count: cached?.signature === signature ? cached.items?.length || 0 : 0,
+                fetchedAt: cached?.signature === signature ? cached.fetchedAt || 0 : 0,
+                lastSuccessAt: cached?.signature === signature ? cached.lastSuccessAt || "" : "",
+                lastError,
+                signature,
+            });
+            if (!force && cached?.items?.length && cached.signature === signature) return cached.items.map(normalizePromptAssets);
             throw error;
         })
         .finally(() => loadingSources.delete(source.id));
@@ -137,6 +163,24 @@ export async function refreshAllSources(): Promise<number> {
         }),
     );
     return settled.reduce((total, items) => total + items.length, 0);
+}
+
+export async function fetchPromptSourceStatuses(): Promise<Record<string, PromptSourceStatus>> {
+    const entries = await Promise.all(
+        usePromptSourceStore.getState().sources.map(async (source) => {
+            const cached = await promptCacheStore.getItem<SourceCache>(promptSourceCacheKey(source.id));
+            return [
+                source.id,
+                {
+                    sourceId: source.id,
+                    count: cached?.items?.length || 0,
+                    lastSuccessAt: cached?.lastSuccessAt || "",
+                    lastError: cached?.lastError || "",
+                },
+            ] as const;
+        }),
+    );
+    return Object.fromEntries(entries);
 }
 
 function filterPrompts(items: Prompt[], options: { keyword: string; category: string; tags: string[] }) {

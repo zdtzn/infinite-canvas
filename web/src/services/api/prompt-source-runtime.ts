@@ -218,6 +218,7 @@ export async function runPromptSource(script: string, options?: RunOptions): Pro
 }
 
 export async function runTrustedPromptSource(sourceId: string, options?: RunOptions): Promise<RawPrompt[]> {
+    if (sourceId === "banana-prompt-quicker") return parseStandardJsonSource("https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources/banana-prompt-quicker.json", "banana-prompt-quicker", options);
     if (sourceId === "davidwu-gpt-image2-prompts") return parseDavidWu(options);
     if (sourceId === "freestylefly-awesome-gpt-image-2") return parseFreestylefly(options);
     if (sourceId === "awesome-gpt-image") return parseAwesomeGptImage(options);
@@ -225,6 +226,32 @@ export async function runTrustedPromptSource(sourceId: string, options?: RunOpti
     if (sourceId === "youmind-gpt-image-2") return parseYouMind("https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main", "youmind-gpt-image-2", "gpt-image-2", options);
     if (sourceId === "youmind-nano-banana-pro") return parseYouMind("https://raw.githubusercontent.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts/main", "youmind-nano-banana-pro", "nano-banana-pro", options);
     throw new Error("公网安全模式不允许运行自定义提示词脚本");
+}
+
+async function parseStandardJsonSource(url: string, idPrefix: string, options?: RunOptions) {
+    const data = await fetchJson<unknown>(url, options?.signal);
+    if (!Array.isArray(data)) throw new Error("标准提示词 JSON 的根节点必须是数组");
+    return data.flatMap((value, index) => {
+        const item = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+        const title = String(item.title || "").trim();
+        const prompt = String(item.prompt || "").trim();
+        if (!title || !prompt) return [];
+        const images = Array.isArray(item.referenceImageUrls) ? item.referenceImageUrls.map((image) => absoluteUrl(url, String(image))).filter(Boolean) : [];
+        const coverUrl = absoluteUrl(url, String(item.coverUrl || "")) || images[0] || "";
+        const preview = [item.description, markdownPreview(images)].filter(Boolean).join("\n\n");
+        return [
+            makePrompt({
+                id: String(item.id || `${idPrefix}-${leftPad(index + 1)}`),
+                title,
+                prompt,
+                coverUrl,
+                tags: Array.isArray(item.tags) ? item.tags.map(String).filter(Boolean) : [],
+                preview,
+                createdAt: String(item.createdAt || ""),
+                updatedAt: String(item.updatedAt || ""),
+            }),
+        ];
+    });
 }
 
 async function parseDavidWu(options?: RunOptions) {

@@ -2,10 +2,14 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { App, Button, Input, Segmented, Tooltip } from "antd";
 import copyToClipboard from "copy-to-clipboard";
-import { Copy, FolderOpen, History, KeyRound, Link2, LoaderCircle, PlugZap, Plus, RefreshCw, Square, Terminal, Trash2 } from "lucide-react";
+import { ChevronDown, Copy, FolderOpen, History, KeyRound, Link2, LoaderCircle, MessageSquare, PlugZap, Plus, RefreshCw, Square, Terminal, Trash2 } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { imageMetadata } from "@/lib/canvas/canvas-node-factory";
+import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
+import { readImageMeta } from "@/lib/image-utils";
 import { randomId } from "@/lib/utils";
+import { uploadImage } from "@/services/image-storage";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useShallow } from "zustand/react/shallow";
@@ -16,6 +20,7 @@ import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentPendingToolCa
 
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_PAYLOAD_BYTES = 28 * 1024 * 1024;
+const SCROLL_BOTTOM_THRESHOLD = 48;
 const DEFAULT_AGENT_URL = "http://127.0.0.1:17371";
 const AGENT_CONNECT_STEPS = [
     { title: "方式一：在 Codex 中使用插件", text: "在 Codex app 安装 Infinite Canvas 插件后，通过插件启动画布，插件会自动启动本地 Agent 并带上连接信息。" },
@@ -86,6 +91,8 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
     const pushEventLog = useAgentStore((state) => state.addEventLog);
     const clearEventLogs = useAgentStore((state) => state.clearEventLogs);
     const listRef = useRef<HTMLDivElement>(null);
+    const followMessagesRef = useRef(true);
+    const [showScrollToBottom, setShowScrollToBottom] = useState(false);
     const canvasContextRef = useRef<AgentCanvasContext | null>(useAgentStore.getState().canvasContext);
     const confirmToolsRef = useRef(confirmTools);
     const pendingToolRef = useRef<AgentPendingToolCall | null>(null);
@@ -139,9 +146,30 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
     useEffect(() => {
         pendingToolRef.current = pendingTool;
     }, [pendingTool]);
+    const updateScrollState = useCallback(() => {
+        const list = listRef.current;
+        if (!list) return;
+        const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight <= SCROLL_BOTTOM_THRESHOLD;
+        followMessagesRef.current = atBottom;
+        setShowScrollToBottom(!atBottom);
+    }, []);
+    const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+        const list = listRef.current;
+        if (!list) return;
+        followMessagesRef.current = true;
+        list.scrollTo({ top: list.scrollHeight, behavior });
+        setShowScrollToBottom(false);
+    }, []);
     useEffect(() => {
-        listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-    }, [messages, pendingTool, waiting]);
+        if (activeTab !== "chat") return;
+        const frame = requestAnimationFrame(() => scrollToBottom("auto"));
+        return () => cancelAnimationFrame(frame);
+    }, [activeTab, activeThreadId, scrollToBottom]);
+    useEffect(() => {
+        if (activeTab !== "chat") return;
+        const frame = requestAnimationFrame(() => (followMessagesRef.current ? scrollToBottom("auto") : updateScrollState()));
+        return () => cancelAnimationFrame(frame);
+    }, [activeTab, messages, pendingTool, scrollToBottom, updateScrollState, waiting]);
     useEffect(() => () => attachmentUrlsRef.current.forEach((url) => URL.revokeObjectURL(url)), []);
 
     useEffect(() => {
@@ -276,7 +304,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
                     messageId,
                     clientId: clientIdRef.current,
                     threadId: useAgentStore.getState().activeThreadId || undefined,
-                    attachments: files.map(({ name, type, dataUrl }) => ({ name, type, dataUrl })),
+                    attachments: files.map(({ id, name, type, size, width, height, dataUrl }) => ({ id, name, type, size, width, height, dataUrl })),
                 }),
             });
             if (data.threadId) setAgentState({ activeThreadId: data.threadId });
@@ -316,9 +344,10 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             const next = await Promise.all(
                 images.slice(0, Math.max(0, MAX_ATTACHMENTS - prev.length)).map(async (file) => {
                     const dataUrl = await readDataUrl(file);
+                    const meta = await readImageMeta(dataUrl);
                     const url = URL.createObjectURL(file);
                     attachmentUrlsRef.current.add(url);
-                    return { id: createId(), name: file.name, type: file.type, size: file.size, url, dataUrl };
+                    return { id: createId(), name: file.name, type: file.type, size: file.size, width: meta.width, height: meta.height, url, dataUrl };
                 }),
             );
             const merged = [...prev, ...next];
@@ -346,7 +375,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
     };
 
     const handleToolCall = async (endpoint: string, token: string, payload: AgentPendingToolCall) => {
-        if (confirmToolsRef.current && payload.name === "canvas_apply_ops") {
+        if (confirmToolsRef.current && isCanvasWriteTool(payload.name)) {
             if (pendingToolRef.current) {
                 await postToolResult(endpoint, token, clientIdRef.current, { requestId: payload.requestId, error: "仍有待确认的画布工具调用" });
                 return;
@@ -378,6 +407,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             const input: { ops?: CanvasAgentOp[]; path?: string } = payload.input || {};
             addEventLog(toolName(payload.name), payload, payload);
             let result: unknown;
+            let appliedOps = input.ops || [];
             if (payload.name === "site_navigate") {
                 const path = input.path || "/";
                 navigate(path);
@@ -385,8 +415,14 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             } else if (payload.name === "canvas_apply_ops") {
                 const context = canvasContextRef.current;
                 if (!context) throw new Error("当前不在画布页，请先用 site_navigate 打开画布");
-                result = context.applyOps(input.ops || []);
+                result = context.applyOps(appliedOps);
                 void postState(endpoint, token, clientIdRef.current, result as CanvasAgentSnapshot);
+            } else if (payload.name === "canvas_create_attachment_nodes") {
+                const context = canvasContextRef.current;
+                if (!context) throw new Error("当前不在画布页，请先用 site_navigate 打开画布");
+                appliedOps = await attachmentNodeOps(endpoint, token, clientIdRef.current, payload.input?.nodes);
+                result = context.applyOps(appliedOps);
+                await postState(endpoint, token, clientIdRef.current, result as CanvasAgentSnapshot);
             } else {
                 const snapshot = canvasContextRef.current?.snapshot;
                 if (!snapshot) throw new Error("当前不在画布页，请先用 site_navigate 打开画布");
@@ -397,7 +433,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
             addMessage({
                 role: "tool",
                 title: `${toolName(payload.name)}完成`,
-                text: payload.name === "canvas_apply_ops" ? summarizeCanvasAgentOps(input.ops || []) || "画布操作" : payload.name === "site_navigate" ? `已跳转到 ${input.path || "/"}` : "已完成",
+                text: appliedOps.length ? summarizeCanvasAgentOps(appliedOps) || "画布操作" : payload.name === "site_navigate" ? `已跳转到 ${input.path || "/"}` : "已完成",
                 detail: { requestId: payload.requestId, name: payload.name, input, result },
             });
         } catch (error) {
@@ -591,7 +627,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
                 theme={theme}
                 items={[
                     { value: "setup", label: "连接", icon: <PlugZap className="size-3.5" /> },
-                    { value: "chat", label: "对话" },
+                    { value: "chat", label: "对话", icon: <MessageSquare className="size-3.5" /> },
                     { value: "history", label: "历史", icon: <History className="size-3.5" />, count: threads.length },
                     { value: "log", label: "日志", icon: <Terminal className="size-3.5" />, count: eventLogs.length },
                 ]}
@@ -646,20 +682,35 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
                 />
             ) : (
                 <>
-                    <div ref={listRef} className="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-                        {messages.map((item) => (
-                            <AgentChatMessage key={item.id} item={agentMessageToChatMessage(item)} theme={theme} user={user} />
-                        ))}
-                        {pendingTool ? (
-                            <AgentPendingToolCard
-                                summary={summarizeCanvasAgentOps(pendingTool.input?.ops || []) || toolName(pendingTool.name)}
-                                detail={{ requestId: pendingTool.requestId, name: pendingTool.name, input: pendingTool.input }}
-                                theme={theme}
-                                onReject={rejectPendingTool}
-                                onApprove={approvePendingTool}
-                            />
+                    <div className="relative min-h-0 flex-1">
+                        <div ref={listRef} className="thin-scrollbar h-full space-y-4 overflow-y-auto px-4 pb-12 pt-4" onScroll={updateScrollState}>
+                            {messages.map((item) => (
+                                <AgentChatMessage key={item.id} item={agentMessageToChatMessage(item)} theme={theme} user={user} />
+                            ))}
+                            {pendingTool ? (
+                                <AgentPendingToolCard
+                                    summary={summarizeCanvasAgentOps(pendingTool.input?.ops || []) || toolName(pendingTool.name)}
+                                    detail={{ requestId: pendingTool.requestId, name: pendingTool.name, input: pendingTool.input }}
+                                    theme={theme}
+                                    onReject={rejectPendingTool}
+                                    onApprove={approvePendingTool}
+                                />
+                            ) : null}
+                            {waiting && !pendingTool ? <AgentWorkingMessage theme={theme} /> : null}
+                        </div>
+                        {showScrollToBottom ? (
+                            <Tooltip title="滚动到底部" placement="left">
+                                <Button
+                                    type="text"
+                                    shape="circle"
+                                    aria-label="滚动到底部"
+                                    className="!absolute bottom-3 left-1/2 z-10 !h-8 !w-8 !min-w-8 -translate-x-1/2 backdrop-blur transition hover:-translate-y-0.5"
+                                    style={{ background: theme.toolbar.panel, border: `1px solid ${theme.node.stroke}`, color: theme.node.text }}
+                                    icon={<ChevronDown className="size-4" />}
+                                    onClick={() => scrollToBottom()}
+                                />
+                            </Tooltip>
                         ) : null}
-                        {waiting && !pendingTool ? <AgentWorkingMessage theme={theme} /> : null}
                     </div>
                     <AgentChatComposer
                         prompt={prompt}
@@ -1113,6 +1164,7 @@ function toolName(name: string) {
     if (name === "canvas_get_selection") return "读取选区";
     if (name === "canvas_export_snapshot") return "导出快照";
     if (name === "canvas_create_node") return "创建节点";
+    if (name === "canvas_create_attachment_nodes") return "添加附件图片";
     if (name === "canvas_create_text_node") return "创建文本";
     if (name === "canvas_create_text_nodes") return "批量创建文本";
     if (name === "canvas_create_config_node") return "创建生成配置";
@@ -1220,9 +1272,7 @@ function mergeAgentText(prev: string, next: string) {
 }
 
 function promptWithAttachments(text: string, attachments: AgentAttachment[]) {
-    if (!attachments.length) return text;
-    const names = attachments.map((item) => item.name).join("、");
-    return [text, `用户上传了 ${attachments.length} 张图片附件：${names}。`].filter(Boolean).join("\n\n");
+    return text || (attachments.length ? "请处理上传的图片附件。" : "");
 }
 
 function attachmentPayloadBytes(attachments: AgentAttachment[]) {
@@ -1231,6 +1281,41 @@ function attachmentPayloadBytes(attachments: AgentAttachment[]) {
 
 function formatBytes(bytes: number) {
     return bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)}MB` : `${Math.ceil(bytes / 1024)}KB`;
+}
+
+function isCanvasWriteTool(name: string) {
+    return name === "canvas_apply_ops" || name === "canvas_create_attachment_nodes";
+}
+
+async function attachmentNodeOps(endpoint: string, token: string, clientId: string, value: unknown): Promise<CanvasAgentOp[]> {
+    const nodes = Array.isArray(value) ? value : [];
+    if (!nodes.length) throw new Error("没有可添加的图片附件");
+    return await Promise.all(
+        nodes.map(async (value) => {
+            const item = value as { id?: unknown; attachmentId?: unknown; title?: unknown; position?: unknown };
+            const id = String(item.id || "");
+            const attachmentId = String(item.attachmentId || "");
+            if (!id || !attachmentId) throw new Error("图片附件节点参数无效");
+            const response = await fetch(`${endpoint}/agent/attachments/${encodeURIComponent(attachmentId)}?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`);
+            if (!response.ok) {
+                const body = (await response.json().catch(() => null)) as { error?: string } | null;
+                throw new Error(body?.error || "读取图片附件失败");
+            }
+            const image = await uploadImage(await response.blob());
+            const size = fitNodeSize(image.width, image.height);
+            const position = item.position && typeof item.position === "object" ? (item.position as { x?: unknown; y?: unknown }) : {};
+            return {
+                type: "add_node" as const,
+                id,
+                nodeType: "image" as const,
+                title: String(item.title || "参考图"),
+                position: { x: Number(position.x) || 0, y: Number(position.y) || 0 },
+                width: size.width,
+                height: size.height,
+                metadata: imageMetadata(image),
+            };
+        }),
+    );
 }
 
 async function fetchAgentJson<T>(endpoint: string, token: string, path: string, init?: RequestInit) {
