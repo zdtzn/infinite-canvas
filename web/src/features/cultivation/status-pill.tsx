@@ -18,14 +18,17 @@ export function CultivationStatusPill() {
     const status = (
         <Link
             to="/cultivation"
-            className={cn("cultivation-status-pill inline-flex size-8 shrink-0 items-center justify-center rounded-md border text-xs lg:h-8 lg:w-auto lg:min-w-0 lg:gap-2 lg:px-2.5", isDouEmperor && "is-imperial-identity")}
+            className={cn(
+                "cultivation-status-pill inline-flex size-8 shrink-0 items-center justify-center rounded-md border text-sm font-medium lg:h-8 lg:w-auto lg:min-w-0 lg:gap-2 lg:px-2.5",
+                isDouEmperor ? "is-imperial-identity !text-[#e4ca8b] hover:!text-[#f3dfad]" : "!text-stone-700 hover:!text-stone-950 dark:!text-stone-200 dark:hover:!text-white",
+            )}
             style={{ "--cultivation-accent": accentColor } as CSSProperties}
             title={isDouEmperor ? undefined : `${label} · ${quotaText(data.remainingToday, data.unlimited)}`}
             aria-label={`打开我的修炼：${label}`}
         >
             <RealmIcon iconKey={data.iconKey} className="size-3.5 shrink-0" />
-            <span className="hidden max-w-28 truncate font-medium lg:block">{label}</span>
-            <span className="hidden text-stone-400 lg:block dark:text-stone-500">{data.unlimited ? "∞" : data.remainingToday}</span>
+            <span className="hidden max-w-32 truncate lg:block">{label}</span>
+            <span className="hidden text-xs text-stone-400 lg:block dark:text-stone-500">{data.unlimited ? "∞" : data.remainingToday}</span>
         </Link>
     );
 

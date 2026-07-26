@@ -90,7 +90,15 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, va
             {showTaskCenter ? <TaskCenter /> : null}
             <Dropdown menu={{ items: menuItems }} trigger={["click"]}>
                 <button type="button" className={cn(naturalIconClass, isDouEmperor && "imperial-avatar-menu-trigger", isImperialMode && "is-active")} style={iconStyle} aria-label="打开应用菜单" title="应用菜单">
-                    {isDouEmperor ? user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="size-6 rounded-full object-cover" /> : <Crown className="size-4" /> : <MoreHorizontal className="size-4" />}
+                    {isDouEmperor ? (
+                        user?.avatarUrl ? (
+                            <img src={user.avatarUrl} alt="" width={24} height={24} loading="eager" decoding="async" fetchPriority="high" className="size-6 rounded-full object-cover" />
+                        ) : (
+                            <Crown className="size-4" />
+                        )
+                    ) : (
+                        <MoreHorizontal className="size-4" />
+                    )}
                 </button>
             </Dropdown>
             <VersionReleaseModal style={versionStyle} />

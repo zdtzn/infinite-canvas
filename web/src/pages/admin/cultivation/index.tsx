@@ -1003,6 +1003,9 @@ function UserIdentity({ user, large = false }: { user: Pick<AdminCultivationUser
                         alt=""
                         width={large ? 40 : 32}
                         height={large ? 40 : 32}
+                        loading={large ? "eager" : "lazy"}
+                        decoding="async"
+                        fetchPriority={large ? "high" : "low"}
                         onError={(event) => {
                             event.currentTarget.hidden = true;
                         }}

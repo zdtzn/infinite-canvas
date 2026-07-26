@@ -92,12 +92,12 @@ export function AppTopNav() {
                                             to={`/${tool.slug}`}
                                             title={tool.label}
                                             className={cn(
-                                                "relative flex h-14 shrink-0 items-center gap-1.5 px-2.5 text-[13px] tracking-[0.08em] transition-colors after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors",
-                                                active ? "font-medium text-stone-950 after:bg-[#c9a86a] dark:text-[#f0ead8]" : "text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-[#c9c4b9] dark:hover:text-[#f7f4ea]",
+                                                "relative flex h-14 shrink-0 items-center gap-2 px-3 text-sm font-medium tracking-normal transition-colors after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors",
+                                                active ? "font-semibold !text-stone-950 after:bg-[#c9a86a] dark:!text-[#f0ead8]" : "!text-stone-600 after:bg-transparent hover:!text-stone-950 dark:!text-[#c9c4b9] dark:hover:!text-[#f7f4ea]",
                                             )}
                                         >
                                             <Icon className={cn("size-4", active && "text-[#c9a86a]")} />
-                                            <span className="font-display">{navigationSceneNames[tool.slug]}</span>
+                                            <span>{navigationSceneNames[tool.slug]}</span>
                                         </Link>
                                     );
                                 })}
@@ -123,8 +123,8 @@ export function AppTopNav() {
                                     <button
                                         type="button"
                                         className={cn(
-                                            "relative flex h-14 shrink-0 items-center gap-1 px-2.5 text-[13px] tracking-[0.08em] transition-colors after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:rounded-full",
-                                            secondaryActive ? "font-medium text-stone-950 after:bg-[#c9a86a] dark:text-[#f0ead8]" : "text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-[#c9c4b9] dark:hover:text-[#f7f4ea]",
+                                            "relative flex h-14 shrink-0 items-center gap-1.5 px-3 text-sm font-medium tracking-normal transition-colors after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full",
+                                            secondaryActive ? "font-semibold !text-stone-950 after:bg-[#c9a86a] dark:!text-[#f0ead8]" : "!text-stone-600 after:bg-transparent hover:!text-stone-950 dark:!text-[#c9c4b9] dark:hover:!text-[#f7f4ea]",
                                         )}
                                         aria-label="打开更多导航"
                                     >

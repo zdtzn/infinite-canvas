@@ -596,7 +596,7 @@ function serveProfileAvatar(session: SessionPayload, userId: string) {
 function serveStoredAsset(asset: StoredAsset) {
     const path = join(ASSET_ROOT, safeSegment(asset.userId), safeSegment(asset.key));
     if (!existsSync(path)) throw new HttpError(404, "素材文件不存在");
-    return new Response(Bun.file(path), { headers: { "Content-Type": asset.mimeType, "Content-Length": String(asset.bytes), "Cache-Control": asset.key === AVATAR_ASSET_KEY ? "private, no-cache" : "private, max-age=31536000, immutable" } });
+    return new Response(Bun.file(path), { headers: { "Content-Type": asset.mimeType, "Content-Length": String(asset.bytes), "Cache-Control": "private, max-age=31536000, immutable" } });
 }
 
 async function deleteAsset(session: SessionPayload, key: string) {

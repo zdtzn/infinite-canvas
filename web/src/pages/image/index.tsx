@@ -103,6 +103,7 @@ export default function ImagePage() {
         : null;
     const canGenerate = Boolean(prompt.trim()) && !generationBlockReason;
     const running = generationJob?.status === "running";
+    const generateButtonLabel = isImperialMode && (running || imperialGenerationCue.active) ? "天地法则演化中……" : running ? "生成中……" : "开始生成";
     const elapsedMs = generationJob?.elapsedMs || 0;
     const results: GenerationResult[] = previewLog ? previewLog.images.map((image) => ({ id: image.id, status: "success", image })) : generationJob?.results || [];
     const showResultsPanel = running || results.length > 0;
@@ -519,15 +520,16 @@ export default function ImagePage() {
                                 size="large"
                                 block
                                 className="imperial-generate-button"
-                                icon={<Sparkles className="size-4" />}
-                                loading={running}
+                                icon={running ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                                aria-busy={running}
+                                aria-live="polite"
                                 disabled={!canGenerate || running}
                                 onClick={() => {
                                     imperialGenerationCue.trigger();
                                     generate();
                                 }}
                             >
-                                {isImperialMode && (running || imperialGenerationCue.active) ? "天地法则演化中……" : "开始生成"}
+                                {generateButtonLabel}
                             </Button>
                             {generationBlockReason ? (
                                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>

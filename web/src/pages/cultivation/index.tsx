@@ -151,7 +151,11 @@ export default function CultivationPage() {
                                         "bg-[#17171d]/80 backdrop-blur",
                                     )}
                                 >
-                                    {avatarUrl ? <img src={avatarUrl} alt={`${data.displayName} 的头像`} width={48} height={48} className="size-full object-cover" /> : data.displayName.slice(0, 1).toUpperCase()}
+                                    {avatarUrl ? (
+                                        <img src={avatarUrl} alt={`${data.displayName} 的头像`} width={48} height={48} loading="eager" decoding="async" fetchPriority="high" className="size-full object-cover" />
+                                    ) : (
+                                        data.displayName.slice(0, 1).toUpperCase()
+                                    )}
                                 </div>
                                 <Tooltip title="上传头像">
                                     <button
