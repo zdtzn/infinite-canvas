@@ -19,31 +19,37 @@ export type UploadedImage = {
 
 export type ImageOutputFormat = "auto" | "png" | "jpeg" | "webp";
 
+type UploadImageOptions = {
+    outputFormat?: string;
+    dimensions?: { width: number; height: number };
+    createThumbnail?: boolean;
+    previewUrl?: string;
+};
+
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
 const objectUrls = new Map<string, string>();
 
-export async function uploadImage(input: string | Blob, options?: { outputFormat?: string }): Promise<UploadedImage> {
+export async function uploadImage(input: string | Blob, options?: UploadImageOptions): Promise<UploadedImage> {
     const blob = await convertImageOutput(input, options?.outputFormat);
-    const previewUrl = URL.createObjectURL(blob);
-    const meta = await readImageMeta(previewUrl);
-    URL.revokeObjectURL(previewUrl);
+    const suppliedDimensions = validDimensions(options?.dimensions) ? options.dimensions : undefined;
+    const meta = suppliedDimensions ? { ...suppliedDimensions, mimeType: blob.type } : await readBlobMeta(blob);
     const mimeType = blob.type || meta.mimeType;
     assertImageUploadAllowed({ bytes: blob.size, mimeType, width: meta.width, height: meta.height });
-    const thumbnail = await createThumbnail(blob, meta.width, meta.height);
+    const thumbnail = options?.createThumbnail === false ? null : await createThumbnail(blob, meta.width, meta.height);
     if (PUBLIC_MODE) {
         const { asset } = await uploadServerAsset(blob, "image");
         const thumbnailAsset = thumbnail ? (await uploadServerAsset(thumbnail, "image")).asset : undefined;
-        return { url: asset.url, storageKey: asset.key, width: meta.width, height: meta.height, bytes: asset.bytes, mimeType: asset.mimeType, thumbnailKey: thumbnailAsset?.key, thumbnailUrl: thumbnailAsset?.url };
+        const url = options?.previewUrl ? rememberObjectUrl(asset.key, options.previewUrl) : asset.url;
+        return { url, storageKey: asset.key, width: meta.width, height: meta.height, bytes: asset.bytes, mimeType: asset.mimeType, thumbnailKey: thumbnailAsset?.key, thumbnailUrl: thumbnailAsset?.url };
     }
     await assertStorageQuotaAvailable(blob.size);
     const storageKey = `image:${nanoid()}`;
     await store.setItem(storageKey, blob);
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
+    const url = rememberObjectUrl(storageKey, options?.previewUrl || URL.createObjectURL(blob));
     const thumbnailKey = thumbnail ? `image:thumb:${nanoid()}` : undefined;
     if (thumbnail && thumbnailKey) {
         await store.setItem(thumbnailKey, thumbnail);
-        objectUrls.set(thumbnailKey, URL.createObjectURL(thumbnail));
+        rememberObjectUrl(thumbnailKey, URL.createObjectURL(thumbnail));
     }
     return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType, thumbnailKey, thumbnailUrl: thumbnailKey ? objectUrls.get(thumbnailKey) : undefined };
 }
@@ -179,15 +185,14 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
 }
 
 export async function deleteStoredImages(keys: Iterable<string>) {
+    const uniqueKeys = Array.from(new Set(keys));
+    uniqueKeys.forEach(forgetObjectUrl);
     if (PUBLIC_MODE) {
-        await Promise.all(Array.from(new Set(keys)).map((key) => deleteServerAsset(key).catch(() => undefined)));
+        await Promise.all(uniqueKeys.map((key) => deleteServerAsset(key).catch(() => undefined)));
         return;
     }
     await Promise.all(
-        Array.from(new Set(keys)).map(async (key) => {
-            const url = objectUrls.get(key);
-            if (url) URL.revokeObjectURL(url);
-            objectUrls.delete(key);
+        uniqueKeys.map(async (key) => {
             await store.removeItem(key);
         }),
     );
@@ -232,4 +237,30 @@ function blobToDataUrl(blob: Blob) {
         reader.onerror = () => reject(new Error("读取图片失败"));
         reader.readAsDataURL(blob);
     });
+}
+
+async function readBlobMeta(blob: Blob) {
+    const previewUrl = URL.createObjectURL(blob);
+    try {
+        return await readImageMeta(previewUrl);
+    } finally {
+        URL.revokeObjectURL(previewUrl);
+    }
+}
+
+function validDimensions(value?: { width: number; height: number }): value is { width: number; height: number } {
+    return Boolean(value && Number.isFinite(value.width) && value.width > 0 && Number.isFinite(value.height) && value.height > 0);
+}
+
+function rememberObjectUrl(storageKey: string, url: string) {
+    const previous = objectUrls.get(storageKey);
+    if (previous && previous !== url) URL.revokeObjectURL(previous);
+    objectUrls.set(storageKey, url);
+    return url;
+}
+
+function forgetObjectUrl(storageKey: string) {
+    const url = objectUrls.get(storageKey);
+    if (url) URL.revokeObjectURL(url);
+    objectUrls.delete(storageKey);
 }

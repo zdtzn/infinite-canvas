@@ -9,14 +9,14 @@ import { requestEdit, requestGeneration, requestImageQuestion } from "@/services
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { uploadImage } from "@/services/image-storage";
+import { deleteStoredImages, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
+import { cropDataUrl, splitImageBlobs, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { App, Button, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
@@ -1769,36 +1769,84 @@ function InfiniteCanvasPage() {
             if (!node.metadata?.content) return;
             setSplitNodeId(null);
             try {
-                const pieces = await splitDataUrl(node.metadata.content, params);
+                const pieces = await splitImageBlobs(node.metadata.content, params);
                 const gap = 16;
                 const cellWidth = node.width / params.columns;
                 const cellHeight = node.height / params.rows;
                 const startX = node.position.x + node.width + 96;
                 const startY = node.position.y;
-                const childNodes = await Promise.all(
-                    pieces.map(async (piece) => {
-                        const image = await uploadImage(piece.dataUrl);
-                        const id = nanoid();
-                        return {
-                            id,
+                const previewUrls = pieces.map((piece) => URL.createObjectURL(piece.blob));
+                const childNodes = pieces.map(
+                    (piece, index) =>
+                        ({
+                            id: nanoid(),
                             type: CanvasNodeType.Image,
                             title: `${node.title || "图片"} ${piece.row + 1}-${piece.column + 1}`,
                             position: { x: startX + piece.column * (cellWidth + gap), y: startY + piece.row * (cellHeight + gap) },
                             width: cellWidth,
                             height: cellHeight,
                             metadata: {
-                                ...imageMetadata(image),
+                                content: previewUrls[index],
+                                status: NODE_STATUS_SUCCESS,
+                                naturalWidth: piece.width,
+                                naturalHeight: piece.height,
+                                bytes: piece.blob.size,
+                                mimeType: piece.blob.type,
                                 prompt: node.metadata?.prompt,
                             },
-                        } satisfies CanvasNodeData;
-                    }),
+                        }) satisfies CanvasNodeData,
                 );
+                const childConnections = childNodes.map((child) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: child.id }));
+                const childIds = new Set(childNodes.map((child) => child.id));
+
+                // Render local slices immediately, but persist only after every slice has durable storage.
+                historyPausedRef.current = true;
                 setNodes((prev) => [...prev, ...childNodes]);
-                setConnections((prev) => [...prev, ...childNodes.map((child) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: child.id }))]);
-                setSelectedNodeIds(new Set(childNodes.map((child) => child.id)));
+                setConnections((prev) => [...prev, ...childConnections]);
+                setSelectedNodeIds(childIds);
                 setSelectedConnectionId(null);
                 setDialogNodeId(null);
-                message.success(`已切分为 ${childNodes.length} 个子节点`);
+
+                try {
+                    const uploadResults = await Promise.allSettled(
+                        pieces.map((piece, index) =>
+                            uploadImage(piece.blob, {
+                                dimensions: { width: piece.width, height: piece.height },
+                                createThumbnail: false,
+                                previewUrl: previewUrls[index],
+                            }),
+                        ),
+                    );
+                    const successfulImages = uploadResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+                    const failedUpload = uploadResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+                    if (failedUpload) {
+                        void deleteStoredImages(successfulImages.map((image) => image.storageKey));
+                        previewUrls.forEach((url) => URL.revokeObjectURL(url));
+                        setNodes((prev) => prev.filter((item) => !childIds.has(item.id)));
+                        setConnections((prev) => prev.filter((connection) => !childIds.has(connection.fromNodeId) && !childIds.has(connection.toNodeId)));
+                        setSelectedNodeIds(new Set([node.id]));
+                        throw failedUpload.reason;
+                    }
+
+                    const imagesByNodeId = new Map(childNodes.map((child, index) => [child.id, successfulImages[index]]));
+                    setNodes((prev) =>
+                        prev.map((item) => {
+                            const image = imagesByNodeId.get(item.id);
+                            if (!image) return item;
+                            return {
+                                ...item,
+                                metadata: {
+                                    ...item.metadata,
+                                    ...imageMetadata(image),
+                                    prompt: node.metadata?.prompt,
+                                },
+                            };
+                        }),
+                    );
+                    message.success(`已切分为 ${childNodes.length} 个子节点`);
+                } finally {
+                    historyPausedRef.current = false;
+                }
             } catch (error) {
                 const errorDetails = error instanceof Error ? error.message : "未知错误";
                 message.error(`切分图片失败：${errorDetails}`);

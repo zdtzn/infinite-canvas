@@ -31,7 +31,9 @@ export type ImageSplitParams = {
 export type ImageSplitPiece = {
     row: number;
     column: number;
-    dataUrl: string;
+    blob: Blob;
+    width: number;
+    height: number;
 };
 
 export async function cropDataUrl(dataUrl: string, crop?: ImageCropRect) {
@@ -45,7 +47,7 @@ export async function cropDataUrl(dataUrl: string, crop?: ImageCropRect) {
     return drawCrop(image, sx, sy, size, size);
 }
 
-export async function splitDataUrl(dataUrl: string, params: ImageSplitParams): Promise<ImageSplitPiece[]> {
+export async function splitImageBlobs(dataUrl: string, params: ImageSplitParams): Promise<ImageSplitPiece[]> {
     const image = await loadImage(dataUrl);
     const xCuts = buildSplitCuts(params.verticalLines, image.width, Math.max(1, Math.floor(params.columns)));
     const yCuts = buildSplitCuts(params.horizontalLines, image.height, Math.max(1, Math.floor(params.rows)));
@@ -57,7 +59,7 @@ export async function splitDataUrl(dataUrl: string, params: ImageSplitParams): P
         for (let column = 0; column < xCuts.length - 1; column += 1) {
             const sx = xCuts[column];
             const sw = xCuts[column + 1] - sx;
-            pieces.push({ row, column, dataUrl: drawCrop(image, sx, sy, sw, sh) });
+            pieces.push({ row, column, blob: await drawCropBlob(image, sx, sy, sw, sh), width: sw, height: sh });
         }
     }
 
@@ -130,6 +132,18 @@ function drawCrop(image: HTMLImageElement, sx: number, sy: number, sw: number, s
     if (!context) return image.src;
     context.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/png");
+}
+
+function drawCropBlob(image: HTMLImageElement, sx: number, sy: number, sw: number, sh: number) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, sw);
+    canvas.height = Math.max(1, sh);
+    const context = canvas.getContext("2d");
+    if (!context) return Promise.reject(new Error("切分图片失败：浏览器无法创建画布"));
+    context.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    return new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("切分图片失败：浏览器无法编码切片"))), "image/png");
+    });
 }
 
 function drawStepUpscale(image: HTMLImageElement, width: number, height: number) {
