@@ -51,16 +51,36 @@ export async function uploadImage(input: string | Blob, options?: { outputFormat
 export async function readImageBlob(input: string | Blob) {
     const blob =
         typeof input === "string"
-            ? await fetch(input, { credentials: "same-origin" }).then(async (response) => {
-                  if (!response.ok) throw new Error(`读取图片失败（${response.status}）`);
-                  return response.blob();
-              })
+            ? /^data:/i.test(input)
+                ? decodeDataUrl(input)
+                : await fetch(input, { credentials: "same-origin" }).then(async (response) => {
+                      if (!response.ok) throw new Error(`读取图片失败（${response.status}）`);
+                      return response.blob();
+                  })
             : input;
     if (!blob.size) throw new Error("读取图片失败：文件为空");
     const mimeType = await detectImageMimeType(blob);
     if (mimeType) return blob.type === mimeType ? blob : new Blob([blob], { type: mimeType });
     if (blob.type.startsWith("image/")) return blob;
     throw new Error("读取图片失败：返回内容不是图片");
+}
+
+function decodeDataUrl(value: string) {
+    const commaIndex = value.indexOf(",");
+    if (commaIndex < 5) throw new Error("读取图片失败：Data URL 格式无效");
+    const metadata = value.slice(5, commaIndex);
+    const mimeType = metadata.split(";", 1)[0] || "application/octet-stream";
+    const payload = value.slice(commaIndex + 1);
+
+    try {
+        if (!metadata.split(";").some((part) => part.toLowerCase() === "base64")) return new Blob([decodeURIComponent(payload)], { type: mimeType });
+        const binary = atob(payload.replace(/\s/g, ""));
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        return new Blob([bytes], { type: mimeType });
+    } catch {
+        throw new Error("读取图片失败：Data URL 无法解码");
+    }
 }
 
 /** Encode a generated result locally when its gateway ignores output_format. */
@@ -101,7 +121,9 @@ async function detectImageMimeType(blob: Blob) {
 }
 
 function imageOutputFormatMimeType(value?: string) {
-    const format = String(value || "auto").trim().toLowerCase() as ImageOutputFormat;
+    const format = String(value || "auto")
+        .trim()
+        .toLowerCase() as ImageOutputFormat;
     return ({ png: "image/png", jpeg: "image/jpeg", webp: "image/webp" } as Partial<Record<ImageOutputFormat, string>>)[format];
 }
 

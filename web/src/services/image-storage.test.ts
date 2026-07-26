@@ -25,6 +25,20 @@ test("reads generated image files with the active session", async () => {
     expect(request).toEqual({ input: "/api/job-files/job/image.png", init: { credentials: "same-origin" } });
 });
 
+test("decodes canvas data URLs without using fetch", async () => {
+    let fetchCalled = false;
+    globalThis.fetch = (async () => {
+        fetchCalled = true;
+        throw new TypeError("CSP blocked data URL fetch");
+    }) as typeof fetch;
+
+    const blob = await readImageBlob("data:image/png;base64,iVBORw0KGgo=");
+
+    expect(fetchCalled).toBe(false);
+    expect(blob.type).toBe("image/png");
+    expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+});
+
 test("recognizes a PNG response when the upstream file uses a generic MIME type", async () => {
     globalThis.fetch = (async () => new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), { headers: { "Content-Type": "application/octet-stream" } })) as typeof fetch;
 
