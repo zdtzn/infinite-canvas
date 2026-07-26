@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 
+import { friendlyErrorMessage } from "@/lib/friendly-error";
 import type { ApiCallFormat, ModelChannel } from "@/stores/use-config-store";
 
 export type AuthUser = { userId: string; displayName: string; admin?: boolean; avatarUrl?: string };
@@ -11,6 +12,7 @@ export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durat
 export type ServerJob = {
     id: string;
     status: ServerJobStatus;
+    phase?: "queued" | "submitting" | "waiting_upstream" | "completed";
     createdAt: number;
     startedAt?: number;
     finishedAt?: number;
@@ -71,6 +73,43 @@ export type CultivationRealmConfig = {
 };
 export type CultivationConfiguration = { realms: CultivationRealmConfig[]; capabilities: Array<{ key: string; label: string; category: string; active: boolean }>; rewards: Record<string, number> };
 export type PagedResponse<T> = { items: T[]; page: number; pageSize: number; total: number };
+export type AdminChannelMetric = {
+    userId: string;
+    ownerName: string;
+    channelId: string;
+    channelName: string;
+    host: string;
+    protocol: ApiCallFormat;
+    status: "idle" | "active" | "healthy" | "degraded" | "unavailable";
+    successRate: number | null;
+    totalJobs: number;
+    activeJobs: number;
+    requestedImages: number;
+    successImages: number;
+    failedImages: number;
+    avgDurationMs: number;
+    lastUsedAt: number;
+    lastError: string;
+};
+export type AdminMetrics = {
+    users: number;
+    channels: number;
+    jobs: Partial<Record<ServerJobStatus, number>>;
+    uptimeSeconds: number;
+    memory: { rss: number; heapTotal: number; heapUsed: number; external: number; arrayBuffers: number };
+    backup: {
+        enabled: boolean;
+        directory: string;
+        retentionCount: number;
+        intervalHours: number;
+        lastAttemptAt?: number;
+        lastCompletedAt?: number;
+        lastFilename?: string;
+        lastBytes?: number;
+        lastError?: string;
+        nextRunAt?: number;
+    } | null;
+};
 
 export async function fetchAuthStatus() {
     return serverRequest<AuthStatus>("/api/auth/status", { timeoutMs: 12_000 });
@@ -218,7 +257,7 @@ export async function waitForServerJob(id: string, options?: { signal?: AbortSig
         const { job } = await fetchServerJob(id);
         options?.onUpdate?.(job);
         if (job.status === "succeeded") return job;
-        if (job.status === "failed") throw new Error(job.error || "生成失败");
+        if (job.status === "failed") throw new Error(friendlyErrorMessage(job.error || "生成失败"));
         if (job.status === "canceled") throw new DOMException("Aborted", "AbortError");
         await abortableSleep(job.status === "queued" ? 1200 : 1800, options?.signal);
     }
@@ -263,7 +302,8 @@ export async function serverRequest<T = unknown>(url: string, options: ServerReq
         return readJsonResponse<T>(response);
     } catch (error) {
         if (error instanceof DOMException && error.name === "TimeoutError") throw new Error("请求超时，请检查网络或上游接口状态");
-        throw error;
+        if (error instanceof DOMException && error.name === "AbortError" && options.signal?.aborted) throw error;
+        throw new Error(friendlyErrorMessage(error));
     } finally {
         window.clearTimeout(timeout);
     }
@@ -282,9 +322,18 @@ async function throwResponseError(response: Response): Promise<never> {
 }
 
 function throwResponsePayload(status: number, payload: unknown): never {
-    const message = readServerError(payload) || `请求失败：${status}`;
+    const originalMessage = readServerError(payload);
+    const message = friendlyErrorMessage(originalMessage, status);
     if (status === 401 || (status === 403 && message.includes("账号已停用"))) window.dispatchEvent(new Event("canvas:auth-invalid"));
     throw new Error(message);
+}
+
+export async function fetchAdminChannelMetrics(days = 7) {
+    return serverRequest<{ days: number; items: AdminChannelMetric[] }>(`/api/admin/channels/metrics?days=${Math.max(1, Math.min(30, Math.floor(days)))}`);
+}
+
+export async function fetchAdminMetrics() {
+    return serverRequest<AdminMetrics>("/api/admin/metrics");
 }
 
 function mimeExtension(mimeType: string) {

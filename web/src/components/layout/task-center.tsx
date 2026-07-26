@@ -5,10 +5,10 @@ import { useNavigate } from "react-router-dom";
 
 import { cancelServerJob, fetchServerJobs, removeServerJob, retryServerJob, type ServerJob } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { formatDuration } from "@/lib/image-utils";
 import { taskProgressProps } from "./task-progress";
 
-const statusLabels: Record<ServerJob["status"], string> = { queued: "排队中", running: "生成中", succeeded: "已完成", failed: "失败", canceled: "已取消" };
 const statusColors: Record<ServerJob["status"], string> = { queued: "default", running: "processing", succeeded: "success", failed: "error", canceled: "default" };
 
 export function TaskCenter() {
@@ -80,7 +80,7 @@ export function TaskCenter() {
                                         <div className="mt-1 line-clamp-2 text-xs leading-5 text-stone-500">{job.prompt}</div>
                                     </button>
                                     <Tag className="m-0 shrink-0" color={statusColors[job.status]}>
-                                        {statusLabels[job.status]}
+                                        {jobStatusLabel(job)}
                                     </Tag>
                                 </div>
                                 {progress ? (
@@ -106,7 +106,7 @@ export function TaskCenter() {
                                         {!active ? <Button type="text" danger size="small" icon={<Trash2 className="size-3.5" />} loading={loadingId === job.id} onClick={() => void act(job, "remove")} /> : null}
                                     </div>
                                 </div>
-                                {job.error ? <div className="mt-2 text-xs leading-5 text-red-500">{job.error}</div> : null}
+                                {job.error ? <div className="mt-2 text-xs leading-5 text-red-500">{friendlyErrorMessage(job.error)}</div> : null}
                             </div>
                         );
                     })}
@@ -115,4 +115,12 @@ export function TaskCenter() {
             </Drawer>
         </>
     );
+}
+
+function jobStatusLabel(job: ServerJob) {
+    if (job.status === "queued") return "排队中";
+    if (job.status === "running") return job.phase === "waiting_upstream" ? "上游生成中" : "正在提交";
+    if (job.status === "succeeded") return "已完成";
+    if (job.status === "failed") return "失败";
+    return "已取消";
 }

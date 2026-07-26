@@ -13,6 +13,7 @@ import { logoutAccess } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cn } from "@/lib/utils";
+import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 
 type UserStatusActionsProps = {
     showConfig?: boolean;
@@ -92,7 +93,16 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, va
                 <button type="button" className={cn(naturalIconClass, isDouEmperor && "imperial-avatar-menu-trigger", isImperialMode && "is-active")} style={iconStyle} aria-label="打开应用菜单" title="应用菜单">
                     {isDouEmperor ? (
                         user?.avatarUrl ? (
-                            <img src={user.avatarUrl} alt="" width={24} height={24} loading="eager" decoding="async" fetchPriority="high" className="size-6 rounded-full object-cover" />
+                            <ProfileAvatarImage
+                                src={user.avatarUrl}
+                                alt=""
+                                fallback={<Crown className="size-4" />}
+                                width={24}
+                                height={24}
+                                loading="eager"
+                                fetchPriority="high"
+                                className="size-6 rounded-full"
+                            />
                         ) : (
                             <Crown className="size-4" />
                         )

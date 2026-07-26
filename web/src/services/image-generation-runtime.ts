@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import localforage from "localforage";
 
 import { requestEdit, requestGeneration } from "@/services/api/image";
+import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { fetchServerJob, waitForServerJob } from "@/services/server-api";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -147,7 +148,7 @@ async function runGeneration(jobId: string, snapshot: ImageGenerationSnapshot, o
     const successCount = successImages.length;
     const failCount = settled.length - successCount;
     const failed = settled.find((item): item is PromiseRejectedResult => item.status === "rejected");
-    const error = failed?.reason instanceof Error ? failed.reason.message : failCount ? "生成失败" : undefined;
+    const error = failed ? friendlyErrorMessage(failed.reason) : failCount ? "生成失败" : undefined;
     const durationMs = Date.now() - job.startedAt;
 
     stopElapsedTimer();
@@ -178,7 +179,7 @@ async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGe
         updateResult(jobId, index, { status: "success", image: nextImage });
         return nextImage;
     } catch (error) {
-        updateResult(jobId, index, { status: "failed", error: error instanceof Error ? error.message : "生成失败" });
+        updateResult(jobId, index, { status: "failed", error: friendlyErrorMessage(error) });
         throw error;
     }
 }

@@ -9,9 +9,14 @@ import { useSearchParams } from "react-router-dom";
 import { previewCultivationBreakthrough } from "@/features/cultivation/breakthrough-overlay";
 import { RealmIcon } from "@/features/cultivation/realm-icon";
 import { cultivationAccentColor, cultivationStageLabel } from "@/features/cultivation/utils";
+import { friendlyErrorMessage } from "@/lib/friendly-error";
+import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
+import { formatBytes } from "@/lib/image-utils";
 import {
     approveAdminBreakthrough,
+    fetchAdminChannelMetrics,
     fetchAdminCultivationUsers,
+    fetchAdminMetrics,
     fetchCultivationConfiguration,
     fetchCultivationLog,
     updateAdminCultivationUser,
@@ -23,6 +28,7 @@ import {
     type CultivationProfile,
     type CultivationRealmConfig,
     type CultivationStageConfig,
+    type AdminChannelMetric,
 } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { buildCultivationUserPatch, type CultivationUserFormValues, type CultivationUserPatch } from "./user-update";
@@ -147,7 +153,7 @@ export default function AdminCultivationPage() {
                             children: <UsersPanel searchFromUrl={searchParams.get("search") || ""} onSearchChange={(search) => updateParams({ search })} />,
                         },
                         { key: "config", label: "配置", children: <ConfigurationPanel /> },
-                        { key: "usage", label: "用量", children: <LogPanel kind="usage" title="生成用量" description="按任务记录请求、成功结算和耗时。" onOpenUser={openUserFromLog} /> },
+                        { key: "usage", label: "用量", children: <UsagePanel onOpenUser={openUserFromLog} /> },
                         { key: "logs", label: "日志", children: <LogsPanel onOpenUser={openUserFromLog} /> },
                     ]}
                 />
@@ -878,6 +884,107 @@ function LogsPanel({ onOpenUser }: { onOpenUser: (displayName: string) => void }
     );
 }
 
+function UsagePanel({ onOpenUser }: { onOpenUser: (displayName: string) => void }) {
+    const channels = useQuery({
+        queryKey: ["admin", "channels", "metrics", 7],
+        queryFn: () => fetchAdminChannelMetrics(7),
+        refetchInterval: 30_000,
+    });
+    const system = useQuery({
+        queryKey: ["admin", "metrics"],
+        queryFn: fetchAdminMetrics,
+        refetchInterval: 30_000,
+    });
+    const backup = system.data?.backup;
+    const backupText = system.isError
+        ? "备份状态加载失败，请刷新重试"
+        : !system.data
+          ? "正在读取备份状态"
+          : !backup?.enabled
+            ? "自动备份已关闭"
+            : backup.lastError
+              ? `最近备份失败：${backup.lastError}`
+              : backup.lastCompletedAt
+                ? `最近备份 ${formatTimestamp(backup.lastCompletedAt)}${backup.lastBytes ? ` · ${formatBytes(backup.lastBytes)}` : ""} · 保留 ${backup.retentionCount} 份`
+                : "自动备份已启用，等待首次一致性快照";
+    const backupError = system.isError || Boolean(backup?.lastError);
+
+    return (
+        <div className="space-y-6">
+            <section className="cultivation-admin-panel">
+                <div className="cultivation-admin-panel-header">
+                    <div>
+                        <h2>渠道状态</h2>
+                        <p>最近 7 天的成功率、平均耗时和错误摘要。成本由上游平台计费，本页不估算金额。</p>
+                    </div>
+                    <Tooltip title="刷新渠道与备份状态">
+                        <Button
+                            type="text"
+                            icon={<RefreshCw className={`size-4 ${channels.isFetching || system.isFetching ? "animate-spin" : ""}`} />}
+                            aria-label="刷新渠道状态"
+                            onClick={() => void Promise.all([channels.refetch(), system.refetch()])}
+                        />
+                    </Tooltip>
+                </div>
+                <div className={`mb-4 border-l-2 pl-3 text-xs leading-5 ${backupError ? "border-red-400 text-red-600 dark:text-red-300" : "border-emerald-500/60 text-stone-500 dark:text-stone-400"}`}>
+                    {backupText}
+                </div>
+                <Table<AdminChannelMetric>
+                    className="cultivation-admin-table"
+                    rowKey={(row) => `${row.userId}:${row.channelId}`}
+                    size="middle"
+                    loading={channels.isLoading}
+                    dataSource={channels.data?.items || []}
+                    scroll={{ x: 1040 }}
+                    pagination={false}
+                    locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={channels.isError ? "渠道状态加载失败" : "暂无渠道"} /> }}
+                    columns={[
+                        {
+                            title: "渠道",
+                            key: "channel",
+                            width: 190,
+                            render: (_, row) => (
+                                <div className="min-w-0">
+                                    <div className="truncate font-medium" title={row.channelName}>{row.channelName}</div>
+                                    <div className="mt-1 truncate text-xs text-stone-500" title={row.host}>{row.host}</div>
+                                </div>
+                            ),
+                        },
+                        { title: "用户", dataIndex: "ownerName", key: "ownerName", width: 130, ellipsis: true },
+                        { title: "状态", dataIndex: "status", key: "status", width: 105, render: (value) => <ChannelStatusTag status={value} /> },
+                        {
+                            title: "成功率",
+                            dataIndex: "successRate",
+                            key: "successRate",
+                            width: 95,
+                            align: "right",
+                            render: (value) => (value === null ? "-" : `${value}%`),
+                        },
+                        {
+                            title: "图片",
+                            key: "images",
+                            width: 120,
+                            align: "right",
+                            render: (_, row) => <span className="cultivation-count">{row.successImages} 成功 / {row.failedImages} 失败</span>,
+                        },
+                        { title: "平均耗时", dataIndex: "avgDurationMs", key: "avgDurationMs", width: 110, align: "right", render: (value) => (value ? formatDuration(value) : "-") },
+                        { title: "运行中", dataIndex: "activeJobs", key: "activeJobs", width: 85, align: "right" },
+                        { title: "最近使用", dataIndex: "lastUsedAt", key: "lastUsedAt", width: 170, render: (value) => (value ? formatTimestamp(value) : "尚未使用") },
+                        {
+                            title: "最近错误",
+                            dataIndex: "lastError",
+                            key: "lastError",
+                            ellipsis: true,
+                            render: (value) => value ? <span className="text-red-600 dark:text-red-300" title={friendlyErrorMessage(value)}>{friendlyErrorMessage(value)}</span> : "-",
+                        },
+                    ]}
+                />
+            </section>
+            <LogPanel kind="usage" title="生成用量" description="按任务记录请求、成功结算、失败退还和耗时。" onOpenUser={onOpenUser} />
+        </div>
+    );
+}
+
 function LogPanel({ kind, title, description, onOpenUser }: { kind: LogKind; title: string; description: string; onOpenUser: (displayName: string) => void }) {
     const [page, setPage] = useState(1);
     const { data, isFetching } = useQuery({ queryKey: ["admin", "cultivation", kind, page], queryFn: () => fetchCultivationLog<LogRow>(kind, page, 20) });
@@ -995,23 +1102,16 @@ function UserIdentity({ user, large = false }: { user: Pick<AdminCultivationUser
     const initial = user.displayName.trim().slice(0, 1).toUpperCase() || "U";
     return (
         <div className={`cultivation-user-identity ${large ? "is-large" : ""}`}>
-            <div className="cultivation-user-avatar">
-                <span>{initial}</span>
-                {user.avatarUrl ? (
-                    <img
-                        src={user.avatarUrl}
-                        alt=""
-                        width={large ? 40 : 32}
-                        height={large ? 40 : 32}
-                        loading={large ? "eager" : "lazy"}
-                        decoding="async"
-                        fetchPriority={large ? "high" : "low"}
-                        onError={(event) => {
-                            event.currentTarget.hidden = true;
-                        }}
-                    />
-                ) : null}
-            </div>
+            <ProfileAvatarImage
+                src={user.avatarUrl}
+                alt=""
+                fallback={initial}
+                width={large ? 40 : 32}
+                height={large ? 40 : 32}
+                loading={large ? "eager" : "lazy"}
+                fetchPriority={large ? "high" : "low"}
+                className="cultivation-user-avatar"
+            />
             <div className="min-w-0">
                 <div className="truncate font-medium text-stone-900 dark:text-stone-100">{user.displayName}</div>
                 <div className="mt-0.5 truncate text-xs text-stone-500 dark:text-stone-400" title={user.userId}>
@@ -1059,6 +1159,18 @@ function UsageStatusTag({ status }: { status: string }) {
         refunded: { label: "已退回", color: "orange" },
     };
     const item = labels[status] || { label: status || "未知" };
+    return <Tag color={item.color}>{item.label}</Tag>;
+}
+
+function ChannelStatusTag({ status }: { status: AdminChannelMetric["status"] }) {
+    const labels: Record<AdminChannelMetric["status"], { label: string; color?: string }> = {
+        idle: { label: "未使用" },
+        active: { label: "运行中", color: "processing" },
+        healthy: { label: "正常", color: "green" },
+        degraded: { label: "需关注", color: "orange" },
+        unavailable: { label: "异常", color: "red" },
+    };
+    const item = labels[status];
     return <Tag color={item.color}>{item.label}</Tag>;
 }
 
@@ -1122,6 +1234,12 @@ function formatDuration(value: unknown) {
     const milliseconds = Number(value);
     if (!Number.isFinite(milliseconds) || milliseconds <= 0) return "-";
     return milliseconds >= 60_000 ? `${(milliseconds / 60_000).toFixed(1)} 分` : `${(milliseconds / 1000).toFixed(1)} 秒`;
+}
+
+function formatTimestamp(value: unknown) {
+    const timestamp = Number(value);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
+    return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
 }
 
 function sourceTypeLabel(value: string) {

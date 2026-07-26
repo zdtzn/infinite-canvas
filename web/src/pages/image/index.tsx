@@ -211,7 +211,12 @@ export default function ImagePage() {
                     images: logImages,
                 }),
             );
-            successCount ? message.success(generationSuccessMessage("图片已生成")) : message.error(error || "生成失败");
+            if (successCount) {
+                const settlement = failCount ? `成功 ${successCount} 张，失败 ${failCount} 张已自动退还额度` : `成功生成 ${successCount} 张图片`;
+                message.success(generationSuccessMessage(settlement));
+            } else {
+                message.error(`${error || "生成失败"}${cultivationProfile ? "，本次额度已自动退还" : ""}`);
+            }
         });
         if (!jobId && agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生图工作台已有任务正在运行" });
     };
@@ -534,7 +539,11 @@ export default function ImagePage() {
                             {generationBlockReason ? (
                                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
                             ) : cultivationProfile ? (
-                                <div className="mt-2 text-center text-xs text-stone-400">{quotaText(cultivationProfile.remainingToday, cultivationProfile.unlimited)}</div>
+                                <div className="mt-2 text-center text-xs text-stone-400">
+                                    {cultivationProfile.unlimited
+                                        ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量`
+                                        : `本次将占用 ${generationCount} 次 · ${quotaText(cultivationProfile.remainingToday, false)} · 失败自动退还`}
+                                </div>
                             ) : null}
                         </div>
                     </div>

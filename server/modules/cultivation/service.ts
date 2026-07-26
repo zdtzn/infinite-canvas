@@ -967,6 +967,42 @@ export function createCultivationService(
     );
   }
 
+  function listChannelMetrics(days = 7) {
+    const safeDays = Math.max(1, Math.min(30, Math.floor(days)));
+    const since = now().getTime() - safeDays * 24 * 60 * 60_000;
+    const rows = database
+      .query(
+        `SELECT user_id, channel_id,
+                COUNT(*) AS total_jobs,
+                SUM(CASE WHEN status = 'settled' THEN 1 ELSE 0 END) AS settled_jobs,
+                SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded_jobs,
+                SUM(CASE WHEN status = 'reserved' THEN 1 ELSE 0 END) AS active_jobs,
+                SUM(requested_count) AS requested_images,
+                SUM(success_count) AS success_images,
+                SUM(fail_count) AS failed_images,
+                ROUND(AVG(CASE WHEN status = 'settled' AND duration_ms > 0 THEN duration_ms END)) AS avg_duration_ms,
+                MAX(created_at) AS last_used_at
+         FROM generation_usage
+         WHERE created_at >= ?
+         GROUP BY user_id, channel_id
+         ORDER BY last_used_at DESC`,
+      )
+      .all(since) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      userId: String(row.user_id),
+      channelId: String(row.channel_id),
+      totalJobs: Number(row.total_jobs || 0),
+      settledJobs: Number(row.settled_jobs || 0),
+      refundedJobs: Number(row.refunded_jobs || 0),
+      activeJobs: Number(row.active_jobs || 0),
+      requestedImages: Number(row.requested_images || 0),
+      successImages: Number(row.success_images || 0),
+      failedImages: Number(row.failed_images || 0),
+      avgDurationMs: Number(row.avg_duration_ms || 0),
+      lastUsedAt: Number(row.last_used_at || 0),
+    }));
+  }
+
   function listAuditLogs(page = 1, pageSize = 20) {
     return paginatedQuery(
       database,
@@ -1050,6 +1086,7 @@ export function createCultivationService(
     listUsers,
     listLedger,
     listGenerationUsage,
+    listChannelMetrics,
     listAuditLogs,
     listLoginLogs,
     listBreakthroughs,

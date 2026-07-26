@@ -6,6 +6,7 @@ import { Streamdown } from "streamdown";
 import { isPlainEnterKey } from "@/lib/keyboard-event";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { LocalUser } from "@/stores/use-user-store";
+import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 
 export type CanvasAgentChatAttachment = { id: string; name: string; url: string };
 export type CanvasAgentChatMessage = {
@@ -291,9 +292,14 @@ function AgentAvatar({ theme }: { theme: (typeof canvasThemes)[keyof typeof canv
 function AgentUserAvatar({ user, theme }: { user: LocalUser | null; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const avatarUrl = user?.avatarUrl?.trim();
     return (
-        <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-full" style={{ color: theme.node.text }}>
-            {avatarUrl ? <img src={avatarUrl} alt="" className="size-full object-cover" referrerPolicy="no-referrer" /> : <UserRound className="size-4" />}
-        </span>
+        <ProfileAvatarImage
+            src={avatarUrl}
+            alt=""
+            fallback={<UserRound className="size-4" />}
+            referrerPolicy="no-referrer"
+            className="size-8 rounded-full"
+            containerStyle={{ color: theme.node.text }}
+        />
     );
 }
 

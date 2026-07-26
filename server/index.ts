@@ -9,6 +9,7 @@ import { decryptSecret, encryptSecret } from "./lib/crypto-store";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
+import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { openAppDatabase, persistReference } from "./db/database";
@@ -97,6 +98,10 @@ const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").trim();
 const secureCookies = PUBLIC_BASE_URL.startsWith("https://") || process.env.FORCE_SECURE_COOKIES === "1";
 const TRUST_PROXY = process.env.TRUST_PROXY === "1";
 const RATE_BUCKET_LIMIT = Math.max(100, positiveInt(process.env.RATE_BUCKET_LIMIT, 10_000));
+const BACKUP_ENABLED = process.env.BACKUP_ENABLED !== "0";
+const BACKUP_DIR = resolve(process.env.BACKUP_DIR || join(DATA_DIR, "backups"));
+const BACKUP_INTERVAL_HOURS = Math.max(1, positiveInt(process.env.BACKUP_INTERVAL_HOURS, 24));
+const BACKUP_RETENTION_COUNT = Math.max(2, positiveInt(process.env.BACKUP_RETENTION_COUNT, 14));
 
 mkdirSync(DATA_DIR, { recursive: true });
 mkdirSync(JOB_FILE_ROOT, { recursive: true });
@@ -108,6 +113,15 @@ let state = appDatabase.loadState();
 const assetBytesByUser = new Map<string, number>();
 for (const asset of Object.values(state.assets)) assetBytesByUser.set(asset.userId, (assetBytesByUser.get(asset.userId) || 0) + asset.bytes);
 const cultivation = appDatabase.raw ? createCultivationService(appDatabase.raw) : null;
+const backupManager = appDatabase.raw
+    ? createSqliteBackupManager({
+          database: appDatabase.raw,
+          directory: BACKUP_DIR,
+          enabled: BACKUP_ENABLED,
+          intervalMs: BACKUP_INTERVAL_HOURS * 60 * 60_000,
+          retentionCount: BACKUP_RETENTION_COUNT,
+      })
+    : null;
 for (const user of Object.values(state.users)) cultivation?.ensureUser(user.userId, Boolean(user.admin));
 const configuredEncryptionSecret = process.env.APP_ENCRYPTION_KEY?.trim();
 if (PUBLIC_BASE_URL.startsWith("https://") && !configuredEncryptionSecret) throw new Error("公网部署必须设置 APP_ENCRYPTION_KEY");
@@ -154,6 +168,7 @@ cultivation?.reconcileReservations(
 );
 pruneTerminalJobs();
 writeState();
+backupManager?.start();
 
 let server: ReturnType<typeof Bun.serve>;
 server = Bun.serve({
@@ -198,6 +213,7 @@ async function route(request: Request, requestId: string) {
         const session = requireSession(request);
         enforceRateLimit(`${session.userId}:${clientIp(request)}`, request.method === "GET" ? 240 : 90);
         if (url.pathname === "/api/admin/metrics" && request.method === "GET") return adminMetrics(session);
+        if (url.pathname === "/api/admin/channels/metrics" && request.method === "GET") return adminChannelMetrics(url, session);
         if (url.pathname === "/api/admin/users" && request.method === "GET") return listUsers(session);
         const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
         if (userMatch && request.method === "PUT") return updateUserAccess(request, session, userMatch[1]);
@@ -367,7 +383,64 @@ async function updateUserAccess(request: Request, session: SessionPayload, userI
 
 function adminMetrics(session: SessionPayload) {
     requireAdmin(session);
-    return json({ users: Object.keys(state.users).length, channels: Object.keys(state.channels).length, jobs: summarizeJobs(), uptimeSeconds: Math.round(process.uptime()), memory: process.memoryUsage() });
+    return json({ users: Object.keys(state.users).length, channels: Object.keys(state.channels).length, jobs: summarizeJobs(), uptimeSeconds: Math.round(process.uptime()), memory: process.memoryUsage(), backup: backupManager?.status() || null });
+}
+
+function adminChannelMetrics(url: URL, session: SessionPayload) {
+    requireAdmin(session);
+    const days = Math.max(1, Math.min(30, Math.floor(Number(url.searchParams.get("days")) || 7)));
+    const usage = requireCultivation().listChannelMetrics(days);
+    const usageByChannel = new Map(usage.map((item) => [`${item.userId}:${item.channelId}`, item]));
+    const cutoff = Date.now() - days * 24 * 60 * 60_000;
+    const recentErrors = new Map<string, string>();
+    for (const job of Object.values(state.jobs).sort((left, right) => right.createdAt - left.createdAt)) {
+        if (job.createdAt < cutoff || job.status !== "failed" || !job.error) continue;
+        const key = `${job.input.userId}:${job.input.channelId}`;
+        if (!recentErrors.has(key)) recentErrors.set(key, job.error.slice(0, 300));
+    }
+    const items = Object.values(state.channels)
+        .map((channel) => {
+            const key = `${channel.userId}:${channel.id}`;
+            const metric = usageByChannel.get(key);
+            const completedImages = (metric?.successImages || 0) + (metric?.failedImages || 0);
+            const successRate = completedImages ? Math.round(((metric?.successImages || 0) / completedImages) * 100) : null;
+            const status =
+                (metric?.activeJobs || 0) > 0
+                    ? "active"
+                    : successRate === null
+                      ? "idle"
+                      : successRate >= 90
+                        ? "healthy"
+                        : successRate >= 60
+                          ? "degraded"
+                          : "unavailable";
+            let host = channel.baseUrl;
+            try {
+                host = new URL(channel.baseUrl).host;
+            } catch {
+                host = "地址无效";
+            }
+            return {
+                userId: channel.userId,
+                ownerName: state.users[channel.userId]?.displayName || channel.userId,
+                channelId: channel.id,
+                channelName: channel.name,
+                host,
+                protocol: channel.apiFormat,
+                status,
+                successRate,
+                totalJobs: metric?.totalJobs || 0,
+                activeJobs: metric?.activeJobs || 0,
+                requestedImages: metric?.requestedImages || 0,
+                successImages: metric?.successImages || 0,
+                failedImages: metric?.failedImages || 0,
+                avgDurationMs: metric?.avgDurationMs || 0,
+                lastUsedAt: metric?.lastUsedAt || 0,
+                lastError: recentErrors.get(key) || "",
+            };
+        })
+        .sort((left, right) => Number(right.activeJobs > 0) - Number(left.activeJobs > 0) || right.lastUsedAt - left.lastUsedAt || left.channelName.localeCompare(right.channelName));
+    return json({ days, items });
 }
 
 function requireAdmin(session: SessionPayload) {
@@ -739,9 +812,23 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
 }
 
 function publicJob(job: StoredImageJob) {
+    const channel = state.channels[channelKey(job.input.userId, job.input.channelId)];
+    const usesUuAsync =
+        job.input.apiFormat === "openai" &&
+        job.input.count === 1 &&
+        Boolean(channel && isUuImageAsyncChannel(channel.baseUrl, job.input.model, job.input.references.length, Boolean(job.input.mask)));
+    const phase =
+        job.status === "queued"
+            ? "queued"
+            : job.status !== "running"
+              ? "completed"
+              : usesUuAsync && !hasUuAsyncTask(job.input)
+                ? "submitting"
+                : "waiting_upstream";
     return {
         id: job.id,
         status: job.status,
+        phase,
         createdAt: job.createdAt,
         startedAt: job.startedAt,
         finishedAt: job.finishedAt,

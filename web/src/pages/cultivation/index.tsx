@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import type { CultivationProfile } from "@/services/server-api";
 import { uploadProfileAvatar } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
@@ -144,19 +145,20 @@ export default function CultivationPage() {
                     <div className="absolute inset-0 flex flex-col justify-between p-6 sm:p-8">
                         <div className="flex items-center gap-3">
                             <div className="relative shrink-0">
-                                <div
+                                <ProfileAvatarImage
+                                    src={avatarUrl}
+                                    alt={`${data.displayName} 的头像`}
+                                    fallback={data.displayName.slice(0, 1).toUpperCase()}
+                                    width={48}
+                                    height={48}
+                                    loading="eager"
+                                    fetchPriority="high"
                                     className={cn(
                                         "grid size-12 place-items-center overflow-hidden rounded-full border text-base font-semibold",
                                         isDouEmperor ? "border-[#c9a86a]/70 text-[#f0ead8]" : "border-[rgb(237_237_230/0.25)] text-[#edede6]",
                                         "bg-[#17171d]/80 backdrop-blur",
                                     )}
-                                >
-                                    {avatarUrl ? (
-                                        <img src={avatarUrl} alt={`${data.displayName} 的头像`} width={48} height={48} loading="eager" decoding="async" fetchPriority="high" className="size-full object-cover" />
-                                    ) : (
-                                        data.displayName.slice(0, 1).toUpperCase()
-                                    )}
-                                </div>
+                                />
                                 <Tooltip title="上传头像">
                                     <button
                                         type="button"

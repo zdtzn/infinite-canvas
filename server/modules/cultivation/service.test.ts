@@ -561,6 +561,84 @@ describe("cultivation quota and settlement", () => {
       reopened.close();
     }
   });
+
+  test("aggregates recent channel health without adding another metrics table", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      service.reserveGeneration({
+        jobId: "channel-a-settled",
+        userId: "user",
+        channelId: "channel-a",
+        model: "gpt-image-1",
+        count: 2,
+        quality: "auto",
+        referenceCount: 0,
+        hasMask: false,
+        activeJobs: 0,
+      });
+      service.settleGeneration({
+        jobId: "channel-a-settled",
+        successCount: 1,
+        failCount: 1,
+        durationMs: 2_000,
+      });
+      service.reserveGeneration({
+        jobId: "channel-a-refunded",
+        userId: "user",
+        channelId: "channel-a",
+        model: "gpt-image-1",
+        count: 1,
+        quality: "auto",
+        referenceCount: 0,
+        hasMask: false,
+        activeJobs: 0,
+      });
+      service.refundGeneration("channel-a-refunded", "upstream failed");
+      service.reserveGeneration({
+        jobId: "channel-b-active",
+        userId: "user",
+        channelId: "channel-b",
+        model: "gpt-image-1",
+        count: 1,
+        quality: "auto",
+        referenceCount: 0,
+        hasMask: false,
+        activeJobs: 0,
+      });
+
+      const metrics = service.listChannelMetrics(7);
+      expect(metrics).toHaveLength(2);
+      expect(metrics.find((item) => item.channelId === "channel-a")).toEqual({
+          userId: "user",
+          channelId: "channel-a",
+          totalJobs: 2,
+          settledJobs: 1,
+          refundedJobs: 1,
+          activeJobs: 0,
+          requestedImages: 3,
+          successImages: 1,
+          failedImages: 2,
+          avgDurationMs: 2_000,
+          lastUsedAt: new Date("2026-07-22T08:00:00+08:00").getTime(),
+        });
+      expect(metrics.find((item) => item.channelId === "channel-b")).toEqual({
+          userId: "user",
+          channelId: "channel-b",
+          totalJobs: 1,
+          settledJobs: 0,
+          refundedJobs: 0,
+          activeJobs: 1,
+          requestedImages: 1,
+          successImages: 0,
+          failedImages: 0,
+          avgDurationMs: 0,
+          lastUsedAt: new Date("2026-07-22T08:00:00+08:00").getTime(),
+        });
+    } finally {
+      store.close();
+    }
+  });
 });
 
 function setup() {

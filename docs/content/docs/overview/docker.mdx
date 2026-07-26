@@ -1,91 +1,170 @@
 ---
 title: Docker 部署
-description: 使用 Docker Compose 部署无限画布
+description: 使用 Docker Compose 部署、备份和恢复无限画布
 ---
 
 # Docker 部署
 
-如果你希望在自己的机器或服务器上运行项目，可以直接使用 Docker Compose。
+主镜像包含 Bun 单体服务和构建后的前端。登录、SQLite、素材、任务、项目与提示词缓存都由同一个容器管理，持久化目录为 `/data`。
 
-## 使用发布镜像
+## 首次部署
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
+git clone https://github.com/zdtzn/infinite-canvas.git
 cd infinite-canvas
-docker compose up -d
+cp .env.example .env
+docker compose up -d app
+docker compose ps
+curl http://127.0.0.1:3000/health
 ```
 
-启动后访问：
+健康检查返回 `{"status":"ok"}` 后，访问 `http://服务器IP:3000` 完成管理员和访问口令初始化。
 
-```text
-http://localhost:3000
+`.env` 至少需要确认以下配置：
+
+```dotenv
+IMAGE_REPOSITORY=ghcr.io/zdtzn/infinite-canvas
+IMAGE_TAG=latest
+APP_ENCRYPTION_KEY=replace-with-a-long-random-secret
+JOB_CONCURRENCY=2
 ```
 
-## 本地构建镜像
+生成加密密钥：
 
-如果需要基于当前源码构建镜像：
+```bash
+openssl rand -base64 32
+```
+
+`APP_ENCRYPTION_KEY` 用于加密渠道密钥。首次正式使用后必须保持不变；需要轮换时，将旧密钥临时放入 `APP_ENCRYPTION_KEY_PREVIOUS`。
+
+## 更新与回滚
+
+```bash
+docker compose pull app
+docker compose up -d app
+docker compose ps
+docker compose logs --tail=50 app
+```
+
+正式环境建议将 `IMAGE_TAG` 固定为已验证的版本号。需要回滚时修改该值，再执行同一组命令。Watchtower 可以自动跟踪 `latest`，但会跳过人工验收，不建议作为唯一发布策略。
+
+## 数据与数据卷
+
+Compose 默认将 `infinite-canvas-data` 挂载到 `/data`。其中主要包含：
+
+| 路径 | 内容 |
+| --- | --- |
+| `/data/app.sqlite` | 用户、渠道、修炼、项目、任务和流水 |
+| `/data/assets` | 用户素材与头像 |
+| `/data/job-files` | 生图任务结果 |
+| `/data/job-references` | 生图参考图 |
+| `/data/prompt-cache` | 提示词图片缓存 |
+| `/data/backups` | SQLite 一致性快照 |
+
+更新或重建容器不会删除数据卷。不要使用 `docker compose down -v`，除非明确要删除全部数据。
+
+查看实际数据卷名称：
+
+```bash
+docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' infinite-canvas
+```
+
+## 自动备份
+
+服务使用 SQLite 原生 `VACUUM INTO` 创建一致性快照，并对新快照执行完整性检查。默认启动 60 秒后生成第一份，之后每 24 小时运行一次，保留最近 14 份。
+
+```dotenv
+BACKUP_ENABLED=1
+BACKUP_INTERVAL_HOURS=24
+BACKUP_RETENTION_COUNT=14
+BACKUP_DIR=/data/backups
+```
+
+管理员可在「掌教殿 > 用量」查看最近备份时间、大小和错误状态。默认备份与主库位于同一个数据卷，可防误操作和单库损坏；如需防整块磁盘故障，还应定期将备份复制到另一台机器或对象存储。
+
+复制一份离线数据卷备份到宿主机：
+
+```bash
+mkdir -p /root/infinite-canvas-backup
+docker run --rm \
+  -v infinite-canvas-data:/source:ro \
+  -v /root/infinite-canvas-backup:/target \
+  alpine sh -c 'cp -a /source/. /target/'
+```
+
+如果 `docker inspect` 返回的卷名不是 `infinite-canvas-data`，请将命令中的卷名替换为实际值。
+
+## 恢复 SQLite 快照
+
+先列出可用快照：
+
+```bash
+docker exec infinite-canvas sh -c 'ls -lh /data/backups'
+```
+
+选择确认过的快照后执行：
+
+```bash
+DATA_VOLUME="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' infinite-canvas)"
+IMAGE="ghcr.io/zdtzn/infinite-canvas:latest"
+SNAPSHOT="app-YYYYMMDDTHHMMSSZ-0000000000000.sqlite"
+
+docker stop infinite-canvas
+docker cp infinite-canvas:/data/app.sqlite "./app.sqlite.before-restore"
+
+docker run --rm --user root --entrypoint sh \
+  -v "$DATA_VOLUME:/data" \
+  "$IMAGE" \
+  -c "cp '/data/backups/$SNAPSHOT' /data/app.sqlite && rm -f /data/app.sqlite-wal /data/app.sqlite-shm && chown bun:bun /data/app.sqlite"
+
+docker start infinite-canvas
+sleep 10
+docker inspect -f '{{.State.Health.Status}}' infinite-canvas
+docker logs --tail=50 infinite-canvas
+```
+
+恢复时必须停止应用，并删除旧库对应的 `-wal`、`-shm` 文件，避免把恢复前的写入重新合并进快照。
+
+## HTTPS 与域名
+
+先将域名 A 记录解析到服务器公网 IP，并在云安全组和系统防火墙开放 TCP `80`、`443`；HTTP/3 可额外开放 UDP `443`。不要把数据库目录或 Docker Socket 暴露到公网。
+
+例如域名为 `mingche.click`：
+
+```dotenv
+DOMAIN=mingche.click
+PUBLIC_BASE_URL=https://mingche.click
+APP_ENCRYPTION_KEY=你的固定加密密钥
+```
+
+启动 Caddy：
+
+```bash
+docker compose --profile https up -d
+docker compose ps
+docker compose logs --tail=50 caddy
+curl -I https://mingche.click/health
+```
+
+Caddy 会自动申请并续期 TLS 证书。启用 HTTPS 后，应用会使用安全 Cookie，并要求配置 `APP_ENCRYPTION_KEY`。公网只需要开放 `80/443`；确认域名访问正常后，可在云安全组关闭公网 `3000` 端口。
+
+## 本地构建
+
+需要验证当前源码而不是发布镜像时：
 
 ```bash
 docker compose -f docker-compose.local.yml up -d --build
 ```
 
-## 文档站镜像
-
-文档站位于 `docs/` 目录，按带服务端能力的 Next.js standalone 应用单独构建，不打进主应用镜像。
-
-使用发布镜像：
-
-```bash
-cd docs
-docker compose up -d
-```
-
-基于当前源码本地构建：
-
-```bash
-cd docs
-docker compose -f docker-compose.local.yml up -d --build
-```
-
-## 数据说明
-
-当前主应用镜像只启动 Next.js。画布、我的素材、生成记录和 AI API Key 默认保存在浏览器本地；第三方提示词由浏览器前端直连拉取，不需要额外挂载数据目录。
+文档站位于 `docs/`，使用独立镜像和 Compose 文件，不包含在主应用容器中。
 
 ## 统计分析（可选）
 
-项目**默认不接入任何统计**：不设置下列环境变量时，页面不会加载任何统计脚本，也不会发送任何外部请求。你在自己的部署上想查看流量时，设置对应环境变量即可，无需修改代码或重新构建镜像——镜像启动时会据此生成运行期配置。
+默认不加载统计脚本。只在自己的部署中按需设置：
 
-统计按「每家一个独立变量」配置：**填了谁就启用谁，可同时启用多家**（例如 GA4 + 百度一起开）。仅支持 GA4 与百度，两者都只接受 ID，脚本地址由代码固定拼接，不接受任意脚本地址或内联 JS。
-
-| 变量 | 说明 |
-| --- | --- |
-| `ANALYTICS_GA4_ID` | Google Analytics 4 衡量 ID（`G-XXXX`） |
-| `ANALYTICS_BAIDU_ID` | 百度统计站点 ID（`hm.js?` 后面那串 hash） |
-
-在 `docker-compose.yml` 的 `environment` 中配置（文件内已附注释示例），下例同时启用 GA4 与百度：
-
-```yaml
-services:
-  app:
-    image: ghcr.io/basketikun/infinite-canvas:latest
-    ports:
-      - "3000:3000"
-    environment:
-      ANALYTICS_GA4_ID: G-XXXXXXXXXX
-      ANALYTICS_BAIDU_ID: e8263761cc5c32f5f7a855b8203b965a
+```dotenv
+ANALYTICS_GA4_ID=
+ANALYTICS_BAIDU_ID=
 ```
 
-或使用 `docker run`：
-
-```bash
-docker run -d -p 3000:3000 \
-  -e ANALYTICS_GA4_ID=G-XXXXXXXXXX \
-  -e ANALYTICS_BAIDU_ID=e8263761cc5c32f5f7a855b8203b965a \
-  ghcr.io/basketikun/infinite-canvas:latest
-```
-
-单页应用的路由切换会自动向所有已启用的统计上报 pageview。
-
-<Callout type="warn">
-请只在你自己的站点上配置统计 ID，不要把 ID 提交进仓库；fork 或自托管本项目的用户默认不会产生任何统计。
-</Callout>
+单页路由切换会向已启用的平台上报 pageview。不要将真实统计 ID 提交到公共仓库。
