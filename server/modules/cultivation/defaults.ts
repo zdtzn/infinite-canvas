@@ -34,7 +34,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Gauge",
     dailyLimit: 10,
     maxConcurrency: 1,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "dou-zhe",
@@ -45,7 +45,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Sparkles",
     dailyLimit: 20,
     maxConcurrency: 1,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "dou-shi",
@@ -56,7 +56,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Orbit",
     dailyLimit: 40,
     maxConcurrency: 1,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "da-dou-shi",
@@ -67,7 +67,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Shield",
     dailyLimit: 60,
     maxConcurrency: 2,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "dou-ling",
@@ -78,7 +78,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Diamond",
     dailyLimit: 80,
     maxConcurrency: 2,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "dou-wang",
@@ -89,7 +89,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Crown",
     dailyLimit: 100,
     maxConcurrency: 2,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "dou-huang",
@@ -100,7 +100,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Sun",
     dailyLimit: 120,
     maxConcurrency: 2,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "dou-zong",
@@ -111,7 +111,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Hexagon",
     dailyLimit: 150,
     maxConcurrency: 2,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "dou-zun",
@@ -122,7 +122,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Aperture",
     dailyLimit: 180,
     maxConcurrency: 2,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "dou-zun-peak",
@@ -133,7 +133,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Waves",
     dailyLimit: 200,
     maxConcurrency: 2,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "half-saint",
@@ -144,7 +144,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "CircleDot",
     dailyLimit: 240,
     maxConcurrency: 2,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "dou-saint",
@@ -155,7 +155,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Star",
     dailyLimit: 300,
     maxConcurrency: 2,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
   {
     code: "dou-emperor",
@@ -166,7 +166,7 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     iconKey: "Infinity",
     dailyLimit: null,
     maxConcurrency: 2,
-    promotionPolicy: "boundary_manual",
+    promotionPolicy: "auto",
   },
 ];
 

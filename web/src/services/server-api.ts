@@ -222,10 +222,6 @@ export async function updateAdminCultivationUser(userId: string, input: Record<s
     return serverRequest<{ profile: CultivationProfile }>(`/api/admin/cultivation/users/${encodeURIComponent(userId)}`, { method: "PATCH", body: input });
 }
 
-export async function approveAdminBreakthrough(userId: string, reason: string) {
-    return serverRequest<{ profile: CultivationProfile }>(`/api/admin/cultivation/users/${encodeURIComponent(userId)}/approve`, { method: "POST", body: { reason } });
-}
-
 export async function fetchCultivationConfiguration() {
     return serverRequest<CultivationConfiguration>("/api/admin/cultivation/config");
 }

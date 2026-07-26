@@ -59,6 +59,27 @@ describe("cultivation promotion policy", () => {
     ]);
   });
 
+  test("automatically advances across realm boundaries when configured for automatic promotion", () => {
+    const automaticStages = stages.map((stage) => ({
+      ...stage,
+      promotionPolicy: "auto" as const,
+    }));
+    const result = advanceProgress(
+      { stageId: "king-1", currentXp: 250, pendingStageId: null },
+      automaticStages,
+    );
+
+    expect(result).toEqual({
+      stageId: "emperor-1",
+      currentXp: 30,
+      pendingStageId: null,
+      transitions: [
+        { from: "king-1", to: "king-2", status: "automatic" },
+        { from: "king-2", to: "emperor-1", status: "automatic" },
+      ],
+    });
+  });
+
   test("manual policy requires approval for star upgrades", () => {
     const manualStages = stages.map((stage) => ({
       ...stage,

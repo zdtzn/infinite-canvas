@@ -53,7 +53,6 @@ export type CultivationRealmUpdate = {
   animationPreset?: string;
   dailyLimit?: number | null;
   maxConcurrency?: number;
-  promotionPolicy?: "auto" | "manual" | "boundary_manual";
   active?: boolean;
 };
 export type CultivationStageUpdate = {
@@ -457,7 +456,7 @@ export function createCultivationService(
     input: CultivationUserUpdate,
     reason: string,
   ) {
-    requireReason(reason);
+    const adjustmentReason = normalizeAdminAdjustmentReason(reason);
     return database.transaction(() => {
       ensureUser(userId, false);
       const before = {
@@ -541,9 +540,11 @@ export function createCultivationService(
           userId,
           Math.trunc(input.xpDelta),
           adminUserId,
-          reason,
+          adjustmentReason,
           now().getTime(),
         );
+      if (input.currentXp !== undefined || input.xpDelta)
+        applyAutomaticPromotion(database, userId, now().getTime());
       const after = {
         profile: getProfile(userId),
         user: database
@@ -557,135 +558,12 @@ export function createCultivationService(
         adminUserId,
         userId,
         "cultivation.user.update",
-        reason,
+        adjustmentReason,
         before,
         after,
         now().getTime(),
       );
       return after.profile;
-    })();
-  }
-
-  function approveBreakthrough(
-    adminUserId: string,
-    userId: string,
-    reason: string,
-  ) {
-    requireReason(reason);
-    return database.transaction(() => {
-      const current = database
-        .query(
-          "SELECT stage_id, current_xp, total_xp, pending_stage_id FROM user_cultivation WHERE user_id = ?",
-        )
-        .get(userId) as {
-        stage_id: string;
-        current_xp: number;
-        total_xp: number;
-        pending_stage_id: string | null;
-      } | null;
-      if (!current?.pending_stage_id)
-        throw new CultivationError(
-          "当前用户没有待突破境界",
-          409,
-          "NO_PENDING_BREAKTHROUGH",
-        );
-      const stage = database
-        .query(
-          "SELECT s.required_xp FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.id = ? AND s.active = 1 AND r.active = 1",
-        )
-        .get(current.stage_id) as { required_xp: number } | null;
-      if (!stage)
-        throw new CultivationError(
-          "当前修炼阶段已停用，无法审批突破",
-          409,
-          "CURRENT_STAGE_INACTIVE",
-        );
-      if (current.current_xp < stage.required_xp)
-        throw new CultivationError(
-          "当前修为不足，无法批准突破",
-          409,
-          "BREAKTHROUGH_XP_INSUFFICIENT",
-        );
-      const stages = database
-        .query(
-          "SELECT s.id, s.realm_id, s.stage_order, s.required_xp, r.promotion_policy FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.active = 1 AND r.active = 1 ORDER BY s.stage_order",
-        )
-        .all() as Array<{
-        id: string;
-        realm_id: string;
-        stage_order: number;
-        required_xp: number;
-        promotion_policy: "auto" | "manual" | "boundary_manual";
-      }>;
-      const progressStages: ProgressStage[] = stages.map((item) => ({
-        id: item.id,
-        realmId: item.realm_id,
-        order: item.stage_order,
-        requiredXp: item.required_xp,
-        promotionPolicy: item.promotion_policy,
-      }));
-      const currentStageIndex = progressStages.findIndex(
-        (item) => item.id === current.stage_id,
-      );
-      const expectedTarget = progressStages[currentStageIndex + 1];
-      if (
-        currentStageIndex < 0 ||
-        !expectedTarget ||
-        expectedTarget.id !== current.pending_stage_id
-      )
-        throw new CultivationError(
-          "待突破目标已失效或不再是下一阶段，请先检查境界配置",
-          409,
-          "BREAKTHROUGH_TARGET_STALE",
-        );
-      const advanced = advanceProgress(
-        {
-          stageId: current.pending_stage_id,
-          currentXp: Math.max(0, current.current_xp - stage.required_xp),
-          pendingStageId: null,
-        },
-        progressStages,
-      );
-      const timestamp = now().getTime();
-      database
-        .query(
-          "UPDATE user_cultivation SET stage_id = ?, current_xp = ?, pending_stage_id = ?, updated_at = ? WHERE user_id = ?",
-        )
-        .run(
-          advanced.stageId,
-          advanced.currentXp,
-          advanced.pendingStageId,
-          timestamp,
-          userId,
-        );
-      database
-        .query(
-          "UPDATE breakthrough_history SET status = 'approved', approved_by = ?, reason = ? WHERE id = (SELECT id FROM breakthrough_history WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1)",
-        )
-        .run(adminUserId, reason, userId);
-      const insertTransition = database.query(
-        "INSERT INTO breakthrough_history(id, user_id, from_stage_id, to_stage_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      );
-      for (const [index, transition] of advanced.transitions.entries())
-        insertTransition.run(
-          randomUUID(),
-          userId,
-          transition.from,
-          transition.to,
-          transition.status,
-          timestamp + index + 1,
-        );
-      audit(
-        database,
-        adminUserId,
-        userId,
-        "cultivation.breakthrough.approve",
-        reason,
-        { stageId: current.stage_id },
-        { stageId: advanced.stageId, pendingStageId: advanced.pendingStageId },
-        timestamp,
-      );
-      return getProfile(userId);
     })();
   }
 
@@ -735,7 +613,7 @@ export function createCultivationService(
           : Math.max(1, Math.floor(input.maxConcurrency));
       database
         .query(
-          "UPDATE realms SET name=?, color=?, icon_key=?, animation_preset=?, daily_limit=?, max_concurrency=?, promotion_policy=?, active=? WHERE id=?",
+          "UPDATE realms SET name=?, color=?, icon_key=?, animation_preset=?, daily_limit=?, max_concurrency=?, promotion_policy='auto', active=? WHERE id=?",
         )
         .run(
           input.name ?? before.name,
@@ -744,7 +622,6 @@ export function createCultivationService(
           input.animationPreset ?? before.animation_preset,
           dailyLimit,
           maxConcurrency,
-          input.promotionPolicy ?? before.promotion_policy,
           input.active === undefined ? before.active : input.active ? 1 : 0,
           realmId,
         );
@@ -1077,7 +954,6 @@ export function createCultivationService(
     reconcileReservations,
     getConfiguration,
     updateUser,
-    approveBreakthrough,
     markBreakthroughSeen,
     updateRealm,
     updateStage,
@@ -1196,31 +1072,13 @@ function awardXp(
     total_xp: number;
     pending_stage_id: string | null;
   };
-  const stages = database
-    .query(
-      "SELECT s.id, s.realm_id, s.stage_order, s.required_xp, r.promotion_policy FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.active = 1 AND r.active = 1 ORDER BY s.stage_order",
-    )
-    .all() as Array<{
-    id: string;
-    realm_id: string;
-    stage_order: number;
-    required_xp: number;
-    promotion_policy: "auto" | "manual" | "boundary_manual";
-  }>;
-  const progressStages: ProgressStage[] = stages.map((stage) => ({
-    id: stage.id,
-    realmId: stage.realm_id,
-    order: stage.stage_order,
-    requiredXp: stage.required_xp,
-    promotionPolicy: stage.promotion_policy,
-  }));
   const advanced = advanceProgress(
     {
       stageId: cultivation.stage_id,
       currentXp: cultivation.current_xp + amount,
-      pendingStageId: cultivation.pending_stage_id,
+      pendingStageId: null,
     },
-    progressStages,
+    automaticProgressStages(database),
   );
   const totalXp = cultivation.total_xp + amount;
   database
@@ -1249,17 +1107,98 @@ function awardXp(
       reason,
       timestamp,
     );
+  recordProgressTransitions(
+    database,
+    userId,
+    advanced.transitions,
+    timestamp,
+  );
+}
+
+function applyAutomaticPromotion(
+  database: Database,
+  userId: string,
+  timestamp: number,
+) {
+  const cultivation = database
+    .query(
+      "SELECT stage_id, current_xp, pending_stage_id FROM user_cultivation WHERE user_id = ?",
+    )
+    .get(userId) as {
+    stage_id: string;
+    current_xp: number;
+    pending_stage_id: string | null;
+  } | null;
+  if (!cultivation) return;
+  const advanced = advanceProgress(
+    {
+      stageId: cultivation.stage_id,
+      currentXp: cultivation.current_xp,
+      pendingStageId: null,
+    },
+    automaticProgressStages(database),
+  );
+  if (
+    advanced.stageId === cultivation.stage_id &&
+    advanced.currentXp === cultivation.current_xp &&
+    !cultivation.pending_stage_id
+  )
+    return;
+  database
+    .query(
+      "UPDATE user_cultivation SET stage_id = ?, current_xp = ?, pending_stage_id = NULL, updated_at = ? WHERE user_id = ?",
+    )
+    .run(advanced.stageId, advanced.currentXp, timestamp, userId);
+  recordProgressTransitions(
+    database,
+    userId,
+    advanced.transitions,
+    timestamp,
+  );
+}
+
+function automaticProgressStages(database: Database): ProgressStage[] {
+  return (
+    database
+      .query(
+        "SELECT s.id, s.realm_id, s.stage_order, s.required_xp FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.active = 1 AND r.active = 1 ORDER BY s.stage_order",
+      )
+      .all() as Array<{
+      id: string;
+      realm_id: string;
+      stage_order: number;
+      required_xp: number;
+    }>
+  ).map((stage) => ({
+    id: stage.id,
+    realmId: stage.realm_id,
+    order: stage.stage_order,
+    requiredXp: stage.required_xp,
+    promotionPolicy: "auto",
+  }));
+}
+
+function recordProgressTransitions(
+  database: Database,
+  userId: string,
+  transitions: Array<{
+    from: string;
+    to: string;
+    status: "automatic" | "pending";
+  }>,
+  timestamp: number,
+) {
   const insertTransition = database.query(
     "INSERT INTO breakthrough_history(id, user_id, from_stage_id, to_stage_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   );
-  for (const transition of advanced.transitions)
+  for (const [index, transition] of transitions.entries())
     insertTransition.run(
       randomUUID(),
       userId,
       transition.from,
       transition.to,
       transition.status,
-      timestamp,
+      timestamp + index,
     );
 }
 
@@ -1333,6 +1272,10 @@ function audit(
 function requireReason(reason: string) {
   if (reason.trim().length < 2)
     throw new CultivationError("请填写调整原因", 400, "REASON_REQUIRED");
+}
+
+function normalizeAdminAdjustmentReason(reason: string) {
+  return reason.trim() || "管理员直接调整";
 }
 
 function paginatedQuery(

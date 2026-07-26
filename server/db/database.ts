@@ -7,6 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { extname, join } from "node:path";
 
 import { decodeImageDataUrl } from "../lib/image-mime";
@@ -93,42 +94,142 @@ function createSchema(database: Database) {
 }
 
 function runMigrations(database: Database) {
-  const alreadyApplied = database
-    .query("SELECT 1 FROM schema_migrations WHERE version = 2")
-    .get();
-  if (alreadyApplied) return;
-  database.transaction(() => {
-    const emperorStage = database
-      .query("SELECT id FROM realm_stages WHERE id = ?")
-      .get("realm-dou-emperor-1");
-    if (emperorStage) {
-      database
-        .query("UPDATE realm_stages SET name = ?, active = 1 WHERE id = ?")
-        .run("斗帝", "realm-dou-emperor-1");
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 2").get()
+  )
+    database.transaction(() => {
+      const emperorStage = database
+        .query("SELECT id FROM realm_stages WHERE id = ?")
+        .get("realm-dou-emperor-1");
+      if (emperorStage) {
+        database
+          .query("UPDATE realm_stages SET name = ?, active = 1 WHERE id = ?")
+          .run("斗帝", "realm-dou-emperor-1");
+        database
+          .query(
+            "UPDATE realm_stages SET active = 0 WHERE realm_id = ? AND id <> ?",
+          )
+          .run("realm-dou-emperor", "realm-dou-emperor-1");
+        database
+          .query(
+            "UPDATE user_cultivation SET stage_id = ? WHERE stage_id LIKE ? AND stage_id <> ?",
+          )
+          .run(
+            "realm-dou-emperor-1",
+            "realm-dou-emperor-%",
+            "realm-dou-emperor-1",
+          );
+        database
+          .query(
+            "UPDATE user_cultivation SET pending_stage_id = NULL WHERE pending_stage_id LIKE ? AND pending_stage_id <> ?",
+          )
+          .run("realm-dou-emperor-%", "realm-dou-emperor-1");
+      }
       database
         .query(
-          "UPDATE realm_stages SET active = 0 WHERE realm_id = ? AND id <> ?",
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (2, ?)",
         )
-        .run("realm-dou-emperor", "realm-dou-emperor-1");
+        .run(Date.now());
+    })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 3").get()
+  )
+    database.transaction(() => {
+      const timestamp = Date.now();
       database
         .query(
-          "UPDATE user_cultivation SET stage_id = ? WHERE stage_id LIKE ? AND stage_id <> ?",
+          "UPDATE realms SET promotion_policy = 'auto' WHERE promotion_policy <> 'auto'",
         )
-        .run(
-          "realm-dou-emperor-1",
-          "realm-dou-emperor-%",
-          "realm-dou-emperor-1",
-        );
+        .run();
+      const stages = database
+        .query(
+          "SELECT s.id, s.stage_order, s.required_xp FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.active = 1 AND r.active = 1 ORDER BY s.stage_order",
+        )
+        .all() as Array<{
+        id: string;
+        stage_order: number;
+        required_xp: number;
+      }>;
+      const stageIndex = new Map(
+        stages.map((stage, index) => [stage.id, index]),
+      );
+      const users = database
+        .query(
+          "SELECT user_id, stage_id, current_xp, pending_stage_id FROM user_cultivation",
+        )
+        .all() as Array<{
+        user_id: string;
+        stage_id: string;
+        current_xp: number;
+        pending_stage_id: string | null;
+      }>;
+      const updateUser = database.query(
+        "UPDATE user_cultivation SET stage_id = ?, current_xp = ?, pending_stage_id = NULL, updated_at = ? WHERE user_id = ?",
+      );
+      const findPending = database.query(
+        "SELECT id FROM breakthrough_history WHERE user_id = ? AND from_stage_id = ? AND to_stage_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
+      );
+      const completePending = database.query(
+        "UPDATE breakthrough_history SET status = 'automatic', reason = ? WHERE id = ?",
+      );
+      const insertTransition = database.query(
+        "INSERT INTO breakthrough_history(id, user_id, from_stage_id, to_stage_id, status, reason, created_at) VALUES (?, ?, ?, ?, 'automatic', ?, ?)",
+      );
+
+      for (const user of users) {
+        let index = stageIndex.get(user.stage_id);
+        let currentXp = Math.max(0, Number(user.current_xp));
+        const transitions: Array<{ from: string; to: string }> = [];
+        if (index !== undefined)
+          while (
+            stages[index + 1] &&
+            currentXp >= Number(stages[index].required_xp)
+          ) {
+            const from = stages[index];
+            const to = stages[index + 1];
+            currentXp -= Number(from.required_xp);
+            transitions.push({ from: from.id, to: to.id });
+            index += 1;
+          }
+        const stageId = index === undefined ? user.stage_id : stages[index].id;
+        if (
+          stageId !== user.stage_id ||
+          currentXp !== Number(user.current_xp) ||
+          user.pending_stage_id
+        )
+          updateUser.run(stageId, currentXp, timestamp, user.user_id);
+
+        for (const [transitionIndex, transition] of transitions.entries()) {
+          const pending = findPending.get(
+            user.user_id,
+            transition.from,
+            transition.to,
+          ) as { id: string } | null;
+          if (pending)
+            completePending.run("升级制度已调整为自动升级", pending.id);
+          else
+            insertTransition.run(
+              randomUUID(),
+              user.user_id,
+              transition.from,
+              transition.to,
+              "升级制度已调整为自动升级",
+              timestamp + transitionIndex,
+            );
+        }
+      }
       database
         .query(
-          "UPDATE user_cultivation SET pending_stage_id = NULL WHERE pending_stage_id LIKE ? AND pending_stage_id <> ?",
+          "UPDATE breakthrough_history SET status = 'superseded', reason = CASE WHEN reason = '' THEN ? ELSE reason END WHERE status = 'pending'",
         )
-        .run("realm-dou-emperor-%", "realm-dou-emperor-1");
-    }
-    database
-      .query("INSERT INTO schema_migrations(version, applied_at) VALUES (2, ?)")
-      .run(Date.now());
-  })();
+        .run("升级制度已调整为自动升级");
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (3, ?)",
+        )
+        .run(timestamp);
+    })();
 }
 
 function migrateLegacyState(

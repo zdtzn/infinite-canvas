@@ -54,4 +54,28 @@ describe("cultivation administrator user patches", () => {
             reason: "adjust quota and XP",
         });
     });
+
+    test("omits an empty optional reason while preserving user changes", () => {
+        const initial = {
+            stageId: "stage-1",
+            currentXp: 100,
+            xpDelta: 0,
+            dailyLimitOverride: 20,
+            unlimited: false,
+            status: "NORMAL",
+            internalNote: "",
+            publicMessage: "",
+            reason: "",
+        };
+
+        expect(
+            buildCultivationUserPatch(initial, {
+                ...initial,
+                stageId: "stage-2",
+                reason: "   ",
+            }),
+        ).toEqual({
+            stageId: "stage-2",
+        });
+    });
 });

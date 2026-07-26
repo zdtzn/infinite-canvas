@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Drawer, Empty, Form, Input, InputNumber, Modal, Result, Select, Switch, Table, Tabs, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Check, Edit3, Eye, Info, RefreshCw, Sparkles } from "lucide-react";
+import { Edit3, Eye, Info, RefreshCw, Sparkles } from "lucide-react";
 import { createRef, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -13,7 +13,6 @@ import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 import { formatBytes } from "@/lib/image-utils";
 import {
-    approveAdminBreakthrough,
     fetchAdminChannelMetrics,
     fetchAdminCultivationUsers,
     fetchAdminMetrics,
@@ -42,7 +41,6 @@ type RealmFormValues = {
     iconKey: string;
     dailyLimit?: number | null;
     maxConcurrency?: number;
-    promotionPolicy?: CultivationRealmConfig["promotionPolicy"];
     animationPreset?: string;
     active?: boolean;
     reason: string;
@@ -72,12 +70,6 @@ const iconOptions = [
     ["Sun", "日曜"],
     ["Waves", "波纹"],
 ] as const;
-
-const promotionPolicyOptions = [
-    { value: "auto", label: "自动升级" },
-    { value: "manual", label: "全部需审批" },
-    { value: "boundary_manual", label: "同境界自动，跨境界审批" },
-] satisfies Array<{ value: CultivationRealmConfig["promotionPolicy"]; label: string }>;
 
 const animationOptions = [
     { value: "minimal-line", label: "简洁位移" },
@@ -189,15 +181,6 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
         },
         onError: (error) => message.error(error instanceof Error ? error.message : "更新失败"),
     });
-    const approve = useMutation({
-        mutationFn: ({ userId, reason }: { userId: string; reason: string }) => approveAdminBreakthrough(userId, reason),
-        onSuccess: () => {
-            void queryClient.invalidateQueries({ queryKey: ["admin", "cultivation"] });
-            message.success("突破已批准");
-        },
-        onError: (error) => message.error(error instanceof Error ? error.message : "审批失败"),
-    });
-
     const stageOptions = useMemo(
         () =>
             config?.realms
@@ -208,7 +191,6 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
                 })) || [],
         [config],
     );
-    const stageNameById = useMemo(() => new Map(config?.realms.flatMap((realm) => realm.stages.map((stage) => [stage.id, cultivationStageLabel(realm.name, stage.name)])) || []), [config]);
 
     const columns: ColumnsType<AdminCultivationUser> = [
         {
@@ -248,32 +230,6 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
             render: (_: unknown, user) => <AccountStatusTag status={user.status} />,
         },
         {
-            title: "突破审批",
-            key: "approval",
-            width: 200,
-            render: (_: unknown, user) =>
-                user.pendingStageId ? (
-                    <div className="flex min-w-0 items-center gap-2">
-                        <Tag color="gold">待审批</Tag>
-                        <span className="truncate text-sm text-stone-500 dark:text-stone-400" title={stageNameById.get(user.pendingStageId)}>
-                            {stageNameById.get(user.pendingStageId) || "下一阶段"}
-                        </span>
-                        <Tooltip title="批准突破">
-                            <Button
-                                size="small"
-                                type="text"
-                                icon={<Check className="size-4" />}
-                                loading={approve.isPending && approve.variables?.userId === user.userId}
-                                onClick={() => promptReason("批准突破", (reason) => approve.mutate({ userId: user.userId, reason }))}
-                                aria-label="批准突破"
-                            />
-                        </Tooltip>
-                    </div>
-                ) : (
-                    <span className="text-sm text-stone-400">无需审批</span>
-                ),
-        },
-        {
             title: "",
             key: "actions",
             width: 56,
@@ -291,7 +247,7 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
             <div className="cultivation-admin-panel-header">
                 <div>
                     <h2>用户成长状态</h2>
-                    <p>查看用户当前境界、额度与待审批突破，修改操作需填写原因。</p>
+                    <p>查看用户当前境界、修为与额度。所有升级由系统自动完成，手动调整会写入管理员日志。</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                     <Input.Search
@@ -319,7 +275,7 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
                 loading={isFetching}
                 dataSource={data?.items || []}
                 locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无匹配用户" /> }}
-                scroll={{ x: 1050 }}
+                scroll={{ x: 850 }}
                 pagination={{ current: page, pageSize: 20, total: data?.total || 0, onChange: setPage, showSizeChanger: false, showTotal: (total) => `共 ${total} 位用户` }}
                 columns={columns}
             />
@@ -470,8 +426,8 @@ function UserDrawer({
                         },
                     ]}
                 />
-                <Form.Item className="mt-5" label="调整原因" name="reason" rules={[{ required: true, min: 2, message: "请填写调整原因" }]}>
-                    <Input.TextArea rows={2} maxLength={300} showCount placeholder="说明本次调整的原因" />
+                <Form.Item className="mt-5" label="调整说明（选填）" name="reason" extra="留空时，管理员日志会记录为“管理员直接调整”。">
+                    <Input.TextArea rows={2} maxLength={300} showCount placeholder="可补充本次调整的背景" />
                 </Form.Item>
             </Form>
         </Drawer>
@@ -552,7 +508,6 @@ function RealmsConfiguration({ realms, onEdit }: { realms: CultivationRealmConfi
         },
         { title: "每日额度", key: "dailyLimit", width: 118, align: "right", render: (_: unknown, realm) => <span className="cultivation-count">{realm.dailyLimit === null ? "不限" : `${realm.dailyLimit} 次`}</span> },
         { title: "最大并发", dataIndex: "maxConcurrency", width: 105, align: "right", render: (value: number) => <span className="cultivation-count">{value}</span> },
-        { title: "升级策略", dataIndex: "promotionPolicy", width: 190, render: (value: CultivationRealmConfig["promotionPolicy"]) => promotionPolicyLabel(value) },
         { title: "阶段", key: "stages", width: 94, align: "right", render: (_: unknown, realm) => <span className="cultivation-count">{realm.stages.length}</span> },
         { title: "状态", dataIndex: "active", width: 94, render: (active: boolean) => (active ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>) },
         {
@@ -701,9 +656,6 @@ function RealmDrawer({ realm, onClose, onSubmit }: { realm: CultivationRealmConf
                         <InputNumber min={1} className="w-full" />
                     </Form.Item>
                 </div>
-                <Form.Item label="升级策略" name="promotionPolicy">
-                    <Select options={promotionPolicyOptions} />
-                </Form.Item>
                 <Form.Item label="突破反馈" name="animationPreset">
                     <div className="flex gap-2">
                         <Select className="min-w-0 flex-1" options={animationOptions} />
@@ -752,7 +704,7 @@ function StageDrawer({ stage, capabilities, onClose, onSubmit }: { stage: Cultiv
                     <Input maxLength={32} />
                 </Form.Item>
                 <div className="grid grid-cols-2 gap-3">
-                    <Form.Item label="升级所需修为" name="requiredXp" extra="到达此数值后触发升级策略">
+                    <Form.Item label="升级所需修为" name="requiredXp" extra="达到此数值后由系统自动升级">
                         <InputNumber min={0} className="w-full" />
                     </Form.Item>
                     <Form.Item label="启用" name="active" valuePropName="checked" extra="停用后不会分配给新用户">
@@ -1092,7 +1044,7 @@ function getLogColumns(kind: LogKind, onOpenUser: (displayName: string) => void)
         text("当前阶段", "from_stage", 150),
         text("目标阶段", "to_stage", 150),
         { title: "状态", dataIndex: "status", key: "status", width: 106, render: (value: unknown) => <BreakthroughStatusTag status={String(value || "")} /> },
-        user("审批人", "approved_name", "approved_by", 130),
+        user("操作人", "approved_name", "approved_by", 130),
         text("原因", "reason"),
         text("时间", "created_at", 170),
     ];
@@ -1176,9 +1128,10 @@ function ChannelStatusTag({ status }: { status: AdminChannelMetric["status"] }) 
 
 function BreakthroughStatusTag({ status }: { status: string }) {
     const labels: Record<string, { label: string; color?: string }> = {
-        pending: { label: "待审批", color: "gold" },
-        approved: { label: "已批准", color: "green" },
+        pending: { label: "历史待处理", color: "gold" },
+        approved: { label: "历史人工突破", color: "green" },
         automatic: { label: "自动突破", color: "blue" },
+        superseded: { label: "已自动化解" },
     };
     const item = labels[status] || { label: status || "未知" };
     return <Tag color={item.color}>{item.label}</Tag>;
@@ -1251,7 +1204,7 @@ function auditActionLabel(value: string) {
         (
             {
                 "cultivation.user.update": "更新用户修炼信息",
-                "cultivation.breakthrough.approve": "批准突破",
+                "cultivation.breakthrough.approve": "历史人工突破",
                 "cultivation.realm.update": "更新境界规则",
                 "cultivation.stage.update": "更新阶段规则",
                 "cultivation.capability.update": "更新能力开关",
@@ -1277,10 +1230,6 @@ function loginResultLabel(value: string) {
         value ||
         "-"
     );
-}
-
-function promotionPolicyLabel(value: CultivationRealmConfig["promotionPolicy"]) {
-    return promotionPolicyOptions.find((option) => option.value === value)?.label || value;
 }
 
 function capabilityCategoryLabel(category: string) {

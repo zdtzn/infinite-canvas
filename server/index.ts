@@ -227,8 +227,6 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/cultivation/users" && request.method === "GET") return adminCultivationUsers(url, session);
         const cultivationUserMatch = url.pathname.match(/^\/api\/admin\/cultivation\/users\/([^/]+)$/);
         if (cultivationUserMatch && request.method === "PATCH") return adminUpdateCultivationUser(request, session, cultivationUserMatch[1]);
-        const approveMatch = url.pathname.match(/^\/api\/admin\/cultivation\/users\/([^/]+)\/approve$/);
-        if (approveMatch && request.method === "POST") return adminApproveBreakthrough(request, session, approveMatch[1]);
         if (url.pathname === "/api/admin/cultivation/config" && request.method === "GET") return adminCultivationConfiguration(session);
         const realmMatch = url.pathname.match(/^\/api\/admin\/cultivation\/realms\/([^/]+)$/);
         if (realmMatch && request.method === "PATCH") return adminUpdateRealm(request, session, realmMatch[1]);
@@ -482,12 +480,6 @@ async function adminUpdateCultivationUser(request: Request, session: SessionPayl
         writeState();
     }
     return json({ profile });
-}
-
-async function adminApproveBreakthrough(request: Request, session: SessionPayload, encodedUserId: string) {
-    requireAdmin(session);
-    const body = await readJson<{ reason?: string }>(request);
-    return json({ profile: requireCultivation().approveBreakthrough(session.userId, decodeURIComponent(encodedUserId), String(body.reason || "")) });
 }
 
 function adminCultivationConfiguration(session: SessionPayload) {

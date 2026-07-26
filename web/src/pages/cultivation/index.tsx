@@ -91,10 +91,10 @@ export default function CultivationPage() {
     const remainingQuota = data.unlimited ? null : Math.max(0, data.remainingToday || 0);
     const quotaConsumed = Math.max(0, data.usedToday + data.reservedToday);
     const quotaPercent = data.unlimited || !data.dailyLimit ? 0 : Math.max(0, Math.min(100, Math.round((quotaConsumed / data.dailyLimit) * 100)));
-    const cultivationPercent = cultivationProgressPercent(data.currentXp, data.requiredXp, Boolean(data.pendingStageId));
+    const cultivationPercent = cultivationProgressPercent(data.currentXp, data.requiredXp, false);
     const realmHero = cultivationRealmHero(data.realmId);
     const emperorFinalStage = isDouEmperor && finalStage;
-    const nextStageSummary = finalStage ? "已抵达当前主题的最高境界" : data.pendingStageId ? "下一阶段正在等待管理员审批" : `距离 ${data.nextStageName} 还需 ${data.xpToNext.toLocaleString()} 修为`;
+    const nextStageSummary = finalStage ? "已抵达当前主题的最高境界" : `距离 ${data.nextStageName} 还需 ${data.xpToNext.toLocaleString()} 修为`;
     const ladderIndex = Math.max(
         0,
         REALM_LADDER.findIndex((realm) => realm.id === data.realmId),
@@ -238,7 +238,7 @@ export default function CultivationPage() {
                                     <MetricBlock
                                         label="修为成长"
                                         value={finalStage ? "最高境界" : `${data.currentXp.toLocaleString()} / ${data.requiredXp.toLocaleString()}`}
-                                        helper={finalStage ? "已抵达该主题定义的最高阶段" : data.pendingStageId ? "修为已满足突破条件,等待审批" : `还需 ${data.xpToNext.toLocaleString()} 修为`}
+                                        helper={finalStage ? "已抵达该主题定义的最高阶段" : `还需 ${data.xpToNext.toLocaleString()} 修为`}
                                         percent={cultivationPercent}
                                         complete={finalStage}
                                     />
@@ -260,9 +260,8 @@ export default function CultivationPage() {
                             <StatBlock label="创作天数" value={`${data.activeDays} 天`} />
                         </section>
 
-                        {data.pendingStageId || data.publicMessage ? (
+                        {data.publicMessage ? (
                             <section className="space-y-3" aria-live="polite">
-                                {data.pendingStageId ? <NoticeBlock label="突破状态" text="修为已达到要求,下一阶段正在等待管理员审批。" accent /> : null}
                                 {data.publicMessage ? <NoticeBlock label="来自管理员" text={data.publicMessage} /> : null}
                             </section>
                         ) : null}

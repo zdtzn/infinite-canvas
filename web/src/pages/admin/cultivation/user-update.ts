@@ -7,11 +7,11 @@ export type CultivationUserFormValues = {
     status?: string;
     internalNote?: string;
     publicMessage?: string;
-    reason: string;
+    reason?: string;
 };
 
 export type CultivationUserPatch = Partial<Omit<CultivationUserFormValues, "reason">> & {
-    reason: string;
+    reason?: string;
 };
 
 const editableFields = [
@@ -26,7 +26,8 @@ const editableFields = [
 ] as const;
 
 export function buildCultivationUserPatch(initial: CultivationUserFormValues, current: CultivationUserFormValues): CultivationUserPatch {
-    const patch: CultivationUserPatch = { reason: current.reason };
+    const reason = current.reason?.trim();
+    const patch: CultivationUserPatch = reason ? { reason } : {};
     const mutablePatch = patch as Record<string, unknown>;
     for (const field of editableFields) {
         if (!Object.is(initial[field], current[field])) mutablePatch[field] = current[field];

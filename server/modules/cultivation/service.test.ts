@@ -140,13 +140,14 @@ describe("cultivation quota and settlement", () => {
     }
   });
 
-  test("records administrative changes with reasons and exposes paginated logs", () => {
+  test("records administrative changes with optional reasons and exposes paginated logs", () => {
     const { store, service } = setup();
     try {
       service.ensureUser("admin", true);
       service.ensureUser("user", false);
       const configuration = service.getConfiguration();
       const targetStage = configuration.realms[1].stages[1];
+      const noReasonTarget = configuration.realms[2].stages[0];
 
       service.updateUser(
         "admin",
@@ -173,9 +174,34 @@ describe("cultivation quota and settlement", () => {
       expect(auditLog.reason).toBe("manual adjustment");
       expect(auditLog.admin_name).toBe("Admin");
       expect(auditLog.target_name).toBe("User");
+
       expect(() =>
-        service.updateUser("admin", "user", { xpDelta: 1 }, ""),
-      ).toThrow("原因");
+        service.updateUser(
+          "admin",
+          "user",
+          {
+            stageId: noReasonTarget.id,
+            xpDelta: 1,
+            dailyLimitOverride: 30,
+          },
+          "",
+        ),
+      ).not.toThrow();
+      expect(service.getProfile("user").stageId).toBe(noReasonTarget.id);
+      expect(
+        store.raw!
+          .query(
+            "SELECT reason FROM admin_audit_logs WHERE target_user_id = ? AND reason = ?",
+          )
+          .get("user", "管理员直接调整"),
+      ).toEqual({ reason: "管理员直接调整" });
+      expect(
+        store.raw!
+          .query(
+            "SELECT reason FROM cultivation_ledger WHERE user_id = ? AND reason = ?",
+          )
+          .get("user", "管理员直接调整"),
+      ).toEqual({ reason: "管理员直接调整" });
     } finally {
       store.close();
     }
@@ -227,7 +253,7 @@ describe("cultivation quota and settlement", () => {
     }
   });
 
-  test("continues automatic star advancement after an approved realm boundary", () => {
+  test("automatically advances across realm boundaries and preserves overflow", () => {
     const { store, service } = setup();
     try {
       service.ensureUser("admin", true);
@@ -242,19 +268,12 @@ describe("cultivation quota and settlement", () => {
         {
           stageId: source.id,
           currentXp: source.requiredXp + target.requiredXp + 5,
-          xpDelta: 1,
         },
-        "prepare overflow",
+        "",
       );
-      expect(service.getProfile("user").pendingStageId).toBe(target.id);
-
-      const profile = service.approveBreakthrough(
-        "admin",
-        "user",
-        "approve boundary",
-      );
+      const profile = service.getProfile("user");
       expect(profile.stageId).toBe(automaticTarget.id);
-      expect(profile.currentXp).toBe(6);
+      expect(profile.currentXp).toBe(5);
       expect(profile.pendingStageId).toBeNull();
     } finally {
       store.close();
@@ -383,7 +402,7 @@ describe("cultivation quota and settlement", () => {
     }
   });
 
-  test("rejects disabling stages and realms assigned to current or pending users", () => {
+  test("rejects disabling stages and realms assigned to current users", () => {
     const { store, service } = setup();
     try {
       service.ensureUser("user", false);
@@ -403,37 +422,6 @@ describe("cultivation quota and settlement", () => {
           profile.realmId,
           { active: false },
           "disable assigned realm",
-        ),
-      ).toThrow("正在使用");
-
-      const configuration = service.getConfiguration();
-      const source = configuration.realms[0].stages.at(-1)!;
-      const target = configuration.realms[1].stages[0];
-      service.updateUser(
-        "admin",
-        "user",
-        {
-          stageId: source.id,
-          currentXp: source.requiredXp,
-          xpDelta: 1,
-        },
-        "prepare pending target",
-      );
-      expect(service.getProfile("user").pendingStageId).toBe(target.id);
-      expect(() =>
-        service.updateStage(
-          "admin",
-          target.id,
-          { active: false },
-          "disable pending stage",
-        ),
-      ).toThrow("正在使用");
-      expect(() =>
-        service.updateRealm(
-          "admin",
-          configuration.realms[1].id,
-          { active: false },
-          "disable pending realm",
         ),
       ).toThrow("正在使用");
     } finally {
@@ -466,7 +454,7 @@ describe("cultivation quota and settlement", () => {
     }
   });
 
-  test("revalidates XP and the immediate active target before approving a breakthrough", () => {
+  test("direct current XP updates immediately apply automatic promotion", () => {
     const { store, service } = setup();
     try {
       service.ensureUser("admin", true);
@@ -480,34 +468,13 @@ describe("cultivation quota and settlement", () => {
         {
           stageId: source.id,
           currentXp: source.requiredXp,
-          xpDelta: 1,
         },
-        "prepare pending breakthrough",
+        "",
       );
-      expect(service.getProfile("user").pendingStageId).toBe(target.id);
-
-      service.updateUser(
-        "admin",
-        "user",
-        { currentXp: source.requiredXp - 1 },
-        "reduce progress below requirement",
-      );
-      expect(() =>
-        service.approveBreakthrough("admin", "user", "approve too early"),
-      ).toThrow("修为不足");
-
-      service.updateUser(
-        "admin",
-        "user",
-        { currentXp: source.requiredXp },
-        "restore progress",
-      );
-      store.raw!
-        .query("UPDATE realm_stages SET active = 0 WHERE id = ?")
-        .run(target.id);
-      expect(() =>
-        service.approveBreakthrough("admin", "user", "approve stale target"),
-      ).toThrow("待突破目标");
+      const profile = service.getProfile("user");
+      expect(profile.stageId).toBe(target.id);
+      expect(profile.currentXp).toBe(0);
+      expect(profile.pendingStageId).toBeNull();
     } finally {
       store.close();
     }

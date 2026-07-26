@@ -211,6 +211,119 @@ describe("SQLite application database", () => {
     }
   });
 
+  test("converts existing approval-based cultivation progress to automatic promotion", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    const database = store.raw;
+    if (!database) throw new Error("Expected SQLite database");
+    try {
+      const insertRealm = database.query(
+        "INSERT INTO realms(id, theme_key, code, name, color, icon_key, animation_preset, sort_order, daily_limit, max_concurrency, promotion_policy) VALUES (?, 'test', ?, ?, '#111827', 'Star', 'minimal-line', ?, 10, 1, ?)",
+      );
+      insertRealm.run(
+        "realm-test-novice",
+        "test-novice",
+        "初境",
+        1,
+        "boundary_manual",
+      );
+      insertRealm.run(
+        "realm-test-adept",
+        "test-adept",
+        "进境",
+        2,
+        "manual",
+      );
+      const insertStage = database.query(
+        "INSERT INTO realm_stages(id, realm_id, name, stage_order, required_xp, active) VALUES (?, ?, ?, ?, ?, 1)",
+      );
+      insertStage.run(
+        "stage-test-novice-1",
+        "realm-test-novice",
+        "一段",
+        1,
+        100,
+      );
+      insertStage.run(
+        "stage-test-adept-1",
+        "realm-test-adept",
+        "一星",
+        2,
+        120,
+      );
+      insertStage.run(
+        "stage-test-adept-2",
+        "realm-test-adept",
+        "二星",
+        3,
+        200,
+      );
+      database
+        .query(
+          "INSERT INTO users(user_id, display_name, is_admin, status, created_at) VALUES ('legacy-user', 'Legacy User', 0, 'NORMAL', 1)",
+        )
+        .run();
+      database
+        .query(
+          "INSERT INTO user_cultivation(user_id, stage_id, current_xp, total_xp, unlimited_quota, pending_stage_id, started_at, updated_at) VALUES ('legacy-user', 'stage-test-novice-1', 230, 230, 0, 'stage-test-adept-1', 1, 1)",
+        )
+        .run();
+      database
+        .query(
+          "INSERT INTO breakthrough_history(id, user_id, from_stage_id, to_stage_id, status, created_at) VALUES ('legacy-pending', 'legacy-user', 'stage-test-novice-1', 'stage-test-adept-1', 'pending', 1)",
+        )
+        .run();
+      database.query("DELETE FROM schema_migrations WHERE version = 3").run();
+    } finally {
+      store.close();
+    }
+
+    const reopened = openAppDatabase({ dataDir });
+    try {
+      const database = reopened.raw;
+      if (!database) throw new Error("Expected SQLite database");
+      expect(
+        database
+          .query(
+            "SELECT DISTINCT promotion_policy FROM realms ORDER BY promotion_policy",
+          )
+          .all(),
+      ).toEqual([{ promotion_policy: "auto" }]);
+      expect(
+        database
+          .query(
+            "SELECT stage_id, current_xp, pending_stage_id FROM user_cultivation WHERE user_id = 'legacy-user'",
+          )
+          .get(),
+      ).toEqual({
+        stage_id: "stage-test-adept-2",
+        current_xp: 10,
+        pending_stage_id: null,
+      });
+      expect(
+        database
+          .query(
+            "SELECT from_stage_id, to_stage_id, status FROM breakthrough_history WHERE user_id = 'legacy-user' ORDER BY created_at, from_stage_id",
+          )
+          .all(),
+      ).toEqual([
+        {
+          from_stage_id: "stage-test-novice-1",
+          to_stage_id: "stage-test-adept-1",
+          status: "automatic",
+        },
+        {
+          from_stage_id: "stage-test-adept-1",
+          to_stage_id: "stage-test-adept-2",
+          status: "automatic",
+        },
+      ]);
+    } finally {
+      reopened.close();
+    }
+  });
+
   test("fails closed and preserves the legacy state when the first SQLite migration fails", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
