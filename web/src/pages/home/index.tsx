@@ -1,10 +1,54 @@
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
-import { App, Button, Image, Tag } from "antd";
-import { useNavigate } from "react-router-dom";
+import { App, Image, Tag } from "antd";
+import { Link, useNavigate } from "react-router-dom";
+import { motion, type Variants } from "motion/react";
 
+import { useCultivationProfile } from "@/features/cultivation/queries";
+import { useImperialMode } from "@/features/cultivation/imperial-mode";
+import { cultivationStageLabel, quotaText } from "@/features/cultivation/utils";
+import { promptImageCandidates, promptOriginalUrl, promptServerThumbnailUrl, PromptCover } from "@/components/prompts/prompt-cover";
 import { fetchPrompts, type Prompt } from "@/services/api/prompts";
 import { cn } from "@/lib/utils";
+
+/**
+ * 山门 · 首页(方案B「山海境」开场版)
+ * 功能不变:新建画布 / 继续最近项目 / 提示词精选与预览。
+ * 视觉:AI 水墨山水 + 开场编排动画 + 金色浮尘 + 流光标题 + 修行引路条。
+ */
+
+const SHJ_EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];
+
+const heroStagger: Variants = {
+    hidden: {},
+    show: {
+        transition: { staggerChildren: 0.1, delayChildren: 0.05 },
+    },
+};
+
+const heroRise: Variants = {
+    hidden: { y: 18, filter: "blur(4px)" },
+    show: {
+        y: 0,
+        filter: "blur(0px)",
+        transition: { duration: 0.65, ease: SHJ_EASE },
+    },
+};
+
+const sealStamp: Variants = {
+    hidden: { opacity: 0, scale: 1.7, rotate: -10 },
+    show: {
+        opacity: 1,
+        scale: 1,
+        rotate: -2,
+        transition: { duration: 0.4, ease: SHJ_EASE },
+    },
+};
+
+const coupletFade: Variants = {
+    hidden: { opacity: 0 },
+    show: { opacity: 1, transition: { duration: 0.8, ease: "easeOut" } },
+};
 
 export default function IndexPage() {
     const { message } = App.useApp();
@@ -12,6 +56,8 @@ export default function IndexPage() {
     const [promptShowcase, setPromptShowcase] = useState<Prompt[]>([]);
     const [previewIndex, setPreviewIndex] = useState(0);
     const [previewOpen, setPreviewOpen] = useState(false);
+    const { data: cultivation } = useCultivationProfile();
+    const { isImperialMode } = useImperialMode();
 
     useEffect(() => {
         void fetchPrompts({ pageSize: 12 })
@@ -20,66 +66,125 @@ export default function IndexPage() {
     }, [message]);
 
     return (
-        <main className="h-full overflow-y-auto bg-background text-stone-950 dark:text-stone-100">
-            <section className="mx-auto max-w-7xl px-6">
-                <div className="flex min-h-[440px] flex-col items-center justify-center border-b border-stone-200 py-16 text-center dark:border-stone-800">
-                    <h1 className="max-w-4xl text-balance text-4xl font-semibold tracking-normal sm:text-5xl">无限画布</h1>
-                    <p className="mt-5 max-w-2xl text-balance text-base leading-7 text-stone-500 dark:text-stone-400">
-                        在<strong className="font-semibold text-stone-950 dark:text-stone-100">无限画布</strong>中生成、连接和重组<strong className="font-semibold text-stone-950 dark:text-stone-100">图片、文字与图形</strong>，让创作从单次生成变成连续推演。
-                    </p>
-                    <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-                        <Button type="primary" size="large" onClick={() => navigate("/canvas?mode=new")} icon={<ArrowRight className="size-4" />} iconPlacement="end">
-                            新建画布
-                        </Button>
-                        <Button size="large" onClick={() => navigate("/canvas?mode=recent")}>
+        <main className="h-full overflow-y-auto bg-background text-foreground">
+            {/* ── 山门 · 全屏 Hero ─────────────────────────── */}
+            <motion.section className={cn("shj-hero relative flex min-h-[calc(100dvh-3.5rem)] flex-col items-center justify-center overflow-hidden", isImperialMode && "shj-hero--imperial")} initial="hidden" animate="show" variants={heroStagger}>
+                <div className="shj-hero-stars" aria-hidden />
+                <div className="shj-hero-mist" aria-hidden />
+                <div className="shj-hero-motes" aria-hidden />
+                <div className="shj-grain" aria-hidden />
+
+                {/* 两侧竖排楹联(仅宽屏,低存在感) */}
+                <motion.span variants={coupletFade} className="shj-vertical shj-couplet font-display absolute left-10 top-1/2 hidden -translate-y-1/2 text-sm lg:block" aria-hidden>
+                    雲海千重皆入畫
+                </motion.span>
+                <motion.span variants={coupletFade} className="shj-vertical shj-couplet font-display absolute right-10 top-1/2 hidden -translate-y-1/2 text-sm lg:block" aria-hidden>
+                    心藏萬象筆先成
+                </motion.span>
+
+                <div className="relative z-10 flex max-w-4xl flex-col items-center px-6 text-center">
+                    <motion.span variants={heroRise} className="shj-hero-eyebrow">
+                        Infinite Canvas
+                    </motion.span>
+
+                    <motion.h1 variants={heroRise} className="font-brush shj-title-sheen mt-8 whitespace-nowrap text-[4rem] leading-none sm:mt-10 sm:text-9xl md:text-[10rem] lg:text-[11rem]">
+                        无限画布
+                    </motion.h1>
+
+                    <motion.p variants={heroRise} className="font-display shj-hero-tagline mt-8 text-balance text-xl leading-8 tracking-[0.3em] sm:text-2xl">
+                        一笔落,万象生
+                    </motion.p>
+
+                    {cultivation ? (
+                        <motion.div variants={sealStamp} className="mt-10 flex items-center gap-4">
+                            <span className="shj-hero-realm-label text-sm tracking-[0.3em]">汝之境界</span>
+                            <span className="shj-seal-lg">{cultivationStageLabel(cultivation.realmName, cultivation.stageName)}</span>
+                        </motion.div>
+                    ) : null}
+
+                    <motion.div variants={heroRise} className="mt-14 flex flex-wrap items-center justify-center gap-4">
+                        <button
+                            type="button"
+                            onClick={() => navigate("/canvas?mode=new")}
+                            className="shj-cta-glow group inline-flex items-center gap-3 rounded-md bg-[#d8402a] px-10 py-4 text-base font-medium tracking-[0.2em] text-[#fff7ee] transition-colors duration-300 hover:bg-[#ee5038]"
+                        >
+                            起笔 · 新建画布
+                            <ArrowRight className="size-5 transition-transform duration-300 group-hover:translate-x-0.5" />
+                        </button>
+                        <button type="button" onClick={() => navigate("/canvas?mode=recent")} className="shj-btn-ghost">
                             继续最近项目
-                        </Button>
-                    </div>
+                        </button>
+                    </motion.div>
                 </div>
 
-                <section className="mx-auto mb-16 max-w-6xl pt-12">
-                    <div className="mb-8 grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-start">
-                        <div />
-                        <div className="max-w-2xl text-center">
-                            <h2 className="text-3xl font-semibold text-stone-950 dark:text-stone-100">沉淀每一次好结果</h2>
-                            <p className="mt-3 text-base leading-7 text-stone-500 dark:text-stone-400">收藏稳定出图的提示词、参考风格和结果图片，让下一次创作从已有经验开始。</p>
+                <motion.div variants={coupletFade} className="absolute inset-x-0 bottom-8 z-10 flex justify-center">
+                    <span className="shj-scroll-cue">卷轴展开</span>
+                </motion.div>
+            </motion.section>
+
+            {/* ── 修行引路条 ──────────────────────────────── */}
+            {cultivation ? (
+                <section className="border-y border-[rgb(237_237_230/0.08)] bg-[#141419]">
+                    <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-5">
+                        <div className="flex items-center gap-4">
+                            <span className="shj-seal">{cultivation.realmName}</span>
+                            <div className="flex flex-col gap-0.5">
+                                <span className="font-display text-sm tracking-[0.15em] text-[#edede6]">今日修行</span>
+                                <span className="text-xs text-[#8a8a96]">{quotaText(cultivation.remainingToday, cultivation.unlimited)} · 笔耕不辍,境界自现</span>
+                            </div>
                         </div>
-                        <Button type="link" onClick={() => navigate("/prompts")} className="justify-self-center md:justify-self-end" icon={<ArrowRight className="size-4" />} iconPlacement="end">
-                            查看提示词库
-                        </Button>
-                    </div>
-                    <div className="grid auto-rows-[210px] gap-4 md:grid-cols-4">
-                        {promptShowcase.map((item, index) => (
-                            <button
-                                key={item.id}
-                                type="button"
-                                onClick={() => {
-                                    setPreviewIndex(index);
-                                    setPreviewOpen(true);
-                                }}
-                                className={cn(
-                                    "group relative cursor-pointer overflow-hidden border border-stone-200 bg-stone-100 text-left dark:border-stone-800 dark:bg-stone-900",
-                                    index === 0 && "md:col-span-2 md:row-span-2",
-                                    index === 3 && "md:col-span-2",
-                                )}
-                            >
-                                <img src={item.coverUrl} alt={item.title} loading="lazy" className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]" />
-                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/35 to-transparent p-4 text-white">
-                                    <div className="mb-2 flex flex-wrap gap-1.5">
-                                        {item.tags.slice(0, 2).map((tag) => (
-                                            <Tag key={tag} variant="filled" className="m-0 bg-white/15 text-[11px] text-white backdrop-blur">
-                                                {tag}
-                                            </Tag>
-                                        ))}
-                                    </div>
-                                    <h3 className="text-sm font-medium">{item.title}</h3>
-                                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/75">{item.prompt}</p>
-                                </div>
-                            </button>
-                        ))}
+                        <Link to="/cultivation" className="group inline-flex items-center gap-2 text-sm tracking-[0.1em] text-[#c9a86a] transition-colors hover:text-[#edede6]">
+                            入命宫修行
+                            <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-0.5" />
+                        </Link>
                     </div>
                 </section>
+            ) : null}
+
+            {/* ── 功法精选 ───────────────────────────────── */}
+            <section className="mx-auto max-w-6xl px-6 pb-24 pt-20">
+                <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+                    <div>
+                        <h2 className="font-display text-3xl text-[#edede6] sm:text-4xl">功法精选</h2>
+                        <p className="mt-3 max-w-xl text-sm leading-6 text-[#8a8a96]">稳定出图的提示词,皆藏于此楼。收藏风格与结果,让下一次创作从已有经验开始。</p>
+                    </div>
+                    <button type="button" onClick={() => navigate("/prompts")} className="group inline-flex items-center gap-2 text-sm text-[#c9a86a] transition-colors hover:text-[#edede6]">
+                        查看功法楼
+                        <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-0.5" />
+                    </button>
+                </div>
+                <hr className="shj-gold-hairline mb-10" />
+
+                <div className="columns-1 gap-4 sm:columns-2 lg:columns-3 xl:columns-4">
+                    {promptShowcase.map((item, index) => (
+                        <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                                setPreviewIndex(index);
+                                setPreviewOpen(true);
+                            }}
+                            className="shj-panel group mb-4 inline-block w-full break-inside-avoid cursor-pointer overflow-hidden text-left align-top"
+                        >
+                            <div className="overflow-hidden bg-[#0f0f14]">
+                                <PromptCover sources={promptImageCandidates(item.coverUrl)} alt={item.title} className="block h-auto min-h-44 w-full object-contain transition duration-500 group-hover:scale-[1.015]" />
+                            </div>
+                            <div className="p-4">
+                                <div className="mb-3 flex flex-wrap gap-1.5">
+                                    {item.tags.slice(0, 2).map((tag) => (
+                                        <Tag key={tag} variant="filled" className="m-0 border border-white/10 bg-white/5 text-[11px] text-[#b7b7c0]">
+                                            {tag}
+                                        </Tag>
+                                    ))}
+                                </div>
+                                <h3 className="font-display text-sm text-[#edede6]">{item.title}</h3>
+                                <p className="mt-2 line-clamp-2 text-xs leading-5 text-[#8a8a96]">{item.prompt}</p>
+                            </div>
+                        </button>
+                    ))}
+                </div>
             </section>
+
             <Image.PreviewGroup
                 preview={{
                     open: previewOpen,
@@ -90,7 +195,7 @@ export default function IndexPage() {
             >
                 <div className="hidden">
                     {promptShowcase.map((item) => (
-                        <Image key={item.id} src={item.coverUrl} alt={item.title} />
+                        <Image key={item.id} src={promptServerThumbnailUrl(item.coverUrl, 1600)} fallback={promptOriginalUrl(item.coverUrl)} alt={item.title} />
                     ))}
                 </div>
             </Image.PreviewGroup>

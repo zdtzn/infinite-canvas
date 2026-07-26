@@ -125,9 +125,9 @@ export default function AdminCultivationPage() {
             <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
                 <header className="cultivation-admin-header">
                     <div>
-                        <p className="cultivation-eyebrow">后台管理</p>
-                        <h1 className="mt-1 text-2xl font-semibold text-stone-950 dark:text-stone-50">修炼管理</h1>
-                        <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-500 dark:text-stone-400">管理用户的成长状态、创作额度和可用能力。所有变更都会进入审计日志。</p>
+                        <p className="shj-hero-eyebrow">Zhang Jiao Dian</p>
+                        <h1 className="font-brush mt-3 text-4xl text-[#edede6] sm:text-5xl">掌教殿</h1>
+                        <p className="font-display mt-3 max-w-2xl text-sm leading-6 tracking-[0.1em] text-[#8a8a96]">管理用户的成长状态、创作额度和可用能力。所有变更都会进入审计日志。</p>
                     </div>
                     <Tooltip title="查看非阻塞式突破反馈">
                         <Button icon={<Sparkles className="size-4" />} disabled={configurationLoading || !configuration?.realms.some((realm) => realm.active && realm.stages.filter((stage) => stage.active).length > 1)} onClick={previewBreakthrough}>
@@ -194,10 +194,12 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
 
     const stageOptions = useMemo(
         () =>
-            config?.realms.filter((realm) => realm.active).map((realm) => ({
-                label: realm.name,
-                options: realm.stages.filter((stage) => stage.active).map((stage) => ({ value: stage.id, label: cultivationStageLabel(realm.name, stage.name) })),
-            })) || [],
+            config?.realms
+                .filter((realm) => realm.active)
+                .map((realm) => ({
+                    label: realm.name,
+                    options: realm.stages.filter((stage) => stage.active).map((stage) => ({ value: stage.id, label: cultivationStageLabel(realm.name, stage.name) })),
+                })) || [],
         [config],
     );
     const stageNameById = useMemo(() => new Map(config?.realms.flatMap((realm) => realm.stages.map((stage) => [stage.id, cultivationStageLabel(realm.name, stage.name)])) || []), [config]);

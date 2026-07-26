@@ -44,14 +44,21 @@ export default function PromptsPage() {
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-background text-stone-800 dark:text-stone-100">
-            <main className="min-h-0 flex-1 overflow-y-auto bg-background px-4 py-6 sm:px-6 lg:py-8" onScroll={handleListScroll}>
-                <div className="mx-auto max-w-7xl">
-                    <div className="text-center">
-                        <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">提示词中心</h1>
-                        <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">当前共 {totalPrompts} 条提示词</p>
+        <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
+            <main className="min-h-0 flex-1 overflow-y-auto" onScroll={handleListScroll}>
+                {/* ── 功法楼 · 场景阁头(仅 UI,逻辑不变) ── */}
+                <section className="relative overflow-hidden">
+                    <img src="/images/ref/misty-dawn.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-b from-[#0e0e12]/78 via-[#0e0e12]/55 to-[#0e0e12]" aria-hidden />
+                    <div className="relative mx-auto max-w-7xl px-6 pb-10 pt-14 text-center">
+                        <p className="shj-hero-eyebrow inline-flex">Gong Fa Lou</p>
+                        <h1 className="font-brush mt-4 text-5xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:text-6xl">功法楼</h1>
+                        <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">楼藏功法 {totalPrompts} 卷 · 每一卷,皆可助你落笔成象</p>
                     </div>
-                    <div className="mt-5 grid items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-6">
+                </section>
+
+                <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:py-8">
+                    <div className="grid items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-6">
                         <aside className="thin-scrollbar max-h-72 overflow-y-auto border-b border-stone-200 pb-5 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-6rem)] lg:border-b-0 lg:border-r lg:pb-8 lg:pr-5 dark:border-stone-800">
                             <PromptFilter label="分类" options={promptCategoryOptions} selected={selectedCategory} onChange={setSelectedCategory} />
                             <div className="mt-6">
@@ -88,9 +95,7 @@ export default function PromptsPage() {
                                     />
                                 </div>
                             )}
-                            <div className="mt-6 text-center text-xs text-stone-500 dark:text-stone-400">
-                                {query.isFetchingNextPage ? "加载中..." : query.hasNextPage ? "继续向下滚动加载更多" : promptItems.length > 0 ? "已经到底了" : null}
-                            </div>
+                            <div className="mt-6 text-center text-xs text-stone-500 dark:text-stone-400">{query.isFetchingNextPage ? "加载中..." : query.hasNextPage ? "继续向下滚动加载更多" : promptItems.length > 0 ? "已经到底了" : null}</div>
                         </section>
                     </div>
                 </div>

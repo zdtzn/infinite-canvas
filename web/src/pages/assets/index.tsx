@@ -1,6 +1,6 @@
-import { Copy, Download, PencilLine, Search, Trash2, Upload } from "lucide-react";
+import { Copy, Download, Eye, PencilLine, Search, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
+import { App, Button, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
 import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -29,6 +29,13 @@ const kindOptions = [
     { label: "视频", value: "video" },
 ];
 
+const kindLabels: Record<string, string> = { image: "图片", video: "视频", text: "文本" };
+
+/**
+ * 藏卷阁 · 作品库(方案B「山海境」)
+ * 资产增删改查 / 导入导出 / 分页 / 详情抽屉逻辑零改动,仅重做呈现:
+ * 螺旋山谷阁头 + 画轴卡片 + hover 浮现操作层。
+ */
 export default function AssetsPage() {
     const { message } = App.useApp();
     const copyText = useCopyText();
@@ -186,15 +193,22 @@ export default function AssetsPage() {
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-background text-stone-900 dark:text-stone-100">
-            <main className="min-h-0 flex-1 overflow-y-auto bg-background px-6 py-8">
-                <div className="pb-8">
-                    <div className="mx-auto max-w-7xl">
-                        <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">我的资产</h1>
-                        <p className="mt-2 text-sm text-stone-500 dark:text-stone-400">收藏常用文本和图片，按类型、标题和标签快速查找。</p>
+        <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
+            <main className="min-h-0 flex-1 overflow-y-auto">
+                {/* ── 阁头:螺旋山谷 ── */}
+                <section className="relative overflow-hidden">
+                    <img src="/images/ref/spiral-valley-1.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-b from-[#0e0e12]/78 via-[#0e0e12]/58 to-[#0e0e12]" aria-hidden />
+                    <div className="relative mx-auto max-w-7xl px-6 pb-12 pt-14">
+                        <p className="shj-hero-eyebrow">Cang Juan Ge</p>
+                        <h1 className="font-brush mt-4 text-5xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:text-6xl">藏卷阁</h1>
+                        <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">珍藏 {validAssets.length} 卷 · 每一卷,都是一次万象落笔</p>
                     </div>
+                </section>
 
-                    <div className="mx-auto mt-6 max-w-7xl">
+                <div className="mx-auto max-w-7xl px-6 pb-10">
+                    {/* ── 检索与行动 ── */}
+                    <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                         <Input.Search
                             className="w-full max-w-xl"
                             size="large"
@@ -211,93 +225,104 @@ export default function AssetsPage() {
                                 setKeyword(value);
                             }}
                         />
-                    </div>
-
-                    <div className="mx-auto mt-5 grid max-w-7xl gap-3 text-left">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="grid gap-2 sm:grid-cols-[56px_minmax(0,1fr)] sm:items-center">
-                                <div className="text-xs font-medium text-stone-500 dark:text-stone-400">类型</div>
-                                <div className="flex flex-wrap gap-2">
-                                    {kindOptions.map((option) => (
-                                        <Tag.CheckableTag
-                                            key={option.value}
-                                            checked={kindFilter === option.value}
-                                            className={cn("prompt-filter-tag", kindFilter === option.value && "is-active")}
-                                            onChange={() => {
-                                                setPage(1);
-                                                setKindFilter(option.value as AssetKind | "all");
-                                            }}
-                                        >
-                                            {option.label}
-                                        </Tag.CheckableTag>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="flex flex-wrap gap-4">
-                                <button
-                                    type="button"
-                                    className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
-                                    onClick={() => void exportAllAssets()}
-                                >
-                                    导出资产
-                                </button>
-                                <button
-                                    type="button"
-                                    className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
-                                    onClick={() => assetInputRef.current?.click()}
-                                >
-                                    导入资产
-                                </button>
-                                <button
-                                    type="button"
-                                    className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
-                                    onClick={openCreate}
-                                >
-                                    新增资产
-                                </button>
-                            </div>
+                        <div className="flex flex-wrap items-center gap-4">
+                            <button type="button" className="text-sm text-[#c9c4b9] transition-colors hover:text-[#f7f4ea]" onClick={() => void exportAllAssets()}>
+                                导出资产
+                            </button>
+                            <button type="button" className="text-sm text-[#c9c4b9] transition-colors hover:text-[#f7f4ea]" onClick={() => assetInputRef.current?.click()}>
+                                导入资产
+                            </button>
+                            <button type="button" onClick={openCreate} className="inline-flex items-center rounded-md bg-[#d8402a] px-5 py-2.5 text-sm font-medium tracking-[0.1em] text-[#fff7ee] transition-colors duration-300 hover:bg-[#ee5038]">
+                                新增资产
+                            </button>
                         </div>
                     </div>
+
+                    <div className="mt-5 flex items-center gap-3">
+                        <span className="text-xs tracking-[0.2em] text-[#8a8a96]">类型</span>
+                        <div className="flex flex-wrap gap-2">
+                            {kindOptions.map((option) => (
+                                <Tag.CheckableTag
+                                    key={option.value}
+                                    checked={kindFilter === option.value}
+                                    className={cn("prompt-filter-tag", kindFilter === option.value && "is-active")}
+                                    onChange={() => {
+                                        setPage(1);
+                                        setKindFilter(option.value as AssetKind | "all");
+                                    }}
+                                >
+                                    {option.label}
+                                </Tag.CheckableTag>
+                            ))}
+                        </div>
+                    </div>
+                    <hr className="shj-gold-hairline mt-6" />
                 </div>
 
-                <div className="mx-auto flex max-w-7xl flex-col gap-5">
+                {/* ── 画轴瀑布 ── */}
+                <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 pb-12">
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {visibleAssets.map((asset) => (
-                            <AssetCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
+                            <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                         ))}
                     </div>
 
-                    {!visibleAssets.length && (
-                        validAssets.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
-                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="text-stone-500">素材库还是空的</span>} />
-                                <Button type="primary" onClick={openCreate}>新增第一个素材</Button>
+                    {!visibleAssets.length &&
+                        (validAssets.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center gap-5 py-24 text-center">
+                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="font-display text-sm tracking-[0.1em] text-[#8a8a96]">阁中尚无一卷,落笔即是开山之作</span>} />
+                                <button
+                                    type="button"
+                                    onClick={openCreate}
+                                    className="shj-cta-glow inline-flex items-center rounded-md bg-[#d8402a] px-6 py-3 text-sm font-medium tracking-[0.15em] text-[#fff7ee] transition-colors duration-300 hover:bg-[#ee5038]"
+                                >
+                                    收入第一卷
+                                </button>
                             </div>
                         ) : (
                             <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
-                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="text-stone-500">当前筛选条件下没有结果</span>} />
-                                <Button onClick={() => { setKeyword(""); setKindFilter("all"); }}>清除筛选条件</Button>
+                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="font-display text-sm tracking-[0.1em] text-[#8a8a96]">此格暂无藏卷</span>} />
+                                <Button
+                                    onClick={() => {
+                                        setKeyword("");
+                                        setKindFilter("all");
+                                    }}
+                                >
+                                    清除筛选条件
+                                </Button>
                             </div>
-                        )
-                    )}
+                        ))}
 
-                    <div className="flex justify-center">
-                        <Pagination
-                            current={page}
-                            pageSize={pageSize}
-                            total={filteredAssets.length}
-                            showSizeChanger
-                            pageSizeOptions={[10, 20, 50, 100]}
-                            onChange={(nextPage, nextPageSize) => {
-                                setPage(nextPage);
-                                setPageSize(nextPageSize);
-                            }}
-                        />
-                    </div>
+                    {filteredAssets.length > pageSize ? (
+                        <div className="flex justify-center">
+                            <Pagination
+                                current={page}
+                                pageSize={pageSize}
+                                total={filteredAssets.length}
+                                showSizeChanger
+                                pageSizeOptions={[10, 20, 50, 100]}
+                                onChange={(nextPage, nextPageSize) => {
+                                    setPage(nextPage);
+                                    setPageSize(nextPageSize);
+                                }}
+                            />
+                        </div>
+                    ) : null}
                 </div>
             </main>
 
-            <Modal title={editingAsset ? "编辑资产" : "新增资产"} open={isAssetOpen} width={980} onCancel={() => setIsAssetOpen(false)} onOk={() => void saveAsset()} okText="保存" cancelText="取消" destroyOnHidden>
+            <Modal
+                title={editingAsset ? "编辑资产" : "新增资产"}
+                open={isAssetOpen}
+                width={980}
+                centered
+                styles={{ body: { maxHeight: "calc(100dvh - 180px)", overflowX: "hidden", overflowY: "auto" } }}
+                onCancel={() => setIsAssetOpen(false)}
+                onOk={() => void saveAsset()}
+                okText="保存"
+                cancelText="取消"
+                destroyOnHidden
+            >
                 <div className="grid gap-6 pt-1 lg:grid-cols-[minmax(0,1fr)_320px]">
                     <Form form={form} layout="vertical" requiredMark={false} initialValues={{ kind: "text", tags: [] }}>
                         <Form.Item name="kind" label="类型">
@@ -414,72 +439,66 @@ export default function AssetsPage() {
     );
 }
 
-function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
+/** 画轴卡片:封面 + hover 浮现操作层 + 落款条 */
+function AssetScrollCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
     const cover = asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "");
     const summary = assetSummary(asset);
+    const actions: { key: string; label: string; icon: typeof Eye; run: () => void; danger?: boolean }[] = [
+        { key: "open", label: "查看", icon: Eye, run: onOpen },
+        ...(asset.kind !== "video" ? [{ key: "edit", label: "编辑", icon: PencilLine, run: onEdit }] : []),
+        ...(asset.kind === "text" ? [{ key: "copy", label: "复制", icon: Copy, run: () => void onCopy(asset) }] : []),
+        ...(asset.kind === "image" || asset.kind === "video" ? [{ key: "download", label: "下载", icon: Download, run: () => onDownload(asset) }] : []),
+        { key: "delete", label: "删除", icon: Trash2, run: onDelete, danger: true },
+    ];
+
     return (
-        <Card
-            hoverable
-            className="overflow-hidden"
-            styles={{ body: { padding: 0 } }}
-            cover={
+        <div className="shj-panel group overflow-hidden !rounded-lg">
+            <div className="relative">
                 <button type="button" className="block w-full text-left" onClick={onOpen}>
                     {cover ? (
-                        <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" />
+                        <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
                     ) : (
-                        <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-5 text-center text-sm leading-6 text-stone-600 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? asset.data.content : "暂无封面"}</div>
+                        <div className="flex aspect-[4/3] items-center justify-center bg-[#17171d] p-5 text-center text-sm leading-6 text-[#c9c4b9]">{asset.kind === "text" ? asset.data.content : "暂无封面"}</div>
                     )}
                 </button>
-            }
-        >
-            <button type="button" className="block w-full text-left" onClick={onOpen}>
-                <div className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                            <h2 className="line-clamp-1 text-sm font-semibold text-stone-950 dark:text-stone-100">{asset.title}</h2>
-                            <Typography.Text type="secondary" className="mt-1 block text-xs">
-                                {asset.source || "未标注来源"}
-                            </Typography.Text>
-                        </div>
-                        <Tag className="m-0 shrink-0 text-[11px]">{asset.kind === "image" ? "图片" : asset.kind === "video" ? "视频" : "文本"}</Tag>
-                    </div>
-                    <Typography.Paragraph type="secondary" ellipsis={{ rows: 3 }} className="!mb-0 !mt-2 !text-xs !leading-5">
-                        {summary}
-                    </Typography.Paragraph>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                        {(asset.tags || []).slice(0, 3).map((tag) => (
-                            <Tag key={tag} className="m-0 text-[11px]">
-                                {tag}
-                            </Tag>
-                        ))}
-                        {!asset.tags?.length ? <Tag className="m-0 text-[11px]">无标签</Tag> : null}
-                    </div>
+                <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-2 bg-gradient-to-t from-[#0e0e12]/85 via-transparent to-transparent p-3 opacity-100 transition-opacity duration-300 md:items-center md:justify-center md:bg-[#0e0e12]/74 md:opacity-0 md:backdrop-blur-[2px] md:group-focus-within:opacity-100 md:group-hover:opacity-100">
+                    {actions.map((action) => {
+                        const ActionIcon = action.icon;
+                        return (
+                            <button
+                                type="button"
+                                key={action.key}
+                                title={action.label}
+                                aria-label={action.label}
+                                className={cn(
+                                    "pointer-events-auto grid size-9 place-items-center rounded-md border bg-[#17171d]/90 transition-colors md:size-10",
+                                    action.danger ? "border-[rgb(216_64_42/0.5)] text-[#ee5038] hover:bg-[#d8402a] hover:text-[#fff7ee]" : "border-[rgb(237_237_230/0.28)] text-[#edede6] hover:border-[#c9a86a]/70 hover:text-[#c9a86a]",
+                                )}
+                                onClick={action.run}
+                            >
+                                <ActionIcon className="size-4" />
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+            {/* 落款条 */}
+            <button type="button" className="block w-full p-4 text-left" onClick={onOpen}>
+                <div className="flex items-start justify-between gap-3">
+                    <h2 className="font-display line-clamp-1 text-sm tracking-[0.05em] text-[#edede6]">{asset.title}</h2>
+                    <span className="shrink-0 rounded border border-[rgb(237_237_230/0.18)] px-1.5 py-0.5 text-[11px] text-[#8a8a96]">{kindLabels[asset.kind]}</span>
+                </div>
+                <p className="mt-2 line-clamp-2 min-h-[2rem] text-xs leading-4 text-[#8a8a96]">{summary}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] text-[#8a8a96]/80">{asset.source || "未标注来源"}</span>
+                    {(asset.tags || []).slice(0, 2).map((tag) => (
+                        <span key={tag} className="rounded border border-[rgb(201_168_106/0.3)] px-1.5 py-0.5 text-[11px] text-[#c9a86a]">
+                            {tag}
+                        </span>
+                    ))}
                 </div>
             </button>
-            <div className="flex items-center gap-2 px-4 pb-4">
-                <Button size="small" onClick={onOpen}>
-                    查看
-                </Button>
-                {asset.kind !== "video" ? (
-                    <Button size="small" icon={<PencilLine className="size-3.5" />} onClick={onEdit}>
-                        编辑
-                    </Button>
-                ) : null}
-                {asset.kind === "text" ? (
-                    <Button size="small" icon={<Copy className="size-3.5" />} onClick={() => void onCopy(asset)}>
-                        复制
-                    </Button>
-                ) : null}
-                {asset.kind === "image" || asset.kind === "video" ? (
-                    <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(asset)}>
-                        下载
-                    </Button>
-                ) : null}
-                <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
-                    删除
-                </Button>
-            </div>
-        </Card>
+        </div>
     );
 }
 

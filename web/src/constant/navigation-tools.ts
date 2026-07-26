@@ -40,6 +40,17 @@ export const navigationTools = [
 
 export type NavigationToolSlug = (typeof navigationTools)[number]["slug"];
 
+/** 山海境场景名(纯展示层,路由与功能不变) */
+export const navigationSceneNames: Record<NavigationToolSlug, string> = {
+    canvas: "洞天",
+    image: "丹青台",
+    video: "流光阁",
+    prompts: "功法楼",
+    assets: "藏卷阁",
+    cultivation: "命宫",
+    config: "洞府",
+};
+
 const primaryNavigationSlugs: NavigationToolSlug[] = ["canvas", "image", "assets"];
 
 export const primaryNavigationTools = navigationTools.filter((tool) => primaryNavigationSlugs.includes(tool.slug));

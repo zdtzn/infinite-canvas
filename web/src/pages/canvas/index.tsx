@@ -70,12 +70,16 @@ export default function CanvasPage() {
     if (hydrated && (mode === "new" || mode === "recent")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
 
     return (
-        <main className="h-full overflow-auto bg-background text-stone-950 dark:text-stone-100">
-            <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10">
-                <header className="flex flex-wrap items-end justify-between gap-4 border-b border-stone-200 pb-6 dark:border-stone-800">
+        <main className="h-full overflow-auto bg-background text-foreground">
+            {/* ── 洞天 · 场景阁头(仅 UI,逻辑不变) ── */}
+            <section className="relative overflow-hidden">
+                <img src="/images/ref/energy-vortex-1.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-b from-[#0e0e12]/80 via-[#0e0e12]/60 to-[#0e0e12]" aria-hidden />
+                <div className="relative mx-auto flex w-full max-w-6xl flex-wrap items-end justify-between gap-4 px-6 pb-10 pt-14">
                     <div>
-                        <p className="text-xs text-stone-500">画布库</p>
-                        <h1 className="mt-3 text-3xl font-semibold">无限画布</h1>
+                        <p className="shj-hero-eyebrow">Dong Tian</p>
+                        <h1 className="font-brush mt-4 text-5xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:text-6xl">洞天</h1>
+                        <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">{projects.length ? `${projects.length} 方天地,各自生长` : "一方属于你的天地,由此而开"}</p>
                     </div>
                     <div className="flex items-center gap-2">
                         {selectedIds.length ? (
@@ -109,10 +113,12 @@ export default function CanvasPage() {
                             新建画布
                         </Button>
                     </div>
-                </header>
+                </div>
+            </section>
 
+            <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10">
                 {!hydrated ? (
-                    <section className="imperial-route-loading flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">{loadingLabel}</section>
+                    <section className="imperial-route-loading flex min-h-[360px] items-center justify-center border-y border-[rgb(237_237_230/0.1)] text-sm text-[#8a8a96]">{loadingLabel}</section>
                 ) : projects.length ? (
                     <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                         {projects.map((project) => (
@@ -120,12 +126,17 @@ export default function CanvasPage() {
                         ))}
                     </div>
                 ) : (
-                    <section className="flex min-h-[360px] flex-col items-center justify-center border-y border-stone-200 text-center dark:border-stone-800">
-                        <h2 className="text-xl font-medium">还没有画布</h2>
-                        <p className="mt-3 text-sm text-stone-500">新建一个画布后，就可以独立保存节点、连线和画布外观。</p>
-                        <Button type="primary" className="mt-6" icon={<Plus className="size-4" />} onClick={createAndEnter}>
-                            新建画布
-                        </Button>
+                    <section className="flex min-h-[360px] flex-col items-center justify-center border-y border-[rgb(237_237_230/0.1)] text-center">
+                        <h2 className="font-brush text-3xl text-[#edede6]">洞天未开</h2>
+                        <p className="font-display mt-3 text-sm tracking-[0.1em] text-[#8a8a96]">新建一个画布,便可独辟一方天地,节点、连线皆由你定。</p>
+                        <button
+                            type="button"
+                            onClick={createAndEnter}
+                            className="shj-cta-glow mt-8 inline-flex items-center gap-2 rounded-md bg-[#d8402a] px-7 py-3.5 text-sm font-medium tracking-[0.2em] text-[#fff7ee] transition-colors duration-300 hover:bg-[#ee5038]"
+                        >
+                            <Plus className="size-4" />
+                            开辟洞天
+                        </button>
                     </section>
                 )}
             </div>

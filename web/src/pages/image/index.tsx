@@ -385,30 +385,36 @@ export default function ImagePage() {
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
+        <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
             <main className="min-h-0 flex-1 overflow-y-auto p-3 lg:overflow-hidden">
-                <section className={showResultsPanel ? "grid h-full min-h-0 w-full gap-3 lg:grid-cols-[minmax(380px,460px)_minmax(0,1fr)]" : "mx-auto w-full max-w-[680px]"}>
-                    <div className="flex min-h-0 flex-col rounded-lg border border-stone-200 bg-card shadow-sm dark:border-stone-800">
+                <section className={showResultsPanel ? "grid h-full min-h-0 min-w-0 w-full gap-3 lg:grid-cols-[minmax(380px,460px)_minmax(0,1fr)]" : "mx-auto w-full min-w-0 max-w-[680px]"}>
+                    <div className="flex min-h-0 min-w-0 flex-col rounded-lg border border-stone-200 bg-card shadow-sm dark:border-stone-800">
                         <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4 lg:p-5">
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                    <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">生图工作台</h1>
-                                    <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">输入提示词后开始生成，结果会在这里持续保留。</p>
+                            {/* 丹青台 · 场景横幅(仅 UI,逻辑不变) */}
+                            <div className="relative mb-6 overflow-hidden rounded-lg">
+                                <img src="/images/ref/energy-vortex-2.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
+                                <div className="absolute inset-0 bg-gradient-to-r from-[#0e0e12]/88 via-[#0e0e12]/62 to-[#0e0e12]/28" aria-hidden />
+                                <div className="relative flex items-end justify-between gap-3 p-5">
+                                    <div className="min-w-0">
+                                        <p className="text-[10px] tracking-[0.4em] text-[#c9a86a]">DAN QING TAI</p>
+                                        <h1 className="font-brush mt-2 text-4xl text-[#edede6] [text-shadow:0_2px_20px_rgb(0_0_0/0.6)]">丹青台</h1>
+                                        <p className="font-display mt-1.5 text-xs tracking-[0.1em] text-[#edede6]/70">一笔落墨,万象皆成 · 结果在这里持续保留</p>
+                                    </div>
+                                    <Button icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
+                                        历史
+                                    </Button>
                                 </div>
-                                <Button icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
-                                    历史
-                                </Button>
                             </div>
 
                             <div className="mt-6 space-y-5">
                                 <div>
-                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                    <div className="mb-2 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
                                         <span className="text-base font-semibold">提示词</span>
-                                        <div className="flex gap-2">
-                                            <Button size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
+                                        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+                                            <Button className="min-w-0" size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
                                                 提示词库
                                             </Button>
-                                            <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
+                                            <Button className="min-w-0" size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
                                                 我的资产
                                             </Button>
                                         </div>
@@ -428,7 +434,7 @@ export default function ImagePage() {
                                 </div>
 
                                 <div className="min-w-0">
-                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                                         <div>
                                             <span className="text-base font-semibold">参考图</span>
                                             <span className="ml-2 text-xs text-stone-400">可上传或从剪贴板粘贴</span>
@@ -466,7 +472,7 @@ export default function ImagePage() {
                                                 <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
                                                 <button
                                                     type="button"
-                                                    className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
+                                                    className="absolute right-1 top-1 flex size-6 items-center justify-center rounded bg-black/60 text-white transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
                                                     onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
                                                     aria-label="移除参考图"
                                                 >

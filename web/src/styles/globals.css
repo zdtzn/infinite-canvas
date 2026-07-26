@@ -84,37 +84,37 @@
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --border: oklch(1 0 0 / 10%);
-    --ring: oklch(0.556 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --input: oklch(1 0 0 / 15%);
+    --background: #0e0e12;
+    --foreground: #edede6;
+    --border: rgb(237 237 230 / 9%);
+    --ring: rgb(201 168 106 / 55%);
+    --card: #17171d;
+    --card-foreground: #edede6;
+    --popover: #1b1b22;
+    --popover-foreground: #edede6;
+    --primary: #d8402a;
+    --primary-foreground: #fff7ee;
+    --secondary: #23232c;
+    --secondary-foreground: #edede6;
+    --muted: #1a1a21;
+    --muted-foreground: #8a8a96;
+    --accent: #23232c;
+    --accent-foreground: #f0ead8;
+    --destructive: #e24b4a;
+    --input: rgb(237 237 230 / 12%);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar: #101016;
+    --sidebar-foreground: #edede6;
+    --sidebar-primary: #c9a86a;
+    --sidebar-primary-foreground: #14120c;
+    --sidebar-accent: #1d1d25;
+    --sidebar-accent-foreground: #f0ead8;
+    --sidebar-border: rgb(237 237 230 / 9%);
+    --sidebar-ring: rgb(201 168 106 / 55%);
 }
 
 @layer base {
@@ -1855,6 +1855,544 @@
         .imperial-breakthrough::after,
         html[data-imperial-mode="true"] .imperial-generate-button.ant-btn-primary:not(.ant-btn-dangerous):active::after {
             animation: none;
+        }
+    }
+}
+
+/* ============================================================
+   山海境 · 方案B 设计基座(纯新增,不影响既有组件)
+   玄墨 / 月白 / 朱砂 / 哑光金 —— 墨 > 金,金色仅作点缀
+   ============================================================ */
+
+:root {
+    --shj-ink-0: #0e0e12;
+    --shj-ink-1: #141419;
+    --shj-ink-2: #1b1b22;
+    --shj-ink-3: #23232c;
+    --shj-moon: #edede6;
+    --shj-fog: #8a8a96;
+    --shj-cinnabar: #d8402a;
+    --shj-cinnabar-bright: #ee5038;
+    --shj-gold: #c9a86a;
+    --shj-gold-dim: rgb(201 168 106 / 38%);
+    --shj-mountain: #3e5c56;
+    --shj-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer components {
+    /* 宋体标题(东方骨架) */
+    .font-display {
+        font-family: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
+        letter-spacing: 0.04em;
+    }
+
+    /* 书法大字(仅 Hero 与仪式场景,克制使用) */
+    .font-brush {
+        font-family: "STKaiti", "KaiTi", "Kaiti SC", "FangSong", "Songti SC", "STSong", serif;
+        font-weight: 400;
+        letter-spacing: 0;
+    }
+
+    /* 竖排文字 */
+    .shj-vertical {
+        writing-mode: vertical-rl;
+        letter-spacing: 0.32em;
+        text-orientation: upright;
+    }
+
+    /* 哑光金文字 */
+    .shj-gold-text {
+        color: var(--shj-gold);
+    }
+
+    /* 金线分隔 */
+    .shj-gold-hairline {
+        height: 1px;
+        border: 0;
+        background: linear-gradient(90deg, transparent, var(--shj-gold-dim), transparent);
+    }
+
+    /* 朱砂印章 */
+    .shj-seal {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.375rem;
+        padding: 0.375rem 0.625rem;
+        border-radius: 4px;
+        border: 1px solid rgb(255 247 238 / 22%);
+        color: #fff7ee;
+        background: linear-gradient(160deg, var(--shj-cinnabar-bright), var(--shj-cinnabar) 55%, #b52c1e);
+        box-shadow: 0 2px 10px rgb(216 64 42 / 28%);
+        font-family: "STKaiti", "KaiTi", "Kaiti SC", "FangSong", "Songti SC", "STSong", serif;
+        font-size: 0.875rem;
+        line-height: 1;
+        letter-spacing: 0.12em;
+    }
+
+    /* 左侧场景导航 */
+    .shj-rail {
+        background: linear-gradient(180deg, #101016 0%, #0e0e12 100%);
+    }
+
+    .shj-rail-item {
+        position: relative;
+        display: flex;
+        width: 68px;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.625rem;
+        padding: 0.875rem 0;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        color: #c9c4b9;
+        transition:
+            color 240ms var(--shj-ease),
+            background-color 240ms var(--shj-ease),
+            border-color 240ms var(--shj-ease);
+    }
+
+    .shj-rail-item:hover {
+        color: #f7f4ea;
+        background: rgb(237 237 230 / 7%);
+    }
+
+    .shj-rail-item.is-active {
+        border-color: var(--shj-gold-dim);
+        color: #f0ead8;
+        background: linear-gradient(180deg, rgb(201 168 106 / 9%), rgb(201 168 106 / 2%));
+    }
+
+    .shj-rail-item.is-active::before {
+        position: absolute;
+        left: -13px;
+        top: 50%;
+        width: 2px;
+        height: 1.5rem;
+        border-radius: 999px;
+        background: var(--shj-gold);
+        content: "";
+        transform: translateY(-50%);
+    }
+
+    .shj-rail-item-label {
+        font-family: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.28em;
+        line-height: 1;
+    }
+
+    /* 山门 Hero:史诗山水底图(金凤衔日) + 压暗渐层 + 暗角 */
+    .shj-hero {
+        position: relative;
+        isolation: isolate;
+        background: #0b0b0f url("/images/hero-main.webp") center 58% / cover no-repeat;
+    }
+
+    .shj-hero::before {
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        background: linear-gradient(180deg, rgb(11 11 15 / 72%) 0%, rgb(11 11 15 / 42%) 32%, rgb(14 14 18 / 26%) 54%, rgb(14 14 18 / 84%) 86%, var(--shj-ink-0) 100%);
+        content: "";
+        pointer-events: none;
+    }
+
+    /* 暗角(电影感) */
+    .shj-hero::after {
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        background: radial-gradient(ellipse 118% 88% at 50% 42%, transparent 52%, rgb(5 5 8 / 52%) 100%);
+        content: "";
+        pointer-events: none;
+    }
+
+    /* 胶片颗粒 */
+    .shj-grain {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        opacity: 0.05;
+        mix-blend-mode: overlay;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.7'/%3E%3C/svg%3E");
+    }
+
+    /* 远山剪影(备用,纯 CSS) */
+    .shj-hero-mountains {
+        position: absolute;
+        inset: auto 0 0 0;
+        z-index: -1;
+        height: 34%;
+        pointer-events: none;
+        opacity: 0.55;
+        background: radial-gradient(ellipse 42% 88% at 12% 100%, #151a17 0%, transparent 70%), radial-gradient(ellipse 52% 100% at 46% 104%, #12161a 0%, transparent 72%), radial-gradient(ellipse 46% 92% at 84% 100%, #161a15 0%, transparent 70%);
+    }
+
+    /* 云雾,90s 超慢漂移,幅度克制 */
+    .shj-hero-mist {
+        position: absolute;
+        inset: -10% -20%;
+        z-index: -1;
+        pointer-events: none;
+        opacity: 0.5;
+        background:
+            radial-gradient(ellipse 34% 16% at 24% 66%, rgb(237 237 230 / 5%), transparent 72%), radial-gradient(ellipse 40% 14% at 72% 42%, rgb(237 237 230 / 4%), transparent 74%),
+            radial-gradient(ellipse 28% 12% at 52% 84%, rgb(201 168 106 / 4%), transparent 70%);
+        animation: shj-mist-drift 90s ease-in-out infinite alternate;
+    }
+
+    /* 星点(斗王以上世界渐有星) */
+    .shj-hero-stars {
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        opacity: 0.5;
+        background-image:
+            radial-gradient(circle at 22% 18%, rgb(237 237 230 / 55%) 0 1px, transparent 1.5px), radial-gradient(circle at 68% 12%, rgb(201 168 106 / 6%) 0 1px, transparent 1.5px),
+            radial-gradient(circle at 84% 30%, rgb(237 237 230 / 40%) 0 0.8px, transparent 1.3px), radial-gradient(circle at 40% 8%, rgb(237 237 230 / 32%) 0 0.8px, transparent 1.3px);
+        background-size:
+            340px 340px,
+            420px 420px,
+            300px 300px,
+            380px 380px;
+    }
+
+    .shj-hero-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.875rem;
+        color: var(--shj-gold);
+        font-size: 0.75rem;
+        letter-spacing: 0.5em;
+        text-transform: uppercase;
+    }
+
+    .shj-hero-eyebrow::before,
+    .shj-hero-eyebrow::after {
+        width: 3rem;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, var(--shj-gold-dim));
+        content: "";
+    }
+
+    .shj-hero-eyebrow::after {
+        background: linear-gradient(90deg, var(--shj-gold-dim), transparent);
+    }
+
+    /* 滚动提示:卷轴展开 */
+    .shj-scroll-cue {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.625rem;
+        color: var(--shj-fog);
+        font-size: 0.75rem;
+        letter-spacing: 0.4em;
+    }
+
+    .shj-scroll-cue::after {
+        width: 1px;
+        height: 3rem;
+        background: linear-gradient(180deg, var(--shj-gold-dim), transparent);
+        content: "";
+        animation: shj-cue-fall 2.6s var(--shj-ease) infinite;
+    }
+
+    /* 墨面板(功法精选等卡片) */
+    .shj-panel {
+        border: 1px solid rgb(237 237 230 / 8%);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--shj-ink-2), var(--shj-ink-1));
+        transition:
+            border-color 240ms var(--shj-ease),
+            transform 240ms var(--shj-ease),
+            box-shadow 240ms var(--shj-ease);
+    }
+
+    .shj-panel:hover {
+        border-color: rgb(201 168 106 / 30%);
+        box-shadow: 0 16px 40px rgb(0 0 0 / 34%);
+        transform: translateY(-4px);
+    }
+
+    /* ── 开场级打磨:浮尘 / 流光 / 印章光泽 ── */
+
+    /* 金色浮尘,缓慢上升(轻微页游感,克制密度) */
+    .shj-hero-motes {
+        position: absolute;
+        inset: -20% 0;
+        z-index: 1;
+        pointer-events: none;
+        opacity: 0.55;
+        background-image: radial-gradient(circle, rgb(201 168 106 / 55%) 0 1.2px, transparent 1.9px), radial-gradient(circle, rgb(237 237 230 / 38%) 0 1px, transparent 1.6px), radial-gradient(circle, rgb(201 168 106 / 30%) 0 1.6px, transparent 2.3px);
+        background-size:
+            260px 260px,
+            380px 380px,
+            520px 520px;
+        animation: shj-motes-rise 32s linear infinite;
+        will-change: transform;
+    }
+
+    /* 标题金色流光(9s 一次,扫过即止) */
+    .shj-title-sheen {
+        background: linear-gradient(100deg, #edede6 32%, #e9d6a4 46%, #f7efd8 50%, #e9d6a4 54%, #edede6 68%);
+        background-size: 240% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        filter: drop-shadow(0 4px 28px rgb(0 0 0 / 0.6));
+        animation: shj-title-sheen 9s ease-in-out infinite;
+    }
+
+    /* 印章光泽扫过 */
+    .shj-seal {
+        position: relative;
+        overflow: hidden;
+    }
+
+    .shj-seal::after {
+        position: absolute;
+        inset: -40% -60%;
+        background: linear-gradient(105deg, transparent 42%, rgb(255 247 238 / 38%) 50%, transparent 58%);
+        content: "";
+        transform: translateX(-75%);
+        animation: shj-seal-sheen 5.5s ease-in-out infinite;
+    }
+
+    /* 导轨选中金光 */
+    .shj-rail-item.is-active {
+        box-shadow:
+            0 0 22px rgb(201 168 106 / 14%),
+            inset 0 0 14px rgb(201 168 106 / 5%);
+    }
+
+    @keyframes shj-motes-rise {
+        from {
+            transform: translate3d(0, 8%, 0);
+        }
+
+        to {
+            transform: translate3d(0, -8%, 0);
+        }
+    }
+
+    @keyframes shj-title-sheen {
+        0%,
+        100% {
+            background-position: 115% 0;
+        }
+
+        50% {
+            background-position: -15% 0;
+        }
+    }
+
+    @keyframes shj-seal-sheen {
+        0%,
+        55% {
+            transform: translateX(-75%);
+        }
+
+        90%,
+        100% {
+            transform: translateX(75%);
+        }
+    }
+
+    /* 大印章(Hero 主展示位,显眼优先) */
+    .shj-seal-lg {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.625rem 1.125rem;
+        border: 1.5px solid rgb(255 247 238 / 34%);
+        border-radius: 6px;
+        color: #fff7ee;
+        background: linear-gradient(160deg, var(--shj-cinnabar-bright), var(--shj-cinnabar) 55%, #b52c1e);
+        box-shadow:
+            0 4px 22px rgb(216 64 42 / 48%),
+            0 0 0 4px rgb(216 64 42 / 14%);
+        font-family: "STKaiti", "KaiTi", "Kaiti SC", "FangSong", "Songti SC", "STSong", serif;
+        font-size: 1.125rem;
+        line-height: 1;
+        letter-spacing: 0.15em;
+        transform: rotate(-2deg);
+    }
+
+    /* 主按钮呼吸红光(显眼,3.2s 一轮) */
+    .shj-cta-glow {
+        animation: shj-cta-breathe 3.2s ease-in-out infinite;
+    }
+
+    @keyframes shj-cta-breathe {
+        0%,
+        100% {
+            box-shadow:
+                0 6px 24px rgb(216 64 42 / 38%),
+                0 0 0 1px rgb(238 80 56 / 50%);
+        }
+
+        50% {
+            box-shadow:
+                0 8px 40px rgb(216 64 42 / 62%),
+                0 0 0 1.5px rgb(238 80 56 / 85%);
+        }
+    }
+
+    /* 帝临模式沿用原始星河主视觉，只保留克制的氛围差异 */
+
+    .shj-hero--imperial .shj-hero-stars {
+        display: none;
+    }
+
+    .shj-hero--imperial .shj-hero-motes {
+        opacity: 0.35;
+    }
+
+    /* 主题化文字 */
+    .shj-hero-tagline {
+        color: rgb(237 237 230 / 75%);
+    }
+
+    .shj-couplet {
+        color: rgb(237 237 230 / 25%);
+    }
+
+    .shj-hero-realm-label {
+        color: #c9c4b9;
+    }
+
+    /* 幽灵按钮 */
+    .shj-btn-ghost {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid rgb(201 168 106 / 38%);
+        border-radius: 6px;
+        background: rgb(14 14 18 / 35%);
+        padding: 1rem 2rem;
+        color: #c9a86a;
+        font-size: 0.875rem;
+        letter-spacing: 0.2em;
+        backdrop-filter: blur(4px);
+        transition:
+            border-color 300ms var(--shj-ease),
+            background-color 300ms var(--shj-ease),
+            color 300ms var(--shj-ease);
+    }
+
+    .shj-btn-ghost:hover {
+        border-color: rgb(201 168 106 / 62%);
+        background: rgb(201 168 106 / 8%);
+    }
+
+    /* ── 命宫 · 十境天梯 ── */
+
+    .shj-ladder {
+        position: relative;
+    }
+
+    .shj-ladder::before {
+        position: absolute;
+        top: 10px;
+        bottom: 10px;
+        left: 7px;
+        width: 1px;
+        background: linear-gradient(180deg, transparent, rgb(201 168 106 / 28%) 12%, rgb(201 168 106 / 28%) 88%, transparent);
+        content: "";
+    }
+
+    .shj-ladder-item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 0.875rem;
+        padding: 0.625rem 0;
+    }
+
+    .shj-ladder-dot {
+        z-index: 1;
+        width: 15px;
+        height: 15px;
+        flex-shrink: 0;
+        border: 1px solid rgb(237 237 230 / 25%);
+        border-radius: 999px;
+        background: #17171d;
+        transition: box-shadow 300ms var(--shj-ease);
+    }
+
+    .shj-ladder-item.is-passed {
+        color: #c9c4b9;
+    }
+
+    .shj-ladder-item.is-passed .shj-ladder-dot {
+        border-color: #3e5c56;
+        background: #3e5c56;
+    }
+
+    .shj-ladder-item.is-current {
+        color: #f0ead8;
+    }
+
+    .shj-ladder-item.is-current .shj-ladder-dot {
+        border-color: #c9a86a;
+        background: #c9a86a;
+        box-shadow: 0 0 16px rgb(201 168 106 / 60%);
+    }
+
+    .shj-ladder-item.is-future {
+        color: rgb(201 196 185 / 35%);
+    }
+
+    .shj-ladder-item.is-future .shj-ladder-dot {
+        opacity: 0.35;
+    }
+
+    @keyframes shj-mist-drift {
+        from {
+            transform: translate3d(-1.5%, -0.5%, 0) scale(1);
+        }
+
+        to {
+            transform: translate3d(1.5%, 1%, 0) scale(1.04);
+        }
+    }
+
+    @keyframes shj-cue-fall {
+        0% {
+            opacity: 0;
+            transform: scaleY(0.2);
+            transform-origin: top;
+        }
+
+        45% {
+            opacity: 1;
+            transform: scaleY(1);
+        }
+
+        100% {
+            opacity: 0;
+            transform: scaleY(1) translateY(12px);
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .shj-hero-mist,
+        .shj-hero-motes,
+        .shj-title-sheen,
+        .shj-seal::after,
+        .shj-cta-glow,
+        .shj-scroll-cue::after {
+            animation: none;
+        }
+
+        .shj-panel,
+        .shj-rail-item {
+            transition-duration: 0.01ms;
         }
     }
 }
