@@ -536,7 +536,7 @@ export default function ImagePage() {
                                             </span>
                                         </summary>
                                         <div className="border-t border-stone-200 p-3 dark:border-stone-800">
-                                            <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                            <GenerationSettings config={effectiveConfig} updateConfig={updateConfig} />
                                         </div>
                                     </details>
                                 </div>
@@ -635,20 +635,10 @@ export default function ImagePage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
+function GenerationSettings({ config, updateConfig }: { config: AiConfig; updateConfig: UpdateAiConfig }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
-    return (
-        <div className="grid gap-4 sm:grid-cols-2">
-            <label className="col-span-2 block min-w-0 sm:col-span-1">
-                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
-                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
-            </label>
-            <div className="col-span-2">
-                <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
-            </div>
-        </div>
-    );
+    return <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />;
 }
 
 function ResultImageCard({
