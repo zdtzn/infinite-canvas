@@ -116,7 +116,6 @@ export default function ImagePage() {
     const generateButtonLabel = isImperialMode && (running || imperialGenerationCue.active) ? "天地法则演化中……" : running ? "生成中……" : "开始生成";
     const elapsedMs = generationJob?.elapsedMs || 0;
     const results: GenerationResult[] = previewLog ? previewLog.images.map((image) => ({ id: image.id, status: "success", image })) : generationJob?.results || [];
-    const showResultsPanel = running || results.length > 0;
 
     useEffect(() => {
         void refreshLogs();
@@ -418,8 +417,8 @@ export default function ImagePage() {
     return (
         <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
             <main className="min-h-0 flex-1 overflow-y-auto p-3 lg:overflow-hidden">
-                <section className={showResultsPanel ? "grid h-full min-h-0 min-w-0 w-full gap-3 lg:grid-cols-[minmax(380px,460px)_minmax(0,1fr)]" : "mx-auto w-full min-w-0 max-w-[680px]"}>
-                    <div className="flex min-h-0 min-w-0 flex-col rounded-lg border border-stone-200 bg-card shadow-sm dark:border-stone-800">
+                <section className="grid min-h-0 min-w-0 w-full gap-3 lg:h-full lg:grid-cols-[minmax(380px,460px)_minmax(0,1fr)]">
+                    <div className="flex min-h-0 min-w-0 flex-col rounded-lg border border-stone-200 bg-card shadow-sm dark:border-stone-800 lg:h-full">
                         <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4 lg:p-5">
                             {/* 丹青台 · 场景横幅(仅 UI,逻辑不变) */}
                             <div className="relative mb-6 overflow-hidden rounded-lg">
@@ -571,40 +570,38 @@ export default function ImagePage() {
                         </div>
                     </div>
 
-                    {showResultsPanel ? (
-                        <section className="thin-scrollbar min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:p-5">
-                            <div className="mb-4 flex items-center justify-between gap-3">
-                                <h2 className="text-xl font-semibold">生成结果</h2>
-                                {running ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
+                    <section className="thin-scrollbar min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:h-full lg:p-5">
+                        <div className="mb-4 flex items-center justify-between gap-3">
+                            <h2 className="text-xl font-semibold">生成结果</h2>
+                            {running ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
+                        </div>
+                        {results.length ? (
+                            <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                                {results.map((result, index) =>
+                                    result.status === "success" && result.image ? (
+                                        <ResultImageCard
+                                            key={result.id}
+                                            image={result.image}
+                                            index={index}
+                                            savingAsset={savingAssetIds.includes(result.image.id)}
+                                            onEdit={addResultToReferences}
+                                            onDownload={downloadImage}
+                                            onSaveAsset={saveResultToAssets}
+                                        />
+                                    ) : result.status === "failed" ? (
+                                        <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
+                                    ) : (
+                                        <PendingImageCard key={result.id} />
+                                    ),
+                                )}
                             </div>
-                            {results.length ? (
-                                <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
-                                    {results.map((result, index) =>
-                                        result.status === "success" && result.image ? (
-                                            <ResultImageCard
-                                                key={result.id}
-                                                image={result.image}
-                                                index={index}
-                                                savingAsset={savingAssetIds.includes(result.image.id)}
-                                                onEdit={addResultToReferences}
-                                                onDownload={downloadImage}
-                                                onSaveAsset={saveResultToAssets}
-                                            />
-                                        ) : result.status === "failed" ? (
-                                            <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
-                                        ) : (
-                                            <PendingImageCard key={result.id} />
-                                        ),
-                                    )}
-                                </div>
-                            ) : (
-                                <div className="flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700">
-                                    <ImagePlus className="mb-3 size-9 text-stone-400" />
-                                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在准备生成结果" />
-                                </div>
-                            )}
-                        </section>
-                    ) : null}
+                        ) : (
+                            <div className="flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[calc(100%_-_3rem)]">
+                                <ImagePlus className="mb-3 size-9 text-stone-400" />
+                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={running ? "正在准备生成结果" : "暂无生成结果"} />
+                            </div>
+                        )}
+                    </section>
                 </section>
             </main>
             <input
