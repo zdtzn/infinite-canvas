@@ -24,7 +24,21 @@ const defaultParams: CanvasImageUpscaleParams = {
     algorithm: "high",
 };
 
-export function CanvasNodeUpscaleDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (params: CanvasImageUpscaleParams) => void }) {
+export function CanvasNodeUpscaleDialog({
+    dataUrl,
+    imageWidth,
+    imageHeight,
+    open,
+    onClose,
+    onConfirm,
+}: {
+    dataUrl: string;
+    imageWidth?: number;
+    imageHeight?: number;
+    open: boolean;
+    onClose: () => void;
+    onConfirm: (params: CanvasImageUpscaleParams) => void;
+}) {
     const [params, setParams] = useState<CanvasImageUpscaleParams>(defaultParams);
     const [image, setImage] = useState<{ width: number; height: number } | null>(null);
     const sourceLongEdge = image ? Math.max(image.width, image.height) : 0;
@@ -35,13 +49,19 @@ export function CanvasNodeUpscaleDialog({ dataUrl, open, onClose, onConfirm }: {
     useEffect(() => {
         if (!open) return;
         setParams(defaultParams);
-        setImage(null);
-    }, [dataUrl, open]);
+        setImage(validImageSize(imageWidth, imageHeight));
+    }, [dataUrl, imageHeight, imageWidth, open]);
 
     useEffect(() => {
-        if (!open) return;
-        void readImageMeta(dataUrl).then(setImage);
-    }, [dataUrl, open]);
+        if (!open || validImageSize(imageWidth, imageHeight)) return;
+        let active = true;
+        void readImageMeta(dataUrl).then((meta) => {
+            if (active) setImage(meta);
+        });
+        return () => {
+            active = false;
+        };
+    }, [dataUrl, imageHeight, imageWidth, open]);
 
     useEffect(() => {
         if (!image) return;
@@ -58,7 +78,14 @@ export function CanvasNodeUpscaleDialog({ dataUrl, open, onClose, onConfirm }: {
                 <div className="grid gap-6 md:grid-cols-[minmax(260px,1fr)_360px]">
                     <div className="rounded-xl border p-4">
                         <div className="grid min-h-[280px] place-items-center rounded-lg bg-black/5">
-                            <img src={dataUrl} alt="" className="max-h-[320px] max-w-full rounded-lg object-contain shadow-xl" draggable={false} />
+                            <img
+                                src={dataUrl}
+                                alt=""
+                                className="max-h-[320px] max-w-full rounded-lg object-contain shadow-xl"
+                                draggable={false}
+                                decoding="async"
+                                onLoad={(event) => setImage(renderedImageSize(event.currentTarget))}
+                            />
                         </div>
                         <div className="mt-3 flex items-center justify-between text-sm">
                             <span className="opacity-60">源图</span>
@@ -109,4 +136,12 @@ export function CanvasNodeUpscaleDialog({ dataUrl, open, onClose, onConfirm }: {
             </div>
         </Modal>
     );
+}
+
+function validImageSize(width?: number, height?: number) {
+    return Number.isFinite(width) && Number.isFinite(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : null;
+}
+
+function renderedImageSize(image: HTMLImageElement) {
+    return validImageSize(image.naturalWidth, image.naturalHeight);
 }

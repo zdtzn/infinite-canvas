@@ -8,6 +8,7 @@ import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { cn } from "@/lib/utils";
+import { DeferredImage } from "@/components/ui/deferred-image";
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
 import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -230,7 +231,7 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
                                 >
                                     {selectMode ? <CheckMark checked={isChecked} theme={theme} /> : null}
                                     <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-md">
-                                        {isImage ? <img src={node.metadata!.content} alt={node.title} className="size-full object-cover" /> : <Icon className="size-5 opacity-60" />}
+                                        {isImage ? <DeferredImage src={node.metadata!.content!} alt={node.title} className="size-full object-cover" fetchPriority="low" /> : <Icon className="size-5 opacity-60" />}
                                     </span>
                                     <span className="min-w-0 flex-1 space-y-0.5">
                                         <span className="block truncate text-sm font-medium leading-snug">{node.title || getNodeDefinition(node.type)?.title || "未命名节点"}</span>
@@ -431,10 +432,10 @@ function AssetCard({ asset, theme, onInsert, onRemove }: { asset: Asset; theme: 
 function AssetCover({ asset }: { asset: Asset }) {
     if (asset.kind === "text") return <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{asset.data.content}</div>;
     if (asset.kind === "video") {
-        if (asset.coverUrl) return <img src={asset.coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
+        if (asset.coverUrl) return <DeferredImage src={asset.coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" fetchPriority="low" />;
         return <video src={`${asset.data.url}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
     }
-    return <img src={asset.coverUrl || asset.data.dataUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
+    return <DeferredImage src={asset.coverUrl || asset.data.dataUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" fetchPriority="low" />;
 }
 
 // ---------------------------------------------------------------------------
@@ -564,7 +565,7 @@ function PromptRow({ item, theme, onInsert, onView }: { item: Prompt; theme: Can
     return (
         <div className="group relative flex items-center gap-2.5 rounded-lg px-2 py-2 transition hover:bg-black/5 dark:hover:bg-white/5">
             {item.coverUrl ? (
-                <img src={item.coverUrl} alt="" className="size-10 shrink-0 rounded-md object-cover" loading="lazy" />
+                <DeferredImage src={item.coverUrl} alt="" className="size-10 shrink-0 rounded-md object-cover" fetchPriority="low" />
             ) : (
                 <span className="grid size-10 shrink-0 place-items-center rounded-md" style={{ background: theme.node.panel }}>
                     <FileText className="size-4 opacity-50" />

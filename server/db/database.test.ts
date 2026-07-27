@@ -116,6 +116,94 @@ describe("SQLite application database", () => {
     store.close();
   });
 
+  test("persists hot-path assets, jobs and projects without replacing the full state", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      const state = store.loadState();
+      state.users.user = {
+        userId: "user",
+        displayName: "User",
+        createdAt: 1,
+      };
+      store.saveState(state);
+
+      store.saveAsset({
+        key: "image:one",
+        userId: "user",
+        mimeType: "image/png",
+        bytes: 123,
+        createdAt: 2,
+      });
+      store.saveJob({
+        id: "job-one",
+        status: "succeeded",
+        createdAt: 3,
+        finishedAt: 4,
+        input: {
+          userId: "user",
+          channelId: "channel",
+          apiFormat: "openai",
+          model: "gpt-image-1",
+          prompt: "test",
+          count: 1,
+          references: [],
+        },
+        result: {
+          images: [],
+          successCount: 1,
+          failCount: 0,
+          durationMs: 1,
+        },
+      });
+      store.saveProject("user", "project-one", {
+        project: { id: "project-one", nodes: [] },
+        revision: 1,
+        updatedAt: 5,
+      });
+
+      expect(store.loadState()).toMatchObject({
+        assets: {
+          "user:image:one": {
+            key: "image:one",
+            bytes: 123,
+          },
+        },
+        jobs: {
+          "job-one": {
+            status: "succeeded",
+          },
+        },
+        projects: {
+          user: {
+            "project-one": {
+              revision: 1,
+            },
+          },
+        },
+      });
+
+      store.deleteProjectWithTombstone("user", "project-one", {
+        revision: 2,
+        deletedAt: 6,
+      });
+      store.deleteAsset("user", "image:one");
+      store.deleteJob("job-one");
+
+      const cleaned = store.loadState();
+      expect(cleaned.assets).toEqual({});
+      expect(cleaned.jobs).toEqual({});
+      expect(cleaned.projects.user).toBeUndefined();
+      expect(cleaned.projectTombstones.user?.["project-one"]).toEqual({
+        revision: 2,
+        deletedAt: 6,
+      });
+    } finally {
+      store.close();
+    }
+  });
+
   test("accepts state snapshots created before project tombstones existed", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);

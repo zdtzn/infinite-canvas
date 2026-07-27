@@ -6,7 +6,7 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { canAccessUserAvatar } from "./lib/avatar-access";
 import { decryptSecret, encryptSecret } from "./lib/crypto-store";
-import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, resolveImageMimeType } from "./lib/image-mime";
+import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
@@ -141,7 +141,7 @@ const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
     worker: runImageJob,
     onChange: (job) => {
         state.jobs[job.id] = job;
-        writeState();
+        appDatabase.saveJob(job);
         if (["succeeded", "failed", "canceled"].includes(job.status)) pruneTerminalJobs();
     },
 });
@@ -244,6 +244,7 @@ async function route(request: Request, requestId: string) {
         const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)$/);
         if (channelMatch && request.method === "PUT") return saveChannel(request, session, decodeURIComponent(channelMatch[1]));
         if (channelMatch && request.method === "DELETE") return deleteChannel(session, decodeURIComponent(channelMatch[1]));
+        if (url.pathname === "/api/assets/from-job" && request.method === "POST") return promoteJobAsset(request, session);
         if (url.pathname === "/api/assets" && request.method === "POST") return uploadAsset(request, session);
         const assetMatch = url.pathname.match(/^\/api\/assets\/([^/]+)$/);
         if (assetMatch && request.method === "GET") return serveAsset(session, decodeURIComponent(assetMatch[1]));
@@ -602,6 +603,35 @@ async function uploadAsset(request: Request, session: SessionPayload) {
     return json({ asset: publicAsset(asset) }, replaced ? 200 : 201);
 }
 
+async function promoteJobAsset(request: Request, session: SessionPayload) {
+    const body = await readJson<{ sourceUrl?: string }>(request, 4 * 1024);
+    const sourceUrl = String(body.sourceUrl || "").trim();
+    const match = sourceUrl.match(/^\/api\/job-files\/([^/?#]+)\/([^/?#]+)$/);
+    if (!match) throw new HttpError(400, "任务图片地址无效");
+    let jobId: string;
+    let filename: string;
+    try {
+        jobId = decodeURIComponent(match[1]);
+        filename = decodeURIComponent(match[2]);
+    } catch {
+        throw new HttpError(400, "任务图片地址无效");
+    }
+    const job = ownedJob(session.userId, jobId);
+    const image = job.result?.images.find((item) => item.dataUrl === sourceUrl);
+    if (!image) throw new HttpError(404, "任务图片不存在");
+    const path = join(JOB_FILE_ROOT, safeSegment(session.userId), safeSegment(jobId), safeSegment(filename));
+    if (!existsSync(path)) throw new HttpError(404, "任务图片文件不存在");
+    const file = Bun.file(path);
+    const mimeType = isAllowedImageMimeType(image.mimeType) ? image.mimeType : await resolveImageMimeType(file);
+    if (!isAllowedImageMimeType(mimeType)) throw new HttpError(400, "图片素材格式无效");
+    const dimensions =
+        Number.isSafeInteger(image.width) && Number.isSafeInteger(image.height) && (image.width || 0) > 0 && (image.height || 0) > 0
+            ? { width: image.width!, height: image.height! }
+            : readImageDimensions(new Uint8Array(await file.arrayBuffer()), mimeType);
+    const { asset } = await storeAsset(session, `image:${randomUUID()}`, file, mimeType);
+    return json({ asset: publicAsset(asset), sourceUrl, ...(dimensions || {}) }, 201);
+}
+
 async function uploadProfileAvatar(request: Request, session: SessionPayload) {
     const { file } = await readAssetUploadForm(request, MAX_AVATAR_UPLOAD_BYTES, MAX_AVATAR_BYTES, "头像文件不能超过 2 MB", "头像文件不能超过 2 MB");
     const mimeType = await resolveImageMimeType(file);
@@ -630,7 +660,7 @@ async function readAssetUploadForm(request: Request, maxUploadBytes: number, max
     return { form, file };
 }
 
-async function storeAsset(session: SessionPayload, key: string, file: File, mimeType: string, refreshCreatedAt = false) {
+async function storeAsset(session: SessionPayload, key: string, file: Blob, mimeType: string, refreshCreatedAt = false) {
     return withAssetMutation(async () => {
         const recordKey = assetKey(session.userId, key);
         const existing = state.assets[recordKey];
@@ -641,7 +671,7 @@ async function storeAsset(session: SessionPayload, key: string, file: File, mime
         await Bun.write(join(directory, safeSegment(key)), file);
         const asset: StoredAsset = { key, userId: session.userId, mimeType, bytes: file.size, createdAt: refreshCreatedAt || !existing ? Date.now() : existing.createdAt };
         state.assets[recordKey] = asset;
-        writeState();
+        appDatabase.saveAsset(asset);
         assetBytesByUser.set(session.userId, usedBytes - (existing?.bytes || 0) + asset.bytes);
         return { asset, replaced: Boolean(existing) };
     });
@@ -674,7 +704,7 @@ async function removeAsset(session: SessionPayload, key: string) {
     const path = join(ASSET_ROOT, safeSegment(session.userId), safeSegment(asset.key));
     return withAssetMutation(async () => {
         delete state.assets[assetKey(session.userId, key)];
-        writeState();
+        appDatabase.deleteAsset(session.userId, key);
         assetBytesByUser.set(session.userId, Math.max(0, (assetBytesByUser.get(session.userId) || 0) - asset.bytes));
         try {
             if (existsSync(path)) unlinkSync(path);
@@ -796,7 +826,7 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
     if (url.searchParams.get("remove") === "1") {
         if (!imageQueue.remove(id)) throw new HttpError(409, "任务仍在运行，无法移除");
         delete state.jobs[id];
-        writeState();
+        appDatabase.deleteJob(id);
         cleanupJobFiles(job);
         return new Response(null, { status: 204 });
     }
@@ -931,7 +961,6 @@ async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, inp
         if (!task.taskId) throw new Error(task.message || "UU 异步任务创建成功，但没有返回任务 ID");
         input.upstream = { provider: "uu-image", taskId: task.taskId, expiresAt: task.expiresAt, status: task.status };
         await imageQueue.touch(job.id);
-        writeState();
     }
     return pollUuImageTask(channel, apiKey, input, signal);
 }
@@ -1064,7 +1093,8 @@ async function persistJobImage(userId: string, jobId: string, value: string, dur
         unlinkSync(join(directory, filename));
         throw abortError(signal);
     }
-    return { id: randomUUID(), dataUrl: `/api/job-files/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`, bytes: bytes.byteLength, durationMs, mimeType };
+    const dimensions = readImageDimensions(bytes, mimeType);
+    return { id: randomUUID(), dataUrl: `/api/job-files/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`, bytes: bytes.byteLength, durationMs, mimeType, ...(dimensions || {}) };
 }
 
 function serveJobFile(session: SessionPayload, jobId: string, filename: string) {
@@ -1125,7 +1155,7 @@ async function saveProject(request: Request, session: SessionPayload, id: string
     if (current && Number(body.revision) !== current.revision) return json({ error: { message: "项目已在其他标签页更新", code: "REVISION_CONFLICT" }, current }, 409);
     const next = { project: body.project, revision: (current?.revision || 0) + 1, updatedAt: Date.now() };
     projects[id] = next;
-    writeState();
+    appDatabase.saveProject(session.userId, id, next);
     return json(next);
 }
 
@@ -1138,7 +1168,7 @@ function deleteProject(url: URL, session: SessionPayload, id: string) {
     const tombstones = (state.projectTombstones[session.userId] ||= {});
     const previous = tombstones[id];
     tombstones[id] = { revision: Math.max(current?.revision || 0, previous?.revision || 0) + 1, deletedAt: Date.now() };
-    writeState();
+    appDatabase.deleteProjectWithTombstone(session.userId, id, tombstones[id]);
     return new Response(null, { status: 204 });
 }
 
@@ -1488,7 +1518,6 @@ function pruneTerminalJobs() {
         items.push(job);
         jobsByUser.set(job.input.userId, items);
     }
-    let changed = false;
     for (const jobs of jobsByUser.values()) {
         jobs.sort((left, right) => (right.finishedAt || right.createdAt) - (left.finishedAt || left.createdAt));
         for (const [index, job] of jobs.entries()) {
@@ -1496,11 +1525,10 @@ function pruneTerminalJobs() {
             if (index < MAX_TERMINAL_JOBS_PER_USER && now - finishedAt < JOB_RETENTION_MS) continue;
             if (!imageQueue.remove(job.id)) continue;
             delete state.jobs[job.id];
+            appDatabase.deleteJob(job.id);
             cleanupJobFiles(job);
-            changed = true;
         }
     }
-    if (changed) queueStateWrite();
 }
 
 function cleanupJobFiles(job: StoredImageJob) {

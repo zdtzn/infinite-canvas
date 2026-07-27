@@ -80,6 +80,8 @@ export type ImageJobImage = {
   bytes: number;
   durationMs: number;
   mimeType: string;
+  width?: number;
+  height?: number;
 };
 export type ImageJobOutput = {
   images: ImageJobImage[];

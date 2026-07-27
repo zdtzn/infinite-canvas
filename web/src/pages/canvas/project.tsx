@@ -16,7 +16,7 @@ import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { cropDataUrl, splitImageBlobs, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
+import { buildSplitLayout, cropImageBlob, IMAGE_SPLIT_CONCURRENCY, splitImageBlobs, upscaleImageBlob } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { App, Button, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
@@ -1739,67 +1739,78 @@ function InfiniteCanvasPage() {
         [effectiveConfig.model, effectiveConfig.textModel, message],
     );
 
-    const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect) => {
-        if (!node.metadata?.content) return;
-        const cropped = await cropDataUrl(node.metadata.content, crop);
-        const image = await uploadImage(cropped);
-        const width = Math.min(node.width, Math.max(220, image.width));
-        const childId = nanoid();
-        const child: CanvasNodeData = {
-            id: childId,
-            type: CanvasNodeType.Image,
-            title: "Cropped Image",
-            position: { x: node.position.x + node.width + 96, y: node.position.y },
-            width,
-            height: width * (image.height / image.width),
-            metadata: {
-                ...imageMetadata(image),
-                prompt: node.metadata?.prompt,
-            },
-        };
-        setNodes((prev) => [...prev, child]);
-        setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
-        setSelectedNodeIds(new Set([childId]));
-        setDialogNodeId(childId);
-        setCropNodeId(null);
-    }, []);
+    const cropImageNode = useCallback(
+        async (node: CanvasNodeData, crop: CanvasImageCropRect) => {
+            if (!node.metadata?.content) return;
+            setCropNodeId(null);
+            const messageKey = `crop-image-${node.id}`;
+            message.open({ key: messageKey, type: "loading", content: "正在裁剪并保存图片...", duration: 0 });
+            try {
+                const cropped = await cropImageBlob(node.metadata.content, crop);
+                const image = await uploadImage(cropped.blob, { imageMeta: { width: cropped.width, height: cropped.height } });
+                const width = Math.min(node.width, Math.max(220, image.width));
+                const childId = nanoid();
+                const child: CanvasNodeData = {
+                    id: childId,
+                    type: CanvasNodeType.Image,
+                    title: "Cropped Image",
+                    position: { x: node.position.x + node.width + 96, y: node.position.y },
+                    width,
+                    height: width * (image.height / image.width),
+                    metadata: {
+                        ...imageMetadata(image),
+                        prompt: node.metadata?.prompt,
+                    },
+                };
+                setNodes((prev) => [...prev, child]);
+                setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+                setSelectedNodeIds(new Set([childId]));
+                setDialogNodeId(childId);
+                message.success({ key: messageKey, content: "裁剪图片已保存" });
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : "未知错误";
+                message.error({ key: messageKey, content: `裁剪图片失败：${detail}`, duration: 4 });
+            }
+        },
+        [message],
+    );
 
     const splitImageNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageSplitParams) => {
             if (!node.metadata?.content) return;
             setSplitNodeId(null);
+            const messageKey = `split-image-${node.id}`;
+            message.open({ key: messageKey, type: "loading", content: "正在切分并保存图片...", duration: 0 });
             try {
                 const pieces = await splitImageBlobs(node.metadata.content, params);
                 const gap = 16;
-                const cellWidth = node.width / params.columns;
-                const cellHeight = node.height / params.rows;
                 const startX = node.position.x + node.width + 96;
                 const startY = node.position.y;
+                const layoutByCell = new Map(buildSplitLayout(pieces, node.width, node.height, gap).map((cell) => [`${cell.row}:${cell.column}`, cell]));
                 const previewUrls = pieces.map((piece) => URL.createObjectURL(piece.blob));
-                const childNodes = pieces.map(
-                    (piece, index) =>
-                        ({
-                            id: nanoid(),
-                            type: CanvasNodeType.Image,
-                            title: `${node.title || "图片"} ${piece.row + 1}-${piece.column + 1}`,
-                            position: { x: startX + piece.column * (cellWidth + gap), y: startY + piece.row * (cellHeight + gap) },
-                            width: cellWidth,
-                            height: cellHeight,
-                            metadata: {
-                                content: previewUrls[index],
-                                status: NODE_STATUS_SUCCESS,
-                                naturalWidth: piece.width,
-                                naturalHeight: piece.height,
-                                bytes: piece.blob.size,
-                                mimeType: piece.blob.type,
-                                prompt: node.metadata?.prompt,
-                            },
-                        }) satisfies CanvasNodeData,
-                );
+                const childNodes = pieces.map((piece, index) => {
+                    const layout = layoutByCell.get(`${piece.row}:${piece.column}`) || { x: 0, y: 0, width: node.width, height: node.height };
+                    return {
+                        id: nanoid(),
+                        type: CanvasNodeType.Image,
+                        title: `${node.title || "图片"} ${piece.row + 1}-${piece.column + 1}`,
+                        position: { x: startX + layout.x, y: startY + layout.y },
+                        width: layout.width,
+                        height: layout.height,
+                        metadata: {
+                            content: previewUrls[index],
+                            status: NODE_STATUS_SUCCESS,
+                            naturalWidth: piece.width,
+                            naturalHeight: piece.height,
+                            bytes: piece.blob.size,
+                            mimeType: piece.blob.type,
+                            prompt: node.metadata?.prompt,
+                        },
+                    } satisfies CanvasNodeData;
+                });
                 const childConnections = childNodes.map((child) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: child.id }));
                 const childIds = new Set(childNodes.map((child) => child.id));
 
-                // Render local slices immediately, but persist only after every slice has durable storage.
                 historyPausedRef.current = true;
                 setNodes((prev) => [...prev, ...childNodes]);
                 setConnections((prev) => [...prev, ...childConnections]);
@@ -1808,24 +1819,27 @@ function InfiniteCanvasPage() {
                 setDialogNodeId(null);
 
                 try {
-                    const uploadResults = await Promise.allSettled(
-                        pieces.map((piece, index) =>
-                            uploadImage(piece.blob, {
-                                dimensions: { width: piece.width, height: piece.height },
+                    const uploadResults = await runWithConcurrency(pieces, IMAGE_SPLIT_CONCURRENCY, async (piece, index) => {
+                        try {
+                            const image = await uploadImage(piece.blob, {
+                                imageMeta: { width: piece.width, height: piece.height },
                                 createThumbnail: false,
                                 previewUrl: previewUrls[index],
-                            }),
-                        ),
-                    );
-                    const successfulImages = uploadResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
-                    const failedUpload = uploadResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
-                    if (failedUpload) {
-                        void deleteStoredImages(successfulImages.map((image) => image.storageKey));
+                            });
+                            return { image };
+                        } catch (error) {
+                            return { error };
+                        }
+                    });
+                    const failedUpload = uploadResults.find((result) => "error" in result);
+                    const successfulImages = uploadResults.flatMap((result) => ("image" in result && result.image ? [result.image] : []));
+                    if (failedUpload && "error" in failedUpload) {
+                        await deleteStoredImages(successfulImages.map((image) => image.storageKey));
                         previewUrls.forEach((url) => URL.revokeObjectURL(url));
                         setNodes((prev) => prev.filter((item) => !childIds.has(item.id)));
                         setConnections((prev) => prev.filter((connection) => !childIds.has(connection.fromNodeId) && !childIds.has(connection.toNodeId)));
                         setSelectedNodeIds(new Set([node.id]));
-                        throw failedUpload.reason;
+                        throw failedUpload.error;
                     }
 
                     const imagesByNodeId = new Map(childNodes.map((child, index) => [child.id, successfulImages[index]]));
@@ -1843,13 +1857,13 @@ function InfiniteCanvasPage() {
                             };
                         }),
                     );
-                    message.success(`已切分为 ${childNodes.length} 个子节点`);
+                    message.success({ key: messageKey, content: `已切分为 ${childNodes.length} 个子节点` });
                 } finally {
                     historyPausedRef.current = false;
                 }
             } catch (error) {
-                const errorDetails = error instanceof Error ? error.message : "未知错误";
-                message.error(`切分图片失败：${errorDetails}`);
+                const detail = error instanceof Error ? error.message : "未知错误";
+                message.error({ key: messageKey, content: `切分图片失败：${detail}`, duration: 4 });
             }
         },
         [message],
@@ -1858,7 +1872,7 @@ function InfiniteCanvasPage() {
     const maskEditImageNode = useCallback(
         async (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => {
             if (!node.metadata?.content) return;
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1", size: node.metadata?.size || "auto" };
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1", size: "auto" };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
@@ -1905,30 +1919,41 @@ function InfiniteCanvasPage() {
         [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
     );
 
-    const upscaleImageNode = useCallback(async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
-        if (!node.metadata?.content) return;
-        setUpscaleNodeId(null);
-        const upscaled = await upscaleDataUrl(node.metadata.content, params);
-        const image = await uploadImage(upscaled);
-        const size = fitNodeSize(image.width, image.height);
-        const childId = nanoid();
-        const child: CanvasNodeData = {
-            id: childId,
-            type: CanvasNodeType.Image,
-            title: "Upscaled Image",
-            position: { x: node.position.x + node.width + 96, y: node.position.y },
-            width: size.width,
-            height: size.height,
-            metadata: {
-                ...imageMetadata(image),
-                prompt: node.metadata?.prompt,
-            },
-        };
-        setNodes((prev) => [...prev, child]);
-        setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
-        setSelectedNodeIds(new Set([childId]));
-        setDialogNodeId(childId);
-    }, []);
+    const upscaleImageNode = useCallback(
+        async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
+            if (!node.metadata?.content) return;
+            setUpscaleNodeId(null);
+            const messageKey = `upscale-image-${node.id}`;
+            message.open({ key: messageKey, type: "loading", content: "正在放大并保存图片...", duration: 0 });
+            try {
+                const upscaled = await upscaleImageBlob(node.metadata.content, params);
+                const image = await uploadImage(upscaled.blob, { imageMeta: { width: upscaled.width, height: upscaled.height } });
+                const size = fitNodeSize(image.width, image.height);
+                const childId = nanoid();
+                const child: CanvasNodeData = {
+                    id: childId,
+                    type: CanvasNodeType.Image,
+                    title: "Upscaled Image",
+                    position: { x: node.position.x + node.width + 96, y: node.position.y },
+                    width: size.width,
+                    height: size.height,
+                    metadata: {
+                        ...imageMetadata(image),
+                        prompt: node.metadata?.prompt,
+                    },
+                };
+                setNodes((prev) => [...prev, child]);
+                setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+                setSelectedNodeIds(new Set([childId]));
+                setDialogNodeId(childId);
+                message.success({ key: messageKey, content: "放大图片已保存" });
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : "未知错误";
+                message.error({ key: messageKey, content: `放大图片失败：${detail}`, duration: 4 });
+            }
+        },
+        [message],
+    );
 
     const generateAngleNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
@@ -3108,16 +3133,48 @@ function InfiniteCanvasPage() {
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
                 <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
 
-                {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
-
-                {maskEditNode?.metadata?.content ? (
-                    <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)} />
+                {cropNode?.metadata?.content ? (
+                    <CanvasNodeCropDialog
+                        dataUrl={cropNode.metadata.content}
+                        imageWidth={cropNode.metadata.naturalWidth}
+                        imageHeight={cropNode.metadata.naturalHeight}
+                        open={Boolean(cropNode)}
+                        onClose={() => setCropNodeId(null)}
+                        onConfirm={(crop) => void cropImageNode(cropNode!, crop)}
+                    />
                 ) : null}
 
-                {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setSplitNodeId(null)} onConfirm={(params) => void splitImageNode(splitNode!, params)} /> : null}
+                {maskEditNode?.metadata?.content ? (
+                    <CanvasNodeMaskEditDialog
+                        dataUrl={maskEditNode.metadata.content}
+                        imageWidth={maskEditNode.metadata.naturalWidth}
+                        imageHeight={maskEditNode.metadata.naturalHeight}
+                        open={Boolean(maskEditNode)}
+                        onClose={() => setMaskEditNodeId(null)}
+                        onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)}
+                    />
+                ) : null}
+
+                {splitNode?.metadata?.content ? (
+                    <CanvasNodeSplitDialog
+                        dataUrl={splitNode.metadata.content}
+                        imageWidth={splitNode.metadata.naturalWidth}
+                        imageHeight={splitNode.metadata.naturalHeight}
+                        open={Boolean(splitNode)}
+                        onClose={() => setSplitNodeId(null)}
+                        onConfirm={(params) => void splitImageNode(splitNode!, params)}
+                    />
+                ) : null}
 
                 {upscaleNode?.metadata?.content ? (
-                    <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} />
+                    <CanvasNodeUpscaleDialog
+                        dataUrl={upscaleNode.metadata.content}
+                        imageWidth={upscaleNode.metadata.naturalWidth}
+                        imageHeight={upscaleNode.metadata.naturalHeight}
+                        open={Boolean(upscaleNode)}
+                        onClose={() => setUpscaleNodeId(null)}
+                        onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)}
+                    />
                 ) : null}
 
                 {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}

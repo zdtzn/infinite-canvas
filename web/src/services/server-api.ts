@@ -8,7 +8,7 @@ export type AuthStatus = { configured: boolean; authenticated: boolean; user: Au
 export type ServerMember = AuthUser & { createdAt: number; disabled: boolean };
 export type ServerAsset = { key: string; url: string; mimeType: string; bytes: number; createdAt: number };
 export type ServerJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
-export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string };
+export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string; width?: number; height?: number };
 export type ServerJob = {
     id: string;
     status: ServerJobStatus;
@@ -145,6 +145,13 @@ export async function uploadServerAsset(blob: Blob, prefix: string, storageKey?:
     if (storageKey) form.set("storageKey", storageKey);
     const response = await fetch("/api/assets", { method: "POST", body: form, credentials: "same-origin" });
     return readJsonResponse<{ asset: ServerAsset }>(response);
+}
+
+export async function promoteServerJobAsset(sourceUrl: string) {
+    return serverRequest<{ asset: ServerAsset; sourceUrl: string; width?: number; height?: number }>("/api/assets/from-job", {
+        method: "POST",
+        body: { sourceUrl },
+    });
 }
 
 export async function fetchServerAssetBlob(storageKey: string) {

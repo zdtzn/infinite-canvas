@@ -191,14 +191,15 @@ async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: numb
         : await requestGeneration(snapshot.config, snapshot.text, { onJobCreated: onServerJobCreated, source: { route: "/image", label: "生图工作台" } });
     const image = result[0];
     if (!image) throw new Error("接口没有返回图片");
-    const meta = await readImageMeta(image.dataUrl);
+    const meta = await resolveGeneratedImageMeta(image);
     return {
         id: image.id,
         dataUrl: image.dataUrl,
-        durationMs: Date.now() - itemStartedAt,
+        durationMs: image.durationMs || Date.now() - itemStartedAt,
         width: meta.width,
         height: meta.height,
-        bytes: getDataUrlByteSize(image.dataUrl),
+        bytes: image.bytes || getDataUrlByteSize(image.dataUrl),
+        mimeType: image.mimeType || meta.mimeType,
     };
 }
 
@@ -233,8 +234,15 @@ async function restoreServerImage(serverJobId: string) {
     const job = current.job.status === "succeeded" ? current.job : await waitForServerJob(serverJobId);
     const image = job.result?.images[0];
     if (!image) throw new Error(job.error || "任务没有返回图片");
-    const meta = await readImageMeta(image.dataUrl);
+    const meta = await resolveGeneratedImageMeta(image);
     return { id: image.id, dataUrl: image.dataUrl, durationMs: image.durationMs || job.result?.durationMs || 0, width: meta.width, height: meta.height, bytes: image.bytes || getDataUrlByteSize(image.dataUrl), mimeType: image.mimeType };
+}
+
+async function resolveGeneratedImageMeta(image: { dataUrl: string; width?: number; height?: number; mimeType?: string }) {
+    if (Number.isSafeInteger(image.width) && Number.isSafeInteger(image.height) && (image.width || 0) > 0 && (image.height || 0) > 0) {
+        return { width: image.width!, height: image.height!, mimeType: image.mimeType || "image/png" };
+    }
+    return readImageMeta(image.dataUrl);
 }
 
 function hydrateRuntime() {

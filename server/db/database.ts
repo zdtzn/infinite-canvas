@@ -13,15 +13,28 @@ import { extname, join } from "node:path";
 import { decodeImageDataUrl } from "../lib/image-mime";
 import type {
   ImageJobInput,
+  ProjectTombstone,
   ServerState,
+  StoredAsset,
   StoredImageJob,
   StoredImageReference,
+  StoredProject,
 } from "../types";
 
 export type AppDatabase = {
   mode: "sqlite" | "legacy";
   loadState(): ServerState;
   saveState(state: ServerState): void;
+  saveAsset(asset: StoredAsset): void;
+  deleteAsset(userId: string, assetKey: string): void;
+  saveJob(job: StoredImageJob): void;
+  deleteJob(jobId: string): void;
+  saveProject(userId: string, projectId: string, project: StoredProject): void;
+  deleteProjectWithTombstone(
+    userId: string,
+    projectId: string,
+    tombstone: ProjectTombstone,
+  ): void;
   countRows(table: string): number;
   pragma(name: string): string | number;
   transaction<T>(operation: () => T): T;
@@ -331,6 +344,58 @@ function sqliteStore(database: Database): AppDatabase {
     raw: database,
     loadState: () => loadState(database),
     saveState: (state) => replaceState(database, state),
+    saveAsset: (asset) =>
+      database
+        .query(
+          "INSERT INTO assets(asset_key, user_id, mime_type, bytes, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, asset_key) DO UPDATE SET mime_type=excluded.mime_type, bytes=excluded.bytes, created_at=excluded.created_at",
+        )
+        .run(
+          asset.key,
+          asset.userId,
+          asset.mimeType,
+          asset.bytes,
+          asset.createdAt,
+        ),
+    deleteAsset: (userId, assetKey) =>
+      database
+        .query("DELETE FROM assets WHERE user_id = ? AND asset_key = ?")
+        .run(userId, assetKey),
+    saveJob: (job) =>
+      database
+        .query(
+          "INSERT INTO jobs(id, user_id, payload_json, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, payload_json=excluded.payload_json, created_at=excluded.created_at",
+        )
+        .run(
+          job.id,
+          job.input.userId,
+          JSON.stringify(job),
+          job.createdAt,
+        ),
+    deleteJob: (jobId) =>
+      database.query("DELETE FROM jobs WHERE id = ?").run(jobId),
+    saveProject: (userId, projectId, project) =>
+      database
+        .query(
+          "INSERT INTO projects(user_id, project_id, payload_json, revision, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, project_id) DO UPDATE SET payload_json=excluded.payload_json, revision=excluded.revision, updated_at=excluded.updated_at",
+        )
+        .run(
+          userId,
+          projectId,
+          JSON.stringify(project.project),
+          project.revision,
+          project.updatedAt,
+        ),
+    deleteProjectWithTombstone: (userId, projectId, tombstone) =>
+      database.transaction(() => {
+        database
+          .query("DELETE FROM projects WHERE user_id = ? AND project_id = ?")
+          .run(userId, projectId);
+        database
+          .query(
+            "INSERT INTO project_tombstones(user_id, project_id, revision, deleted_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, project_id) DO UPDATE SET revision=excluded.revision, deleted_at=excluded.deleted_at",
+          )
+          .run(userId, projectId, tombstone.revision, tombstone.deletedAt);
+      })(),
     countRows: (table) =>
       Number(
         (

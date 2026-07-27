@@ -12,18 +12,33 @@ export type CanvasImageMaskEditPayload = {
 type DrawMode = "paint" | "erase";
 
 const defaultBrushSize = 100;
-const maskFillColor = "rgba(37, 99, 235, .38)";
-const maskBorderColor = "rgba(255, 255, 255, .72)";
+const maskFillColor = "#2563eb";
 
-export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (payload: CanvasImageMaskEditPayload) => void }) {
+export function CanvasNodeMaskEditDialog({
+    dataUrl,
+    imageWidth,
+    imageHeight,
+    open,
+    onClose,
+    onConfirm,
+}: {
+    dataUrl: string;
+    imageWidth?: number;
+    imageHeight?: number;
+    open: boolean;
+    onClose: () => void;
+    onConfirm: (payload: CanvasImageMaskEditPayload) => void;
+}) {
     const maskCanvasRef = useRef<HTMLCanvasElement>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement>(null);
     const drawingRef = useRef<{ active: boolean; last: { x: number; y: number } | null }>({ active: false, last: null });
+    const hasPaintRef = useRef(false);
     const [image, setImage] = useState<{ width: number; height: number } | null>(null);
     const [prompt, setPrompt] = useState("");
     const [brushSize, setBrushSize] = useState(defaultBrushSize);
     const [mode, setMode] = useState<DrawMode>("paint");
     const [error, setError] = useState("");
+    const [submitting, setSubmitting] = useState(false);
 
     useEffect(() => {
         if (!open) return;
@@ -31,33 +46,46 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         setBrushSize(defaultBrushSize);
         setMode("paint");
         setError("");
-        void readImageMeta(dataUrl).then(setImage);
-    }, [dataUrl, open]);
+        setSubmitting(false);
+        hasPaintRef.current = false;
+        setImage(validImageSize(imageWidth, imageHeight));
+    }, [dataUrl, imageHeight, imageWidth, open]);
+
+    useEffect(() => {
+        if (!open || validImageSize(imageWidth, imageHeight)) return;
+        let active = true;
+        void readImageMeta(dataUrl).then((meta) => {
+            if (active) setImage(meta);
+        });
+        return () => {
+            active = false;
+        };
+    }, [dataUrl, imageHeight, imageWidth, open]);
 
     useEffect(() => {
         clearCanvas(maskCanvasRef.current);
         clearCanvas(previewCanvasRef.current);
+        hasPaintRef.current = false;
     }, [image]);
 
     const draw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
         const point = readCanvasPoint(event.currentTarget, event.clientX, event.clientY);
         const maskCanvas = maskCanvasRef.current;
-        const context = maskCanvas?.getContext("2d");
-        if (!maskCanvas || !context) return;
-        context.lineCap = "round";
-        context.lineJoin = "round";
-        context.lineWidth = brushSize;
-        context.globalCompositeOperation = mode === "paint" ? "source-over" : "destination-out";
-        context.strokeStyle = "#000";
-        context.fillStyle = "#000";
+        const maskContext = maskCanvas?.getContext("2d");
+        const previewContext = previewCanvasRef.current?.getContext("2d");
+        if (!maskCanvas || !maskContext || !previewContext) return;
+        configureBrush(maskContext, brushSize, mode, "#000");
+        configureBrush(previewContext, brushSize, mode, maskFillColor);
         if (!drawingRef.current.last) {
-            drawMaskStroke(context, point, point, brushSize);
+            drawMaskStroke(maskContext, point, point, brushSize);
+            drawMaskStroke(previewContext, point, point, brushSize);
         } else {
-            drawMaskStroke(context, drawingRef.current.last, point, brushSize);
+            drawMaskStroke(maskContext, drawingRef.current.last, point, brushSize);
+            drawMaskStroke(previewContext, drawingRef.current.last, point, brushSize);
         }
-        renderMaskPreview(maskCanvas, previewCanvasRef.current);
         drawingRef.current.last = point;
         if (mode === "paint") {
+            hasPaintRef.current = true;
             setError("");
         }
     };
@@ -67,7 +95,6 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
         event.stopPropagation();
         event.currentTarget.setPointerCapture(event.pointerId);
         drawingRef.current = { active: true, last: null };
-        if (maskCanvasRef.current) renderMaskPreview(maskCanvasRef.current, previewCanvasRef.current);
         draw(event);
     };
 
@@ -79,23 +106,33 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
 
     const stopDraw = () => {
         drawingRef.current = { active: false, last: null };
-        const maskCanvas = maskCanvasRef.current;
-        if (maskCanvas) renderMaskPreview(maskCanvas, previewCanvasRef.current, canvasHasPaint(maskCanvas));
     };
 
     const resetMask = () => {
         clearCanvas(maskCanvasRef.current);
         clearCanvas(previewCanvasRef.current);
+        hasPaintRef.current = false;
         setError("");
     };
 
-    const submit = () => {
+    const submit = async () => {
         const nextPrompt = prompt.trim();
         const canvas = maskCanvasRef.current;
         if (!nextPrompt) return setError("请输入修改要求");
         if (!canvas) return;
-        if (!canvasHasPaint(canvas)) return setError("请先涂抹局部区域");
-        onConfirm({ prompt: nextPrompt, maskDataUrl: buildEditMask(canvas) });
+        if (!hasPaintRef.current || !canvasHasPaint(canvas)) {
+            hasPaintRef.current = false;
+            return setError("请先涂抹局部区域");
+        }
+        setSubmitting(true);
+        setError("");
+        try {
+            onConfirm({ prompt: nextPrompt, maskDataUrl: await buildEditMask(canvas) });
+        } catch (error) {
+            setError(error instanceof Error ? error.message : "蒙版处理失败");
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     return (
@@ -103,7 +140,14 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
             <div className="grid gap-5 lg:grid-cols-[minmax(360px,1fr)_320px]">
                 <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-black/10 bg-transparent p-0 dark:border-white/10">
                     <div className="relative inline-block max-w-full overflow-hidden rounded-lg bg-transparent select-none">
-                        <img src={dataUrl} alt="" className="block max-h-[68vh] max-w-full bg-transparent" draggable={false} />
+                        <img
+                            src={dataUrl}
+                            alt=""
+                            className="block max-h-[68vh] max-w-full bg-transparent"
+                            draggable={false}
+                            decoding="async"
+                            onLoad={(event) => setImage(renderedImageSize(event.currentTarget))}
+                        />
                         {image ? (
                             <>
                                 <canvas ref={maskCanvasRef} width={image.width} height={image.height} className="hidden" />
@@ -111,7 +155,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                                     ref={previewCanvasRef}
                                     width={image.width}
                                     height={image.height}
-                                    className="absolute inset-0 h-full w-full cursor-crosshair touch-none"
+                                    className="absolute inset-0 h-full w-full cursor-crosshair touch-none opacity-[0.38]"
                                     onPointerDown={startDraw}
                                     onPointerMove={moveDraw}
                                     onPointerUp={stopDraw}
@@ -168,7 +212,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
                             <Button icon={<X className="size-4" />} onClick={onClose}>
                                 取消
                             </Button>
-                            <Button type="primary" icon={<WandSparkles className="size-4" />} onClick={submit}>
+                            <Button type="primary" icon={<WandSparkles className="size-4" />} loading={submitting} onClick={() => void submit()}>
                                 AI 修改
                             </Button>
                         </div>
@@ -177,6 +221,14 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
             </div>
         </Modal>
     );
+}
+
+function validImageSize(width?: number, height?: number) {
+    return Number.isFinite(width) && Number.isFinite(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : null;
+}
+
+function renderedImageSize(image: HTMLImageElement) {
+    return validImageSize(image.naturalWidth, image.naturalHeight);
 }
 
 function readCanvasPoint(canvas: HTMLCanvasElement, clientX: number, clientY: number) {
@@ -206,72 +258,57 @@ function drawMaskStroke(context: CanvasRenderingContext2D, from: { x: number; y:
     context.stroke();
 }
 
+function configureBrush(context: CanvasRenderingContext2D, size: number, mode: DrawMode, color: string) {
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.lineWidth = size;
+    context.globalCompositeOperation = mode === "paint" ? "source-over" : "destination-out";
+    context.strokeStyle = color;
+    context.fillStyle = color;
+}
+
 function canvasHasPaint(canvas: HTMLCanvasElement) {
     const context = canvas.getContext("2d");
     if (!context) return false;
-    const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    for (let index = 3; index < data.length; index += 4) {
-        if (data[index] > 0) return true;
+    const chunkHeight = Math.max(1, Math.floor(1_048_576 / Math.max(1, canvas.width)));
+    for (let y = 0; y < canvas.height; y += chunkHeight) {
+        const data = context.getImageData(0, y, canvas.width, Math.min(chunkHeight, canvas.height - y)).data;
+        for (let index = 3; index < data.length; index += 4) {
+            if (data[index] > 0) return true;
+        }
     }
     return false;
 }
 
-function renderMaskPreview(maskCanvas: HTMLCanvasElement, previewCanvas: HTMLCanvasElement | null, withBorder = false) {
-    const context = previewCanvas?.getContext("2d");
-    if (!previewCanvas || !context) return;
-    context.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-    context.fillStyle = maskFillColor;
-    context.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
-    context.globalCompositeOperation = "destination-in";
-    context.drawImage(maskCanvas, 0, 0);
-    context.globalCompositeOperation = "source-over";
-    if (withBorder) drawDashedMaskBorder(context, maskCanvas);
-}
-
-function drawDashedMaskBorder(context: CanvasRenderingContext2D, maskCanvas: HTMLCanvasElement) {
-    const maskContext = maskCanvas.getContext("2d");
-    if (!maskContext) return;
-    const { width, height } = maskCanvas;
-    const data = maskContext.getImageData(0, 0, width, height).data;
-    const step = Math.max(1, Math.round(Math.max(width, height) / 1200));
-    const dash = step * 8;
-    const gap = step * 5;
-    const period = dash + gap;
-
-    context.save();
-    context.fillStyle = maskBorderColor;
-    context.shadowColor = "rgba(0, 0, 0, .24)";
-    context.shadowBlur = step * 1.5;
-    for (let y = step; y < height - step; y += step) {
-        for (let x = step; x < width - step; x += step) {
-            const offset = (y * width + x) * 4 + 3;
-            if (data[offset] === 0 || !isMaskEdge(data, width, x, y, step)) continue;
-            if ((x + y) % period > dash) continue;
-            context.fillRect(x - step / 2, y - step / 2, Math.max(1.5, step), Math.max(1.5, step));
-        }
-    }
-    context.restore();
-}
-
-function isMaskEdge(data: Uint8ClampedArray, width: number, x: number, y: number, step: number) {
-    return data[((y - step) * width + x) * 4 + 3] === 0 || data[((y + step) * width + x) * 4 + 3] === 0 || data[(y * width + x - step) * 4 + 3] === 0 || data[(y * width + x + step) * 4 + 3] === 0;
-}
-
-function buildEditMask(selectionCanvas: HTMLCanvasElement) {
+async function buildEditMask(selectionCanvas: HTMLCanvasElement) {
     const canvas = document.createElement("canvas");
     canvas.width = selectionCanvas.width;
     canvas.height = selectionCanvas.height;
     const context = canvas.getContext("2d");
-    if (!context) return selectionCanvas.toDataURL("image/png");
-    const selectionContext = selectionCanvas.getContext("2d");
+    if (!context) throw new Error("当前浏览器无法创建编辑蒙版");
     context.fillStyle = "#fff";
     context.fillRect(0, 0, canvas.width, canvas.height);
-    if (!selectionContext) return canvas.toDataURL("image/png");
-    const selection = selectionContext.getImageData(0, 0, canvas.width, canvas.height);
-    const mask = context.getImageData(0, 0, canvas.width, canvas.height);
-    for (let index = 3; index < mask.data.length; index += 4) {
-        if (selection.data[index] > 0) mask.data[index] = 0;
+    context.globalCompositeOperation = "destination-out";
+    context.drawImage(selectionCanvas, 0, 0);
+    try {
+        return await blobToDataUrl(await canvasToBlob(canvas));
+    } finally {
+        canvas.width = 1;
+        canvas.height = 1;
     }
-    context.putImageData(mask, 0, 0);
-    return canvas.toDataURL("image/png");
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement) {
+    return new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("编辑蒙版编码失败"))), "image/png");
+    });
+}
+
+function blobToDataUrl(blob: Blob) {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("编辑蒙版读取失败"));
+        reader.readAsDataURL(blob);
+    });
 }

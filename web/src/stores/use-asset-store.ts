@@ -46,12 +46,14 @@ const assetStorage: PersistStorage<AssetStore> = {
             parsed.state.assets.map(async (asset) => {
                 if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
                 if (asset.kind !== "image") return asset;
-                if (asset.data.storageKey)
+                if (asset.data.storageKey) {
+                    const dataUrl = await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl);
                     return {
                         ...asset,
-                        coverUrl: asset.coverUrl.startsWith("blob:") ? await resolveImageUrl(asset.data.storageKey, asset.coverUrl) : asset.coverUrl,
-                        data: { ...asset.data, dataUrl: await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl) },
+                        coverUrl: dataUrl,
+                        data: { ...asset.data, dataUrl },
                     };
+                }
                 if (!asset.data.dataUrl.startsWith("data:image/")) return asset;
                 const image = await uploadImage(asset.data.dataUrl);
                 return { ...asset, coverUrl: asset.coverUrl.startsWith("data:image/") ? image.url : asset.coverUrl, data: { ...asset.data, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, mimeType: image.mimeType } };

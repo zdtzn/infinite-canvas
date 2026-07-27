@@ -12,6 +12,16 @@ import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { geminiApiBase, geminiProviderHeaders, isServerManagedConfig, openAiApiUrl, providerHeaders, type ManagedAiConfig } from "./gateway";
 import type { ReferenceImage } from "@/types/image";
 
+export type RequestedImage = {
+    id: string;
+    dataUrl: string;
+    width?: number;
+    height?: number;
+    bytes?: number;
+    durationMs?: number;
+    mimeType?: string;
+};
+
 export type AiTextMessage = {
     role: "system" | "user" | "assistant";
     content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
@@ -685,7 +695,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
-export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
+export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<RequestedImage[]> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     if (isServerManagedConfig(requestConfig)) return requestServerImageJob(requestConfig, prompt, [], undefined, n, options);
@@ -748,7 +758,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
+export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions): Promise<RequestedImage[]> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
@@ -886,7 +896,14 @@ export async function fetchChannelModels(channel: ModelChannel) {
     return fetchImageModels({ ...defaultConfig, baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
 }
 
-async function requestServerImageJob(requestConfig: ManagedAiConfig & { channelId: string; serverManaged: true }, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, count: number, options?: RequestOptions) {
+async function requestServerImageJob(
+    requestConfig: ManagedAiConfig & { channelId: string; serverManaged: true },
+    prompt: string,
+    references: ReferenceImage[],
+    mask: ReferenceImage | undefined,
+    count: number,
+    options?: RequestOptions,
+): Promise<RequestedImage[]> {
     const capabilities = deriveImageModelCapabilities(requestConfig.model, requestConfig.apiFormat, requestConfig.baseUrl);
     const resolution = normalizeResolution(requestConfig.quality) || "low";
     const imageQuality = resolveSupportedImageQuality(requestConfig);
@@ -914,7 +931,15 @@ async function requestServerImageJob(requestConfig: ManagedAiConfig & { channelI
     options?.signal?.addEventListener("abort", abort, { once: true });
     try {
         const completed = await waitForServerJob(job.id, { signal: options?.signal });
-        return (completed.result?.images || []).map((image) => ({ id: image.id, dataUrl: image.dataUrl }));
+        return (completed.result?.images || []).map((image) => ({
+            id: image.id,
+            dataUrl: image.dataUrl,
+            width: image.width,
+            height: image.height,
+            bytes: image.bytes,
+            durationMs: image.durationMs,
+            mimeType: image.mimeType,
+        }));
     } finally {
         options?.signal?.removeEventListener("abort", abort);
     }

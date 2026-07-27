@@ -9,6 +9,7 @@ import { ImageSettingsPanel, imageGenerationQualityLabel, imageOutputFormatLabel
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import { DeferredImage } from "@/components/ui/deferred-image";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { resolveModelChannel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -255,7 +256,9 @@ export default function ImagePage() {
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
         const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
-        const stored = await uploadImage(image.dataUrl, { outputFormat });
+        const stored = image.storageKey
+            ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
+            : await uploadImage(image.dataUrl, { outputFormat });
         setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.${imageFileExtension(stored.mimeType)}`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
         message.success("已加入参考图");
     };
@@ -268,7 +271,7 @@ export default function ImagePage() {
             // Generated results are already persisted by the job flow. Reusing that asset avoids a
             // duplicate upload and prevents upstream MIME headers from affecting asset registration.
             const stored =
-                image.storageKey && image.dataUrl.startsWith("/api/assets/")
+                image.storageKey
                     ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
                     : await uploadImage(image.dataUrl, { outputFormat: previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat });
             addAsset({
@@ -473,7 +476,7 @@ export default function ImagePage() {
                                     >
                                         {references.map((item, index) => (
                                             <div key={item.id} className="group relative size-16 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800 sm:size-20">
-                                                <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                                <img src={item.dataUrl} alt={item.name} className="size-full object-cover" decoding="async" />
                                                 <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
                                                 <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
                                                 <button
@@ -595,7 +598,7 @@ export default function ImagePage() {
                     event.target.value = "";
                 }}
             />
-            <Drawer title="生成记录" placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
+            <Drawer title="生成记录" placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)} destroyOnHidden>
                 <LogPanel
                     logs={logs}
                     selectedLogIds={selectedLogIds}
@@ -646,9 +649,55 @@ function ResultImageCard({
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
 }) {
+    const [previewStatus, setPreviewStatus] = useState<"loading" | "loaded" | "error">("loading");
+    const [previewAttempt, setPreviewAttempt] = useState(0);
+
+    useEffect(() => {
+        setPreviewStatus("loading");
+        setPreviewAttempt(0);
+    }, [image.dataUrl]);
+
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
-            <Image src={image.dataUrl} alt={`生成结果 ${index + 1}`} className="aspect-square object-cover" />
+            <div className="relative aspect-square overflow-hidden bg-stone-100 dark:bg-stone-900">
+                {previewStatus !== "loaded" ? (
+                    <div className="absolute inset-0 z-10 grid place-items-center p-4 text-center" aria-live="polite">
+                        {previewStatus === "error" ? (
+                            <div className="space-y-2">
+                                <div className="text-sm text-stone-500 dark:text-stone-400">高清预览加载失败</div>
+                                <Button
+                                    size="small"
+                                    onClick={() => {
+                                        setPreviewStatus("loading");
+                                        setPreviewAttempt((attempt) => attempt + 1);
+                                    }}
+                                >
+                                    重新加载预览
+                                </Button>
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2 text-sm text-stone-500 dark:text-stone-400">
+                                <LoaderCircle className="size-4 animate-spin" />
+                                正在载入高清预览
+                            </div>
+                        )}
+                    </div>
+                ) : null}
+                <Image
+                    key={`${image.id}:${previewAttempt}`}
+                    src={retryImageUrl(image.dataUrl, previewAttempt)}
+                    alt={`生成结果 ${index + 1}`}
+                    rootClassName="block size-full"
+                    className={`size-full object-contain transition-opacity duration-200 ${previewStatus === "loaded" ? "opacity-100" : "opacity-0"}`}
+                    style={{ width: "100%", height: "100%" }}
+                    loading="eager"
+                    decoding="async"
+                    fetchPriority={index === 0 ? "high" : "auto"}
+                    preview={previewStatus === "loaded"}
+                    onLoad={() => setPreviewStatus("loaded")}
+                    onError={() => setPreviewStatus("error")}
+                />
+            </div>
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
                 <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                     <span>
@@ -677,6 +726,11 @@ function ResultImageCard({
             </div>
         </div>
     );
+}
+
+function retryImageUrl(url: string, attempt: number) {
+    if (!attempt || !url.startsWith("/")) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}previewRetry=${attempt}`;
 }
 
 function PendingImageCard() {
@@ -788,7 +842,7 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                         {thumbnails.length ? (
                             <div className="mt-2 flex gap-1 overflow-hidden">
                                 {thumbnails.map((image, index) => (
-                                    <img key={`${log.id}-${index}`} src={image} alt="" className="size-8 shrink-0 rounded-md object-cover" />
+                                    <DeferredImage key={`${log.id}-${index}`} src={image} alt="" className="size-8 shrink-0 rounded-md object-cover" fetchPriority="low" />
                                 ))}
                             </div>
                         ) : null}

@@ -3,7 +3,7 @@ import localforage from "localforage";
 import { nanoid } from "nanoid";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { readImageMeta } from "@/lib/image-utils";
-import { deleteServerAsset, fetchServerAssetBlob, uploadServerAsset } from "@/services/server-api";
+import { deleteServerAsset, fetchServerAssetBlob, promoteServerJobAsset, uploadServerAsset } from "@/services/server-api";
 import { assertImageUploadAllowed, assertStorageQuotaAvailable } from "@/services/upload-policy";
 
 export type UploadedImage = {
@@ -19,8 +19,15 @@ export type UploadedImage = {
 
 export type ImageOutputFormat = "auto" | "png" | "jpeg" | "webp";
 
+type ImageUploadMeta = {
+    width: number;
+    height: number;
+    mimeType?: string;
+};
+
 type UploadImageOptions = {
     outputFormat?: string;
+    imageMeta?: ImageUploadMeta;
     dimensions?: { width: number; height: number };
     createThumbnail?: boolean;
     previewUrl?: string;
@@ -28,12 +35,27 @@ type UploadImageOptions = {
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
 const objectUrls = new Map<string, string>();
+const promotedJobImages = new Map<string, Promise<UploadedImage>>();
 
 export async function uploadImage(input: string | Blob, options?: UploadImageOptions): Promise<UploadedImage> {
+    if (PUBLIC_MODE && typeof input === "string" && canPromoteServerJobImage(input, options?.outputFormat)) {
+        const existing = promotedJobImages.get(input);
+        if (existing) return existing;
+        const pending = promoteJobImage(input);
+        promotedJobImages.set(input, pending);
+        try {
+            return await pending;
+        } finally {
+            if (promotedJobImages.get(input) === pending) promotedJobImages.delete(input);
+        }
+    }
+
     const blob = await convertImageOutput(input, options?.outputFormat);
-    const suppliedDimensions = validDimensions(options?.dimensions) ? options.dimensions : undefined;
-    const meta = suppliedDimensions ? { ...suppliedDimensions, mimeType: blob.type } : await readBlobMeta(blob);
-    const mimeType = blob.type || meta.mimeType;
+    const suppliedMeta = options?.imageMeta || options?.dimensions;
+    const meta: ImageUploadMeta = validDimensions(suppliedMeta)
+        ? { ...suppliedMeta, mimeType: options?.imageMeta?.mimeType || blob.type }
+        : await readBlobMeta(blob);
+    const mimeType = blob.type || meta.mimeType || "image/png";
     assertImageUploadAllowed({ bytes: blob.size, mimeType, width: meta.width, height: meta.height });
     const thumbnail = options?.createThumbnail === false ? null : await createThumbnail(blob, meta.width, meta.height);
     if (PUBLIC_MODE) {
@@ -52,6 +74,27 @@ export async function uploadImage(input: string | Blob, options?: UploadImageOpt
         rememberObjectUrl(thumbnailKey, URL.createObjectURL(thumbnail));
     }
     return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType, thumbnailKey, thumbnailUrl: thumbnailKey ? objectUrls.get(thumbnailKey) : undefined };
+}
+
+export function canPromoteServerJobImage(input: string, outputFormat?: string) {
+    if (!/^\/api\/job-files\/[^/?#]+\/[^/?#]+$/i.test(input)) return false;
+    const targetMimeType = imageOutputFormatMimeType(outputFormat);
+    if (!targetMimeType) return true;
+    const extension = input.slice(input.lastIndexOf(".")).toLowerCase();
+    const sourceMimeType = ({ ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" } as Record<string, string>)[extension];
+    return sourceMimeType === targetMimeType;
+}
+
+async function promoteJobImage(sourceUrl: string): Promise<UploadedImage> {
+    const { asset, width, height } = await promoteServerJobAsset(sourceUrl);
+    const meta = Number.isSafeInteger(width) && Number.isSafeInteger(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : await readImageMeta(sourceUrl);
+    try {
+        assertImageUploadAllowed({ bytes: asset.bytes, mimeType: asset.mimeType, width: meta.width, height: meta.height });
+    } catch (error) {
+        await deleteServerAsset(asset.key).catch(() => undefined);
+        throw error;
+    }
+    return { url: sourceUrl, storageKey: asset.key, width: meta.width, height: meta.height, bytes: asset.bytes, mimeType: asset.mimeType };
 }
 
 export async function readImageBlob(input: string | Blob) {

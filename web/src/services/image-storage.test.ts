@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { convertImageOutput, readImageBlob } from "./image-storage";
+import { canPromoteServerJobImage, convertImageOutput, readImageBlob } from "./image-storage";
 
 const originalFetch = globalThis.fetch;
 const originalCreateImageBitmap = globalThis.createImageBitmap;
@@ -37,6 +37,16 @@ test("decodes canvas data URLs without using fetch", async () => {
     expect(fetchCalled).toBe(false);
     expect(blob.type).toBe("image/png");
     expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+});
+
+test("promotes server job images only when no local format conversion is needed", () => {
+    const png = "/api/job-files/job/image.png";
+
+    expect(canPromoteServerJobImage(png, "auto")).toBe(true);
+    expect(canPromoteServerJobImage(png, "png")).toBe(true);
+    expect(canPromoteServerJobImage(png, "jpeg")).toBe(false);
+    expect(canPromoteServerJobImage("/api/assets/image.png", "png")).toBe(false);
+    expect(canPromoteServerJobImage("https://example.com/image.png", "png")).toBe(false);
 });
 
 test("recognizes a PNG response when the upstream file uses a generic MIME type", async () => {

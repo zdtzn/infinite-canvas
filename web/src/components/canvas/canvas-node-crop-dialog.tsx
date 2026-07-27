@@ -18,7 +18,21 @@ const handles: ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const minSize = 0.06;
 const defaultCrop = { x: 0.12, y: 0.12, width: 0.76, height: 0.76 };
 
-export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (crop: CanvasImageCropRect) => void }) {
+export function CanvasNodeCropDialog({
+    dataUrl,
+    imageWidth,
+    imageHeight,
+    open,
+    onClose,
+    onConfirm,
+}: {
+    dataUrl: string;
+    imageWidth?: number;
+    imageHeight?: number;
+    open: boolean;
+    onClose: () => void;
+    onConfirm: (crop: CanvasImageCropRect) => void;
+}) {
     const boxRef = useRef<HTMLDivElement>(null);
     const [crop, setCrop] = useState<CanvasImageCropRect>(defaultCrop);
     const [locked, setLocked] = useState(false);
@@ -26,13 +40,21 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
     const cropSize = image ? { width: Math.max(1, Math.round(crop.width * image.width)), height: Math.max(1, Math.round(crop.height * image.height)) } : null;
 
     useEffect(() => {
-        if (open) setCrop(defaultCrop);
-    }, [dataUrl, open]);
+        if (!open) return;
+        setCrop(defaultCrop);
+        setImage(validImageSize(imageWidth, imageHeight));
+    }, [dataUrl, imageHeight, imageWidth, open]);
 
     useEffect(() => {
-        if (!open) return;
-        void readImageMeta(dataUrl).then(setImage);
-    }, [dataUrl, open]);
+        if (!open || validImageSize(imageWidth, imageHeight)) return;
+        let active = true;
+        void readImageMeta(dataUrl).then((meta) => {
+            if (active) setImage(meta);
+        });
+        return () => {
+            active = false;
+        };
+    }, [dataUrl, imageHeight, imageWidth, open]);
 
     const startDrag = (mode: DragMode, event: ReactPointerEvent, handle?: ResizeHandle) => {
         const box = boxRef.current?.getBoundingClientRect();
@@ -58,7 +80,14 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
             <div className="space-y-4">
                 <div className="flex justify-center">
                     <div ref={boxRef} className="relative inline-block max-w-full overflow-hidden rounded-lg bg-black select-none">
-                        <img src={dataUrl} alt="" className="block max-h-[62vh] max-w-full opacity-90" draggable={false} />
+                        <img
+                            src={dataUrl}
+                            alt=""
+                            className="block max-h-[62vh] max-w-full opacity-90"
+                            draggable={false}
+                            decoding="async"
+                            onLoad={(event) => setImage(renderedImageSize(event.currentTarget))}
+                        />
                         <CropMask crop={crop} />
                         <div className="absolute cursor-move border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,.3),0_0_28px_rgba(0,0,0,.28)]" style={cropStyle(crop)} onPointerDown={(event) => startDrag("move", event)}>
                             <div className="pointer-events-none absolute inset-x-0 top-1/3 border-t border-white/50" />
@@ -99,6 +128,14 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
             </div>
         </Modal>
     );
+}
+
+function validImageSize(width?: number, height?: number) {
+    return Number.isFinite(width) && Number.isFinite(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : null;
+}
+
+function renderedImageSize(image: HTMLImageElement) {
+    return validImageSize(image.naturalWidth, image.naturalHeight);
 }
 
 function CropMask({ crop }: { crop: CanvasImageCropRect }) {

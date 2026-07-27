@@ -11,7 +11,21 @@ const defaultParams: CanvasImageSplitParams = { rows: 2, columns: 2, horizontalL
 const maxGridSize = 12;
 type ActiveLine = { axis: "horizontal" | "vertical"; index: number } | null;
 
-export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (params: CanvasImageSplitParams) => void }) {
+export function CanvasNodeSplitDialog({
+    dataUrl,
+    imageWidth,
+    imageHeight,
+    open,
+    onClose,
+    onConfirm,
+}: {
+    dataUrl: string;
+    imageWidth?: number;
+    imageHeight?: number;
+    open: boolean;
+    onClose: () => void;
+    onConfirm: (params: CanvasImageSplitParams) => void;
+}) {
     const [params, setParams] = useState(defaultParams);
     const [image, setImage] = useState<{ width: number; height: number } | null>(null);
     const [active, setActive] = useState<ActiveLine>(null);
@@ -27,13 +41,19 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         if (!open) return;
         setParams(defaultParams);
         setActive(null);
-        setImage(null);
-    }, [dataUrl, open]);
+        setImage(validImageSize(imageWidth, imageHeight));
+    }, [dataUrl, imageHeight, imageWidth, open]);
 
     useEffect(() => {
-        if (!open) return;
-        void readImageMeta(dataUrl).then(setImage);
-    }, [dataUrl, open]);
+        if (!open || validImageSize(imageWidth, imageHeight)) return;
+        let active = true;
+        void readImageMeta(dataUrl).then((meta) => {
+            if (active) setImage(meta);
+        });
+        return () => {
+            active = false;
+        };
+    }, [dataUrl, imageHeight, imageWidth, open]);
 
     const update = (key: "rows" | "columns", value: string | number | null) => {
         const count = clampGrid(value ?? params[key]);
@@ -94,7 +114,14 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
                     <div className="rounded-xl border p-4">
                         <div className="grid min-h-[300px] place-items-center rounded-lg bg-black/5">
                             <div ref={previewRef} className="relative inline-block max-w-full overflow-hidden rounded-lg bg-black shadow-xl">
-                                <img src={dataUrl} alt="" className="block max-h-[340px] max-w-full object-contain opacity-95" draggable={false} />
+                                <img
+                                    src={dataUrl}
+                                    alt=""
+                                    className="block max-h-[340px] max-w-full object-contain opacity-95"
+                                    draggable={false}
+                                    decoding="async"
+                                    onLoad={(event) => setImage(renderedImageSize(event.currentTarget))}
+                                />
                                 <SplitGrid horizontalLines={horizontalLines} verticalLines={verticalLines} active={active} onPointerDown={startDrag} />
                             </div>
                         </div>
@@ -130,6 +157,14 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
             </div>
         </Modal>
     );
+}
+
+function validImageSize(width?: number, height?: number) {
+    return Number.isFinite(width) && Number.isFinite(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : null;
+}
+
+function renderedImageSize(image: HTMLImageElement) {
+    return validImageSize(image.naturalWidth, image.naturalHeight);
 }
 
 function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (value: string | number | null) => void }) {
