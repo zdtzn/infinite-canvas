@@ -50,6 +50,14 @@ export type StoredLibraryAsset = {
   payload: Record<string, unknown>;
   updatedAt: number;
 };
+export type GenerationHistoryKind = "image" | "video";
+export type StoredGenerationHistoryItem = {
+  id: string;
+  kind: GenerationHistoryKind;
+  payload: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+};
 export type StoredImageReference = {
   path: string;
   mimeType: string;
@@ -82,7 +90,8 @@ export type ImageJobInput = {
     provider: "uu-image";
     taskId: string;
     expiresAt?: string;
-    status?: "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
+    status?:
+      "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
   };
 };
 export type ImageJobImage = {

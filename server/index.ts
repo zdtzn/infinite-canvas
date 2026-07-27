@@ -7,6 +7,7 @@ import { createIdentityToken, createSessionToken, expiredIdentityCookie, expired
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem } from "./lib/asset-library";
 import { canAccessUserAvatar } from "./lib/avatar-access";
 import { decryptSecret, encryptSecret } from "./lib/crypto-store";
+import { GenerationHistoryInputError, normalizeGenerationHistory, normalizeGenerationHistoryItem } from "./lib/generation-history";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
@@ -16,7 +17,7 @@ import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChan
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
-import type { ChannelRecord, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
+import type { ChannelRecord, GenerationHistoryKind, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
 
 class AsyncSemaphore {
     private active = 0;
@@ -128,7 +129,10 @@ for (const user of Object.values(state.users)) cultivation?.ensureUser(user.user
 const configuredEncryptionSecret = process.env.APP_ENCRYPTION_KEY?.trim();
 if (PUBLIC_BASE_URL.startsWith("https://") && !configuredEncryptionSecret) throw new Error("公网部署必须设置 APP_ENCRYPTION_KEY");
 const encryptionSecret = configuredEncryptionSecret || state.auth.sessionSecret;
-const previousEncryptionSecrets = (process.env.APP_ENCRYPTION_KEY_PREVIOUS || "").split(",").map((value) => value.trim()).filter(Boolean);
+const previousEncryptionSecrets = (process.env.APP_ENCRYPTION_KEY_PREVIOUS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 const requestClientIps = new WeakMap<Request, string>();
 let stateWriteQueued = false;
@@ -195,7 +199,15 @@ server = Bun.serve({
     },
 });
 
-console.info(JSON.stringify({ event: "server_started", port: server.port, dataDir: DATA_DIR, webRoot: WEB_ROOT, jobConcurrency: JOB_CONCURRENCY }));
+console.info(
+    JSON.stringify({
+        event: "server_started",
+        port: server.port,
+        dataDir: DATA_DIR,
+        webRoot: WEB_ROOT,
+        jobConcurrency: JOB_CONCURRENCY,
+    }),
+);
 
 async function route(request: Request, requestId: string) {
     const url = new URL(request.url);
@@ -251,6 +263,12 @@ async function route(request: Request, requestId: string) {
         const libraryAssetMatch = url.pathname.match(/^\/api\/library-assets\/([^/]+)$/);
         if (libraryAssetMatch && request.method === "PUT") return saveLibraryAsset(request, session, decodeURIComponent(libraryAssetMatch[1]));
         if (libraryAssetMatch && request.method === "DELETE") return deleteLibraryAsset(session, decodeURIComponent(libraryAssetMatch[1]));
+        const generationHistoryMatch = url.pathname.match(/^\/api\/generation-history\/(image|video)$/);
+        if (generationHistoryMatch && request.method === "GET") return listGenerationHistory(session, generationHistoryMatch[1] as GenerationHistoryKind);
+        if (generationHistoryMatch && request.method === "PUT") return mergeGenerationHistory(request, session, generationHistoryMatch[1] as GenerationHistoryKind);
+        const generationHistoryItemMatch = url.pathname.match(/^\/api\/generation-history\/(image|video)\/([^/]+)$/);
+        if (generationHistoryItemMatch && request.method === "PUT") return saveGenerationHistoryItem(request, session, generationHistoryItemMatch[1] as GenerationHistoryKind, decodeURIComponent(generationHistoryItemMatch[2]));
+        if (generationHistoryItemMatch && request.method === "DELETE") return deleteGenerationHistoryItem(session, generationHistoryItemMatch[1] as GenerationHistoryKind, decodeURIComponent(generationHistoryItemMatch[2]));
         if (url.pathname === "/api/assets/from-job" && request.method === "POST") return promoteJobAsset(request, session);
         if (url.pathname === "/api/assets" && request.method === "POST") return uploadAsset(request, session);
         const assetMatch = url.pathname.match(/^\/api\/assets\/([^/]+)$/);
@@ -265,7 +283,11 @@ async function route(request: Request, requestId: string) {
         if (jobMatch && request.method === "DELETE") return deleteJob(url, session, jobMatch[1]);
         const jobFileMatch = url.pathname.match(/^\/api\/job-files\/([^/]+)\/([^/]+)$/);
         if (jobFileMatch && request.method === "GET") return serveJobFile(session, jobFileMatch[1], jobFileMatch[2]);
-        if (url.pathname === "/api/projects" && request.method === "GET") return json({ items: Object.values(state.projects[session.userId] || {}), deleted: Object.entries(state.projectTombstones[session.userId] || {}).map(([projectId, tombstone]) => ({ projectId, ...tombstone })) });
+        if (url.pathname === "/api/projects" && request.method === "GET")
+            return json({
+                items: Object.values(state.projects[session.userId] || {}),
+                deleted: Object.entries(state.projectTombstones[session.userId] || {}).map(([projectId, tombstone]) => ({ projectId, ...tombstone })),
+            });
         const projectMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
         if (projectMatch && request.method === "PUT") return saveProject(request, session, projectMatch[1]);
         if (projectMatch && request.method === "DELETE") return deleteProject(url, session, projectMatch[1]);
@@ -280,12 +302,21 @@ async function authStatus(request: Request) {
     const candidate = optionalSession(request);
     const user = candidate ? state.users[candidate.userId] : undefined;
     const session = candidate && user && !isUserDisabled(user) ? candidate : null;
-    return json({ configured: Boolean(state.auth.accessCodeHash), authenticated: Boolean(session), user: session && user ? publicAuthUser(user) : null, publicMode: true });
+    return json({
+        configured: Boolean(state.auth.accessCodeHash),
+        authenticated: Boolean(session),
+        user: session && user ? publicAuthUser(user) : null,
+        publicMode: true,
+    });
 }
 
 async function setupAuth(request: Request) {
     enforceRateLimit(`setup:${clientIp(request)}`, 10);
-    const body = await readJson<{ accessCode?: string; displayName?: string; personalCode?: string }>(request);
+    const body = await readJson<{
+        accessCode?: string;
+        displayName?: string;
+        personalCode?: string;
+    }>(request);
     const accessCode = String(body.accessCode || "").trim();
     const displayName = normalizeDisplayName(body.displayName);
     const personalCode = normalizePersonalCode(body.personalCode, 10);
@@ -295,45 +326,105 @@ async function setupAuth(request: Request) {
         const userId = randomUUID();
         state.auth.accessCodeHash = await hashAccessCode(accessCode);
         state.auth.adminUserId = userId;
-        state.users[userId] = { userId, displayName, admin: true, status: "NORMAL", createdAt: Date.now(), loginHash: await hashAccessCode(personalCode) };
+        state.users[userId] = {
+            userId,
+            displayName,
+            admin: true,
+            status: "NORMAL",
+            createdAt: Date.now(),
+            loginHash: await hashAccessCode(personalCode),
+        };
         writeState();
         cultivation?.ensureUser(userId, true);
-        cultivation?.recordLogin({ userId, displayName, result: "setup-success", ip: clientIp(request), userAgent: request.headers.get("user-agent") || "", secret: state.auth.sessionSecret });
+        cultivation?.recordLogin({
+            userId,
+            displayName,
+            result: "setup-success",
+            ip: clientIp(request),
+            userAgent: request.headers.get("user-agent") || "",
+            secret: state.auth.sessionSecret,
+        });
         return authenticatedResponse(state.users[userId]);
     });
 }
 
 async function login(request: Request) {
     enforceRateLimit(`login:${clientIp(request)}`, 20);
-    const body = await readJson<{ accessCode?: string; displayName?: string; personalCode?: string }>(request);
+    const body = await readJson<{
+        accessCode?: string;
+        displayName?: string;
+        personalCode?: string;
+    }>(request);
     const rawDisplayName = String(body.displayName || "").trim();
     const displayName = normalizeDisplayName(rawDisplayName);
     const personalCode = normalizePersonalCode(body.personalCode);
     return withAuthMutation(async () => {
         if (!state.auth.accessCodeHash) return json({ error: { message: "站点尚未初始化" } }, 409);
         if (!(await verifyAccessCode(String(body.accessCode || "").trim(), state.auth.accessCodeHash))) {
-            cultivation?.recordLogin({ displayName: rawDisplayName || "unknown", result: "invalid-access-code", ip: clientIp(request), userAgent: request.headers.get("user-agent") || "", secret: state.auth.sessionSecret });
+            cultivation?.recordLogin({
+                displayName: rawDisplayName || "unknown",
+                result: "invalid-access-code",
+                ip: clientIp(request),
+                userAgent: request.headers.get("user-agent") || "",
+                secret: state.auth.sessionSecret,
+            });
             return json({ error: { message: "访问口令错误" } }, 401);
         }
         const identityUserId = readIdentityToken(readCookie(request, "canvas_identity"), state.auth.sessionSecret);
         const existing = Object.values(state.users).find((user) => sameDisplayName(user.displayName, displayName));
         if (existing && isUserDisabled(existing)) {
-            cultivation?.recordLogin({ userId: existing.userId, displayName, result: "disabled", ip: clientIp(request), userAgent: request.headers.get("user-agent") || "", secret: state.auth.sessionSecret });
+            cultivation?.recordLogin({
+                userId: existing.userId,
+                displayName,
+                result: "disabled",
+                ip: clientIp(request),
+                userAgent: request.headers.get("user-agent") || "",
+                secret: state.auth.sessionSecret,
+            });
             return json({ error: { message: "当前账号已停用" } }, 403);
         }
         if (existing?.loginHash && !(await verifyAccessCode(personalCode, existing.loginHash))) {
-            cultivation?.recordLogin({ userId: existing.userId, displayName, result: "invalid-personal-code", ip: clientIp(request), userAgent: request.headers.get("user-agent") || "", secret: state.auth.sessionSecret });
+            cultivation?.recordLogin({
+                userId: existing.userId,
+                displayName,
+                result: "invalid-personal-code",
+                ip: clientIp(request),
+                userAgent: request.headers.get("user-agent") || "",
+                secret: state.auth.sessionSecret,
+            });
             return json({ error: { message: "个人密码错误" } }, 401);
         }
-        if (existing && !existing.loginHash && existing.userId !== identityUserId) return json({ error: { message: "该旧账号尚未设置个人密码，请先在原设备登录后完成升级" } }, 409);
-        const user = existing || { userId: randomUUID(), displayName, admin: false, status: "NORMAL" as const, createdAt: Date.now(), loginHash: await hashAccessCode(personalCode) };
+        if (existing && !existing.loginHash && existing.userId !== identityUserId)
+            return json(
+                {
+                    error: {
+                        message: "该旧账号尚未设置个人密码，请先在原设备登录后完成升级",
+                    },
+                },
+                409,
+            );
+        const user = existing || {
+            userId: randomUUID(),
+            displayName,
+            admin: false,
+            status: "NORMAL" as const,
+            createdAt: Date.now(),
+            loginHash: await hashAccessCode(personalCode),
+        };
         if (!user.loginHash) user.loginHash = await hashAccessCode(personalCode);
         user.disabled = false;
         user.status = "NORMAL";
         state.users[user.userId] = user;
         writeState();
         cultivation?.ensureUser(user.userId, Boolean(user.admin));
-        cultivation?.recordLogin({ userId: user.userId, displayName: user.displayName, result: "success", ip: clientIp(request), userAgent: request.headers.get("user-agent") || "", secret: state.auth.sessionSecret });
+        cultivation?.recordLogin({
+            userId: user.userId,
+            displayName: user.displayName,
+            result: "success",
+            ip: clientIp(request),
+            userAgent: request.headers.get("user-agent") || "",
+            secret: state.auth.sessionSecret,
+        });
         return authenticatedResponse(user);
     });
 }
@@ -348,7 +439,12 @@ function authenticatedResponse(user: UserRecord) {
 }
 
 function publicAuthUser(user: UserRecord) {
-    return { userId: user.userId, displayName: user.displayName, admin: Boolean(user.admin), avatarUrl: avatarUrlFor(user.userId) };
+    return {
+        userId: user.userId,
+        displayName: user.displayName,
+        admin: Boolean(user.admin),
+        avatarUrl: avatarUrlFor(user.userId),
+    };
 }
 
 function logout() {
@@ -372,7 +468,15 @@ function requireSession(request: Request) {
 
 function listUsers(session: SessionPayload) {
     requireAdmin(session);
-    return json({ items: Object.values(state.users).map(({ userId, displayName, admin, createdAt, disabled }) => ({ userId, displayName, admin: Boolean(admin), createdAt, disabled: Boolean(disabled) })) });
+    return json({
+        items: Object.values(state.users).map(({ userId, displayName, admin, createdAt, disabled }) => ({
+            userId,
+            displayName,
+            admin: Boolean(admin),
+            createdAt,
+            disabled: Boolean(disabled),
+        })),
+    });
 }
 
 async function updateUserAccess(request: Request, session: SessionPayload, userId: string) {
@@ -384,12 +488,27 @@ async function updateUserAccess(request: Request, session: SessionPayload, userI
     user.disabled = Boolean(body.disabled);
     user.status = user.disabled ? "DISABLED" : "NORMAL";
     writeState();
-    return json({ user: { userId: user.userId, displayName: user.displayName, admin: Boolean(user.admin), createdAt: user.createdAt, disabled: Boolean(user.disabled) } });
+    return json({
+        user: {
+            userId: user.userId,
+            displayName: user.displayName,
+            admin: Boolean(user.admin),
+            createdAt: user.createdAt,
+            disabled: Boolean(user.disabled),
+        },
+    });
 }
 
 function adminMetrics(session: SessionPayload) {
     requireAdmin(session);
-    return json({ users: Object.keys(state.users).length, channels: listPlatformChannels(state).length, jobs: summarizeJobs(), uptimeSeconds: Math.round(process.uptime()), memory: process.memoryUsage(), backup: backupManager?.status() || null });
+    return json({
+        users: Object.keys(state.users).length,
+        channels: listPlatformChannels(state).length,
+        jobs: summarizeJobs(),
+        uptimeSeconds: Math.round(process.uptime()),
+        memory: process.memoryUsage(),
+        backup: backupManager?.status() || null,
+    });
 }
 
 function adminChannelMetrics(url: URL, session: SessionPayload) {
@@ -427,16 +546,7 @@ function adminChannelMetrics(url: URL, session: SessionPayload) {
             const metric = usageByChannel.get(key);
             const completedImages = (metric?.successImages || 0) + (metric?.failedImages || 0);
             const successRate = completedImages ? Math.round(((metric?.successImages || 0) / completedImages) * 100) : null;
-            const status =
-                (metric?.activeJobs || 0) > 0
-                    ? "active"
-                    : successRate === null
-                      ? "idle"
-                      : successRate >= 90
-                        ? "healthy"
-                        : successRate >= 60
-                          ? "degraded"
-                          : "unavailable";
+            const status = (metric?.activeJobs || 0) > 0 ? "active" : successRate === null ? "idle" : successRate >= 90 ? "healthy" : successRate >= 60 ? "degraded" : "unavailable";
             let host = channel.baseUrl;
             try {
                 host = new URL(channel.baseUrl).host;
@@ -474,7 +584,9 @@ function cultivationProfile(session: SessionPayload) {
     const service = requireCultivation();
     service.ensureUser(session.userId, Boolean(state.users[session.userId]?.admin));
     const { internalNote: _internalNote, ...profile } = service.getProfile(session.userId);
-    return json({ profile: { ...profile, avatarUrl: avatarUrlFor(session.userId) } });
+    return json({
+        profile: { ...profile, avatarUrl: avatarUrlFor(session.userId) },
+    });
 }
 
 function markCultivationBreakthroughSeen(session: SessionPayload, breakthroughId: string) {
@@ -486,7 +598,13 @@ function adminCultivationUsers(url: URL, session: SessionPayload) {
     requireAdmin(session);
     const { page, pageSize } = readPagination(url);
     const result = requireCultivation().listUsers(page, pageSize, url.searchParams.get("search") || "");
-    return json({ ...result, items: result.items.map((item) => ({ ...item, avatarUrl: avatarUrlFor(item.userId) })) });
+    return json({
+        ...result,
+        items: result.items.map((item) => ({
+            ...item,
+            avatarUrl: avatarUrlFor(item.userId),
+        })),
+    });
 }
 
 async function adminUpdateCultivationUser(request: Request, session: SessionPayload, encodedUserId: string) {
@@ -535,7 +653,10 @@ async function adminUpdateCapability(request: Request, session: SessionPayload, 
 
 async function adminUpdateRewards(request: Request, session: SessionPayload) {
     requireAdmin(session);
-    const body = await readJson<{ rewards?: Record<string, number>; reason?: string }>(request);
+    const body = await readJson<{
+        rewards?: Record<string, number>;
+        reason?: string;
+    }>(request);
     return json(requireCultivation().updateRewards(session.userId, body.rewards || {}, String(body.reason || "")));
 }
 
@@ -575,19 +696,31 @@ function requireCultivation() {
 }
 
 function readPagination(url: URL) {
-    return { page: Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1)), pageSize: Math.max(1, Math.min(50, Math.floor(Number(url.searchParams.get("pageSize")) || 20))) };
+    return {
+        page: Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1)),
+        pageSize: Math.max(1, Math.min(50, Math.floor(Number(url.searchParams.get("pageSize")) || 20))),
+    };
 }
 
 function listChannels(session: SessionPayload) {
     void session;
     return json({
-        items: listPlatformChannels(state).map(({ apiKey: _apiKey, userId: _userId, ...channel }) => ({ ...channel, hasApiKey: true })),
+        items: listPlatformChannels(state).map(({ apiKey: _apiKey, userId: _userId, ...channel }) => ({
+            ...channel,
+            hasApiKey: true,
+        })),
     });
 }
 
 async function saveChannel(request: Request, session: SessionPayload, id: string) {
     requireAdmin(session);
-    const body = await readJson<{ name?: string; baseUrl?: string; apiFormat?: ProviderProtocol; apiKey?: string; models?: unknown }>(request);
+    const body = await readJson<{
+        name?: string;
+        baseUrl?: string;
+        apiFormat?: ProviderProtocol;
+        apiKey?: string;
+        models?: unknown;
+    }>(request);
     const baseUrl = String(body.baseUrl || "").trim();
     assertAllowedUpstreamUrl(baseUrl);
     const apiFormat: ProviderProtocol = body.apiFormat === "gemini" ? "gemini" : "openai";
@@ -600,7 +733,9 @@ async function saveChannel(request: Request, session: SessionPayload, id: string
     state.channels[key] = {
         id,
         userId: adminUserId,
-        name: String(body.name || existing?.name || "未命名渠道").trim().slice(0, 80),
+        name: String(body.name || existing?.name || "未命名渠道")
+            .trim()
+            .slice(0, 80),
         baseUrl,
         apiFormat,
         apiKey: plaintext ? encryptSecret(plaintext, encryptionSecret) : existing.apiKey,
@@ -622,14 +757,21 @@ function deleteChannel(session: SessionPayload, id: string) {
 
 function listLibraryAssets(session: SessionPayload) {
     const library = appDatabase.loadAssetLibrary(session.userId);
-    return json({ initialized: library.initialized, items: library.items.map((item) => item.payload) });
+    return json({
+        initialized: library.initialized,
+        items: library.items.map((item) => item.payload),
+    });
 }
 
 async function replaceLibraryAssets(request: Request, session: SessionPayload) {
     const body = await readJson<{ items?: unknown; initializeOnly?: boolean }>(request);
     if (body.initializeOnly) {
         const current = appDatabase.loadAssetLibrary(session.userId);
-        if (current.initialized) return json({ initialized: true, items: current.items.map((item) => item.payload) });
+        if (current.initialized)
+            return json({
+                initialized: true,
+                items: current.items.map((item) => item.payload),
+            });
     }
     const items = normalizeAssetLibrary(body.items, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
     appDatabase.replaceAssetLibrary(session.userId, items);
@@ -645,6 +787,31 @@ async function saveLibraryAsset(request: Request, session: SessionPayload, id: s
 
 function deleteLibraryAsset(session: SessionPayload, id: string) {
     appDatabase.deleteAssetLibraryItem(session.userId, id);
+    return new Response(null, { status: 204 });
+}
+
+function listGenerationHistory(session: SessionPayload, kind: GenerationHistoryKind) {
+    return json({
+        items: appDatabase.loadGenerationHistory(session.userId, kind).map((item) => item.payload),
+    });
+}
+
+async function mergeGenerationHistory(request: Request, session: SessionPayload, kind: GenerationHistoryKind) {
+    const body = await readJson<{ items?: unknown }>(request, 16 * 1024 * 1024);
+    const items = normalizeGenerationHistory(kind, body.items, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
+    appDatabase.upsertGenerationHistoryItems(session.userId, kind, items);
+    return listGenerationHistory(session, kind);
+}
+
+async function saveGenerationHistoryItem(request: Request, session: SessionPayload, kind: GenerationHistoryKind, id: string) {
+    const body = await readJson<{ item?: unknown }>(request, 1024 * 1024);
+    const item = normalizeGenerationHistoryItem(kind, body.item, id, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
+    appDatabase.upsertGenerationHistoryItems(session.userId, kind, [item]);
+    return json({ item: item.payload });
+}
+
+function deleteGenerationHistoryItem(session: SessionPayload, kind: GenerationHistoryKind, id: string) {
+    appDatabase.deleteGenerationHistoryItem(session.userId, kind, id);
     return new Response(null, { status: 204 });
 }
 
@@ -727,7 +894,13 @@ async function storeAsset(session: SessionPayload, key: string, file: Blob, mime
         const directory = join(ASSET_ROOT, safeSegment(session.userId));
         mkdirSync(directory, { recursive: true });
         await Bun.write(join(directory, safeSegment(key)), file);
-        const asset: StoredAsset = { key, userId: session.userId, mimeType, bytes: file.size, createdAt: refreshCreatedAt || !existing ? Date.now() : existing.createdAt };
+        const asset: StoredAsset = {
+            key,
+            userId: session.userId,
+            mimeType,
+            bytes: file.size,
+            createdAt: refreshCreatedAt || !existing ? Date.now() : existing.createdAt,
+        };
         state.assets[recordKey] = asset;
         appDatabase.saveAsset(asset);
         assetBytesByUser.set(session.userId, usedBytes - (existing?.bytes || 0) + asset.bytes);
@@ -749,7 +922,13 @@ function serveProfileAvatar(session: SessionPayload, userId: string) {
 function serveStoredAsset(asset: StoredAsset) {
     const path = join(ASSET_ROOT, safeSegment(asset.userId), safeSegment(asset.key));
     if (!existsSync(path)) throw new HttpError(404, "素材文件不存在");
-    return new Response(Bun.file(path), { headers: { "Content-Type": asset.mimeType, "Content-Length": String(asset.bytes), "Cache-Control": "private, max-age=31536000, immutable" } });
+    return new Response(Bun.file(path), {
+        headers: {
+            "Content-Type": asset.mimeType,
+            "Content-Length": String(asset.bytes),
+            "Cache-Control": "private, max-age=31536000, immutable",
+        },
+    });
 }
 
 async function deleteAsset(session: SessionPayload, key: string) {
@@ -767,13 +946,25 @@ async function removeAsset(session: SessionPayload, key: string) {
         try {
             if (existsSync(path)) unlinkSync(path);
         } catch (error) {
-            console.warn(JSON.stringify({ event: "asset_file_cleanup_failed", key: asset.key, message: error instanceof Error ? error.message : "unknown error" }));
+            console.warn(
+                JSON.stringify({
+                    event: "asset_file_cleanup_failed",
+                    key: asset.key,
+                    message: error instanceof Error ? error.message : "unknown error",
+                }),
+            );
         }
     });
 }
 
 function publicAsset(asset: StoredAsset) {
-    return { key: asset.key, url: assetUrl(asset.key), mimeType: asset.mimeType, bytes: asset.bytes, createdAt: asset.createdAt };
+    return {
+        key: asset.key,
+        url: assetUrl(asset.key),
+        mimeType: asset.mimeType,
+        bytes: asset.bytes,
+        createdAt: asset.createdAt,
+    };
 }
 
 function avatarUrlFor(userId: string) {
@@ -810,7 +1001,17 @@ async function createImageJob(request: Request, session: SessionPayload) {
     const isUuGptImage2 = isUuAsyncGptImage2Channel(channel.baseUrl, model);
     const imageQuality = isUuGptImage2 ? undefined : normalizeImageQuality(body.imageQuality);
     const imageOutputFormat = isUuGptImage2 ? undefined : normalizeImageOutputFormat(body.imageOutputFormat, model);
-    cultivation?.reserveGeneration({ jobId, userId: session.userId, channelId, model, count, quality: resolution, referenceCount: references.length, hasMask: Boolean(body.mask), activeJobs: activeUserJobs(session.userId) });
+    cultivation?.reserveGeneration({
+        jobId,
+        userId: session.userId,
+        channelId,
+        model,
+        count,
+        quality: resolution,
+        referenceCount: references.length,
+        hasMask: Boolean(body.mask),
+        activeJobs: activeUserJobs(session.userId),
+    });
     try {
         const input: ImageJobInput = {
             userId: session.userId,
@@ -837,7 +1038,12 @@ async function createImageJob(request: Request, session: SessionPayload) {
 }
 
 function listJobs(session: SessionPayload) {
-    return json({ items: imageQueue.list().filter((job) => job.input.userId === session.userId).map(publicJob) });
+    return json({
+        items: imageQueue
+            .list()
+            .filter((job) => job.input.userId === session.userId)
+            .map(publicJob),
+    });
 }
 
 function getJob(session: SessionPayload, id: string) {
@@ -849,7 +1055,17 @@ async function retryJob(session: SessionPayload, id: string) {
     const source = ownedJob(session.userId, id);
     if (["queued", "running"].includes(source.status)) throw new HttpError(409, "任务仍在运行");
     const jobId = randomUUID();
-    cultivation?.reserveGeneration({ jobId, userId: session.userId, channelId: source.input.channelId, model: source.input.model, count: source.input.count, quality: source.input.quality, referenceCount: source.input.references.length, hasMask: Boolean(source.input.mask), activeJobs: activeUserJobs(session.userId) });
+    cultivation?.reserveGeneration({
+        jobId,
+        userId: session.userId,
+        channelId: source.input.channelId,
+        model: source.input.model,
+        count: source.input.count,
+        quality: source.input.quality,
+        referenceCount: source.input.references.length,
+        hasMask: Boolean(source.input.mask),
+        activeJobs: activeUserJobs(session.userId),
+    });
     try {
         const input = await copyImageJobInputForRetry(source.input, jobId);
         const job = imageQueue.add(input, jobId);
@@ -862,14 +1078,8 @@ async function retryJob(session: SessionPayload, id: string) {
 }
 
 async function copyImageJobInputForRetry(input: ImageJobInput, jobId: string): Promise<ImageJobInput> {
-    const references = await Promise.all(
-        input.references.map(async (reference, index) =>
-            persistReference(DATA_DIR, input.userId, jobId, index, await materializeStoredImage(reference)),
-        ),
-    );
-    const mask = input.mask
-        ? persistReference(DATA_DIR, input.userId, jobId, 10_000, await materializeStoredImage(input.mask))
-        : undefined;
+    const references = await Promise.all(input.references.map(async (reference, index) => persistReference(DATA_DIR, input.userId, jobId, index, await materializeStoredImage(reference))));
+    const mask = input.mask ? persistReference(DATA_DIR, input.userId, jobId, 10_000, await materializeStoredImage(input.mask)) : undefined;
     return { ...input, references, mask, upstream: undefined };
 }
 
@@ -878,7 +1088,15 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
     if (["queued", "running"].includes(job.status)) {
         if (imageQueue.cancel(id)) {
             cultivation?.refundGeneration(id, "user canceled");
-            void cancelUuImageTask(job.input).catch((error) => console.warn(JSON.stringify({ event: "uu_async_cancel_failed", jobId: id, message: error instanceof Error ? error.message : "unknown error" })));
+            void cancelUuImageTask(job.input).catch((error) =>
+                console.warn(
+                    JSON.stringify({
+                        event: "uu_async_cancel_failed",
+                        jobId: id,
+                        message: error instanceof Error ? error.message : "unknown error",
+                    }),
+                ),
+            );
         }
         return json({ job: publicJob(imageQueue.get(id)!) });
     }
@@ -894,18 +1112,8 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
 
 function publicJob(job: StoredImageJob) {
     const channel = resolvePlatformChannel(state, job.input.channelId);
-    const usesUuAsync =
-        job.input.apiFormat === "openai" &&
-        job.input.count === 1 &&
-        Boolean(channel && isUuImageAsyncChannel(channel.baseUrl, job.input.model, job.input.references.length, Boolean(job.input.mask)));
-    const phase =
-        job.status === "queued"
-            ? "queued"
-            : job.status !== "running"
-              ? "completed"
-              : usesUuAsync && !hasUuAsyncTask(job.input)
-                ? "submitting"
-                : "waiting_upstream";
+    const usesUuAsync = job.input.apiFormat === "openai" && job.input.count === 1 && Boolean(channel && isUuImageAsyncChannel(channel.baseUrl, job.input.model, job.input.references.length, Boolean(job.input.mask)));
+    const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : usesUuAsync && !hasUuAsyncTask(job.input) ? "submitting" : "waiting_upstream";
     return {
         id: job.id,
         status: job.status,
@@ -917,6 +1125,11 @@ function publicJob(job: StoredImageJob) {
         prompt: job.input.prompt,
         model: job.input.model,
         count: job.input.count,
+        channelId: job.input.channelId,
+        quality: job.input.quality,
+        imageQuality: job.input.imageQuality,
+        imageOutputFormat: job.input.imageOutputFormat,
+        size: job.input.size,
         source: job.input.source,
         result: job.result,
     };
@@ -940,8 +1153,18 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
             images.push(await persistJobImage(input.userId, job.id, raw, Date.now() - startedAt, signal));
         }
         if (!images.length) throw new Error("上游接口没有返回图片");
-        const result = { images, successCount: images.length, failCount: Math.max(0, input.count - images.length), durationMs: Date.now() - startedAt };
-        cultivation?.settleGeneration({ jobId: job.id, successCount: result.successCount, failCount: result.failCount, durationMs: result.durationMs });
+        const result = {
+            images,
+            successCount: images.length,
+            failCount: Math.max(0, input.count - images.length),
+            durationMs: Date.now() - startedAt,
+        };
+        cultivation?.settleGeneration({
+            jobId: job.id,
+            successCount: result.successCount,
+            failCount: result.failCount,
+            durationMs: result.durationMs,
+        });
         return result;
     } catch (error) {
         if (job.status !== "canceled") cultivation?.refundGeneration(job.id, error instanceof Error ? error.message : "generation failed");
@@ -950,7 +1173,11 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
 }
 
 async function materializeImageInput(input: ImageJobInput): Promise<RuntimeImageJobInput> {
-    return { ...input, references: await Promise.all(input.references.map(materializeStoredImage)), mask: input.mask ? await materializeStoredImage(input.mask) : undefined };
+    return {
+        ...input,
+        references: await Promise.all(input.references.map(materializeStoredImage)),
+        mask: input.mask ? await materializeStoredImage(input.mask) : undefined,
+    };
 }
 
 async function materializeStoredImage(reference: string | StoredImageReference) {
@@ -961,12 +1188,24 @@ async function materializeStoredImage(reference: string | StoredImageReference) 
     return `data:${reference.mimeType};base64,${bytes.toString("base64")}`;
 }
 
-type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & { references: string[]; mask?: string };
+type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & {
+    references: string[];
+    mask?: string;
+};
 
 async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal) {
-    const headers = { Authorization: `Bearer ${apiKey}`, "Idempotency-Key": randomUUID() };
+    const headers = {
+        Authorization: `Bearer ${apiKey}`,
+        "Idempotency-Key": randomUUID(),
+    };
     const size = resolveOpenAiImageSize(input.size, input.quality);
-    const requestOptions = buildOpenAiImageRequestOptions({ count: input.count, quality: input.imageQuality, outputFormat: input.imageOutputFormat, size, background: input.background });
+    const requestOptions = buildOpenAiImageRequestOptions({
+        count: input.count,
+        quality: input.imageQuality,
+        outputFormat: input.imageOutputFormat,
+        size,
+        background: input.background,
+    });
     let response: Response;
     if (input.references.length) {
         const form = new FormData();
@@ -992,7 +1231,10 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
             true,
         );
     }
-    const payload = await parseUpstreamJson(response, { maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES, tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试" });
+    const payload = await parseUpstreamJson(response, {
+        maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES,
+        tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试",
+    });
     const data = Array.isArray(payload.data) ? payload.data : [];
     const mimeType = imageOutputFormatMimeType(input.imageOutputFormat);
     return data.map((item) => (typeof item?.b64_json === "string" ? base64ImageDataUrl(item.b64_json, mimeType) : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
@@ -1001,7 +1243,11 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
 async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal) {
     if (!hasUuAsyncTask(input)) {
         const runtimeInput = await materializeImageInput(input);
-        const requestOptions = buildUuAsyncImageRequest({ size: input.size, quality: input.quality, referenceCount: runtimeInput.references.length });
+        const requestOptions = buildUuAsyncImageRequest({
+            size: input.size,
+            quality: input.quality,
+            referenceCount: runtimeInput.references.length,
+        });
         const form = new FormData();
         form.set("model", input.model);
         form.set("mode", requestOptions.mode);
@@ -1012,13 +1258,26 @@ async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, inp
 
         const response = await upstreamFetch(
             buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations/async"),
-            { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Idempotency-Key": randomUUID() }, body: form, signal },
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    "Idempotency-Key": randomUUID(),
+                },
+                body: form,
+                signal,
+            },
             true,
             UU_ASYNC_REQUEST_TIMEOUT_MS,
         );
         const task = readUuAsyncTask(await parseUpstreamJson(response));
         if (!task.taskId) throw new Error(task.message || "UU 异步任务创建成功，但没有返回任务 ID");
-        input.upstream = { provider: "uu-image", taskId: task.taskId, expiresAt: task.expiresAt, status: task.status };
+        input.upstream = {
+            provider: "uu-image",
+            taskId: task.taskId,
+            expiresAt: task.expiresAt,
+            status: task.status,
+        };
         await imageQueue.touch(job.id);
     }
     return pollUuImageTask(channel, apiKey, input, signal);
@@ -1060,7 +1319,9 @@ async function cancelUuImageTask(input: ImageJobInput) {
     await response.body?.cancel();
 }
 
-function hasUuAsyncTask(input: ImageJobInput): input is ImageJobInput & { upstream: NonNullable<ImageJobInput["upstream"]> } {
+function hasUuAsyncTask(input: ImageJobInput): input is ImageJobInput & {
+    upstream: NonNullable<ImageJobInput["upstream"]>;
+} {
     return input.upstream?.provider === "uu-image" && Boolean(input.upstream.taskId);
 }
 
@@ -1090,33 +1351,48 @@ async function generateGeminiImages(channel: ChannelRecord, apiKey: string, inpu
     const outputs = await Promise.all(
         Array.from({ length: input.count }, async () => {
             return geminiImageSemaphore.run(signal, async () => {
-            const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
-            input.references.forEach((dataUrl) => {
-                const parsed = parseDataUrl(dataUrl);
-                parts.push({ inlineData: { mimeType: parsed.mimeType, data: parsed.base64 } });
-            });
-            const image: Record<string, string> = {};
-            if (input.size && input.size !== "auto") image.aspectRatio = normalizeAspectRatio(input.size);
-            if (input.quality && input.quality !== "auto") image.imageSize = ({ low: "1K", medium: "2K", high: "4K" } as Record<string, string>)[input.quality] || input.quality;
-            const response = await upstreamFetch(
-                buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(input.model.replace(/^models\//, ""))}:generateContent`),
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey, "Idempotency-Key": randomUUID() },
-                    body: JSON.stringify({ contents: [{ role: "user", parts }], generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...(Object.keys(image).length ? { responseFormat: { image } } : {}) } }),
-                    signal,
-                },
-                true,
-            );
-            const payload = await parseUpstreamJson(response, { maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES, tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试" });
-            return (Array.isArray(payload.candidates) ? payload.candidates : [])
-                .flatMap((candidate) => candidate?.content?.parts || [])
-                .map((part) => {
-                    const inline = part?.inlineData || part?.inline_data;
-                    if (inline?.data) return `data:${inline.mimeType || inline.mime_type || "image/png"};base64,${inline.data}`;
-                    return part?.fileData?.fileUri || "";
-                })
-                .filter(Boolean);
+                const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
+                input.references.forEach((dataUrl) => {
+                    const parsed = parseDataUrl(dataUrl);
+                    parts.push({
+                        inlineData: { mimeType: parsed.mimeType, data: parsed.base64 },
+                    });
+                });
+                const image: Record<string, string> = {};
+                if (input.size && input.size !== "auto") image.aspectRatio = normalizeAspectRatio(input.size);
+                if (input.quality && input.quality !== "auto") image.imageSize = ({ low: "1K", medium: "2K", high: "4K" } as Record<string, string>)[input.quality] || input.quality;
+                const response = await upstreamFetch(
+                    buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(input.model.replace(/^models\//, ""))}:generateContent`),
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "x-goog-api-key": apiKey,
+                            "Idempotency-Key": randomUUID(),
+                        },
+                        body: JSON.stringify({
+                            contents: [{ role: "user", parts }],
+                            generationConfig: {
+                                responseModalities: ["TEXT", "IMAGE"],
+                                ...(Object.keys(image).length ? { responseFormat: { image } } : {}),
+                            },
+                        }),
+                        signal,
+                    },
+                    true,
+                );
+                const payload = await parseUpstreamJson(response, {
+                    maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES,
+                    tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试",
+                });
+                return (Array.isArray(payload.candidates) ? payload.candidates : [])
+                    .flatMap((candidate) => candidate?.content?.parts || [])
+                    .map((part) => {
+                        const inline = part?.inlineData || part?.inline_data;
+                        if (inline?.data) return `data:${inline.mimeType || inline.mime_type || "image/png"};base64,${inline.data}`;
+                        return part?.fileData?.fileUri || "";
+                    })
+                    .filter(Boolean);
             });
         }),
     );
@@ -1153,7 +1429,14 @@ async function persistJobImage(userId: string, jobId: string, value: string, dur
         throw abortError(signal);
     }
     const dimensions = readImageDimensions(bytes, mimeType);
-    return { id: randomUUID(), dataUrl: `/api/job-files/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`, bytes: bytes.byteLength, durationMs, mimeType, ...(dimensions || {}) };
+    return {
+        id: randomUUID(),
+        dataUrl: `/api/job-files/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`,
+        bytes: bytes.byteLength,
+        durationMs,
+        mimeType,
+        ...(dimensions || {}),
+    };
 }
 
 function serveJobFile(session: SessionPayload, jobId: string, filename: string) {
@@ -1162,7 +1445,12 @@ function serveJobFile(session: SessionPayload, jobId: string, filename: string) 
     const path = join(JOB_FILE_ROOT, safeSegment(session.userId), safeSegment(jobId), safeName);
     const file = Bun.file(path);
     if (!existsSync(path)) throw new HttpError(404, "图片不存在");
-    return new Response(file, { headers: { "Content-Type": file.type || "application/octet-stream", "Cache-Control": "private, max-age=31536000, immutable" } });
+    return new Response(file, {
+        headers: {
+            "Content-Type": file.type || "application/octet-stream",
+            "Cache-Control": "private, max-age=31536000, immutable",
+        },
+    });
 }
 
 async function proxyAiRequest(request: Request, session: SessionPayload, channelId: string, protocol: ProviderProtocol, path: string, requestId: string) {
@@ -1193,7 +1481,10 @@ async function proxyAiRequest(request: Request, session: SessionPayload, channel
     }
     responseHeaders.set("x-request-id", requestId);
     responseHeaders.set("x-upstream-status", String(response.status));
-    return new Response(response.body, { status: response.status, headers: responseHeaders });
+    return new Response(response.body, {
+        status: response.status,
+        headers: responseHeaders,
+    });
 }
 
 function assertAllowedProxyRequest(method: string, protocol: ProviderProtocol, path: string) {
@@ -1202,9 +1493,10 @@ function assertAllowedProxyRequest(method: string, protocol: ProviderProtocol, p
     const openAiReadPath = /^\/(?:models(?:\/[^/]+)?|videos\/[^/]+(?:\/content)?|contents\/generations\/tasks(?:\/[^/]+)?)$/;
     const openAiWritePath = /^\/(?:audio\/speech|videos|contents\/generations\/tasks)$/;
     const geminiReadPath = /^\/models(?:\/[^/]+)?$/;
-    const allowed = protocol === "gemini"
-        ? ["GET", "HEAD"].includes(normalizedMethod) && geminiReadPath.test(normalizedPath)
-        : (["GET", "HEAD"].includes(normalizedMethod) && openAiReadPath.test(normalizedPath)) || (normalizedMethod === "POST" && openAiWritePath.test(normalizedPath));
+    const allowed =
+        protocol === "gemini"
+            ? ["GET", "HEAD"].includes(normalizedMethod) && geminiReadPath.test(normalizedPath)
+            : (["GET", "HEAD"].includes(normalizedMethod) && openAiReadPath.test(normalizedPath)) || (normalizedMethod === "POST" && openAiWritePath.test(normalizedPath));
     if (!allowed) throw new HttpError(403, "该渠道请求必须通过受控任务接口执行");
 }
 
@@ -1215,7 +1507,11 @@ async function readProxyRequestModel(contentType: string, body: Uint8Array) {
             const payload = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
             model = String(payload.model || "").trim();
         } else if (contentType.includes("multipart/form-data") || contentType.includes("application/x-www-form-urlencoded")) {
-            const form = await new Request("http://localhost", { method: "POST", headers: { "Content-Type": contentType }, body }).formData();
+            const form = await new Request("http://localhost", {
+                method: "POST",
+                headers: { "Content-Type": contentType },
+                body,
+            }).formData();
             model = String(form.get("model") || "").trim();
         } else {
             throw new HttpError(400, "代理请求格式不受支持");
@@ -1235,14 +1531,38 @@ function assertPlatformModelAllowed(channelId: string, model: string, capability
 }
 
 async function saveProject(request: Request, session: SessionPayload, id: string) {
-    const body = await readJson<{ project?: Record<string, unknown>; revision?: number }>(request, 8 * 1024 * 1024);
+    const body = await readJson<{
+        project?: Record<string, unknown>;
+        revision?: number;
+    }>(request, 8 * 1024 * 1024);
     if (!isValidProjectPayload(body.project, id)) throw new HttpError(400, "项目数据无效");
     const projects = (state.projects[session.userId] ||= {});
     const tombstone = state.projectTombstones[session.userId]?.[id];
-    if (tombstone) return json({ error: { message: "画布已删除，请新建画布后继续编辑", code: "PROJECT_DELETED" }, tombstone }, 409);
+    if (tombstone)
+        return json(
+            {
+                error: {
+                    message: "画布已删除，请新建画布后继续编辑",
+                    code: "PROJECT_DELETED",
+                },
+                tombstone,
+            },
+            409,
+        );
     const current = projects[id];
-    if (current && Number(body.revision) !== current.revision) return json({ error: { message: "项目已在其他标签页更新", code: "REVISION_CONFLICT" }, current }, 409);
-    const next = { project: body.project, revision: (current?.revision || 0) + 1, updatedAt: Date.now() };
+    if (current && Number(body.revision) !== current.revision)
+        return json(
+            {
+                error: { message: "项目已在其他标签页更新", code: "REVISION_CONFLICT" },
+                current,
+            },
+            409,
+        );
+    const next = {
+        project: body.project,
+        revision: (current?.revision || 0) + 1,
+        updatedAt: Date.now(),
+    };
     projects[id] = next;
     appDatabase.saveProject(session.userId, id, next);
     return json(next);
@@ -1252,11 +1572,21 @@ function deleteProject(url: URL, session: SessionPayload, id: string) {
     const projects = state.projects[session.userId];
     const current = projects?.[id];
     const requestedRevision = Number(url.searchParams.get("revision") || 0);
-    if (current && requestedRevision && requestedRevision !== current.revision) return json({ error: { message: "画布已在其他位置更新", code: "REVISION_CONFLICT" }, current }, 409);
+    if (current && requestedRevision && requestedRevision !== current.revision)
+        return json(
+            {
+                error: { message: "画布已在其他位置更新", code: "REVISION_CONFLICT" },
+                current,
+            },
+            409,
+        );
     if (projects) delete projects[id];
     const tombstones = (state.projectTombstones[session.userId] ||= {});
     const previous = tombstones[id];
-    tombstones[id] = { revision: Math.max(current?.revision || 0, previous?.revision || 0) + 1, deletedAt: Date.now() };
+    tombstones[id] = {
+        revision: Math.max(current?.revision || 0, previous?.revision || 0) + 1,
+        deletedAt: Date.now(),
+    };
     appDatabase.deleteProjectWithTombstone(session.userId, id, tombstones[id]);
     return new Response(null, { status: 204 });
 }
@@ -1325,15 +1655,22 @@ async function proxyPromptAsset(request: Request, url: URL, requestId: string) {
     try {
         return await promptProxySemaphore.run(request.signal, async () => {
             if (isFreshPromptCache(cachePath)) return promptCachedResponse(cachePath, requestId);
-            const response = await upstreamFetch(target, { headers: { "User-Agent": "InfiniteCanvas/1.0" }, signal: request.signal }, false, PROMPT_PROXY_TIMEOUT_MS);
+            const response = await upstreamFetch(
+                target,
+                {
+                    headers: { "User-Agent": "InfiniteCanvas/1.0" },
+                    signal: request.signal,
+                },
+                false,
+                PROMPT_PROXY_TIMEOUT_MS,
+            );
             if (!response.ok) throw new HttpError(response.status, `提示词资源加载失败：${response.status}`);
             const bytes = await readResponseBytes(response, MAX_PROMPT_PROXY_BYTES, "提示词资源过大");
             const contentType = promptAssetContentType(response.headers.get("content-type"), bytes);
-            await Promise.all([
-                Bun.write(cachePath, bytes),
-                Bun.write(`${cachePath}.meta.json`, JSON.stringify({ contentType })),
-            ]);
-            return new Response(bytes, { headers: promptCacheHeaders(contentType, requestId) });
+            await Promise.all([Bun.write(cachePath, bytes), Bun.write(`${cachePath}.meta.json`, JSON.stringify({ contentType }))]);
+            return new Response(bytes, {
+                headers: promptCacheHeaders(contentType, requestId),
+            });
         });
     } catch (error) {
         if (existsSync(cachePath)) return promptCachedResponse(cachePath, requestId, true);
@@ -1348,7 +1685,9 @@ function isFreshPromptCache(path: string) {
 async function promptCachedResponse(path: string, requestId: string, stale = false) {
     const file = Bun.file(path);
     const contentType = await promptCacheContentType(path, file);
-    return new Response(file, { headers: promptCacheHeaders(contentType, requestId, stale) });
+    return new Response(file, {
+        headers: promptCacheHeaders(contentType, requestId, stale),
+    });
 }
 
 function promptCacheHeaders(contentType: string, requestId: string, stale = false) {
@@ -1361,7 +1700,9 @@ function promptCacheHeaders(contentType: string, requestId: string, stale = fals
 
 async function promptCacheContentType(path: string, file: Blob) {
     try {
-        const metadata = (await Bun.file(`${path}.meta.json`).json()) as { contentType?: unknown };
+        const metadata = (await Bun.file(`${path}.meta.json`).json()) as {
+            contentType?: unknown;
+        };
         const contentType = String(metadata.contentType || "").toLowerCase();
         if (PROMPT_IMAGE_MIME_TYPES.has(contentType)) return contentType;
     } catch {
@@ -1373,7 +1714,10 @@ async function promptCacheContentType(path: string, file: Blob) {
 function promptAssetContentType(header: string | null, bytes: Uint8Array) {
     const detected = detectImageMimeFromBytes(bytes);
     if (detected) return detected;
-    const declared = String(header || "").split(";", 1)[0].trim().toLowerCase();
+    const declared = String(header || "")
+        .split(";", 1)[0]
+        .trim()
+        .toLowerCase();
     return PROMPT_IMAGE_MIME_TYPES.has(declared) ? declared : "application/octet-stream";
 }
 
@@ -1398,12 +1742,19 @@ function promptProxyTarget(pathname: string, search: string) {
 async function serveStatic(pathname: string, method: string) {
     if (!["GET", "HEAD"].includes(method)) return new Response(null, { status: 405 });
     const decoded = decodeURIComponent(pathname);
-    const relative = normalize(decoded).replace(/^(\.\.[/\\])+/, "").replace(/^[/\\]+/, "");
+    const relative = normalize(decoded)
+        .replace(/^(\.\.[/\\])+/, "")
+        .replace(/^[/\\]+/, "");
     let path = resolve(WEB_ROOT, relative || "index.html");
     if (!(path === WEB_ROOT || path.startsWith(`${WEB_ROOT}${sep}`)) || !existsSync(path) || Bun.file(path).size === 0) path = join(WEB_ROOT, "index.html");
     const file = Bun.file(path);
     const immutable = /\.[a-f0-9]{8,}\.(?:js|css|woff2?|svg)$/i.test(path);
-    return new Response(method === "HEAD" ? null : file, { headers: { "Content-Type": file.type || contentType(path), "Cache-Control": immutable ? "public, max-age=31536000, immutable" : path.endsWith("index.html") ? "no-cache" : "public, max-age=3600" } });
+    return new Response(method === "HEAD" ? null : file, {
+        headers: {
+            "Content-Type": file.type || contentType(path),
+            "Cache-Control": immutable ? "public, max-age=31536000, immutable" : path.endsWith("index.html") ? "no-cache" : "public, max-age=3600",
+        },
+    });
 }
 
 function runtimeConfigResponse() {
@@ -1412,7 +1763,12 @@ function runtimeConfigResponse() {
         ANALYTICS_BAIDU_ID: sanitizeId(process.env.ANALYTICS_BAIDU_ID),
         PUBLIC_MODE: true,
     };
-    return new Response(`window.__RUNTIME_CONFIG__ = ${JSON.stringify(config)};`, { headers: { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store" } });
+    return new Response(`window.__RUNTIME_CONFIG__ = ${JSON.stringify(config)};`, {
+        headers: {
+            "Content-Type": "application/javascript; charset=utf-8",
+            "Cache-Control": "no-store",
+        },
+    });
 }
 
 function withSecurityHeaders(response: Response, requestId: string) {
@@ -1428,20 +1784,32 @@ function withSecurityHeaders(response: Response, requestId: string) {
         "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://www.googletagmanager.com https://hm.baidu.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' https://www.google-analytics.com https://hm.baidu.com; font-src 'self' data:; worker-src 'self' blob:; manifest-src 'self'",
     );
     if (secureCookies) headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
-    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+    });
 }
 
 function errorResponse(error: unknown, requestId: string) {
     const status =
         error instanceof HttpError || error instanceof CultivationError
             ? error.status
-            : error instanceof AssetLibraryInputError
+            : error instanceof AssetLibraryInputError || error instanceof GenerationHistoryInputError
               ? 400
               : error instanceof DOMException && error.name === "TimeoutError"
                 ? 504
                 : 500;
     const message = error instanceof Error ? error.message : "服务器内部错误";
-    console.error(JSON.stringify({ event: "request_error", requestId, status, message, stack: error instanceof Error ? error.stack : undefined }));
+    console.error(
+        JSON.stringify({
+            event: "request_error",
+            requestId,
+            status,
+            message,
+            stack: error instanceof Error ? error.stack : undefined,
+        }),
+    );
     return json({ error: { message }, requestId }, status);
 }
 
@@ -1636,9 +2004,20 @@ function cleanupJobFilesFor(userId: string, jobId: string) {
     const safeJobId = safeSegment(jobId);
     for (const root of [JOB_FILE_ROOT, join(DATA_DIR, "job-references")]) {
         try {
-            rmSync(join(root, safeUserId, safeJobId), { recursive: true, force: true, maxRetries: 2, retryDelay: 25 });
+            rmSync(join(root, safeUserId, safeJobId), {
+                recursive: true,
+                force: true,
+                maxRetries: 2,
+                retryDelay: 25,
+            });
         } catch (error) {
-            console.warn(JSON.stringify({ event: "job_file_cleanup_failed", jobId, message: error instanceof Error ? error.message : "unknown error" }));
+            console.warn(
+                JSON.stringify({
+                    event: "job_file_cleanup_failed",
+                    jobId,
+                    message: error instanceof Error ? error.message : "unknown error",
+                }),
+            );
         }
     }
 }
@@ -1676,11 +2055,24 @@ function summarizeJobs() {
 
 function logRequest(request: Request, response: Response, requestId: string, durationMs: number) {
     const url = new URL(request.url);
-    console.info(JSON.stringify({ event: "http_request", requestId, method: request.method, path: url.pathname, status: response.status, durationMs }));
+    console.info(
+        JSON.stringify({
+            event: "http_request",
+            requestId,
+            method: request.method,
+            path: url.pathname,
+            status: response.status,
+            durationMs,
+        }),
+    );
 }
 
 function normalizeDisplayName(value: unknown) {
-    const displayName = String(value || "").normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, 32);
+    const displayName = String(value || "")
+        .normalize("NFKC")
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, 32);
     if (displayName.length < 2) throw new HttpError(400, "昵称至少 2 个字符");
     if (/\p{C}/u.test(displayName)) throw new HttpError(400, "昵称不能包含控制字符");
     return displayName;
@@ -1731,7 +2123,12 @@ function normalizeJobSource(value: unknown): ImageJobInput["source"] {
     const label = optionalString(input.label);
     const fields = [route, projectId, nodeId, label];
     if (fields.some((item) => item && item.length > 180)) throw new HttpError(400, "任务来源信息过长");
-    return { ...(route ? { route } : {}), ...(projectId ? { projectId } : {}), ...(nodeId ? { nodeId } : {}), ...(label ? { label } : {}) };
+    return {
+        ...(route ? { route } : {}),
+        ...(projectId ? { projectId } : {}),
+        ...(nodeId ? { nodeId } : {}),
+        ...(label ? { label } : {}),
+    };
 }
 
 function isValidProjectPayload(value: unknown, id: string): value is Record<string, unknown> {
@@ -1755,7 +2152,9 @@ function isValidProjectPayload(value: unknown, id: string): value is Record<stri
 }
 
 function normalizeAssetPrefix(value: FormDataEntryValue | null) {
-    const prefix = String(value || "file").trim().toLowerCase();
+    const prefix = String(value || "file")
+        .trim()
+        .toLowerCase();
     if (!/^[a-z][a-z0-9-]{0,31}$/.test(prefix)) throw new HttpError(400, "素材类型无效");
     return prefix;
 }
@@ -1784,7 +2183,9 @@ function parseDataUrl(value: string) {
 
 function dataUrlBlob(value: string) {
     const parsed = parseDataUrl(value);
-    return new Blob([Buffer.from(parsed.base64, "base64")], { type: parsed.mimeType });
+    return new Blob([Buffer.from(parsed.base64, "base64")], {
+        type: parsed.mimeType,
+    });
 }
 
 function normalizeAspectRatio(value: string) {
@@ -1794,7 +2195,16 @@ function normalizeAspectRatio(value: string) {
 }
 
 function imageExtension(mimeType: string) {
-    return ({ "image/jpeg": ".jpg", "image/webp": ".webp", "image/avif": ".avif", "image/gif": ".gif" } as Record<string, string>)[mimeType] || ".png";
+    return (
+        (
+            {
+                "image/jpeg": ".jpg",
+                "image/webp": ".webp",
+                "image/avif": ".avif",
+                "image/gif": ".gif",
+            } as Record<string, string>
+        )[mimeType] || ".png"
+    );
 }
 
 function safeSegment(value: string) {
@@ -1806,7 +2216,17 @@ function sanitizeId(value: string | undefined) {
 }
 
 function contentType(path: string) {
-    return ({ ".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml" } as Record<string, string>)[extname(path)] || "application/octet-stream";
+    return (
+        (
+            {
+                ".html": "text/html; charset=utf-8",
+                ".js": "application/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8",
+                ".json": "application/json; charset=utf-8",
+                ".svg": "image/svg+xml",
+            } as Record<string, string>
+        )[extname(path)] || "application/octet-stream"
+    );
 }
 
 function positiveInt(value: string | undefined, fallback: number) {

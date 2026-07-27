@@ -3,10 +3,12 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 
 import { nanoid } from "nanoid";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { runWithConcurrency } from "@/lib/async-pool";
 import { localForageStorage } from "@/lib/localforage-storage";
 import { deleteServerAssetLibraryItem, fetchServerAssetLibrary, replaceServerAssetLibrary, upsertServerAssetLibraryItem } from "@/services/server-api";
 import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { mergeAssetRecords, planAssetLibraryHydration } from "./asset-library-sync";
 
 export type AssetKind = "text" | "image" | "video";
 export type TextAsset = AssetBase<"text"> & { data: { content: string } };
@@ -31,6 +33,7 @@ type AssetStore = {
     hydrated: boolean;
     ownerUserId: string;
     serverHydrated: boolean;
+    migratedUserIds: string[];
     assets: Asset[];
     addAsset: (asset: Omit<Asset, "id" | "createdAt" | "updatedAt">) => string;
     updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
@@ -42,6 +45,7 @@ type AssetStore = {
 };
 
 const ASSET_STORE_KEY = "infinite-canvas:asset_store";
+const ASSET_MIGRATION_CONCURRENCY = 4;
 let assetLibraryMutation = Promise.resolve();
 let assetHydrationVersion = 0;
 
@@ -79,6 +83,7 @@ export const useAssetStore = create<AssetStore>()(
             hydrated: false,
             ownerUserId: "",
             serverHydrated: false,
+            migratedUserIds: [],
             assets: [],
             addAsset: (asset) => {
                 const now = new Date().toISOString();
@@ -125,25 +130,31 @@ export const useAssetStore = create<AssetStore>()(
                 const requestVersion = ++assetHydrationVersion;
                 const canMigrateLocal = !current.ownerUserId || current.ownerUserId === userId;
                 const localAssets = canMigrateLocal ? current.assets : [];
+                const localAlreadyMigrated = current.migratedUserIds.includes(userId);
                 if (!canMigrateLocal) set({ assets: [], ownerUserId: userId, serverHydrated: false });
 
                 const remote = await fetchServerAssetLibrary();
                 if (requestVersion !== assetHydrationVersion) return;
-                if (remote.initialized) {
-                    const assets = await Promise.all(remote.items.map(hydrateServerAsset));
-                    if (requestVersion === assetHydrationVersion) set({ assets, ownerUserId: userId, serverHydrated: true });
-                    return;
-                }
-
-                const prepared = await Promise.all(localAssets.map(prepareAssetForServer));
+                const remoteAssets = await Promise.all(remote.items.map(hydrateServerAsset));
+                const migration = localAlreadyMigrated ? { prepared: [] as Asset[], failed: [] as Asset[] } : await prepareAssetsForServer(localAssets);
                 if (requestVersion !== assetHydrationVersion) return;
-                if (!prepared.length) {
-                    set({ assets: [], ownerUserId: userId, serverHydrated: true });
-                    return;
+                const plan = planAssetLibraryHydration({
+                    local: migration.prepared,
+                    remote: remoteAssets,
+                    remoteInitialized: remote.initialized,
+                    localAlreadyMigrated,
+                });
+                const serverAssets = plan.writeServer ? await replaceServerAssetLibrary(plan.assets).then((result) => Promise.all(result.items.map(hydrateServerAsset))) : plan.assets;
+                const assets = mergeAssetRecords(migration.failed, serverAssets);
+                if (requestVersion === assetHydrationVersion) {
+                    set((state) => ({
+                        assets,
+                        ownerUserId: userId,
+                        serverHydrated: true,
+                        migratedUserIds: migration.failed.length || state.migratedUserIds.includes(userId) ? state.migratedUserIds : [...state.migratedUserIds, userId],
+                    }));
+                    if (migration.failed.length) reportAssetSyncError(new Error(`${migration.failed.length} 项旧资产暂未迁移，已保留在当前浏览器，下次打开时会继续尝试`));
                 }
-                const migrated = await replaceServerAssetLibrary(prepared, true);
-                const assets = await Promise.all(migrated.items.map(hydrateServerAsset));
-                if (requestVersion === assetHydrationVersion) set({ assets, ownerUserId: userId, serverHydrated: true });
             },
             cleanupImages: (extra) => {
                 void extra;
@@ -151,7 +162,7 @@ export const useAssetStore = create<AssetStore>()(
         }),
         {
             name: ASSET_STORE_KEY,
-            version: 2,
+            version: 3,
             storage: assetStorage,
             migrate: (persisted) => {
                 const value = (persisted || {}) as Partial<AssetStore>;
@@ -159,10 +170,11 @@ export const useAssetStore = create<AssetStore>()(
                     ...value,
                     ownerUserId: typeof value.ownerUserId === "string" ? value.ownerUserId : "",
                     serverHydrated: false,
+                    migratedUserIds: Array.isArray(value.migratedUserIds) ? value.migratedUserIds.filter((item): item is string => typeof item === "string") : [],
                     assets: Array.isArray(value.assets) ? value.assets : [],
                 } as AssetStore;
             },
-            partialize: (state) => ({ ownerUserId: state.ownerUserId, assets: state.assets }) as StorageValue<AssetStore>["state"],
+            partialize: (state) => ({ ownerUserId: state.ownerUserId, migratedUserIds: state.migratedUserIds, assets: state.assets }) as StorageValue<AssetStore>["state"],
             onRehydrateStorage: () => () => {
                 useAssetStore.setState({ hydrated: true });
             },
@@ -230,6 +242,20 @@ async function prepareAssetForServer(asset: Asset): Promise<Asset> {
         };
     }
     return asset;
+}
+
+async function prepareAssetsForServer(assets: Asset[]) {
+    const results = await runWithConcurrency(assets, ASSET_MIGRATION_CONCURRENCY, async (asset) => {
+        try {
+            return { asset: await prepareAssetForServer(asset), failed: false as const };
+        } catch {
+            return { asset, failed: true as const };
+        }
+    });
+    return {
+        prepared: results.filter((result) => !result.failed).map((result) => result.asset),
+        failed: results.filter((result) => result.failed).map((result) => result.asset),
+    };
 }
 
 function reportAssetSyncError(error: unknown) {

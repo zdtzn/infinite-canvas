@@ -42,8 +42,16 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             const detail = (event as CustomEvent<{ message?: string }>).detail;
             message.error(detail?.message || "个人资产同步失败");
         };
+        const handleHistorySyncError = (event: Event) => {
+            const detail = (event as CustomEvent<{ message?: string }>).detail;
+            message.error(detail?.message || "生成记录同步失败");
+        };
         window.addEventListener("canvas:asset-sync-error", handleAssetSyncError);
-        return () => window.removeEventListener("canvas:asset-sync-error", handleAssetSyncError);
+        window.addEventListener("canvas:generation-history-sync-error", handleHistorySyncError);
+        return () => {
+            window.removeEventListener("canvas:asset-sync-error", handleAssetSyncError);
+            window.removeEventListener("canvas:generation-history-sync-error", handleHistorySyncError);
+        };
     }, [message]);
 
     useEffect(() => {

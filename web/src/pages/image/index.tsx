@@ -16,7 +16,7 @@ import { resolveModelChannel, useConfigStore, useEffectiveConfig, type AiConfig 
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { convertImageOutput, deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { convertImageOutput, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { clearImageGenerationJob, getImageGenerationSnapshot, replaceImageGenerationResult, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -25,10 +25,18 @@ import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialGenerationCue, useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationGenerationBlockReason, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, persistGenerationHistoryRecords, synchronizeGenerationHistory } from "@/services/generation-history";
+import { mergeServerJobsIntoImageHistory } from "@/services/image-generation-history";
+import { fetchServerJobs, removeServerJob, type ServerJob } from "@/services/server-api";
+import { useUserStore } from "@/stores/use-user-store";
 
 type GenerationLog = {
     id: string;
     createdAt: number;
+    updatedAt?: number;
+    ownerUserId?: string;
+    serverJobIds?: string[];
     title: string;
     prompt: string;
     time: string;
@@ -50,7 +58,6 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 
@@ -60,6 +67,8 @@ export default function ImagePage() {
     const { data: cultivationProfile } = useCultivationProfile();
     const { generationSuccessMessage, isImperialMode } = useImperialMode();
     const imperialGenerationCue = useImperialGenerationCue();
+    const authenticatedUserId = useUserStore((state) => state.user?.id || "");
+    const historyUserId = PUBLIC_MODE ? authenticatedUserId : "local";
     const fileInputRef = useRef<HTMLInputElement>(null);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -111,7 +120,7 @@ export default function ImagePage() {
 
     useEffect(() => {
         void refreshLogs();
-    }, []);
+    }, [historyUserId]);
 
     useEffect(() => {
         if (!generationJob) return;
@@ -256,9 +265,7 @@ export default function ImagePage() {
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
         const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
-        const stored = image.storageKey
-            ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
-            : await uploadImage(image.dataUrl, { outputFormat });
+        const stored = image.storageKey ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" } : await uploadImage(image.dataUrl, { outputFormat });
         setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.${imageFileExtension(stored.mimeType)}`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
         message.success("已加入参考图");
     };
@@ -270,10 +277,9 @@ export default function ImagePage() {
         try {
             // Generated results are already persisted by the job flow. Reusing that asset avoids a
             // duplicate upload and prevents upstream MIME headers from affecting asset registration.
-            const stored =
-                image.storageKey
-                    ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
-                    : await uploadImage(image.dataUrl, { outputFormat: previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat });
+            const stored = image.storageKey
+                ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
+                : await uploadImage(image.dataUrl, { outputFormat: previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat });
             addAsset({
                 kind: "image",
                 title: `生成结果 ${index + 1}`,
@@ -317,8 +323,9 @@ export default function ImagePage() {
     };
 
     const deleteSelectedLogs = () => {
-        const imageKeys = logs.filter((log) => selectedLogIds.includes(log.id)).flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
+        const selected = logs.filter((log) => selectedLogIds.includes(log.id));
+        const serverJobIds = Array.from(new Set(selected.flatMap((log) => log.serverJobIds || [])));
+        void Promise.allSettled([deleteGenerationHistoryRecords({ kind: "image", userId: historyUserId, store: logStore }, selectedLogIds), ...serverJobIds.map(removeServerJob)]).then(refreshLogs);
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
         }
@@ -327,10 +334,25 @@ export default function ImagePage() {
     };
 
     const saveLog = (log: GenerationLog) => {
-        void logStore.setItem(log.id, serializeLog(log)).then(refreshLogs);
+        void persistGenerationHistoryRecord({ kind: "image", userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareImageLogForServer }, { ...serializeLog(log), updatedAt: Date.now() }).then(refreshLogs);
     };
 
-    const refreshLogs = async () => setLogs(await readStoredLogs());
+    const refreshLogs = async () => {
+        const options = { kind: "image" as const, userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareImageLogForServer };
+        let nextLogs = await synchronizeGenerationHistory(options);
+        if (PUBLIC_MODE && historyUserId) {
+            try {
+                const jobs = (await fetchServerJobs()).items;
+                const merged = mergeServerJobsIntoImageHistory(nextLogs, jobs, buildLogFromServerJob);
+                if (imageHistoryChanged(nextLogs, merged)) nextLogs = await persistGenerationHistoryRecords(options, merged);
+                else nextLogs = merged;
+            } catch {
+                // The account history remains usable even if task recovery is temporarily unavailable.
+            }
+        }
+        setLogs(nextLogs);
+        return nextLogs;
+    };
 
     const previewGenerationLog = async (log: GenerationLog) => {
         setPreviewLog(log);
@@ -543,9 +565,7 @@ export default function ImagePage() {
                                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
                             ) : cultivationProfile ? (
                                 <div className="mt-2 text-center text-xs text-stone-400">
-                                    {cultivationProfile.unlimited
-                                        ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量`
-                                        : `本次将占用 ${generationCount} 次 · ${quotaText(cultivationProfile.remainingToday, false)} · 失败自动退还`}
+                                    {cultivationProfile.unlimited ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量` : `本次将占用 ${generationCount} 次 · ${quotaText(cultivationProfile.remainingToday, false)} · 失败自动退还`}
                                 </div>
                             ) : null}
                         </div>
@@ -874,20 +894,6 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     );
 }
 
-async function readStoredLogs() {
-    if (typeof window === "undefined") return [];
-    try {
-        const values: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
-            values.push(value);
-        });
-        const logs = await Promise.all(values.map(normalizeLog));
-        return logs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    } catch {
-        return [];
-    }
-}
-
 async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
     const references = await Promise.all(
         (log.references || []).map(async (item) => ({
@@ -905,6 +911,9 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     return {
         id: log.id || nanoid(),
         createdAt: log.createdAt || Date.now(),
+        updatedAt: log.updatedAt || log.createdAt || Date.now(),
+        ownerUserId: log.ownerUserId,
+        serverJobIds: Array.from(new Set((log.serverJobIds || []).filter(Boolean))),
         title: log.title || log.model || "未命名",
         prompt: log.prompt || log.title || "",
         time: log.time || new Date().toLocaleString("zh-CN", { hour12: false }),
@@ -923,6 +932,32 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     };
 }
 
+async function prepareImageLogForServer(log: GenerationLog): Promise<GenerationLog> {
+    const references = await Promise.all(
+        log.references.map(async (item) => {
+            if (item.storageKey || !item.dataUrl) return item;
+            const stored = await uploadImage(item.dataUrl);
+            return { ...item, dataUrl: stored.url, storageKey: stored.storageKey, type: stored.mimeType };
+        }),
+    );
+    const images = await Promise.all(
+        log.images.map(async (image) => {
+            if (image.storageKey || !image.dataUrl) return image;
+            const stored = await uploadImage(image.dataUrl, { outputFormat: log.config.imageOutputFormat });
+            return {
+                ...image,
+                dataUrl: stored.url,
+                storageKey: stored.storageKey,
+                width: stored.width,
+                height: stored.height,
+                bytes: stored.bytes,
+                mimeType: stored.mimeType,
+            };
+        }),
+    );
+    return serializeLog({ ...log, references, images, thumbnails: [] });
+}
+
 function serializeLog(log: GenerationLog): GenerationLog {
     return {
         ...log,
@@ -930,6 +965,59 @@ function serializeLog(log: GenerationLog): GenerationLog {
         images: log.images.map((image) => ({ ...image, dataUrl: image.storageKey ? "" : image.dataUrl })),
         thumbnails: [],
     };
+}
+
+function buildLogFromServerJob(job: ServerJob): GenerationLog {
+    const images: GeneratedImage[] = (job.result?.images || []).map((image) => ({
+        id: image.id,
+        dataUrl: image.dataUrl,
+        durationMs: image.durationMs || job.result?.durationMs || 0,
+        width: image.width || 0,
+        height: image.height || 0,
+        bytes: image.bytes || 0,
+        mimeType: image.mimeType,
+        serverJobId: job.id,
+    }));
+    const config: GenerationLogConfig = {
+        model: job.model,
+        imageModel: job.model,
+        quality: job.quality || "",
+        imageQuality: job.imageQuality || "auto",
+        imageOutputFormat: job.imageOutputFormat || "auto",
+        size: job.size || "",
+        count: String(job.count || images.length || 1),
+    };
+    return {
+        id: `server-job:${job.id}`,
+        createdAt: job.createdAt,
+        updatedAt: job.finishedAt || job.createdAt,
+        serverJobIds: [job.id],
+        title: job.prompt.slice(0, 12) || "未命名",
+        prompt: job.prompt,
+        time: new Date(job.createdAt).toLocaleString("zh-CN", { hour12: false }),
+        model: job.model,
+        config,
+        references: [],
+        durationMs: job.result?.durationMs || Math.max(0, Number(job.finishedAt || job.createdAt) - Number(job.startedAt || job.createdAt)),
+        successCount: job.result?.successCount || 0,
+        failCount: job.result?.failCount || (job.status === "succeeded" ? 0 : job.count || 1),
+        imageCount: images.length,
+        size: config.size,
+        quality: config.quality,
+        status: job.status === "succeeded" ? "成功" : "失败",
+        images,
+        thumbnails: images.map((image) => image.dataUrl),
+    };
+}
+
+function imageHistoryChanged(previous: GenerationLog[], next: GenerationLog[]) {
+    if (previous.length !== next.length) return true;
+    const previousById = new Map(previous.map((log) => [log.id, log]));
+    return next.some((log) => {
+        const current = previousById.get(log.id);
+        if (!current) return true;
+        return [...(current.serverJobIds || [])].sort().join("|") !== [...(log.serverJobIds || [])].sort().join("|");
+    });
 }
 
 function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
@@ -999,6 +1087,8 @@ function buildLog({
     return {
         id: nanoid(),
         createdAt: Date.now(),
+        updatedAt: Date.now(),
+        serverJobIds: Array.from(new Set(images.map((image) => image.serverJobId).filter((id): id is string => Boolean(id)))),
         title: prompt.slice(0, 12) || "未命名",
         prompt,
         time: new Date().toLocaleString("zh-CN", { hour12: false }),

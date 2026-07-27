@@ -32,7 +32,8 @@ describe("SQLite application database", () => {
   test("migrates legacy state atomically and stores reference images as files", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
-    const reference = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
+    const reference =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
     writeFileSync(
       join(dataDir, "state.json"),
       JSON.stringify({
@@ -258,13 +259,84 @@ describe("SQLite application database", () => {
     }
   });
 
+  test("persists generation history per user and media kind", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      const state = store.loadState();
+      state.users.alice = {
+        userId: "alice",
+        displayName: "Alice",
+        createdAt: 1,
+      };
+      state.users.bob = {
+        userId: "bob",
+        displayName: "Bob",
+        createdAt: 2,
+      };
+      store.saveState(state);
+
+      store.upsertGenerationHistoryItems("alice", "image", [
+        {
+          id: "history-a",
+          kind: "image",
+          payload: { id: "history-a", prompt: "Alice image" },
+          createdAt: 10,
+          updatedAt: 11,
+        },
+      ]);
+      store.upsertGenerationHistoryItems("alice", "video", [
+        {
+          id: "history-v",
+          kind: "video",
+          payload: { id: "history-v", prompt: "Alice video" },
+          createdAt: 12,
+          updatedAt: 13,
+        },
+      ]);
+      store.upsertGenerationHistoryItems("bob", "image", [
+        {
+          id: "history-b",
+          kind: "image",
+          payload: { id: "history-b", prompt: "Bob image" },
+          createdAt: 14,
+          updatedAt: 15,
+        },
+      ]);
+
+      expect(store.loadGenerationHistory("alice", "image")).toHaveLength(1);
+      expect(
+        store.loadGenerationHistory("alice", "video")[0].payload.prompt,
+      ).toBe("Alice video");
+      expect(
+        store.loadGenerationHistory("bob", "image")[0].payload.prompt,
+      ).toBe("Bob image");
+
+      store.deleteGenerationHistoryItem("alice", "image", "history-a");
+      expect(store.loadGenerationHistory("alice", "image")).toEqual([]);
+      expect(store.loadGenerationHistory("bob", "image")).toHaveLength(1);
+      expect(
+        store.raw
+          ?.query("SELECT 1 FROM schema_migrations WHERE version = 5")
+          .get(),
+      ).toBeTruthy();
+    } finally {
+      store.close();
+    }
+  });
+
   test("accepts state snapshots created before project tombstones existed", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
     const store = openAppDatabase({ dataDir });
     try {
-      const legacyState = store.loadState() as ReturnType<typeof store.loadState> & {
-        projectTombstones?: ReturnType<typeof store.loadState>["projectTombstones"];
+      const legacyState = store.loadState() as ReturnType<
+        typeof store.loadState
+      > & {
+        projectTombstones?: ReturnType<
+          typeof store.loadState
+        >["projectTombstones"];
       };
       delete legacyState.projectTombstones;
 
@@ -370,13 +442,7 @@ describe("SQLite application database", () => {
         1,
         "boundary_manual",
       );
-      insertRealm.run(
-        "realm-test-adept",
-        "test-adept",
-        "进境",
-        2,
-        "manual",
-      );
+      insertRealm.run("realm-test-adept", "test-adept", "进境", 2, "manual");
       const insertStage = database.query(
         "INSERT INTO realm_stages(id, realm_id, name, stage_order, required_xp, active) VALUES (?, ?, ?, ?, ?, 1)",
       );
@@ -387,20 +453,8 @@ describe("SQLite application database", () => {
         1,
         100,
       );
-      insertStage.run(
-        "stage-test-adept-1",
-        "realm-test-adept",
-        "一星",
-        2,
-        120,
-      );
-      insertStage.run(
-        "stage-test-adept-2",
-        "realm-test-adept",
-        "二星",
-        3,
-        200,
-      );
+      insertStage.run("stage-test-adept-1", "realm-test-adept", "一星", 2, 120);
+      insertStage.run("stage-test-adept-2", "realm-test-adept", "二星", 3, 200);
       database
         .query(
           "INSERT INTO users(user_id, display_name, is_admin, status, created_at) VALUES ('legacy-user', 'Legacy User', 0, 'NORMAL', 1)",
@@ -469,7 +523,8 @@ describe("SQLite application database", () => {
   test("fails closed and preserves the legacy state when the first SQLite migration fails", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
-    const reference = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
+    const reference =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
     writeFileSync(
       join(dataDir, "state.json"),
       JSON.stringify({
@@ -504,7 +559,9 @@ describe("SQLite application database", () => {
     writeFileSync(join(dataDir, "job-references"), "blocks directory creation");
 
     expect(() => openAppDatabase({ dataDir })).toThrow();
-    expect(JSON.parse(readFileSync(join(dataDir, "state.json"), "utf8"))).toMatchObject({ jobs: { job1: { input: { references: [reference] } } } });
+    expect(
+      JSON.parse(readFileSync(join(dataDir, "state.json"), "utf8")),
+    ).toMatchObject({ jobs: { job1: { input: { references: [reference] } } } });
     expect(existsSync(join(dataDir, "app.sqlite"))).toBe(false);
   });
 });

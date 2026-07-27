@@ -10,6 +10,7 @@ import type { ReferenceImage } from "@/types/image";
 
 export type GeneratedImage = {
     id: string;
+    serverJobId?: string;
     dataUrl: string;
     storageKey?: string;
     durationMs: number;
@@ -175,9 +176,16 @@ async function runGeneration(jobId: string, snapshot: ImageGenerationSnapshot, o
 async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGenerationSnapshot, slotRunner: SlotRunner = requestImageSlot) {
     try {
         const existingServerJobId = currentJob?.id === jobId ? currentJob.results[index]?.serverJobId : undefined;
-        const nextImage = existingServerJobId ? await restoreServerImage(existingServerJobId) : await slotRunner(snapshot, index, (serverJobId) => updateResult(jobId, index, { serverJobId }));
-        updateResult(jobId, index, { status: "success", image: nextImage });
-        return nextImage;
+        let serverJobId = existingServerJobId;
+        const nextImage = existingServerJobId
+            ? await restoreServerImage(existingServerJobId)
+            : await slotRunner(snapshot, index, (createdJobId) => {
+                  serverJobId = createdJobId;
+                  updateResult(jobId, index, { serverJobId: createdJobId });
+              });
+        const persistedImage = serverJobId ? { ...nextImage, serverJobId } : nextImage;
+        updateResult(jobId, index, { status: "success", image: persistedImage });
+        return persistedImage;
     } catch (error) {
         updateResult(jobId, index, { status: "failed", error: friendlyErrorMessage(error) });
         throw error;

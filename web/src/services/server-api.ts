@@ -23,6 +23,11 @@ export type ServerJob = {
     prompt: string;
     model: string;
     count: number;
+    channelId?: string;
+    quality?: string;
+    imageQuality?: string;
+    imageOutputFormat?: string;
+    size?: string;
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
     result?: { images: ServerJobImage[]; successCount: number; failCount: number; durationMs: number };
 };
@@ -191,6 +196,23 @@ export async function upsertServerAssetLibraryItem(item: Asset) {
 
 export async function deleteServerAssetLibraryItem(id: string) {
     await serverRequest(`/api/library-assets/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function fetchServerGenerationHistory(kind: "image" | "video") {
+    return serverRequest<{ items: Record<string, unknown>[] }>(`/api/generation-history/${kind}`, { timeoutMs: 20_000 });
+}
+
+export async function mergeServerGenerationHistory(kind: "image" | "video", items: Record<string, unknown>[]) {
+    return serverRequest<{ items: Record<string, unknown>[] }>(`/api/generation-history/${kind}`, { method: "PUT", body: { items }, timeoutMs: 30_000 });
+}
+
+export async function upsertServerGenerationHistoryItem(kind: "image" | "video", item: Record<string, unknown>) {
+    const id = String(item.id || "");
+    return serverRequest<{ item: Record<string, unknown> }>(`/api/generation-history/${kind}/${encodeURIComponent(id)}`, { method: "PUT", body: { item } });
+}
+
+export async function deleteServerGenerationHistoryItem(kind: "image" | "video", id: string) {
+    await serverRequest(`/api/generation-history/${kind}/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function uploadProfileAvatar(file: File) {

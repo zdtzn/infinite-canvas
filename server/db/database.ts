@@ -12,10 +12,12 @@ import { extname, join } from "node:path";
 
 import { decodeImageDataUrl } from "../lib/image-mime";
 import type {
+  GenerationHistoryKind,
   ImageJobInput,
   ProjectTombstone,
   ServerState,
   StoredAsset,
+  StoredGenerationHistoryItem,
   StoredImageJob,
   StoredImageReference,
   StoredLibraryAsset,
@@ -28,10 +30,27 @@ export type AppDatabase = {
   saveState(state: ServerState): void;
   saveAsset(asset: StoredAsset): void;
   deleteAsset(userId: string, assetKey: string): void;
-  loadAssetLibrary(userId: string): { initialized: boolean; items: StoredLibraryAsset[] };
+  loadAssetLibrary(userId: string): {
+    initialized: boolean;
+    items: StoredLibraryAsset[];
+  };
   replaceAssetLibrary(userId: string, items: StoredLibraryAsset[]): void;
   upsertAssetLibraryItem(userId: string, item: StoredLibraryAsset): void;
   deleteAssetLibraryItem(userId: string, assetId: string): void;
+  loadGenerationHistory(
+    userId: string,
+    kind: GenerationHistoryKind,
+  ): StoredGenerationHistoryItem[];
+  upsertGenerationHistoryItems(
+    userId: string,
+    kind: GenerationHistoryKind,
+    items: StoredGenerationHistoryItem[],
+  ): void;
+  deleteGenerationHistoryItem(
+    userId: string,
+    kind: GenerationHistoryKind,
+    recordId: string,
+  ): void;
   saveJob(job: StoredImageJob): void;
   deleteJob(jobId: string): void;
   saveProject(userId: string, projectId: string, project: StoredProject): void;
@@ -276,6 +295,31 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 5").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS generation_history_items (
+          user_id TEXT NOT NULL,
+          history_kind TEXT NOT NULL CHECK (history_kind IN ('image', 'video')),
+          record_id TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, history_kind, record_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_generation_history_user_kind_updated
+          ON generation_history_items(user_id, history_kind, updated_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (5, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(
@@ -451,12 +495,7 @@ function sqliteStore(database: Database): AppDatabase {
           .query(
             "INSERT INTO asset_library_items(user_id, asset_id, payload_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, asset_id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at",
           )
-          .run(
-            userId,
-            item.id,
-            JSON.stringify(item.payload),
-            item.updatedAt,
-          );
+          .run(userId, item.id, JSON.stringify(item.payload), item.updatedAt);
       })(),
     deleteAssetLibraryItem: (userId, assetId) =>
       database.transaction(() => {
@@ -472,17 +511,57 @@ function sqliteStore(database: Database): AppDatabase {
           )
           .run(userId, assetId);
       })(),
+    loadGenerationHistory: (userId, kind) =>
+      (
+        database
+          .query(
+            "SELECT record_id, payload_json, created_at, updated_at FROM generation_history_items WHERE user_id = ? AND history_kind = ? ORDER BY updated_at DESC LIMIT 5000",
+          )
+          .all(userId, kind) as Array<{
+          record_id: string;
+          payload_json: string;
+          created_at: number;
+          updated_at: number;
+        }>
+      ).map((item) => ({
+        id: item.record_id,
+        kind,
+        payload: JSON.parse(item.payload_json),
+        createdAt: Number(item.created_at),
+        updatedAt: Number(item.updated_at),
+      })),
+    upsertGenerationHistoryItems: (userId, kind, items) =>
+      database.transaction(() => {
+        const upsert = database.query(
+          "INSERT INTO generation_history_items(user_id, history_kind, record_id, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, history_kind, record_id) DO UPDATE SET payload_json=excluded.payload_json, created_at=excluded.created_at, updated_at=excluded.updated_at WHERE excluded.updated_at >= generation_history_items.updated_at",
+        );
+        for (const item of items)
+          upsert.run(
+            userId,
+            kind,
+            item.id,
+            JSON.stringify(item.payload),
+            item.createdAt,
+            item.updatedAt,
+          );
+        database
+          .query(
+            "DELETE FROM generation_history_items WHERE rowid IN (SELECT rowid FROM generation_history_items WHERE user_id = ? AND history_kind = ? ORDER BY updated_at DESC LIMIT -1 OFFSET 5000)",
+          )
+          .run(userId, kind);
+      })(),
+    deleteGenerationHistoryItem: (userId, kind, recordId) =>
+      database
+        .query(
+          "DELETE FROM generation_history_items WHERE user_id = ? AND history_kind = ? AND record_id = ?",
+        )
+        .run(userId, kind, recordId),
     saveJob: (job) =>
       database
         .query(
           "INSERT INTO jobs(id, user_id, payload_json, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, payload_json=excluded.payload_json, created_at=excluded.created_at",
         )
-        .run(
-          job.id,
-          job.input.userId,
-          JSON.stringify(job),
-          job.createdAt,
-        ),
+        .run(job.id, job.input.userId, JSON.stringify(job), job.createdAt),
     deleteJob: (jobId) =>
       database.query("DELETE FROM jobs WHERE id = ?").run(jobId),
     saveProject: (userId, projectId, project) =>
@@ -594,29 +673,58 @@ function replaceState(database: Database, state: ServerState) {
           project.revision,
           project.updatedAt,
         );
-    const deleteChannel = database.query("DELETE FROM channels WHERE user_id = ? AND id = ?");
-    for (const row of database.query("SELECT user_id, id FROM channels").all() as Array<{ user_id: string; id: string }>)
-      if (!state.channels[`${row.user_id}:${row.id}`]) deleteChannel.run(row.user_id, row.id);
-    const deleteAsset = database.query("DELETE FROM assets WHERE user_id = ? AND asset_key = ?");
-    for (const row of database.query("SELECT user_id, asset_key FROM assets").all() as Array<{ user_id: string; asset_key: string }>)
-      if (!state.assets[`${row.user_id}:${row.asset_key}`]) deleteAsset.run(row.user_id, row.asset_key);
+    const deleteChannel = database.query(
+      "DELETE FROM channels WHERE user_id = ? AND id = ?",
+    );
+    for (const row of database
+      .query("SELECT user_id, id FROM channels")
+      .all() as Array<{ user_id: string; id: string }>)
+      if (!state.channels[`${row.user_id}:${row.id}`])
+        deleteChannel.run(row.user_id, row.id);
+    const deleteAsset = database.query(
+      "DELETE FROM assets WHERE user_id = ? AND asset_key = ?",
+    );
+    for (const row of database
+      .query("SELECT user_id, asset_key FROM assets")
+      .all() as Array<{ user_id: string; asset_key: string }>)
+      if (!state.assets[`${row.user_id}:${row.asset_key}`])
+        deleteAsset.run(row.user_id, row.asset_key);
     const deleteJob = database.query("DELETE FROM jobs WHERE id = ?");
-    for (const row of database.query("SELECT id FROM jobs").all() as Array<{ id: string }>)
+    for (const row of database.query("SELECT id FROM jobs").all() as Array<{
+      id: string;
+    }>)
       if (!state.jobs[row.id]) deleteJob.run(row.id);
-    const deleteProject = database.query("DELETE FROM projects WHERE user_id = ? AND project_id = ?");
-    for (const row of database.query("SELECT user_id, project_id FROM projects").all() as Array<{ user_id: string; project_id: string }>)
-      if (!state.projects[row.user_id]?.[row.project_id]) deleteProject.run(row.user_id, row.project_id);
+    const deleteProject = database.query(
+      "DELETE FROM projects WHERE user_id = ? AND project_id = ?",
+    );
+    for (const row of database
+      .query("SELECT user_id, project_id FROM projects")
+      .all() as Array<{ user_id: string; project_id: string }>)
+      if (!state.projects[row.user_id]?.[row.project_id])
+        deleteProject.run(row.user_id, row.project_id);
     const insertProjectTombstone = database.query(
       "INSERT INTO project_tombstones(user_id, project_id, revision, deleted_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, project_id) DO UPDATE SET revision=excluded.revision, deleted_at=excluded.deleted_at WHERE project_tombstones.revision IS NOT excluded.revision OR project_tombstones.deleted_at IS NOT excluded.deleted_at",
     );
     for (const [userId, tombstones] of Object.entries(projectTombstones))
       for (const [projectId, tombstone] of Object.entries(tombstones))
-        insertProjectTombstone.run(userId, projectId, tombstone.revision, tombstone.deletedAt);
-    const deleteProjectTombstone = database.query("DELETE FROM project_tombstones WHERE user_id = ? AND project_id = ?");
-    for (const row of database.query("SELECT user_id, project_id FROM project_tombstones").all() as Array<{ user_id: string; project_id: string }>)
-      if (!projectTombstones[row.user_id]?.[row.project_id]) deleteProjectTombstone.run(row.user_id, row.project_id);
+        insertProjectTombstone.run(
+          userId,
+          projectId,
+          tombstone.revision,
+          tombstone.deletedAt,
+        );
+    const deleteProjectTombstone = database.query(
+      "DELETE FROM project_tombstones WHERE user_id = ? AND project_id = ?",
+    );
+    for (const row of database
+      .query("SELECT user_id, project_id FROM project_tombstones")
+      .all() as Array<{ user_id: string; project_id: string }>)
+      if (!projectTombstones[row.user_id]?.[row.project_id])
+        deleteProjectTombstone.run(row.user_id, row.project_id);
     const deleteUser = database.query("DELETE FROM users WHERE user_id = ?");
-    for (const row of database.query("SELECT user_id FROM users").all() as Array<{ user_id: string }>)
+    for (const row of database
+      .query("SELECT user_id FROM users")
+      .all() as Array<{ user_id: string }>)
       if (!state.users[row.user_id]) deleteUser.run(row.user_id);
   })();
 }
@@ -685,7 +793,9 @@ function loadState(database: Database): ServerState {
       updatedAt: Number(row.updated_at),
     };
   const projectTombstones: ServerState["projectTombstones"] = {};
-  for (const row of database.query("SELECT * FROM project_tombstones").all() as Array<Record<string, unknown>>)
+  for (const row of database
+    .query("SELECT * FROM project_tombstones")
+    .all() as Array<Record<string, unknown>>)
     (projectTombstones[String(row.user_id)] ||= {})[String(row.project_id)] = {
       revision: Number(row.revision),
       deletedAt: Number(row.deleted_at),

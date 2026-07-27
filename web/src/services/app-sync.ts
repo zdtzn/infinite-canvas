@@ -3,13 +3,15 @@ import localforage from "localforage";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
 import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
 import { downloadWebdavFile, uploadWebdavFile, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
+import { generationHistoryCacheKey, recordBelongsToUser } from "@/services/generation-history";
 import type { Asset } from "@/stores/use-asset-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import type { WebdavSyncConfig } from "@/stores/use-config-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useUserStore } from "@/stores/use-user-store";
 
-type StoredLog = Record<string, unknown> & { id?: string };
+type StoredLog = Record<string, unknown> & { id?: string; ownerUserId?: string };
 export type AppSyncDomainKey = "canvas" | "assets" | "image-workbench" | "video-workbench";
 type DomainKey = AppSyncDomainKey;
 type CanvasDomainData = { projects: CanvasProject[] };
@@ -83,6 +85,7 @@ const storageKeyPattern = /^(image|video|audio|file|video-reference|audio-refere
 export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?: AppSyncProgress): Promise<AppSyncResult> {
     emitProgress(onProgress, { stage: "等待本地数据加载" });
     await Promise.all([waitForHydration(useCanvasStore), waitForHydration(useAssetStore)]);
+    const userId = useUserStore.getState().user?.id || "local";
 
     const [canvas, assets, imageLogs, videoLogs] = await Promise.all([
         syncDomain<CanvasDomainData>(config, onProgress, {
@@ -105,17 +108,17 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
             key: "image-workbench",
             label: "生图工作台",
             emptyData: { logs: [] },
-            localData: async () => ({ logs: await readStoredLogs(imageLogStore) }),
-            mergeData: (local, remote) => ({ logs: mergeById(local.logs, remote.logs, "createdAt") }),
-            applyData: async (data) => replaceStoredLogs(imageLogStore, data.logs),
+            localData: async () => ({ logs: await readStoredLogs(imageLogStore, userId) }),
+            mergeData: (local, remote) => ({ logs: mergeById(local.logs, ownedLogs(remote.logs, userId), "updatedAt") }),
+            applyData: async (data) => replaceStoredLogs(imageLogStore, data.logs, userId),
         }),
         syncDomain<LogDomainData>(config, onProgress, {
             key: "video-workbench",
             label: "视频创作台",
             emptyData: { logs: [] },
-            localData: async () => ({ logs: await readStoredLogs(videoLogStore) }),
-            mergeData: (local, remote) => ({ logs: mergeById(local.logs, remote.logs, "createdAt") }),
-            applyData: async (data) => replaceStoredLogs(videoLogStore, data.logs),
+            localData: async () => ({ logs: await readStoredLogs(videoLogStore, userId) }),
+            mergeData: (local, remote) => ({ logs: mergeById(local.logs, ownedLogs(remote.logs, userId), "updatedAt") }),
+            applyData: async (data) => replaceStoredLogs(videoLogStore, data.logs, userId),
         }),
     ]);
 
@@ -275,20 +278,28 @@ async function hydrateAsset(asset: Asset): Promise<Asset> {
     return asset;
 }
 
-async function readStoredLogs(store: LogStore) {
+async function readStoredLogs(store: LogStore, userId: string) {
     const logs: StoredLog[] = [];
     await store.iterate<StoredLog, void>((value) => {
-        if (value && typeof value === "object") logs.push(value);
+        if (value && typeof value === "object" && recordBelongsToUser(value, userId)) logs.push({ ...value, ownerUserId: userId });
     });
     return logs;
 }
 
-async function replaceStoredLogs(store: LogStore, logs: StoredLog[]) {
-    await store.clear();
-    await runWithConcurrency(logs, FILE_CONCURRENCY, async (log) => {
-        const id = getStringField(log, "id");
-        if (id) await store.setItem(id, log);
+async function replaceStoredLogs(store: LogStore, logs: StoredLog[], userId: string) {
+    const removable: string[] = [];
+    await store.iterate<StoredLog, void>((value, key) => {
+        if (value && typeof value === "object" && recordBelongsToUser(value, userId)) removable.push(key);
     });
+    await Promise.all(removable.map((key) => store.removeItem(key)));
+    await runWithConcurrency(ownedLogs(logs, userId), FILE_CONCURRENCY, async (log) => {
+        const id = getStringField(log, "id");
+        if (id) await store.setItem(generationHistoryCacheKey(userId, id), { ...log, ownerUserId: userId });
+    });
+}
+
+function ownedLogs(logs: StoredLog[], userId: string) {
+    return logs.filter((log) => recordBelongsToUser(log, userId)).map((log) => ({ ...log, ownerUserId: userId }));
 }
 
 function mergeById<T extends { id?: string }>(local: T[], remote: T[], timeKey: string) {

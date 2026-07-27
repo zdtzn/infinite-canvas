@@ -12,7 +12,7 @@ import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeVa
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
+import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -23,6 +23,9 @@ import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { useCultivationProfile } from "@/features/cultivation/queries";
 import { cultivationGenerationBlockReason, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, synchronizeGenerationHistory } from "@/services/generation-history";
+import { useUserStore } from "@/stores/use-user-store";
 
 type GeneratedVideo = {
     id: string;
@@ -45,6 +48,8 @@ type GenerationResult = {
 type GenerationLog = {
     id: string;
     createdAt: number;
+    updatedAt?: number;
+    ownerUserId?: string;
     title: string;
     prompt: string;
     time: string;
@@ -67,12 +72,13 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vqu
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 
 export default function VideoPage() {
     const { message } = App.useApp();
     const { data: cultivationProfile } = useCultivationProfile();
+    const authenticatedUserId = useUserStore((state) => state.user?.id || "");
+    const historyUserId = PUBLIC_MODE ? authenticatedUserId : "local";
     const fileInputRef = useRef<HTMLInputElement>(null);
     const videoInputRef = useRef<HTMLInputElement>(null);
     const audioInputRef = useRef<HTMLInputElement>(null);
@@ -128,7 +134,7 @@ export default function VideoPage() {
 
     useEffect(() => {
         void refreshLogs();
-    }, []);
+    }, [historyUserId]);
 
     const addReferences = async (files?: FileList | null) => {
         const selectedFiles = Array.from(files || []);
@@ -325,11 +331,7 @@ export default function VideoPage() {
     };
 
     const deleteSelectedLogs = () => {
-        const mediaKeys = logs
-            .filter((log) => selectedLogIds.includes(log.id))
-            .map((log) => log.video?.storageKey)
-            .filter((key): key is string => Boolean(key));
-        void Promise.all([deleteStoredMedia(mediaKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(() => refreshLogs());
+        void deleteGenerationHistoryRecords({ kind: "video", userId: historyUserId, store: logStore }, selectedLogIds).then(() => refreshLogs());
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);
@@ -339,12 +341,18 @@ export default function VideoPage() {
     };
 
     const saveLog = async (log: GenerationLog, resumePending = true) => {
-        await logStore.setItem(log.id, serializeLog(log));
+        await persistGenerationHistoryRecord({ kind: "video", userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareVideoLogForServer }, { ...serializeLog(log), updatedAt: Date.now() });
         await refreshLogs(resumePending);
     };
 
     const refreshLogs = async (resumePending = true) => {
-        const nextLogs = await readStoredLogs();
+        const nextLogs = await synchronizeGenerationHistory({
+            kind: "video",
+            userId: historyUserId,
+            store: logStore,
+            hydrate: normalizeLog,
+            prepare: prepareVideoLogForServer,
+        });
         setLogs(nextLogs);
         if (resumePending) resumePendingLogs(nextLogs);
         return nextLogs;
@@ -871,19 +879,6 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     );
 }
 
-async function readStoredLogs() {
-    if (typeof window === "undefined") return [];
-    try {
-        const logs: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
-            logs.push(value);
-        });
-        return (await Promise.all(logs.map(normalizeLog))).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    } catch {
-        return [];
-    }
-}
-
 async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
     const video = log.video?.storageKey ? { ...log.video, url: await resolveMediaUrl(log.video.storageKey, log.video.url) } : log.video;
     const videoReferences = await Promise.all(
@@ -908,6 +903,8 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     return {
         id: log.id || nanoid(),
         createdAt: log.createdAt || Date.now(),
+        updatedAt: log.updatedAt || log.createdAt || Date.now(),
+        ownerUserId: log.ownerUserId,
         title: log.title || log.model || "未命名",
         prompt: log.prompt || "",
         time: log.time || new Date().toLocaleString("zh-CN", { hour12: false }),
@@ -925,6 +922,43 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         video,
         error: log.error,
     };
+}
+
+async function prepareVideoLogForServer(log: GenerationLog): Promise<GenerationLog> {
+    const references = await Promise.all(
+        log.references.map(async (item) => {
+            if (item.storageKey || !item.dataUrl) return item;
+            const stored = await uploadImage(item.dataUrl);
+            return { ...item, dataUrl: stored.url, storageKey: stored.storageKey, type: stored.mimeType };
+        }),
+    );
+    const videoReferences = await Promise.all(
+        log.videoReferences.map(async (item) => {
+            if (item.storageKey || !item.url) return item;
+            const stored = await uploadMediaFile(item.url, "video-reference");
+            return { ...item, url: stored.url, storageKey: stored.storageKey, type: stored.mimeType, bytes: stored.bytes, width: stored.width, height: stored.height, durationMs: stored.durationMs };
+        }),
+    );
+    const audioReferences = await Promise.all(
+        log.audioReferences.map(async (item) => {
+            if (item.storageKey || !item.url) return item;
+            const stored = await uploadMediaFile(item.url, "audio-reference");
+            return { ...item, url: stored.url, storageKey: stored.storageKey, type: stored.mimeType, durationMs: stored.durationMs };
+        }),
+    );
+    const video =
+        log.video && !log.video.storageKey && log.video.url
+            ? await uploadMediaFile(log.video.url, "video").then((stored) => ({
+                  ...log.video!,
+                  url: stored.url,
+                  storageKey: stored.storageKey,
+                  bytes: stored.bytes,
+                  mimeType: stored.mimeType,
+                  width: stored.width || log.video!.width,
+                  height: stored.height || log.video!.height,
+              }))
+            : log.video;
+    return serializeLog({ ...log, references, videoReferences, audioReferences, video });
 }
 
 function serializeLog(log: GenerationLog): GenerationLog {
@@ -1028,6 +1062,7 @@ function buildLog({
     return {
         id: nanoid(),
         createdAt: Date.now(),
+        updatedAt: Date.now(),
         title: prompt.slice(0, 12) || "未命名",
         prompt,
         time: new Date().toLocaleString("zh-CN", { hour12: false }),
