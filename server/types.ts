@@ -3,6 +3,11 @@ import type { EncryptedSecret } from "./lib/crypto-store";
 import type { ProviderProtocol } from "./lib/url-policy";
 
 export type UserStatus = "NORMAL" | "DISABLED" | "BANNED";
+export type ChannelCapability = "image" | "video" | "text" | "audio";
+export type ChannelModelRecord = {
+  name: string;
+  capability: ChannelCapability;
+};
 export type UserRecord = {
   userId: string;
   displayName: string;
@@ -21,6 +26,7 @@ export type ChannelRecord = {
   baseUrl: string;
   apiFormat: ProviderProtocol;
   apiKey: EncryptedSecret;
+  models?: ChannelModelRecord[];
   updatedAt: number;
 };
 export type StoredProject = {
@@ -38,6 +44,11 @@ export type StoredAsset = {
   mimeType: string;
   bytes: number;
   createdAt: number;
+};
+export type StoredLibraryAsset = {
+  id: string;
+  payload: Record<string, unknown>;
+  updatedAt: number;
 };
 export type StoredImageReference = {
   path: string;

@@ -1,12 +1,15 @@
 import { nanoid } from "nanoid";
 
 import { friendlyErrorMessage } from "@/lib/friendly-error";
+import type { Asset } from "@/stores/use-asset-store";
 import type { ApiCallFormat, ModelChannel } from "@/stores/use-config-store";
 
 export type AuthUser = { userId: string; displayName: string; admin?: boolean; avatarUrl?: string };
 export type AuthStatus = { configured: boolean; authenticated: boolean; user: AuthUser | null; publicMode: boolean };
 export type ServerMember = AuthUser & { createdAt: number; disabled: boolean };
 export type ServerAsset = { key: string; url: string; mimeType: string; bytes: number; createdAt: number };
+export type ServerChannel = Omit<ModelChannel, "apiKey" | "credentialState"> & { hasApiKey: boolean };
+export type ServerAssetLibrary = { initialized: boolean; items: Asset[] };
 export type ServerJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string; width?: number; height?: number };
 export type ServerJob = {
@@ -127,10 +130,20 @@ export async function logoutAccess() {
     await serverRequest("/api/auth/logout", { method: "POST" });
 }
 
+export async function fetchServerChannels() {
+    return serverRequest<{ items: ServerChannel[] }>("/api/channels", { timeoutMs: 12_000 });
+}
+
 export async function saveServerChannel(channel: ModelChannel) {
     return serverRequest(`/api/channels/${encodeURIComponent(channel.id)}`, {
         method: "PUT",
-        body: { name: channel.name, baseUrl: channel.baseUrl, apiFormat: channel.apiFormat, apiKey: channel.apiKey },
+        body: {
+            name: channel.name,
+            baseUrl: channel.baseUrl,
+            apiFormat: channel.apiFormat,
+            apiKey: channel.apiKey,
+            models: channel.models.map(({ name, capability }) => ({ name, capability })),
+        },
     });
 }
 
@@ -162,6 +175,22 @@ export async function fetchServerAssetBlob(storageKey: string) {
 
 export async function deleteServerAsset(storageKey: string) {
     await serverRequest(`/api/assets/${encodeURIComponent(storageKey)}`, { method: "DELETE" });
+}
+
+export async function fetchServerAssetLibrary() {
+    return serverRequest<ServerAssetLibrary>("/api/library-assets", { timeoutMs: 20_000 });
+}
+
+export async function replaceServerAssetLibrary(items: Asset[], initializeOnly = false) {
+    return serverRequest<ServerAssetLibrary>("/api/library-assets", { method: "PUT", body: { items, initializeOnly }, timeoutMs: 30_000 });
+}
+
+export async function upsertServerAssetLibraryItem(item: Asset) {
+    return serverRequest<{ item: Asset }>(`/api/library-assets/${encodeURIComponent(item.id)}`, { method: "PUT", body: { item } });
+}
+
+export async function deleteServerAssetLibraryItem(id: string) {
+    await serverRequest(`/api/library-assets/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function uploadProfileAvatar(file: File) {

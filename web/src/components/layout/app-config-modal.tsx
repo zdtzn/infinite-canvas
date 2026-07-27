@@ -81,9 +81,13 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
+    const canManageChannels = !PUBLIC_MODE || Boolean(user?.admin);
     const webdavReady = Boolean(webdav.url.trim());
-    const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || null;
-    useEffect(() => setActiveTab(initialTab), [initialTab]);
+    const editingChannel = canManageChannels ? config.channels.find((channel) => channel.id === editingChannelId) || null : null;
+    useEffect(() => setActiveTab(initialTab === "channels" && !canManageChannels ? "preferences" : initialTab), [canManageChannels, initialTab]);
+    useEffect(() => {
+        if (!canManageChannels) setEditingChannelId("");
+    }, [canManageChannels]);
 
     const saveConfig = (nextConfig: AiConfig) => {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
@@ -100,12 +104,14 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const updateChannels = (channels: ModelChannel[]) => saveConfig(withChannels(config, channels));
 
     const addChannel = () => {
+        if (!canManageChannels) return;
         const channel = createModelChannel({ name: `渠道 ${config.channels.length + 1}` });
         updateChannels([...config.channels, channel]);
         setEditingChannelId(channel.id);
     };
 
     const deleteChannel = (id: string) => {
+        if (!canManageChannels) return;
         if (config.channels.length <= 1) {
             message.warning("至少保留一个渠道");
             return;
@@ -115,6 +121,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     };
 
     const saveChannel = async (channel: ModelChannel) => {
+        if (!canManageChannels) return;
         if (PUBLIC_MODE) await saveServerChannel(channel);
         const saved = PUBLIC_MODE ? { ...channel, apiKey: "", credentialState: "saved" as const } : channel;
         updateChannels(config.channels.map((item) => (item.id === channel.id ? saved : item)));
@@ -313,7 +320,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                             </Form>
                         ),
                     },
-                ]}
+                ].filter((item) => canManageChannels || item.key !== "channels")}
             />
             {showDoneButton ? (
                 <div className="mt-4 flex justify-end">
@@ -322,7 +329,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                     </Button>
                 </div>
             ) : null}
-            <ChannelEditorDrawer open={Boolean(editingChannel)} channel={editingChannel} onSave={saveChannel} onClose={() => setEditingChannelId("")} />
+            {canManageChannels ? <ChannelEditorDrawer open={Boolean(editingChannel)} channel={editingChannel} onSave={saveChannel} onClose={() => setEditingChannelId("")} /> : null}
         </>
     );
 }

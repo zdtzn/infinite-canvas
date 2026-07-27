@@ -130,6 +130,7 @@ type ConfigStore = {
     configTab: ConfigTabKey;
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
+    setPlatformChannels: (channels: ModelChannel[]) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean, tab?: ConfigTabKey) => void;
@@ -197,6 +198,10 @@ export const useConfigStore = create<ConfigStore>()(
                         ...state.config,
                         [key]: value,
                     },
+                })),
+            setPlatformChannels: (channels) =>
+                set((state) => ({
+                    config: applyPlatformChannels(state.config, channels),
                 })),
             updateWebdavConfig: (key, value) =>
                 set((state) => ({
@@ -322,6 +327,34 @@ export function modelOptionsFromChannels(channels: ModelChannel[]) {
     return uniqueModelOptions(channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model.name))));
 }
 
+export function applyPlatformChannels(config: AiConfig, input: ModelChannel[]): AiConfig {
+    const channels = input.map((channel) =>
+        createModelChannel({
+            ...channel,
+            apiKey: "",
+            credentialState: "saved",
+            models: channel.models,
+        }),
+    );
+    const next = {
+        ...config,
+        channels,
+        models: modelOptionsFromChannels(channels),
+        baseUrl: channels[0]?.baseUrl || config.baseUrl,
+        apiKey: "",
+        apiFormat: channels[0]?.apiFormat || config.apiFormat,
+    };
+    const imageModel = pickPlatformModel(next, "image", config.imageModel);
+    return {
+        ...next,
+        model: imageModel || normalizeModelOptionValue(config.model, channels),
+        imageModel,
+        videoModel: pickPlatformModel(next, "video", config.videoModel),
+        textModel: pickPlatformModel(next, "text", config.textModel),
+        audioModel: pickPlatformModel(next, "audio", config.audioModel),
+    };
+}
+
 export function normalizeModelOptionValue(value: string | undefined, channels: ModelChannel[]) {
     const model = (value || "").trim();
     if (!model) return "";
@@ -338,7 +371,11 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.some((item) => item.name === model));
-    return matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })) });
+    return (
+        matched ||
+        config.channels[0] ||
+        createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })) })
+    );
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
@@ -388,17 +425,27 @@ function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
 }
 
 function normalizeImageQuality(value: unknown) {
-    const quality = String(value || "auto").trim().toLowerCase();
+    const quality = String(value || "auto")
+        .trim()
+        .toLowerCase();
     return ["auto", "low", "medium", "high", "standard", "hd"].includes(quality) ? quality : "auto";
 }
 
 function normalizeImageOutputFormat(value: unknown) {
-    const format = String(value || "auto").trim().toLowerCase();
+    const format = String(value || "auto")
+        .trim()
+        .toLowerCase();
     return ["auto", "png", "jpeg", "webp"].includes(format) ? format : "auto";
 }
 
 function uniqueModelOptions(models: string[]) {
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)));
+}
+
+function pickPlatformModel(config: AiConfig, capability: ModelCapability, current: string) {
+    const options = selectableModelsByCapability(config, capability);
+    const normalized = normalizeModelOptionValue(current, config.channels);
+    return options.includes(normalized) ? normalized : options[0] || "";
 }
 
 export function buildApiUrl(baseUrl: string, path: string) {

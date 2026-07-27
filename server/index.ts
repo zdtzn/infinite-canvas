@@ -4,11 +4,13 @@ import { isIP } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
+import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem } from "./lib/asset-library";
 import { canAccessUserAvatar } from "./lib/avatar-access";
 import { decryptSecret, encryptSecret } from "./lib/crypto-store";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
+import { listPlatformChannels, normalizeChannelModels, platformChannelKey, platformChannelModels, resolvePlatformChannel } from "./lib/platform-channels";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
@@ -244,6 +246,11 @@ async function route(request: Request, requestId: string) {
         const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)$/);
         if (channelMatch && request.method === "PUT") return saveChannel(request, session, decodeURIComponent(channelMatch[1]));
         if (channelMatch && request.method === "DELETE") return deleteChannel(session, decodeURIComponent(channelMatch[1]));
+        if (url.pathname === "/api/library-assets" && request.method === "GET") return listLibraryAssets(session);
+        if (url.pathname === "/api/library-assets" && request.method === "PUT") return replaceLibraryAssets(request, session);
+        const libraryAssetMatch = url.pathname.match(/^\/api\/library-assets\/([^/]+)$/);
+        if (libraryAssetMatch && request.method === "PUT") return saveLibraryAsset(request, session, decodeURIComponent(libraryAssetMatch[1]));
+        if (libraryAssetMatch && request.method === "DELETE") return deleteLibraryAsset(session, decodeURIComponent(libraryAssetMatch[1]));
         if (url.pathname === "/api/assets/from-job" && request.method === "POST") return promoteJobAsset(request, session);
         if (url.pathname === "/api/assets" && request.method === "POST") return uploadAsset(request, session);
         const assetMatch = url.pathname.match(/^\/api\/assets\/([^/]+)$/);
@@ -382,24 +389,41 @@ async function updateUserAccess(request: Request, session: SessionPayload, userI
 
 function adminMetrics(session: SessionPayload) {
     requireAdmin(session);
-    return json({ users: Object.keys(state.users).length, channels: Object.keys(state.channels).length, jobs: summarizeJobs(), uptimeSeconds: Math.round(process.uptime()), memory: process.memoryUsage(), backup: backupManager?.status() || null });
+    return json({ users: Object.keys(state.users).length, channels: listPlatformChannels(state).length, jobs: summarizeJobs(), uptimeSeconds: Math.round(process.uptime()), memory: process.memoryUsage(), backup: backupManager?.status() || null });
 }
 
 function adminChannelMetrics(url: URL, session: SessionPayload) {
     requireAdmin(session);
     const days = Math.max(1, Math.min(30, Math.floor(Number(url.searchParams.get("days")) || 7)));
     const usage = requireCultivation().listChannelMetrics(days);
-    const usageByChannel = new Map(usage.map((item) => [`${item.userId}:${item.channelId}`, item]));
+    const usageByChannel = new Map<string, (typeof usage)[number]>();
+    for (const metric of usage) {
+        const current = usageByChannel.get(metric.channelId);
+        if (!current) {
+            usageByChannel.set(metric.channelId, { ...metric });
+            continue;
+        }
+        const durationTotal = current.avgDurationMs * current.settledJobs + metric.avgDurationMs * metric.settledJobs;
+        current.totalJobs += metric.totalJobs;
+        current.settledJobs += metric.settledJobs;
+        current.refundedJobs += metric.refundedJobs;
+        current.activeJobs += metric.activeJobs;
+        current.requestedImages += metric.requestedImages;
+        current.successImages += metric.successImages;
+        current.failedImages += metric.failedImages;
+        current.avgDurationMs = current.settledJobs ? Math.round(durationTotal / current.settledJobs) : 0;
+        current.lastUsedAt = Math.max(current.lastUsedAt, metric.lastUsedAt);
+    }
     const cutoff = Date.now() - days * 24 * 60 * 60_000;
     const recentErrors = new Map<string, string>();
     for (const job of Object.values(state.jobs).sort((left, right) => right.createdAt - left.createdAt)) {
         if (job.createdAt < cutoff || job.status !== "failed" || !job.error) continue;
-        const key = `${job.input.userId}:${job.input.channelId}`;
+        const key = job.input.channelId;
         if (!recentErrors.has(key)) recentErrors.set(key, job.error.slice(0, 300));
     }
-    const items = Object.values(state.channels)
+    const items = listPlatformChannels(state)
         .map((channel) => {
-            const key = `${channel.userId}:${channel.id}`;
+            const key = channel.id;
             const metric = usageByChannel.get(key);
             const completedImages = (metric?.successImages || 0) + (metric?.failedImages || 0);
             const successRate = completedImages ? Math.round(((metric?.successImages || 0) / completedImages) * 100) : null;
@@ -555,38 +579,72 @@ function readPagination(url: URL) {
 }
 
 function listChannels(session: SessionPayload) {
+    void session;
     return json({
-        items: Object.values(state.channels)
-            .filter((channel) => channel.userId === session.userId)
-            .map(({ apiKey: _apiKey, ...channel }) => ({ ...channel, hasApiKey: true })),
+        items: listPlatformChannels(state).map(({ apiKey: _apiKey, userId: _userId, ...channel }) => ({ ...channel, hasApiKey: true })),
     });
 }
 
 async function saveChannel(request: Request, session: SessionPayload, id: string) {
-    const body = await readJson<{ name?: string; baseUrl?: string; apiFormat?: ProviderProtocol; apiKey?: string }>(request);
+    requireAdmin(session);
+    const body = await readJson<{ name?: string; baseUrl?: string; apiFormat?: ProviderProtocol; apiKey?: string; models?: unknown }>(request);
     const baseUrl = String(body.baseUrl || "").trim();
     assertAllowedUpstreamUrl(baseUrl);
     const apiFormat: ProviderProtocol = body.apiFormat === "gemini" ? "gemini" : "openai";
-    const key = channelKey(session.userId, id);
+    const adminUserId = state.auth.adminUserId;
+    if (!adminUserId) throw new HttpError(409, "Platform administrator is not configured");
+    const key = platformChannelKey(adminUserId, id);
     const existing = state.channels[key];
     const plaintext = String(body.apiKey || "").trim();
     if (!plaintext && !existing) throw new HttpError(400, "首次保存渠道时必须填写 API Key");
     state.channels[key] = {
         id,
-        userId: session.userId,
+        userId: adminUserId,
         name: String(body.name || existing?.name || "未命名渠道").trim().slice(0, 80),
         baseUrl,
         apiFormat,
         apiKey: plaintext ? encryptSecret(plaintext, encryptionSecret) : existing.apiKey,
+        models: body.models === undefined ? existing?.models || [] : normalizeChannelModels(body.models),
         updatedAt: Date.now(),
     };
     writeState();
-    return json({ ok: true, channel: { id, baseUrl, apiFormat, hasApiKey: true } });
+    const { apiKey: _apiKey, userId: _userId, ...channel } = state.channels[key];
+    return json({ ok: true, channel: { ...channel, hasApiKey: true } });
 }
 
 function deleteChannel(session: SessionPayload, id: string) {
-    delete state.channels[channelKey(session.userId, id)];
+    requireAdmin(session);
+    const adminUserId = state.auth.adminUserId;
+    if (adminUserId) delete state.channels[platformChannelKey(adminUserId, id)];
     writeState();
+    return new Response(null, { status: 204 });
+}
+
+function listLibraryAssets(session: SessionPayload) {
+    const library = appDatabase.loadAssetLibrary(session.userId);
+    return json({ initialized: library.initialized, items: library.items.map((item) => item.payload) });
+}
+
+async function replaceLibraryAssets(request: Request, session: SessionPayload) {
+    const body = await readJson<{ items?: unknown; initializeOnly?: boolean }>(request);
+    if (body.initializeOnly) {
+        const current = appDatabase.loadAssetLibrary(session.userId);
+        if (current.initialized) return json({ initialized: true, items: current.items.map((item) => item.payload) });
+    }
+    const items = normalizeAssetLibrary(body.items, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
+    appDatabase.replaceAssetLibrary(session.userId, items);
+    return json({ initialized: true, items: items.map((item) => item.payload) });
+}
+
+async function saveLibraryAsset(request: Request, session: SessionPayload, id: string) {
+    const body = await readJson<{ item?: unknown }>(request);
+    const item = normalizeAssetLibraryItem(body.item, id, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
+    appDatabase.upsertAssetLibraryItem(session.userId, item);
+    return json({ item: item.payload });
+}
+
+function deleteLibraryAsset(session: SessionPayload, id: string) {
+    appDatabase.deleteAssetLibraryItem(session.userId, id);
     return new Response(null, { status: 204 });
 }
 
@@ -730,7 +788,7 @@ function assetUrl(key: string) {
 async function createImageJob(request: Request, session: SessionPayload) {
     const body = await readJson<Partial<ImageJobInput>>(request, MAX_IMAGE_JOB_JSON_BYTES);
     const channelId = String(body.channelId || "");
-    const channel = ownedChannel(session.userId, channelId);
+    const channel = platformChannel(channelId);
     const count = Math.max(1, Math.min(10, Math.floor(Number(body.count) || 1)));
     const references = Array.isArray(body.references) ? body.references.map(String) : [];
     if (references.length > 16) throw new HttpError(400, "参考图最多 16 张");
@@ -747,6 +805,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
     }
     const model = String(body.model || "").trim();
     if (!model) throw new HttpError(400, "模型不能为空");
+    assertPlatformModelAllowed(channelId, model, "image");
     const resolution = optionalString(body.quality);
     const isUuGptImage2 = isUuAsyncGptImage2Channel(channel.baseUrl, model);
     const imageQuality = isUuGptImage2 ? undefined : normalizeImageQuality(body.imageQuality);
@@ -834,7 +893,7 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
 }
 
 function publicJob(job: StoredImageJob) {
-    const channel = state.channels[channelKey(job.input.userId, job.input.channelId)];
+    const channel = resolvePlatformChannel(state, job.input.channelId);
     const usesUuAsync =
         job.input.apiFormat === "openai" &&
         job.input.count === 1 &&
@@ -866,7 +925,7 @@ function publicJob(job: StoredImageJob) {
 async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: QueueJob<ImageJobInput, ImageJobOutput>) {
     const startedAt = Date.now();
     try {
-        const channel = ownedChannel(input.userId, input.channelId);
+        const channel = platformChannel(input.channelId);
         const apiKey = decryptChannelApiKey(channel);
         const useUuAsync = input.apiFormat === "openai" && (hasUuAsyncTask(input) || (input.count === 1 && isUuImageAsyncChannel(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))));
         const rawImages =
@@ -990,7 +1049,7 @@ async function pollUuImageTask(channel: ChannelRecord, apiKey: string, input: Im
 
 async function cancelUuImageTask(input: ImageJobInput) {
     if (!hasUuAsyncTask(input)) return;
-    const channel = ownedChannel(input.userId, input.channelId);
+    const channel = platformChannel(input.channelId);
     const apiKey = decryptChannelApiKey(channel);
     const response = await upstreamFetch(
         buildUpstreamUrl(channel.baseUrl, "openai", `/images/generations/tasks/${encodeURIComponent(input.upstream.taskId)}`),
@@ -1107,7 +1166,7 @@ function serveJobFile(session: SessionPayload, jobId: string, filename: string) 
 }
 
 async function proxyAiRequest(request: Request, session: SessionPayload, channelId: string, protocol: ProviderProtocol, path: string, requestId: string) {
-    const channel = ownedChannel(session.userId, channelId);
+    const channel = platformChannel(channelId);
     if (channel.apiFormat !== protocol) throw new HttpError(400, "渠道协议不匹配");
     assertAllowedProxyRequest(request.method, protocol, path);
     const apiKey = decryptChannelApiKey(channel);
@@ -1122,6 +1181,10 @@ async function proxyAiRequest(request: Request, session: SessionPayload, channel
     if (protocol === "gemini") headers.set("x-goog-api-key", apiKey);
     else headers.set("authorization", `Bearer ${apiKey}`);
     const body = ["GET", "HEAD"].includes(request.method) ? undefined : await readRequestBytes(request, MAX_PROXY_BODY_BYTES, "代理请求内容过大");
+    if (body) {
+        const model = await readProxyRequestModel(headers.get("content-type") || "", body);
+        assertPlatformModelAllowed(channelId, model, path.startsWith("/audio/") ? "audio" : "video");
+    }
     const response = await upstreamFetch(`${target}${new URL(request.url).search}`, { method: request.method, headers, body, signal: request.signal }, Boolean(headers.get("idempotency-key")));
     const responseHeaders = new Headers();
     for (const name of ["content-type", "content-disposition", "cache-control"]) {
@@ -1143,6 +1206,32 @@ function assertAllowedProxyRequest(method: string, protocol: ProviderProtocol, p
         ? ["GET", "HEAD"].includes(normalizedMethod) && geminiReadPath.test(normalizedPath)
         : (["GET", "HEAD"].includes(normalizedMethod) && openAiReadPath.test(normalizedPath)) || (normalizedMethod === "POST" && openAiWritePath.test(normalizedPath));
     if (!allowed) throw new HttpError(403, "该渠道请求必须通过受控任务接口执行");
+}
+
+async function readProxyRequestModel(contentType: string, body: Uint8Array) {
+    try {
+        let model = "";
+        if (contentType.includes("application/json")) {
+            const payload = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+            model = String(payload.model || "").trim();
+        } else if (contentType.includes("multipart/form-data") || contentType.includes("application/x-www-form-urlencoded")) {
+            const form = await new Request("http://localhost", { method: "POST", headers: { "Content-Type": contentType }, body }).formData();
+            model = String(form.get("model") || "").trim();
+        } else {
+            throw new HttpError(400, "代理请求格式不受支持");
+        }
+        if (!model) throw new HttpError(400, "模型不能为空");
+        return model;
+    } catch (error) {
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(400, "代理请求内容格式无效");
+    }
+}
+
+function assertPlatformModelAllowed(channelId: string, model: string, capability?: "image" | "video" | "text" | "audio") {
+    const configured = platformChannelModels(state, channelId).find((item) => item.name === model);
+    if (!configured) throw new HttpError(403, "该模型未在当前平台渠道中开放");
+    if (capability && configured.capability !== capability) throw new HttpError(403, "该模型未开放当前生成能力");
 }
 
 async function saveProject(request: Request, session: SessionPayload, id: string) {
@@ -1343,7 +1432,14 @@ function withSecurityHeaders(response: Response, requestId: string) {
 }
 
 function errorResponse(error: unknown, requestId: string) {
-    const status = error instanceof HttpError || error instanceof CultivationError ? error.status : error instanceof DOMException && error.name === "TimeoutError" ? 504 : 500;
+    const status =
+        error instanceof HttpError || error instanceof CultivationError
+            ? error.status
+            : error instanceof AssetLibraryInputError
+              ? 400
+              : error instanceof DOMException && error.name === "TimeoutError"
+                ? 504
+                : 500;
     const message = error instanceof Error ? error.message : "服务器内部错误";
     console.error(JSON.stringify({ event: "request_error", requestId, status, message, stack: error instanceof Error ? error.stack : undefined }));
     return json({ error: { message }, requestId }, status);
@@ -1479,8 +1575,8 @@ function isUserDisabled(user: UserRecord) {
     return Boolean(user.disabled) || user.status === "DISABLED" || user.status === "BANNED";
 }
 
-function ownedChannel(userId: string, id: string) {
-    const channel = state.channels[channelKey(userId, id)];
+function platformChannel(id: string) {
+    const channel = resolvePlatformChannel(state, id);
     if (!channel) throw new HttpError(404, "渠道不存在或尚未保存 API Key");
     return channel;
 }
@@ -1559,10 +1655,6 @@ function ownedAsset(userId: string, key: string) {
 
 function assetKey(userId: string, key: string) {
     return `${userId}:${key}`;
-}
-
-function channelKey(userId: string, id: string) {
-    return `${userId}:${id}`;
 }
 
 function queueStateWrite() {

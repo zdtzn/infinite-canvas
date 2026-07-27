@@ -18,6 +18,7 @@ import type {
   StoredAsset,
   StoredImageJob,
   StoredImageReference,
+  StoredLibraryAsset,
   StoredProject,
 } from "../types";
 
@@ -27,6 +28,10 @@ export type AppDatabase = {
   saveState(state: ServerState): void;
   saveAsset(asset: StoredAsset): void;
   deleteAsset(userId: string, assetKey: string): void;
+  loadAssetLibrary(userId: string): { initialized: boolean; items: StoredLibraryAsset[] };
+  replaceAssetLibrary(userId: string, items: StoredLibraryAsset[]): void;
+  upsertAssetLibraryItem(userId: string, item: StoredLibraryAsset): void;
+  deleteAssetLibraryItem(userId: string, assetId: string): void;
   saveJob(job: StoredImageJob): void;
   deleteJob(jobId: string): void;
   saveProject(userId: string, projectId: string, project: StoredProject): void;
@@ -243,6 +248,34 @@ function runMigrations(database: Database) {
         )
         .run(timestamp);
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 4").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS asset_library_state (
+          user_id TEXT PRIMARY KEY,
+          initialized_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS asset_library_items (
+          user_id TEXT NOT NULL,
+          asset_id TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, asset_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_asset_library_user_updated ON asset_library_items(user_id, updated_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (4, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(
@@ -360,6 +393,85 @@ function sqliteStore(database: Database): AppDatabase {
       database
         .query("DELETE FROM assets WHERE user_id = ? AND asset_key = ?")
         .run(userId, assetKey),
+    loadAssetLibrary: (userId) => {
+      const initialized = Boolean(
+        database
+          .query("SELECT 1 FROM asset_library_state WHERE user_id = ?")
+          .get(userId),
+      );
+      const items = database
+        .query(
+          "SELECT asset_id, payload_json, updated_at FROM asset_library_items WHERE user_id = ? ORDER BY updated_at DESC",
+        )
+        .all(userId) as Array<{
+        asset_id: string;
+        payload_json: string;
+        updated_at: number;
+      }>;
+      return {
+        initialized,
+        items: items.map((item) => ({
+          id: item.asset_id,
+          payload: JSON.parse(item.payload_json),
+          updatedAt: Number(item.updated_at),
+        })),
+      };
+    },
+    replaceAssetLibrary: (userId, items) =>
+      database.transaction(() => {
+        const now = Date.now();
+        database
+          .query(
+            "INSERT INTO asset_library_state(user_id, initialized_at, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET updated_at=excluded.updated_at",
+          )
+          .run(userId, now, now);
+        database
+          .query("DELETE FROM asset_library_items WHERE user_id = ?")
+          .run(userId);
+        const insert = database.query(
+          "INSERT INTO asset_library_items(user_id, asset_id, payload_json, updated_at) VALUES (?, ?, ?, ?)",
+        );
+        for (const item of items)
+          insert.run(
+            userId,
+            item.id,
+            JSON.stringify(item.payload),
+            item.updatedAt,
+          );
+      })(),
+    upsertAssetLibraryItem: (userId, item) =>
+      database.transaction(() => {
+        const now = Date.now();
+        database
+          .query(
+            "INSERT INTO asset_library_state(user_id, initialized_at, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET updated_at=excluded.updated_at",
+          )
+          .run(userId, now, now);
+        database
+          .query(
+            "INSERT INTO asset_library_items(user_id, asset_id, payload_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, asset_id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at",
+          )
+          .run(
+            userId,
+            item.id,
+            JSON.stringify(item.payload),
+            item.updatedAt,
+          );
+      })(),
+    deleteAssetLibraryItem: (userId, assetId) =>
+      database.transaction(() => {
+        const now = Date.now();
+        database
+          .query(
+            "INSERT INTO asset_library_state(user_id, initialized_at, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET updated_at=excluded.updated_at",
+          )
+          .run(userId, now, now);
+        database
+          .query(
+            "DELETE FROM asset_library_items WHERE user_id = ? AND asset_id = ?",
+          )
+          .run(userId, assetId);
+      })(),
     saveJob: (job) =>
       database
         .query(

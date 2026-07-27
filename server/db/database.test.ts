@@ -204,6 +204,60 @@ describe("SQLite application database", () => {
     }
   });
 
+  test("persists isolated asset-library catalogs, including an intentionally empty catalog", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      const state = store.loadState();
+      state.users.alice = {
+        userId: "alice",
+        displayName: "Alice",
+        createdAt: 1,
+      };
+      state.users.bob = {
+        userId: "bob",
+        displayName: "Bob",
+        createdAt: 2,
+      };
+      store.saveState(state);
+
+      expect(store.loadAssetLibrary("alice")).toEqual({
+        initialized: false,
+        items: [],
+      });
+      store.replaceAssetLibrary("alice", [
+        {
+          id: "asset-a",
+          payload: { id: "asset-a", kind: "text", title: "Alice only" },
+          updatedAt: 10,
+        },
+      ]);
+      store.upsertAssetLibraryItem("bob", {
+        id: "asset-b",
+        payload: { id: "asset-b", kind: "text", title: "Bob only" },
+        updatedAt: 11,
+      });
+
+      expect(store.loadAssetLibrary("alice").items).toHaveLength(1);
+      expect(store.loadAssetLibrary("alice").items[0].payload.title).toBe(
+        "Alice only",
+      );
+      expect(store.loadAssetLibrary("bob").items[0].payload.title).toBe(
+        "Bob only",
+      );
+
+      store.deleteAssetLibraryItem("alice", "asset-a");
+      expect(store.loadAssetLibrary("alice")).toEqual({
+        initialized: true,
+        items: [],
+      });
+      expect(store.loadAssetLibrary("bob").items).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
   test("accepts state snapshots created before project tombstones existed", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
