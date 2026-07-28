@@ -8,7 +8,7 @@ import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryIte
 import { AsyncSemaphore } from "./lib/async-semaphore";
 import { canAccessUserAvatar } from "./lib/avatar-access";
 import { decryptSecret, encryptSecret, normalizeEncryptionSecret } from "./lib/crypto-store";
-import { GenerationHistoryInputError, normalizeGenerationHistory, normalizeGenerationHistoryItem } from "./lib/generation-history";
+import { generationHistoryJobIdsForDeletion, GenerationHistoryInputError, normalizeGenerationHistory, normalizeGenerationHistoryDeletion, normalizeGenerationHistoryItem } from "./lib/generation-history";
 import { parseSingleByteRange } from "./lib/http-range";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
@@ -286,6 +286,7 @@ async function route(request: Request, requestId: string) {
         if (generationHistoryMatch && request.method === "GET") return listGenerationHistory(session, generationHistoryMatch[1] as GenerationHistoryKind);
         if (generationHistoryMatch && request.method === "PUT")
             return heavyRequestSemaphore.run(request.signal, () => mergeGenerationHistory(request, session, generationHistoryMatch[1] as GenerationHistoryKind));
+        if (generationHistoryMatch && request.method === "DELETE") return deleteGenerationHistoryItems(request, session, generationHistoryMatch[1] as GenerationHistoryKind);
         const generationHistoryItemMatch = url.pathname.match(/^\/api\/generation-history\/(image|video)\/([^/]+)$/);
         if (generationHistoryItemMatch && request.method === "PUT")
             return saveGenerationHistoryItem(request, session, generationHistoryItemMatch[1] as GenerationHistoryKind, decodeRouteSegment(generationHistoryItemMatch[2], "生成记录 ID"));
@@ -822,8 +823,14 @@ function deleteLibraryAsset(session: SessionPayload, id: string) {
 }
 
 function listGenerationHistory(session: SessionPayload, kind: GenerationHistoryKind) {
+    const tombstones = appDatabase.loadGenerationHistoryTombstones(session.userId, kind).map((item) => ({
+        id: item.id,
+        createdAt: item.deletedAt,
+        updatedAt: item.deletedAt,
+        deletedAt: item.deletedAt,
+    }));
     return json({
-        items: appDatabase.loadGenerationHistory(session.userId, kind).map((item) => item.payload),
+        items: [...appDatabase.loadGenerationHistory(session.userId, kind).map((item) => item.payload), ...tombstones].sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0)),
     });
 }
 
@@ -834,15 +841,64 @@ async function mergeGenerationHistory(request: Request, session: SessionPayload,
     return listGenerationHistory(session, kind);
 }
 
+async function deleteGenerationHistoryItems(request: Request, session: SessionPayload, kind: GenerationHistoryKind) {
+    const deletion = normalizeGenerationHistoryDeletion(await readJson<unknown>(request, 512 * 1024));
+    const existing = appDatabase.loadGenerationHistory(session.userId, kind);
+    const allHistory = [...(kind === "image" ? existing : appDatabase.loadGenerationHistory(session.userId, "image")), ...(kind === "video" ? existing : appDatabase.loadGenerationHistory(session.userId, "video"))];
+    const selectedIds = new Set(deletion.ids);
+    const remainingJobIds = new Set(
+        allHistory
+            .filter((item) => item.kind !== kind || !selectedIds.has(item.id))
+            .flatMap((item) => (Array.isArray(item.payload.serverJobIds) ? item.payload.serverJobIds : []))
+            .map((id) => String(id || "").trim())
+            .filter(Boolean),
+    );
+    const relatedJobIds = generationHistoryJobIdsForDeletion(kind, deletion.ids, allHistory);
+    const hiddenJobIds = new Set(relatedJobIds);
+    for (const id of deletion.jobIds) {
+        if (remainingJobIds.has(id)) continue;
+        const job = imageQueue.get(id);
+        if (!job || job.input.userId !== session.userId || job.input.source?.route !== "/image" || ["queued", "running"].includes(job.status)) continue;
+        hiddenJobIds.add(id);
+    }
+    const deletedAt = Date.now();
+    const tombstoneIds = new Set(deletion.ids);
+    for (const id of hiddenJobIds) {
+        const fallbackId = `server-job:${id}`;
+        if (fallbackId.length <= 180) tombstoneIds.add(fallbackId);
+    }
+    appDatabase.deleteGenerationHistoryItems(
+        session.userId,
+        kind,
+        Array.from(tombstoneIds).map((id) => ({ id, kind, deletedAt, jobIds: Array.from(hiddenJobIds) })),
+    );
+
+    let removedJobs = 0;
+    for (const id of relatedJobIds) {
+        const job = imageQueue.get(id);
+        if (!job || job.input.userId !== session.userId || ["queued", "running"].includes(job.status)) continue;
+        if (!imageQueue.remove(id)) continue;
+        delete state.jobs[id];
+        appDatabase.deleteJob(id);
+        cleanupJobFiles(job);
+        removedJobs += 1;
+    }
+
+    return json({ deleted: deletion.ids.length, removedJobs });
+}
+
 async function saveGenerationHistoryItem(request: Request, session: SessionPayload, kind: GenerationHistoryKind, id: string) {
     const body = await readJson<{ item?: unknown }>(request, 1024 * 1024);
+    const tombstone = appDatabase.loadGenerationHistoryTombstones(session.userId, kind).find((item) => item.id === id);
+    if (tombstone) return json({ item: { id, createdAt: tombstone.deletedAt, updatedAt: tombstone.deletedAt, deletedAt: tombstone.deletedAt } });
     const item = normalizeGenerationHistoryItem(kind, body.item, id, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
     appDatabase.upsertGenerationHistoryItems(session.userId, kind, [item]);
     return json({ item: item.payload });
 }
 
 function deleteGenerationHistoryItem(session: SessionPayload, kind: GenerationHistoryKind, id: string) {
-    appDatabase.deleteGenerationHistoryItem(session.userId, kind, id);
+    const deletedAt = Date.now();
+    appDatabase.deleteGenerationHistoryItems(session.userId, kind, [{ id, kind, deletedAt, jobIds: [] }]);
     return new Response(null, { status: 204 });
 }
 
@@ -1136,10 +1192,14 @@ async function createImageJob(request: Request, session: SessionPayload) {
 }
 
 function listJobs(session: SessionPayload) {
+    const hiddenJobIds = new Set([
+        ...appDatabase.loadGenerationHistoryTombstones(session.userId, "image").flatMap((item) => item.jobIds),
+        ...appDatabase.loadGenerationHistoryTombstones(session.userId, "video").flatMap((item) => item.jobIds),
+    ]);
     return json({
         items: imageQueue
             .list()
-            .filter((job) => job.input.userId === session.userId)
+            .filter((job) => job.input.userId === session.userId && !hiddenJobIds.has(job.id))
             .map(publicJob),
     });
 }

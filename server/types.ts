@@ -58,6 +58,12 @@ export type StoredGenerationHistoryItem = {
   createdAt: number;
   updatedAt: number;
 };
+export type StoredGenerationHistoryTombstone = {
+  id: string;
+  kind: GenerationHistoryKind;
+  deletedAt: number;
+  jobIds: string[];
+};
 export type StoredImageReference = {
   path: string;
   mimeType: string;

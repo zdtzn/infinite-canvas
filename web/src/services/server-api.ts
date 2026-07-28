@@ -213,8 +213,13 @@ export async function upsertServerGenerationHistoryItem(kind: "image" | "video",
     return serverRequest<{ item: Record<string, unknown> }>(`/api/generation-history/${kind}/${encodeURIComponent(id)}`, { method: "PUT", body: { item }, expectedUserId });
 }
 
-export async function deleteServerGenerationHistoryItem(kind: "image" | "video", id: string, expectedUserId?: string) {
-    await serverRequest(`/api/generation-history/${kind}/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
+export async function deleteServerGenerationHistoryItems(kind: "image" | "video", ids: string[], jobIds: string[] = [], expectedUserId?: string) {
+    return serverRequest<{ deleted: number; removedJobs: number }>(`/api/generation-history/${kind}`, {
+        method: "DELETE",
+        body: { ids, jobIds },
+        timeoutMs: 30_000,
+        expectedUserId,
+    });
 }
 
 export async function uploadProfileAvatar(file: File) {

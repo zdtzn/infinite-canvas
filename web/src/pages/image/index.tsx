@@ -28,7 +28,7 @@ import { cultivationGenerationBlockReason, cultivationRefundNotice, quotaText, r
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, persistGenerationHistoryRecords, synchronizeGenerationHistory } from "@/services/generation-history";
 import { mergeServerJobsIntoImageHistory } from "@/services/image-generation-history";
-import { fetchServerJobs, removeServerJob, type ServerJob } from "@/services/server-api";
+import { fetchServerJobs, type ServerJob } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 
 type GenerationLog = {
@@ -86,6 +86,7 @@ export default function ImagePage() {
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [deletingLogs, setDeletingLogs] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
     const savingAssetIdsRef = useRef(new Set<string>());
     const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
@@ -329,15 +330,25 @@ export default function ImagePage() {
         setPreviewLog(null);
     };
 
-    const deleteSelectedLogs = () => {
-        const selected = logs.filter((log) => selectedLogIds.includes(log.id));
+    const deleteSelectedLogs = async () => {
+        const deletingIds = [...selectedLogIds];
+        if (!deletingIds.length || deletingLogs) return;
+        const selected = logs.filter((log) => deletingIds.includes(log.id));
         const serverJobIds = Array.from(new Set(selected.flatMap((log) => log.serverJobIds || [])));
-        void Promise.allSettled([deleteGenerationHistoryRecords({ kind: "image", userId: historyUserId, store: logStore }, selectedLogIds), ...serverJobIds.map((id) => removeServerJob(id, historyUserId))]).then(refreshLogs);
-        if (previewLog && selectedLogIds.includes(previewLog.id)) {
-            setPreviewLog(null);
+        setDeletingLogs(true);
+        try {
+            await deleteGenerationHistoryRecords({ kind: "image", userId: historyUserId, store: logStore }, deletingIds, serverJobIds);
+            await refreshLogs();
+            if (previewLog && deletingIds.includes(previewLog.id)) setPreviewLog(null);
+            setSelectedLogIds([]);
+            setDeleteConfirmOpen(false);
+            message.success(`已删除 ${deletingIds.length} 条历史记录`);
+        } catch (error) {
+            console.error("Failed to delete image generation history", error);
+            message.error("历史记录删除失败，请稍后重试");
+        } finally {
+            setDeletingLogs(false);
         }
-        setSelectedLogIds([]);
-        setDeleteConfirmOpen(false);
     };
 
     const saveLog = (log: GenerationLog) => {
@@ -432,15 +443,12 @@ export default function ImagePage() {
                             <div className="relative mb-6 overflow-hidden rounded-lg">
                                 <img src="/images/ref/energy-vortex-2.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
                                 <div className="absolute inset-0 bg-gradient-to-r from-[#0e0e12]/88 via-[#0e0e12]/62 to-[#0e0e12]/28" aria-hidden />
-                                <div className="relative flex items-end justify-between gap-3 p-5">
+                                <div className="relative p-5">
                                     <div className="min-w-0">
                                         <p className="text-[10px] tracking-[0.4em] text-[#c9a86a]">DAN QING TAI</p>
                                         <h1 className="font-brush mt-2 text-4xl text-[#edede6] [text-shadow:0_2px_20px_rgb(0_0_0/0.6)]">丹青台</h1>
                                         <p className="font-display mt-1.5 text-xs tracking-[0.1em] text-[#edede6]/70">一笔落墨,万象皆成 · 结果在这里持续保留</p>
                                     </div>
-                                    <Button icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
-                                        历史
-                                    </Button>
                                 </div>
                             </div>
 
@@ -581,7 +589,12 @@ export default function ImagePage() {
                     <section className="thin-scrollbar min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:h-full lg:p-5">
                         <div className="mb-4 flex items-center justify-between gap-3">
                             <h2 className="text-xl font-semibold">生成结果</h2>
-                            {running ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                                {running ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
+                                <Button size="small" icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
+                                    历史
+                                </Button>
+                            </div>
                         </div>
                         {results.length ? (
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
@@ -636,8 +649,23 @@ export default function ImagePage() {
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
-            <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
-                确定删除选中的 {selectedLogIds.length} 条生成记录吗？
+            <Modal
+                title="删除历史记录"
+                open={deleteConfirmOpen}
+                onCancel={() => setDeleteConfirmOpen(false)}
+                onOk={() => void deleteSelectedLogs()}
+                okText="删除"
+                confirmLoading={deletingLogs}
+                okButtonProps={{ danger: true }}
+                cancelButtonProps={{ disabled: deletingLogs }}
+                closable={!deletingLogs}
+                mask={{ closable: !deletingLogs }}
+                cancelText="取消"
+            >
+                <div className="space-y-2">
+                    <p>确定删除选中的 {selectedLogIds.length} 条历史记录吗？</p>
+                    <p className="text-sm text-stone-500 dark:text-stone-400">记录将从生成历史中移除，已入藏卷阁的图片不会受影响。</p>
+                </div>
             </Modal>
         </div>
     );

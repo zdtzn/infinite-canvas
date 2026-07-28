@@ -283,7 +283,14 @@ describe("SQLite application database", () => {
           kind: "image",
           payload: { id: "history-a", prompt: "Alice image" },
           createdAt: 10,
-          updatedAt: 11,
+          updatedAt: 9_999_999_999_999,
+        },
+        {
+          id: "history-keep",
+          kind: "image",
+          payload: { id: "history-keep", prompt: "Alice keeps this" },
+          createdAt: 11,
+          updatedAt: 12,
         },
       ]);
       store.upsertGenerationHistoryItems("alice", "video", [
@@ -305,7 +312,7 @@ describe("SQLite application database", () => {
         },
       ]);
 
-      expect(store.loadGenerationHistory("alice", "image")).toHaveLength(1);
+      expect(store.loadGenerationHistory("alice", "image")).toHaveLength(2);
       expect(
         store.loadGenerationHistory("alice", "video")[0].payload.prompt,
       ).toBe("Alice video");
@@ -313,12 +320,54 @@ describe("SQLite application database", () => {
         store.loadGenerationHistory("bob", "image")[0].payload.prompt,
       ).toBe("Bob image");
 
-      store.deleteGenerationHistoryItem("alice", "image", "history-a");
-      expect(store.loadGenerationHistory("alice", "image")).toEqual([]);
+      store.deleteGenerationHistoryItems("alice", "image", [
+        {
+          id: "history-a",
+          kind: "image",
+          deletedAt: 20,
+          jobIds: ["job-a"],
+        },
+        {
+          id: "history-missing",
+          kind: "image",
+          deletedAt: 20,
+          jobIds: [],
+        },
+      ]);
+      expect(
+        store.loadGenerationHistory("alice", "image").map((item) => item.id),
+      ).toEqual(["history-keep"]);
+      expect(store.loadGenerationHistoryTombstones("alice", "image")).toEqual([
+        {
+          id: "history-a",
+          kind: "image",
+          deletedAt: 20,
+          jobIds: ["job-a"],
+        },
+        {
+          id: "history-missing",
+          kind: "image",
+          deletedAt: 20,
+          jobIds: [],
+        },
+      ]);
+
+      store.upsertGenerationHistoryItems("alice", "image", [
+        {
+          id: "history-a",
+          kind: "image",
+          payload: { id: "history-a", prompt: "Stale resurrection" },
+          createdAt: 10,
+          updatedAt: 10_000_000_000_000,
+        },
+      ]);
+      expect(
+        store.loadGenerationHistory("alice", "image").map((item) => item.id),
+      ).toEqual(["history-keep"]);
       expect(store.loadGenerationHistory("bob", "image")).toHaveLength(1);
       expect(
         store.raw
-          ?.query("SELECT 1 FROM schema_migrations WHERE version = 5")
+          ?.query("SELECT 1 FROM schema_migrations WHERE version = 8")
           .get(),
       ).toBeTruthy();
     } finally {

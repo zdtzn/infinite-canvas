@@ -12,7 +12,7 @@ import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeVa
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
+import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -83,6 +83,7 @@ export default function VideoPage() {
     const videoInputRef = useRef<HTMLInputElement>(null);
     const audioInputRef = useRef<HTMLInputElement>(null);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
+    const deletedLogIdsRef = useRef<Set<string>>(new Set());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -105,6 +106,7 @@ export default function VideoPage() {
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [deletingLogs, setDeletingLogs] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
     const videoCommand = useWorkbenchAgentStore((state) => state.videoCommand);
     const clearVideoCommand = useWorkbenchAgentStore((state) => state.clearVideoCommand);
@@ -330,14 +332,34 @@ export default function VideoPage() {
         setPreviewLog(null);
     };
 
-    const deleteSelectedLogs = () => {
-        void deleteGenerationHistoryRecords({ kind: "video", userId: historyUserId, store: logStore }, selectedLogIds).then(() => refreshLogs());
-        if (previewLog && selectedLogIds.includes(previewLog.id)) {
-            setPreviewLog(null);
-            setResults([]);
+    const deleteSelectedLogs = async () => {
+        const deletingIds = [...selectedLogIds];
+        if (!deletingIds.length || deletingLogs) return;
+        const deletingActiveLog = deletingIds.some((id) => activeLogIdsRef.current.has(id));
+        deletingIds.forEach((id) => deletedLogIdsRef.current.add(id));
+        setDeletingLogs(true);
+        try {
+            await deleteGenerationHistoryRecords({ kind: "video", userId: historyUserId, store: logStore }, deletingIds);
+            await refreshLogs();
+            if (deletingActiveLog || (previewLog && deletingIds.includes(previewLog.id))) {
+                setPreviewLog(null);
+                setResults([]);
+            }
+            if (deletingActiveLog && !Array.from(activeLogIdsRef.current).some((id) => !deletingIds.includes(id))) {
+                setRunning(false);
+                setStartedAt(0);
+            }
+            setSelectedLogIds([]);
+            setDeleteConfirmOpen(false);
+            message.success(`已删除 ${deletingIds.length} 条历史记录`);
+        } catch (error) {
+            deletingIds.forEach((id) => deletedLogIdsRef.current.delete(id));
+            await refreshLogs().catch(() => undefined);
+            console.error("Failed to delete video generation history", error);
+            message.error("历史记录删除失败，请稍后重试");
+        } finally {
+            setDeletingLogs(false);
         }
-        setSelectedLogIds([]);
-        setDeleteConfirmOpen(false);
     };
 
     const saveLog = async (log: GenerationLog, resumePending = true) => {
@@ -365,7 +387,7 @@ export default function VideoPage() {
     };
 
     const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig, agentTaskId?: string) => {
-        if (!log.task || activeLogIdsRef.current.has(log.id)) return;
+        if (!log.task || deletedLogIdsRef.current.has(log.id) || activeLogIdsRef.current.has(log.id)) return;
         activeLogIdsRef.current.add(log.id);
         setRunning(true);
         setStartedAt((value) => value || performance.now());
@@ -373,9 +395,15 @@ export default function VideoPage() {
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         try {
             for (let attempt = 0; attempt < 120; attempt += 1) {
+                if (deletedLogIdsRef.current.has(log.id)) return;
                 const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
+                if (deletedLogIdsRef.current.has(log.id)) return;
                 if (state.status === "completed") {
                     const stored = await storeGeneratedVideo(state.result);
+                    if (deletedLogIdsRef.current.has(log.id)) {
+                        if (stored.storageKey) await deleteStoredMedia([stored.storageKey], historyUserId);
+                        return;
+                    }
                     const nextVideo: GeneratedVideo = {
                         id: nanoid(),
                         url: stored.url,
@@ -397,6 +425,7 @@ export default function VideoPage() {
                 await delay(log.task.provider === "seedance" ? 5000 : 2500);
             }
         } catch (error) {
+            if (deletedLogIdsRef.current.has(log.id)) return;
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             setResults([{ id: log.id, status: "failed", error: errorMessage }]);
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
@@ -718,8 +747,23 @@ export default function VideoPage() {
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
-            <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
-                确定删除选中的 {selectedLogIds.length} 条生成记录吗？
+            <Modal
+                title="删除历史记录"
+                open={deleteConfirmOpen}
+                onCancel={() => setDeleteConfirmOpen(false)}
+                onOk={() => void deleteSelectedLogs()}
+                okText="删除"
+                confirmLoading={deletingLogs}
+                okButtonProps={{ danger: true }}
+                cancelButtonProps={{ disabled: deletingLogs }}
+                closable={!deletingLogs}
+                mask={{ closable: !deletingLogs }}
+                cancelText="取消"
+            >
+                <div className="space-y-2">
+                    <p>确定删除选中的 {selectedLogIds.length} 条历史记录吗？</p>
+                    <p className="text-sm text-stone-500 dark:text-stone-400">记录将从生成历史中移除，已入藏卷阁的作品不会受影响。</p>
+                </div>
             </Modal>
         </div>
     );

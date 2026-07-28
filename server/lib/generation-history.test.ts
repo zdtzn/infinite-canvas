@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  generationHistoryJobIdsForDeletion,
   GenerationHistoryInputError,
+  normalizeGenerationHistoryDeletion,
   normalizeGenerationHistoryItem,
 } from "./generation-history";
 import type { StoredAsset } from "../types";
@@ -15,6 +17,52 @@ const ownedImage: StoredAsset = {
 };
 
 describe("generation history validation", () => {
+  test("normalizes one batch deletion request without duplicate writes", () => {
+    expect(
+      normalizeGenerationHistoryDeletion({
+        ids: ["history-one", "history-one", "server-job:job_1"],
+        jobIds: ["must-not-be-trusted"],
+      }),
+    ).toEqual({
+      ids: ["history-one", "server-job:job_1"],
+      jobIds: ["must-not-be-trusted"],
+    });
+  });
+
+  test("rejects malformed batch deletion identifiers", () => {
+    expect(() =>
+      normalizeGenerationHistoryDeletion({ ids: ["history/foreign"] }),
+    ).toThrow(GenerationHistoryInputError);
+  });
+
+  test("removes only jobs exclusively referenced by the selected records", () => {
+    expect(
+      generationHistoryJobIdsForDeletion(
+        "image",
+        ["history-selected"],
+        [
+          {
+            id: "history-selected",
+            kind: "image",
+            payload: {
+              id: "history-selected",
+              serverJobIds: ["job-shared", "job-remove"],
+            },
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            id: "video-remaining",
+            kind: "video",
+            payload: { id: "video-remaining", serverJobIds: ["job-shared"] },
+            createdAt: 2,
+            updatedAt: 2,
+          },
+        ],
+      ),
+    ).toEqual(["job-remove"]);
+  });
+
   test("keeps safe metadata and strips browser-only ownership and URLs", () => {
     const item = normalizeGenerationHistoryItem(
       "image",

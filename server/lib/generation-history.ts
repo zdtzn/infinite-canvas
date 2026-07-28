@@ -24,6 +24,39 @@ const SENSITIVE_KEYS = new Set([
 
 export class GenerationHistoryInputError extends Error {}
 
+export function normalizeGenerationHistoryDeletion(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new GenerationHistoryInputError("删除生成记录的请求格式无效");
+  const source = input as Record<string, unknown>;
+  const ids = normalizeDeletionIds(source.ids, "生成记录");
+  if (!ids.length)
+    throw new GenerationHistoryInputError("请选择要删除的生成记录");
+  return {
+    ids,
+    jobIds: normalizeDeletionIds(source.jobIds ?? [], "生成任务"),
+  };
+}
+
+export function generationHistoryJobIdsForDeletion(
+  kind: GenerationHistoryKind,
+  ids: string[],
+  records: StoredGenerationHistoryItem[],
+) {
+  const selectedIds = new Set(ids);
+  const remainingJobIds = new Set(
+    records
+      .filter((item) => item.kind !== kind || !selectedIds.has(item.id))
+      .flatMap(historyJobIds),
+  );
+  return Array.from(
+    new Set(
+      records
+        .filter((item) => item.kind === kind && selectedIds.has(item.id))
+        .flatMap(historyJobIds),
+    ),
+  ).filter((id) => !remainingJobIds.has(id));
+}
+
 export function normalizeGenerationHistory(
   kind: GenerationHistoryKind,
   input: unknown,
@@ -117,4 +150,31 @@ function sanitizeHistoryValue(
 function normalizeTimestamp(input: unknown, fallback: number) {
   const value = Number(input);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+function normalizeDeletionIds(input: unknown, label: string) {
+  if (!Array.isArray(input))
+    throw new GenerationHistoryInputError(`${label}列表格式无效`);
+  if (input.length > MAX_HISTORY_ITEMS)
+    throw new GenerationHistoryInputError(
+      `单次最多删除 ${MAX_HISTORY_ITEMS} 条${label}`,
+    );
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const value of input) {
+    const id = String(value || "").trim();
+    if (!HISTORY_ID_PATTERN.test(id))
+      throw new GenerationHistoryInputError(`${label}标识无效`);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function historyJobIds(item: StoredGenerationHistoryItem) {
+  if (!Array.isArray(item.payload.serverJobIds)) return [];
+  return item.payload.serverJobIds
+    .map((value) => String(value || "").trim())
+    .filter((id) => HISTORY_ID_PATTERN.test(id));
 }

@@ -1,6 +1,6 @@
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { runWithConcurrency } from "@/lib/async-pool";
-import { deleteServerGenerationHistoryItem, fetchServerGenerationHistory, mergeServerGenerationHistory, upsertServerGenerationHistoryItem } from "@/services/server-api";
+import { deleteServerGenerationHistoryItems, fetchServerGenerationHistory, mergeServerGenerationHistory, upsertServerGenerationHistoryItem } from "@/services/server-api";
 
 export type GenerationHistoryKind = "image" | "video";
 
@@ -8,6 +8,7 @@ export type GenerationHistoryRecord = {
     id: string;
     createdAt: number;
     updatedAt?: number;
+    deletedAt?: number;
     ownerUserId?: string;
 };
 
@@ -43,6 +44,10 @@ export function persistGenerationHistoryRecord<T extends GenerationHistoryRecord
             const prepared = stripLocalOwnership(await options.prepare(local, options.userId));
             const response = await upsertServerGenerationHistoryItem(options.kind, prepared as Record<string, unknown>, options.userId);
             const canonical = withLocalOwnership(response.item as T, options.userId);
+            if (isGenerationHistoryTombstone(canonical)) {
+                await Promise.all([options.store.removeItem(generationHistoryCacheKey(options.userId, local.id)), removeLegacyCacheItem(options.store, options.userId, local.id)]);
+                return undefined;
+            }
             await options.store.setItem(generationHistoryCacheKey(options.userId, canonical.id), canonical);
             return options.hydrate(canonical);
         } catch (error) {
@@ -63,7 +68,7 @@ export function persistGenerationHistoryRecords<T extends GenerationHistoryRecor
         try {
             const response = await mergeServerGenerationHistoryBatches(options.kind, prepared, options.userId);
             const canonical = (response.items as T[]).map((record) => withLocalOwnership(record, options.userId));
-            const merged = mergeGenerationHistoryRecords(failed, canonical);
+            const merged = activeGenerationHistoryRecords(mergeGenerationHistoryRecords(failed, canonical));
             await replaceOwnedHistoryCache(options.store, options.userId, merged);
             return Promise.all(merged.map(options.hydrate));
         } catch (error) {
@@ -73,25 +78,28 @@ export function persistGenerationHistoryRecords<T extends GenerationHistoryRecor
     });
 }
 
-export function deleteGenerationHistoryRecords<T extends GenerationHistoryRecord>(options: Pick<HistorySyncOptions<T>, "kind" | "userId" | "store">, ids: string[]) {
+export function deleteGenerationHistoryRecords<T extends GenerationHistoryRecord>(options: Pick<HistorySyncOptions<T>, "kind" | "userId" | "store">, ids: string[], jobIds: string[] = []) {
     return serializeHistoryOperation(options, async () => {
         const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+        if (PUBLIC_MODE && options.userId) await deleteServerGenerationHistoryItems(options.kind, uniqueIds, jobIds, options.userId);
         await Promise.all(uniqueIds.flatMap((id) => [options.store.removeItem(generationHistoryCacheKey(options.userId, id)), removeLegacyCacheItem(options.store, options.userId, id)]));
-        if (!PUBLIC_MODE || !options.userId) return;
-        const results = await Promise.allSettled(uniqueIds.map((id) => deleteServerGenerationHistoryItem(options.kind, id, options.userId)));
-        const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-        if (failure) reportHistorySyncError(failure.reason);
     });
 }
 
 export function mergeGenerationHistoryRecords<T extends GenerationHistoryRecord>(local: T[], remote: T[]) {
     const records = new Map<string, T>();
+    const remoteTombstones = new Set(remote.filter(isGenerationHistoryTombstone).map((item) => item.id));
     for (const item of remote) records.set(item.id, item);
     for (const item of local) {
+        if (remoteTombstones.has(item.id)) continue;
         const current = records.get(item.id);
         if (!current || recordVersion(item) > recordVersion(current)) records.set(item.id, item);
     }
     return Array.from(records.values()).sort((left, right) => recordVersion(right) - recordVersion(left));
+}
+
+export function activeGenerationHistoryRecords<T extends GenerationHistoryRecord>(records: T[]) {
+    return records.filter((record) => !isGenerationHistoryTombstone(record));
 }
 
 export function recordBelongsToUser(record: Pick<GenerationHistoryRecord, "ownerUserId">, userId: string) {
@@ -114,6 +122,7 @@ async function synchronizeNow<T extends GenerationHistoryRecord>(options: Histor
     const remoteById = new Map(remote.map((record) => [record.id, record]));
     const upload = prepared.filter((record) => {
         const current = remoteById.get(record.id);
+        if (current && isGenerationHistoryTombstone(current)) return false;
         return !current || recordVersion(record) > recordVersion(current);
     });
 
@@ -128,7 +137,7 @@ async function synchronizeNow<T extends GenerationHistoryRecord>(options: Histor
         }
     }
 
-    const merged = reconcileGenerationHistoryRecords(local, failed, canonical, uploadSucceeded).map((record) => withLocalOwnership(record, options.userId));
+    const merged = activeGenerationHistoryRecords(reconcileGenerationHistoryRecords(local, failed, canonical, uploadSucceeded)).map((record) => withLocalOwnership(record, options.userId));
     await replaceOwnedHistoryCache(options.store, options.userId, merged);
     return Promise.all(merged.map(options.hydrate));
 }
@@ -244,6 +253,10 @@ export function generationHistoryCacheKey(userId: string, id: string) {
 
 function recordVersion(record: GenerationHistoryRecord) {
     return Number(record.updatedAt || record.createdAt || 0);
+}
+
+function isGenerationHistoryTombstone(record: GenerationHistoryRecord) {
+    return Number(record.deletedAt || 0) > 0;
 }
 
 function reportHistorySyncError(error: unknown) {

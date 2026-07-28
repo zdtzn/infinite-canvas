@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { mergeGenerationHistoryRecords, reconcileGenerationHistoryRecords, recordBelongsToUser, splitGenerationHistoryBatches } from "./generation-history";
+import { activeGenerationHistoryRecords, mergeGenerationHistoryRecords, reconcileGenerationHistoryRecords, recordBelongsToUser, splitGenerationHistoryBatches } from "./generation-history";
 
 describe("generation history synchronization", () => {
     test("merges local and remote records without dropping either side", () => {
@@ -33,6 +33,16 @@ describe("generation history synchronization", () => {
         const remote = [{ id: "remote", createdAt: 3, updatedAt: 30 }];
 
         expect(reconcileGenerationHistoryRecords(local, [local[1]], remote, false).map((item) => item.id)).toEqual(["remote", "prepare-failed", "prepared"]);
+    });
+
+    test("keeps a server deletion tombstone authoritative over a stale local record", () => {
+        const merged = mergeGenerationHistoryRecords(
+            [{ id: "deleted", createdAt: 1, updatedAt: 999 }],
+            [{ id: "deleted", createdAt: 1, updatedAt: 20, deletedAt: 20 }],
+        );
+
+        expect(merged).toEqual([{ id: "deleted", createdAt: 1, updatedAt: 20, deletedAt: 20 }]);
+        expect(activeGenerationHistoryRecords(merged)).toEqual([]);
     });
 
     test("splits oversized migration uploads into bounded requests", () => {

@@ -18,6 +18,7 @@ import type {
   ServerState,
   StoredAsset,
   StoredGenerationHistoryItem,
+  StoredGenerationHistoryTombstone,
   StoredImageJob,
   StoredImageReference,
   StoredLibraryAsset,
@@ -45,6 +46,15 @@ export type AppDatabase = {
     userId: string,
     kind: GenerationHistoryKind,
     items: StoredGenerationHistoryItem[],
+  ): void;
+  loadGenerationHistoryTombstones(
+    userId: string,
+    kind: GenerationHistoryKind,
+  ): StoredGenerationHistoryTombstone[];
+  deleteGenerationHistoryItems(
+    userId: string,
+    kind: GenerationHistoryKind,
+    tombstones: StoredGenerationHistoryTombstone[],
   ): void;
   deleteGenerationHistoryItem(
     userId: string,
@@ -365,6 +375,30 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 8").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS generation_history_tombstones (
+          user_id TEXT NOT NULL,
+          history_kind TEXT NOT NULL CHECK (history_kind IN ('image', 'video')),
+          record_id TEXT NOT NULL,
+          deleted_at INTEGER NOT NULL,
+          job_ids_json TEXT NOT NULL DEFAULT '[]',
+          PRIMARY KEY (user_id, history_kind, record_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_generation_history_tombstones_user_kind
+          ON generation_history_tombstones(user_id, history_kind, deleted_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (8, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(
@@ -575,12 +609,39 @@ function sqliteStore(database: Database): AppDatabase {
         createdAt: Number(item.created_at),
         updatedAt: Number(item.updated_at),
       })),
+    loadGenerationHistoryTombstones: (userId, kind) =>
+      (
+        database
+          .query(
+            "SELECT record_id, deleted_at, job_ids_json FROM generation_history_tombstones WHERE user_id = ? AND history_kind = ? ORDER BY record_id ASC",
+          )
+          .all(userId, kind) as Array<{
+          record_id: string;
+          deleted_at: number;
+          job_ids_json: string;
+        }>
+      ).map((item) => ({
+        id: item.record_id,
+        kind,
+        deletedAt: Number(item.deleted_at),
+        jobIds: parseStringArray(item.job_ids_json),
+      })),
     upsertGenerationHistoryItems: (userId, kind, items) =>
       database.transaction(() => {
         const upsert = database.query(
           "INSERT INTO generation_history_items(user_id, history_kind, record_id, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, history_kind, record_id) DO UPDATE SET payload_json=excluded.payload_json, created_at=excluded.created_at, updated_at=excluded.updated_at WHERE excluded.updated_at >= generation_history_items.updated_at",
         );
-        for (const item of items)
+        const tombstonedIds = new Set(
+          (
+            database
+              .query(
+                "SELECT record_id FROM generation_history_tombstones WHERE user_id = ? AND history_kind = ?",
+              )
+              .all(userId, kind) as Array<{ record_id: string }>
+          ).map((item) => item.record_id),
+        );
+        for (const item of items) {
+          if (tombstonedIds.has(item.id)) continue;
           upsert.run(
             userId,
             kind,
@@ -589,11 +650,43 @@ function sqliteStore(database: Database): AppDatabase {
             item.createdAt,
             item.updatedAt,
           );
+        }
         database
           .query(
             "DELETE FROM generation_history_items WHERE rowid IN (SELECT rowid FROM generation_history_items WHERE user_id = ? AND history_kind = ? ORDER BY updated_at DESC LIMIT -1 OFFSET 5000)",
           )
           .run(userId, kind);
+      })(),
+    deleteGenerationHistoryItems: (userId, kind, tombstones) =>
+      database.transaction(() => {
+        const remove = database.query(
+          "DELETE FROM generation_history_items WHERE user_id = ? AND history_kind = ? AND record_id = ?",
+        );
+        const loadExisting = database.query(
+          "SELECT deleted_at, job_ids_json FROM generation_history_tombstones WHERE user_id = ? AND history_kind = ? AND record_id = ?",
+        );
+        const upsert = database.query(
+          "INSERT INTO generation_history_tombstones(user_id, history_kind, record_id, deleted_at, job_ids_json) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, history_kind, record_id) DO UPDATE SET deleted_at = MAX(generation_history_tombstones.deleted_at, excluded.deleted_at), job_ids_json = excluded.job_ids_json",
+        );
+        for (const tombstone of tombstones) {
+          const existing = loadExisting.get(userId, kind, tombstone.id) as
+            | { deleted_at: number; job_ids_json: string }
+            | null;
+          const jobIds = Array.from(
+            new Set([
+              ...parseStringArray(existing?.job_ids_json),
+              ...tombstone.jobIds,
+            ]),
+          );
+          remove.run(userId, kind, tombstone.id);
+          upsert.run(
+            userId,
+            kind,
+            tombstone.id,
+            Math.max(Number(existing?.deleted_at || 0), tombstone.deletedAt),
+            JSON.stringify(jobIds),
+          );
+        }
       })(),
     deleteGenerationHistoryItem: (userId, kind, recordId) =>
       database
@@ -869,6 +962,17 @@ function normalizeState(state: ServerState): ServerState {
   state.projects ||= {};
   state.projectTombstones ||= {};
   return state;
+}
+
+function parseStringArray(value?: string) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 function safeSegment(value: string) {
