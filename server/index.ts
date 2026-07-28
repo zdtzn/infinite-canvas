@@ -2148,7 +2148,7 @@ async function serveStatic(pathname: string, method: string) {
         .replace(/^(\.\.[/\\])+/, "")
         .replace(/^[/\\]+/, "");
     let path = resolve(WEB_ROOT, relative || "index.html");
-    if (!(path === WEB_ROOT || path.startsWith(`${WEB_ROOT}${sep}`)) || !existsSync(path) || Bun.file(path).size === 0) path = join(WEB_ROOT, "index.html");
+    if (!(path === WEB_ROOT || path.startsWith(`${WEB_ROOT}${sep}`)) || !existsSync(path) || statSync(path).isDirectory() || Bun.file(path).size === 0) path = join(WEB_ROOT, "index.html");
     const file = Bun.file(path);
     const immutable = /-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2?|svg)$/.test(path);
     const revalidate = path.endsWith("index.html") || path.endsWith("theme-init.js");
