@@ -278,16 +278,6 @@ export default function CultivationPage() {
                                 {data.publicMessage ? <NoticeBlock label="来自管理员" text={data.publicMessage} /> : null}
                             </section>
                         ) : null}
-
-                        {data.capabilities.length ? (
-                            <section className="shj-panel flex flex-wrap items-baseline gap-x-3 gap-y-1 p-5" aria-label="已开放能力">
-                                <span className="font-display text-sm tracking-[0.1em] text-[#c9a86a]">能力权限</span>
-                                <p className="text-sm text-[#c9c4b9]">
-                                    已开放:{data.capabilities.slice(0, 3).map(cultivationCapabilityLabel).join("、")}
-                                    {data.capabilities.length > 3 ? ` 等 ${data.capabilities.length} 项能力` : ""}
-                                </p>
-                            </section>
-                        ) : null}
                     </div>
 
                     {/* ── 境界阶梯 ── */}
@@ -309,6 +299,16 @@ export default function CultivationPage() {
                         </div>
                     </aside>
                 </div>
+
+                {data.capabilities.length ? (
+                    <section className="shj-panel mt-6 flex flex-wrap items-baseline gap-x-3 gap-y-1 p-5" aria-label="已开放能力">
+                        <span className="font-display text-sm tracking-[0.1em] text-[#c9a86a]">能力权限</span>
+                        <p className="text-sm text-[#c9c4b9]">
+                            已开放：{data.capabilities.slice(0, 3).map(cultivationCapabilityLabel).join("、")}
+                            {data.capabilities.length > 3 ? ` 等 ${data.capabilities.length} 项能力` : ""}
+                        </p>
+                    </section>
+                ) : null}
             </div>
         </main>
     );

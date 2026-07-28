@@ -65,7 +65,7 @@ export default function ImagePage() {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const { data: cultivationProfile } = useCultivationProfile();
-    const { generationSuccessMessage, isImperialMode } = useImperialMode();
+    const { generationSuccessMessage, isDouEmperor } = useImperialMode();
     const imperialGenerationCue = useImperialGenerationCue();
     const authenticatedUserId = useUserStore((state) => state.user?.id || "");
     const historyUserId = PUBLIC_MODE ? authenticatedUserId : "local";
@@ -114,7 +114,7 @@ export default function ImagePage() {
         : null;
     const canGenerate = Boolean(prompt.trim()) && !generationBlockReason;
     const running = generationJob?.status === "running";
-    const generateButtonLabel = isImperialMode && (running || imperialGenerationCue.active) ? "天地法则演化中……" : running ? "生成中……" : "开始生成";
+    const generateButtonLabel = isDouEmperor ? (running || imperialGenerationCue.active ? "天地法则演化中……" : "执笔天地") : running ? "生成中……" : "开始生成";
     const elapsedMs = generationJob?.elapsedMs || 0;
     const results: GenerationResult[] = previewLog ? previewLog.images.map((image) => ({ id: image.id, status: "success", image })) : generationJob?.results || [];
 
@@ -225,9 +225,7 @@ export default function ImagePage() {
                     }),
                 );
                 if (successCount) {
-                    const settlement = failCount
-                        ? `成功 ${successCount} 张，失败 ${failCount} 张${cultivationRefundNotice(cultivationProfile?.unlimited, "failed")}`
-                        : `成功生成 ${successCount} 张图片`;
+                    const settlement = failCount ? `成功 ${successCount} 张，失败 ${failCount} 张${cultivationRefundNotice(cultivationProfile?.unlimited, "failed")}` : `成功生成 ${successCount} 张图片`;
                     message.success(generationSuccessMessage(settlement));
                 } else {
                     message.error(`${error || "生成失败"}${cultivationRefundNotice(cultivationProfile?.unlimited, "all")}`);

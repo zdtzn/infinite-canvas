@@ -184,7 +184,7 @@ export function useImperialMode() {
 }
 
 export function useImperialGenerationCue() {
-    const { isImperialMode } = useImperialMode();
+    const { isDouEmperor } = useImperialMode();
     const [active, setActive] = useState(false);
     const timeoutRef = useRef<number | null>(null);
 
@@ -196,16 +196,16 @@ export function useImperialGenerationCue() {
     );
 
     const trigger = useCallback(() => {
-        if (!isImperialMode) return;
+        if (!isDouEmperor) return;
         if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
         setActive(true);
         timeoutRef.current = window.setTimeout(() => {
             timeoutRef.current = null;
             setActive(false);
         }, 300);
-    }, [isImperialMode]);
+    }, [isDouEmperor]);
 
-    return { active: isImperialMode && active, trigger };
+    return { active: isDouEmperor && active, trigger };
 }
 
 export function useImperialLoadingText(fallback: string, scope: string) {
