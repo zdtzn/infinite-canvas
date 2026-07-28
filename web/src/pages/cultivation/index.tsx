@@ -225,7 +225,7 @@ export default function CultivationPage() {
                 </section>
 
                 <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_300px]">
-                    <div className="min-w-0 space-y-6">
+                    <div className="flex h-full min-w-0 flex-col gap-6">
                         {/* ── 今日修行 ── */}
                         <section className="shj-panel p-6" aria-label="今日修行">
                             <div className="grid gap-6 sm:grid-cols-2">
@@ -277,6 +277,28 @@ export default function CultivationPage() {
                             <section className="space-y-3" aria-live="polite">
                                 {data.publicMessage ? <NoticeBlock label="来自管理员" text={data.publicMessage} /> : null}
                             </section>
+                        ) : null}
+
+                        {emperorFinalStage && realmHero.portraitSrc ? (
+                            <figure className="shj-panel group relative aspect-[5/4] overflow-hidden !rounded-lg lg:h-0 lg:aspect-auto lg:min-h-80 lg:flex-1" aria-label="斗帝帝境法相">
+                                <img
+                                    src={realmHero.portraitSrc}
+                                    alt="斗帝立于金色天地法阵中的帝境法相"
+                                    width={1024}
+                                    height={1024}
+                                    loading="lazy"
+                                    decoding="async"
+                                    className="absolute inset-0 h-full w-full object-cover object-[center_45%] transition-transform duration-700 group-hover:scale-[1.015] motion-reduce:transition-none"
+                                />
+                                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0e0e12]/80 via-transparent to-[#0e0e12]/10" aria-hidden />
+                                <figcaption className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-4 p-5 sm:p-6">
+                                    <div>
+                                        <div className="text-xs text-[#c9a86a]">帝境法相</div>
+                                        <div className="font-display mt-1 text-lg text-[#f0ead8]">斗帝 · 诸天至尊</div>
+                                    </div>
+                                    <RealmIcon iconKey={data.iconKey} className="size-5 shrink-0 text-[#c9a86a]" />
+                                </figcaption>
+                            </figure>
                         ) : null}
                     </div>
 

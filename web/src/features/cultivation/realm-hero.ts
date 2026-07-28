@@ -1,5 +1,6 @@
 type RealmHeroTheme = {
     imageSrc: string;
+    portraitSrc?: string;
     description: string;
     progressMessage: string;
     completedProgressMessage?: string;
@@ -90,6 +91,7 @@ const realmHeroThemes: Record<string, RealmHeroTheme> = {
     },
     "realm-dou-emperor": {
         imageSrc: realmAsset("realm-dou-emperor.webp"),
+        portraitSrc: realmAsset("realm-dou-emperor-portrait.webp"),
         description: "星河之下，创作已成为一种稳定的掌控。",
         progressMessage: "诸天尽头就在眼前，坚持创作，终将问鼎斗帝之境。",
         completedProgressMessage: "万法归一，诸天俯首。手握日月摘星辰 世间无我这般人！",
