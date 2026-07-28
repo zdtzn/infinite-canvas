@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
@@ -618,8 +618,13 @@ export default function ImagePage() {
                             </div>
                         ) : (
                             <div className="flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[calc(100%_-_3rem)]">
-                                <ImagePlus className="mb-3 size-9 text-stone-400" />
-                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={running ? "正在准备生成结果" : "暂无生成结果"} />
+                                <div className="empty-state !p-8">
+                                    <span className="empty-state-icon">
+                                        <ImagePlus className="size-5" />
+                                    </span>
+                                    <span className="empty-state-title">{running ? "正在准备生成结果" : "万象未生"}</span>
+                                    <span className="empty-state-desc">{running ? "结果生成后会保留在这里" : "暂无生成结果,从左侧提示词落下第一笔"}</span>
+                                </div>
                             </div>
                         )}
                     </section>

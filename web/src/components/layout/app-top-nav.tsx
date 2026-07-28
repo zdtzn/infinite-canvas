@@ -6,7 +6,7 @@ import { navigationSceneNames, primaryNavigationTools, secondaryNavigationTools,
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { TaskCenter } from "@/components/layout/task-center";
-import { ImperialModeBadge, useImperialLoadingText } from "@/features/cultivation/imperial-mode";
+import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 import { CultivationStatusPill } from "@/features/cultivation/status-pill";
 import { lazyRoute } from "@/lib/lazy-route";
 import { cn } from "@/lib/utils";
@@ -142,7 +142,6 @@ export function AppTopNav() {
                                     <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label="打开 Agent" />
                                 </Tooltip>
                             </span>
-                            <ImperialModeBadge />
                             <CultivationStatusPill />
                             <TaskCenter />
                             <UserStatusActions showTaskCenter={false} />

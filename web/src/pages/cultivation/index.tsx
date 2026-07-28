@@ -101,6 +101,150 @@ export default function CultivationPage() {
         REALM_LADDER.findIndex((realm) => realm.id === data.realmId),
     );
 
+    /* ── 帝临 · 斗帝专属视图:身份 > 核心文案 > 修为 > 数据。
+       不显示下一等级/距离升级/经验条;保留专属文案与能力列表。 ── */
+    if (emperorFinalStage) {
+        return (
+            <main className="h-full overflow-y-auto bg-background text-foreground">
+                <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+                    <header className="flex flex-wrap items-end justify-between gap-4">
+                        <div>
+                            <p className="shj-hero-eyebrow">Ming Gong</p>
+                            <h1 className="font-brush mt-3 text-5xl text-[#edede6] sm:text-6xl">命宫</h1>
+                            <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#8a8a96]">修行进度与境界之路,皆在此宫</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3">
+                            {user?.admin ? (
+                                <Link to="/admin/cultivation" className="inline-flex items-center gap-1.5 text-sm text-[#c9c4b9] transition-colors hover:text-[#f7f4ea]">
+                                    <Settings2 className="size-4" />
+                                    修炼管理
+                                </Link>
+                            ) : null}
+                            <Link to="/image" className="inline-flex items-center gap-1.5 text-sm text-[#c9c4b9] transition-colors hover:text-[#f7f4ea]">
+                                <ImagePlus className="size-4" />
+                                生图工作台
+                            </Link>
+                            <Link to="/canvas">
+                                <Button type="primary" icon={<Maximize2 className="size-4" />}>
+                                    回到画布
+                                </Button>
+                            </Link>
+                        </div>
+                    </header>
+
+                    {/* ── 帝临 Hero:浩瀚宇宙,天地规则,极致克制 ── */}
+                    <section className="ming-hero ming-hero--emperor mt-8" aria-label="斗帝 · 诸天至尊">
+                        <img src={realmHero.imageSrc} alt="" aria-hidden className="ming-hero-realm-img" decoding="async" fetchPriority="high" />
+                        <div className="ming-hero-stars" aria-hidden />
+                        <div className="ming-hero-rings" aria-hidden />
+
+                        {/* 左上:人 */}
+                        <div className="absolute left-5 top-5 z-10 flex items-center gap-3 sm:left-7 sm:top-7">
+                            <div className="ming-avatar-halo relative shrink-0">
+                                <ProfileAvatarImage
+                                    src={avatarUrl}
+                                    alt={`${data.displayName} 的头像`}
+                                    fallback={data.displayName.slice(0, 1).toUpperCase()}
+                                    width={48}
+                                    height={48}
+                                    loading="eager"
+                                    fetchPriority="high"
+                                    className="grid size-12 place-items-center overflow-hidden rounded-full border border-[#e6cc91]/50 bg-[#0b1727]/80 text-base font-semibold text-[#f0ead8]"
+                                />
+                                <Tooltip title="上传头像">
+                                    <button
+                                        type="button"
+                                        className="absolute -bottom-1 -right-1 z-10 grid size-6 place-items-center rounded-full border border-[#e6cc91]/40 bg-[#0d1a2b] text-[#c9c4b9] transition-colors hover:text-[#f7f4ea]"
+                                        onClick={() => avatarInputRef.current?.click()}
+                                        disabled={avatarUploading}
+                                        aria-label="上传头像"
+                                    >
+                                        {avatarUploading ? <LoaderCircle className="size-3 animate-spin" /> : <Camera className="size-3" />}
+                                    </button>
+                                </Tooltip>
+                                <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/avif" className="hidden" onChange={(event) => void uploadAvatar(event)} />
+                            </div>
+                            <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-[#f0ead8]">{data.displayName}</div>
+                                <div className="mt-0.5 text-xs text-[#a4b2c7]">UID {data.userId.slice(0, 8)}</div>
+                            </div>
+                        </div>
+
+                        {/* 中央:身份 > 核心文案 > 修为 > 数据 */}
+                        <div className="ming-hero-content">
+                            <div className="ming-hero-eyebrow">
+                                <RealmIcon iconKey={data.iconKey} className="size-4" />
+                                当前境界
+                            </div>
+                            <h2 className="font-brush ming-hero-title">斗帝</h2>
+                            <div className="font-display ming-hero-subtitle">诸天至尊</div>
+                            <p className="ming-hero-creed">已登临最高境界。天地无更高之境,创作永无止境。</p>
+                            <p className="font-display ming-hero-quote">{realmHero.completedProgressMessage || "手握日月摘星辰 世间无我这般人!"}</p>
+
+                            <div className="ming-data-strip" aria-label="修行数据">
+                                <div className="ming-data-item">
+                                    <span className="font-display ming-data-value">{data.totalXp.toLocaleString()}</span>
+                                    <span className="ming-data-label">累计修为</span>
+                                </div>
+                                <div className="ming-data-item">
+                                    <span className="font-display ming-data-value">{data.totalImages.toLocaleString()}</span>
+                                    <span className="ming-data-label">累计生图</span>
+                                </div>
+                                <div className="ming-data-item">
+                                    <span className="font-display ming-data-value">{data.activeDays} 天</span>
+                                    <span className="ming-data-label">创作天数</span>
+                                </div>
+                                <div className="ming-data-item">
+                                    <span className="font-display ming-data-value">{data.unlimited ? "不限" : `${remainingQuota} 次`}</span>
+                                    <span className="ming-data-label">{data.unlimited ? `今日创作 · 已用 ${data.usedToday}` : "今日剩余"}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_300px]">
+                        <div className="min-w-0 space-y-6">
+                            {data.publicMessage ? (
+                                <section className="space-y-3" aria-live="polite">
+                                    <NoticeBlock label="来自管理员" text={data.publicMessage} />
+                                </section>
+                            ) : null}
+
+                            {data.capabilities.length ? (
+                                <section className="shj-panel flex flex-wrap items-baseline gap-x-3 gap-y-1 p-5" aria-label="已开放能力">
+                                    <span className="font-display text-sm tracking-[0.1em] text-[#c9a86a]">能力权限</span>
+                                    <p className="text-sm text-[#c9c4b9]">
+                                        已开放:{data.capabilities.slice(0, 3).map(cultivationCapabilityLabel).join("、")}
+                                        {data.capabilities.length > 3 ? ` 等 ${data.capabilities.length} 项能力` : ""}
+                                    </p>
+                                </section>
+                            ) : null}
+                        </div>
+
+                        {/* ── 境界阶梯:保持原有成长顺序 ── */}
+                        <aside className="shj-panel h-fit p-6 lg:sticky lg:top-20" aria-label="境界阶梯">
+                            <h2 className="font-display text-lg tracking-[0.15em] text-[#edede6]">境界阶梯</h2>
+                            <p className="mt-1 text-xs text-[#8a8a96]">越过一境,天地一变</p>
+                            <div className="shj-ladder mt-5">
+                                {[...REALM_LADDER].reverse().map((realm) => {
+                                    const index = REALM_LADDER.findIndex((item) => item.id === realm.id);
+                                    const state = index < ladderIndex ? "is-passed" : index === ladderIndex ? "is-current" : "is-future";
+                                    return (
+                                        <div key={realm.id} className={cn("shj-ladder-item", state)}>
+                                            <span className="shj-ladder-dot" aria-hidden />
+                                            <span className={cn("font-display", state === "is-current" ? "text-base" : "text-sm")}>{realm.name}</span>
+                                            {state === "is-current" ? <span className="shj-seal ml-auto !px-1.5 !py-1 !text-[11px]">汝在此处</span> : null}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </aside>
+                    </div>
+                </div>
+            </main>
+        );
+    }
+
     return (
         <main className="h-full overflow-y-auto bg-background text-foreground">
             <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">

@@ -98,7 +98,7 @@ export default function IndexPage() {
                     {cultivation ? (
                         <motion.div variants={sealStamp} className="mt-10 flex items-center gap-4">
                             <span className="shj-hero-realm-label text-sm tracking-[0.3em]">汝之境界</span>
-                            <span className="shj-seal-lg">{cultivationStageLabel(cultivation.realmName, cultivation.stageName)}</span>
+                            <span className={cn("shj-seal-lg", isImperialMode && "is-imperial")}>{cultivationStageLabel(cultivation.realmName, cultivation.stageName)}</span>
                         </motion.div>
                     ) : null}
 

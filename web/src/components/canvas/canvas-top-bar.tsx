@@ -3,7 +3,7 @@ import { BookOpen, Bot, Download, Home, Images, Menu, PanelLeftClose, PanelLeftO
 import { Button, Dropdown, Modal, Tooltip } from "antd";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
-import { ImperialModeBadge } from "@/features/cultivation/imperial-mode";
+import { CultivationStatusPill } from "@/features/cultivation/status-pill";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -143,7 +143,7 @@ export function CanvasTopBar({
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
-                    <ImperialModeBadge />
+                    <CultivationStatusPill />
                     <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
                     <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
                     <Button

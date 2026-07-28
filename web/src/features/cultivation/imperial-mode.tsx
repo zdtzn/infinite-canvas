@@ -1,6 +1,6 @@
 import { Crown } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Popover, Switch, Tooltip } from "antd";
+import { Switch } from "antd";
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { useUserStore } from "@/stores/use-user-store";
@@ -215,47 +215,8 @@ export function useImperialLoadingText(fallback: string, scope: string) {
     return isImperialMode ? imperialQuoteFor(seed, imperialLoadingMessages) : fallback;
 }
 
-export function ImperialModeBadge() {
-    const { isDouEmperor, isImperialMode } = useImperialMode();
-    if (!isDouEmperor) return null;
-
-    return (
-        <Tooltip
-            title={
-                <span className="block py-0.5">
-                    <span className="block font-medium">当前世界最高境界</span>
-                    <span className="mt-0.5 block text-xs opacity-70">诸天万界皆可入画</span>
-                </span>
-            }
-        >
-            <Popover
-                placement="bottomRight"
-                trigger="click"
-                content={
-                    <div className="imperial-identity-card">
-                        <div className="imperial-identity-card-mark" aria-hidden="true">
-                            <Crown className="size-4" />
-                        </div>
-                        <div>
-                            <div className="imperial-identity-card-eyebrow">最高身份</div>
-                            <strong>斗帝</strong>
-                            <p>诸天至尊</p>
-                            <div className="imperial-identity-card-divider" />
-                            <span>已登临修炼终点</span>
-                            <span>创作永无止境</span>
-                        </div>
-                    </div>
-                }
-            >
-                <button type="button" data-active={isImperialMode} aria-label="查看斗帝身份" className="imperial-mode-badge">
-                    <Crown className="size-3.5 shrink-0" />
-                    <span className="imperial-mode-badge-label">帝临模式</span>
-                    <span className="imperial-mode-badge-indicator" aria-hidden="true" />
-                </button>
-            </Popover>
-        </Tooltip>
-    );
-}
+/* 原 ImperialModeBadge 已合并进 CultivationStatusPill(斗帝身份徽章),
+   顶部导航与画布顶栏不再单独挂载「帝临模式」徽章。 */
 
 export function ImperialModePreferences() {
     const { isDouEmperor, isImperialMode, imperialWelcomeEnabled, setImperialModeEnabled, setImperialWelcomeEnabled } = useImperialMode();
