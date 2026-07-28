@@ -19,10 +19,12 @@ test("reads generated image files with the active session", async () => {
         return new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } });
     }) as typeof fetch;
 
-    const blob = await readImageBlob("/api/job-files/job/image.png");
+    const blob = await readImageBlob("/api/job-files/job/image.png", "user-a");
 
     expect(blob.type).toBe("image/png");
-    expect(request).toEqual({ input: "/api/job-files/job/image.png", init: { credentials: "same-origin" } });
+    expect(request?.input).toBe("/api/job-files/job/image.png");
+    expect(request?.init?.credentials).toBe("same-origin");
+    expect(new Headers(request?.init?.headers).get("x-expected-user-id")).toBe("user-a");
 });
 
 test("decodes canvas data URLs without using fetch", async () => {

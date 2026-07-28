@@ -22,7 +22,7 @@ type HistorySyncOptions<T extends GenerationHistoryRecord> = {
     userId: string;
     store: HistoryStore;
     hydrate: (record: T) => Promise<T>;
-    prepare: (record: T) => Promise<T>;
+    prepare: (record: T, expectedUserId: string) => Promise<T>;
 };
 
 const historyOperations = new Map<string, Promise<unknown>>();
@@ -40,8 +40,8 @@ export function persistGenerationHistoryRecord<T extends GenerationHistoryRecord
         await options.store.setItem(generationHistoryCacheKey(options.userId, local.id), local);
         if (!PUBLIC_MODE || !options.userId) return options.hydrate(local);
         try {
-            const prepared = stripLocalOwnership(await options.prepare(local));
-            const response = await upsertServerGenerationHistoryItem(options.kind, prepared as Record<string, unknown>);
+            const prepared = stripLocalOwnership(await options.prepare(local, options.userId));
+            const response = await upsertServerGenerationHistoryItem(options.kind, prepared as Record<string, unknown>, options.userId);
             const canonical = withLocalOwnership(response.item as T, options.userId);
             await options.store.setItem(generationHistoryCacheKey(options.userId, canonical.id), canonical);
             return options.hydrate(canonical);
@@ -58,10 +58,10 @@ export function persistGenerationHistoryRecords<T extends GenerationHistoryRecor
         await Promise.all(local.map((record) => options.store.setItem(generationHistoryCacheKey(options.userId, record.id), record)));
         if (!PUBLIC_MODE || !options.userId) return Promise.all(local.map(options.hydrate));
 
-        const { prepared, failed } = await prepareHistoryRecords(local, options.prepare);
+        const { prepared, failed } = await prepareHistoryRecords(local, options.prepare, options.userId);
         if (!prepared.length) return Promise.all(failed.map(options.hydrate));
         try {
-            const response = await mergeServerGenerationHistoryBatches(options.kind, prepared);
+            const response = await mergeServerGenerationHistoryBatches(options.kind, prepared, options.userId);
             const canonical = (response.items as T[]).map((record) => withLocalOwnership(record, options.userId));
             const merged = mergeGenerationHistoryRecords(failed, canonical);
             await replaceOwnedHistoryCache(options.store, options.userId, merged);
@@ -78,7 +78,7 @@ export function deleteGenerationHistoryRecords<T extends GenerationHistoryRecord
         const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
         await Promise.all(uniqueIds.flatMap((id) => [options.store.removeItem(generationHistoryCacheKey(options.userId, id)), removeLegacyCacheItem(options.store, options.userId, id)]));
         if (!PUBLIC_MODE || !options.userId) return;
-        const results = await Promise.allSettled(uniqueIds.map((id) => deleteServerGenerationHistoryItem(options.kind, id)));
+        const results = await Promise.allSettled(uniqueIds.map((id) => deleteServerGenerationHistoryItem(options.kind, id, options.userId)));
         const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
         if (failure) reportHistorySyncError(failure.reason);
     });
@@ -104,13 +104,13 @@ async function synchronizeNow<T extends GenerationHistoryRecord>(options: Histor
 
     let remote: T[];
     try {
-        remote = (await fetchServerGenerationHistory(options.kind)).items as T[];
+        remote = (await fetchServerGenerationHistory(options.kind, options.userId)).items as T[];
     } catch (error) {
         reportHistorySyncError(error);
         return Promise.all(local.map(options.hydrate));
     }
 
-    const { prepared, failed } = await prepareHistoryRecords(local, options.prepare);
+    const { prepared, failed } = await prepareHistoryRecords(local, options.prepare, options.userId);
     const remoteById = new Map(remote.map((record) => [record.id, record]));
     const upload = prepared.filter((record) => {
         const current = remoteById.get(record.id);
@@ -121,7 +121,7 @@ async function synchronizeNow<T extends GenerationHistoryRecord>(options: Histor
     let uploadSucceeded = true;
     if (upload.length) {
         try {
-            canonical = (await mergeServerGenerationHistoryBatches(options.kind, upload)).items as T[];
+            canonical = (await mergeServerGenerationHistoryBatches(options.kind, upload, options.userId)).items as T[];
         } catch (error) {
             reportHistorySyncError(error);
             uploadSucceeded = false;
@@ -152,10 +152,10 @@ async function replaceOwnedHistoryCache<T extends GenerationHistoryRecord>(store
     await Promise.all(records.map((record) => store.setItem(generationHistoryCacheKey(userId, record.id), withLocalOwnership(record, userId))));
 }
 
-async function prepareHistoryRecords<T extends GenerationHistoryRecord>(records: T[], prepare: (record: T) => Promise<T>) {
+async function prepareHistoryRecords<T extends GenerationHistoryRecord>(records: T[], prepare: (record: T, expectedUserId: string) => Promise<T>, expectedUserId: string) {
     const settled = await runWithConcurrency(records, HISTORY_PREPARE_CONCURRENCY, async (record): Promise<PromiseSettledResult<T>> => {
         try {
-            return { status: "fulfilled", value: await prepare(record) };
+            return { status: "fulfilled", value: await prepare(record, expectedUserId) };
         } catch (reason) {
             return { status: "rejected", reason };
         }
@@ -172,12 +172,13 @@ async function prepareHistoryRecords<T extends GenerationHistoryRecord>(records:
     return { prepared, failed };
 }
 
-async function mergeServerGenerationHistoryBatches<T extends GenerationHistoryRecord>(kind: GenerationHistoryKind, records: T[]) {
+async function mergeServerGenerationHistoryBatches<T extends GenerationHistoryRecord>(kind: GenerationHistoryKind, records: T[], expectedUserId: string) {
     let response: { items: Record<string, unknown>[] } = { items: [] };
     for (const batch of splitGenerationHistoryBatches(records)) {
         response = await mergeServerGenerationHistory(
             kind,
             batch.map((record) => stripLocalOwnership(record) as Record<string, unknown>),
+            expectedUserId,
         );
     }
     return response;

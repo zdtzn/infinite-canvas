@@ -197,36 +197,42 @@ export default function ImagePage() {
 
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
         setPreviewLog(null);
-        const jobId = startImageGeneration(snapshot, generationCount, async ({ successImages, successCount, failCount, error, durationMs }) => {
-            void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
-            if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
-            const logImages = await Promise.all(
-                successImages.map(async (image) => {
-                    const stored = await uploadImage(image.dataUrl, { outputFormat: snapshot.config.imageOutputFormat });
-                    return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
-                }),
-            );
-            logImages.forEach(replaceImageGenerationResult);
-            saveLog(
-                buildLog({
-                    prompt: text,
-                    model,
-                    config: { ...snapshot.config, count: String(generationCount) },
-                    references: snapshot.references,
-                    durationMs,
-                    successCount,
-                    failCount,
-                    status: successCount ? "成功" : "失败",
-                    images: logImages,
-                }),
-            );
-            if (successCount) {
-                const settlement = failCount ? `成功 ${successCount} 张，失败 ${failCount} 张已自动退还额度` : `成功生成 ${successCount} 张图片`;
-                message.success(generationSuccessMessage(settlement));
-            } else {
-                message.error(`${error || "生成失败"}${cultivationProfile ? "，本次额度已自动退还" : ""}`);
-            }
-        });
+        const jobId = startImageGeneration(
+            snapshot,
+            generationCount,
+            async ({ successImages, successCount, failCount, error, durationMs }) => {
+                void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
+                if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
+                const logImages = await Promise.all(
+                    successImages.map(async (image) => {
+                        const stored = await uploadImage(image.dataUrl, { outputFormat: snapshot.config.imageOutputFormat });
+                        return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+                    }),
+                );
+                logImages.forEach(replaceImageGenerationResult);
+                saveLog(
+                    buildLog({
+                        prompt: text,
+                        model,
+                        config: { ...snapshot.config, count: String(generationCount) },
+                        references: snapshot.references,
+                        durationMs,
+                        successCount,
+                        failCount,
+                        status: successCount ? "成功" : "失败",
+                        images: logImages,
+                    }),
+                );
+                if (successCount) {
+                    const settlement = failCount ? `成功 ${successCount} 张，失败 ${failCount} 张已自动退还额度` : `成功生成 ${successCount} 张图片`;
+                    message.success(generationSuccessMessage(settlement));
+                } else {
+                    message.error(`${error || "生成失败"}${cultivationProfile ? "，本次额度已自动退还" : ""}`);
+                }
+            },
+            undefined,
+            cultivationProfile?.maxConcurrency || generationCount,
+        );
         if (!jobId && agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生图工作台已有任务正在运行" });
     };
 
@@ -324,7 +330,7 @@ export default function ImagePage() {
     const deleteSelectedLogs = () => {
         const selected = logs.filter((log) => selectedLogIds.includes(log.id));
         const serverJobIds = Array.from(new Set(selected.flatMap((log) => log.serverJobIds || [])));
-        void Promise.allSettled([deleteGenerationHistoryRecords({ kind: "image", userId: historyUserId, store: logStore }, selectedLogIds), ...serverJobIds.map(removeServerJob)]).then(refreshLogs);
+        void Promise.allSettled([deleteGenerationHistoryRecords({ kind: "image", userId: historyUserId, store: logStore }, selectedLogIds), ...serverJobIds.map((id) => removeServerJob(id, historyUserId))]).then(refreshLogs);
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
         }
@@ -341,7 +347,7 @@ export default function ImagePage() {
         let nextLogs = await synchronizeGenerationHistory(options);
         if (PUBLIC_MODE && historyUserId) {
             try {
-                const jobs = (await fetchServerJobs()).items;
+                const jobs = (await fetchServerJobs(historyUserId)).items;
                 const merged = mergeServerJobsIntoImageHistory(nextLogs, jobs, buildLogFromServerJob);
                 if (imageHistoryChanged(nextLogs, merged)) nextLogs = await persistGenerationHistoryRecords(options, merged);
                 else nextLogs = merged;
@@ -919,18 +925,18 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     };
 }
 
-async function prepareImageLogForServer(log: GenerationLog): Promise<GenerationLog> {
+async function prepareImageLogForServer(log: GenerationLog, expectedUserId: string): Promise<GenerationLog> {
     const references = await Promise.all(
         log.references.map(async (item) => {
             if (item.storageKey || !item.dataUrl) return item;
-            const stored = await uploadImage(item.dataUrl);
+            const stored = await uploadImage(item.dataUrl, { expectedUserId });
             return { ...item, dataUrl: stored.url, storageKey: stored.storageKey, type: stored.mimeType };
         }),
     );
     const images = await Promise.all(
         log.images.map(async (image) => {
             if (image.storageKey || !image.dataUrl) return image;
-            const stored = await uploadImage(image.dataUrl, { outputFormat: log.config.imageOutputFormat });
+            const stored = await uploadImage(image.dataUrl, { outputFormat: log.config.imageOutputFormat, expectedUserId });
             return {
                 ...image,
                 dataUrl: stored.url,

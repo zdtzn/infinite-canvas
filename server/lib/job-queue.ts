@@ -15,6 +15,7 @@ type QueueOptions<I, O> = {
     concurrency: number;
     worker: (input: I, signal: AbortSignal, job: QueueJob<I, O>) => Promise<O>;
     onChange?: (job: QueueJob<I, O>) => void | Promise<void>;
+    onInitializationFailure?: (job: QueueJob<I, O>, error: unknown) => void | Promise<void>;
 };
 
 export class JobQueue<I, O> {
@@ -22,10 +23,12 @@ export class JobQueue<I, O> {
     private readonly completions = new Map<string, { promise: Promise<O>; resolve: (value: O) => void; reject: (error: Error) => void }>();
     private readonly controllers = new Map<string, AbortController>();
     private active = 0;
+    private accepting = true;
 
     constructor(private readonly options: QueueOptions<I, O>) {}
 
-    add(input: I, id = crypto.randomUUID()) {
+    add(input: I, id: string = crypto.randomUUID()) {
+        if (!this.accepting) throw new Error("任务队列正在关闭，请稍后重试");
         if (this.jobs.has(id)) return this.jobs.get(id)!;
         const job: QueueJob<I, O> = { id, input, status: "queued", createdAt: Date.now() };
         this.jobs.set(id, job);
@@ -44,6 +47,14 @@ export class JobQueue<I, O> {
 
     list() {
         return Array.from(this.jobs.values()).sort((a, b) => b.createdAt - a.createdAt);
+    }
+
+    pause() {
+        this.accepting = false;
+    }
+
+    activeCount() {
+        return this.active;
     }
 
     get(id: string) {
@@ -85,6 +96,7 @@ export class JobQueue<I, O> {
     }
 
     private drain() {
+        if (!this.accepting) return;
         while (this.active < Math.max(1, this.options.concurrency)) {
             const job = Array.from(this.jobs.values()).find((item) => item.status === "queued");
             if (!job) return;
@@ -101,6 +113,11 @@ export class JobQueue<I, O> {
             job.error = error instanceof Error ? error.message : "任务持久化失败";
             job.finishedAt = Date.now();
             this.completions.get(job.id)?.reject(new Error(job.error));
+            try {
+                await this.options.onInitializationFailure?.({ ...job }, error);
+            } catch {
+                // Reservation cleanup must not mask the persistence error.
+            }
             await this.changed(job).catch(() => undefined);
             return;
         }
@@ -116,7 +133,7 @@ export class JobQueue<I, O> {
             job.startedAt = Date.now();
             await this.changed(job);
             const result = await this.options.worker(job.input, controller.signal, job);
-            if (job.status === "canceled") return;
+            if (this.jobs.get(job.id)?.status === "canceled") return;
             job.status = "succeeded";
             job.result = result;
             job.finishedAt = Date.now();
@@ -142,8 +159,8 @@ export class JobQueue<I, O> {
     private ensureCompletion(id: string) {
         const existing = this.completions.get(id);
         if (existing) return existing;
-        let resolve = (_value: O) => undefined;
-        let reject = (_error: Error) => undefined;
+        let resolve: (value: O) => void = () => undefined;
+        let reject: (error: Error) => void = () => undefined;
         const promise = new Promise<O>((onResolve, onReject) => {
             resolve = onResolve;
             reject = onReject;

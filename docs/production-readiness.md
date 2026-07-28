@@ -1,0 +1,86 @@
+# Production Deployment Notes
+
+This deployment profile targets one Bun process, one SQLite database, and roughly ten invited users. It intentionally does not add Redis, a message broker, or Kubernetes.
+
+## Before the Domain Is Ready
+
+Use direct IP access only for temporary testing:
+
+```bash
+APP_BIND_ADDRESS=0.0.0.0 \
+PUBLIC_BASE_URL= \
+TRUST_PROXY=0 \
+FORCE_SECURE_COOKIES=0 \
+docker compose up -d app
+```
+
+The default bind address is `127.0.0.1`, which prevents accidental public exposure of port 3000. Direct-IP testing also requires a temporary cloud firewall rule for port 3000 and should be removed afterward. Set a stable `APP_ENCRYPTION_KEY` before storing any real provider key, even during direct-IP testing. Once the domain is ready, keep the loopback bind and use the production Compose override; it requires the public URL, encryption key, and domain and forces trusted-proxy and secure-cookie handling.
+
+## Initialize the Administrator Before Exposure
+
+Start only the `app` service and call `POST /api/auth/setup` from the server loopback interface with no `Origin` header. Do not expose Caddy until this one-time setup has succeeded. The exact command is documented in `docs/SECURE_PUBLIC_DEPLOYMENT.md`.
+
+Keep `ALLOW_NEW_USERS=1` only while invited members create their accounts. Then set `ALLOW_NEW_USERS=0` and recreate the app container. Existing members can still log in. `MAX_REGISTERED_USERS` is a second guardrail and includes the administrator.
+
+## Pin the Production Image
+
+Do not let Watchtower deploy a moving `latest` tag. Resolve the tested GHCR digest and set:
+
+```bash
+export IMAGE_REF='ghcr.io/zdtzn/infinite-canvas@sha256:REPLACE_WITH_TESTED_DIGEST'
+docker compose -f docker-compose.yml -f docker-compose.production.yml pull
+docker compose --profile https -f docker-compose.yml -f docker-compose.production.yml up -d
+```
+
+The image workflow runs type checking, all tests, and the production build before publishing any image.
+
+## Required Secrets
+
+Keep these in a root-readable environment file outside the repository:
+
+```dotenv
+PUBLIC_BASE_URL=https://your-domain.example
+APP_ENCRYPTION_KEY=replace-with-at-least-32-random-bytes
+TRUST_PROXY=1
+FORCE_SECURE_COOKIES=1
+```
+
+Back up `APP_ENCRYPTION_KEY` separately. Database and channel backups are unusable without the key.
+
+## Backups
+
+The built-in scheduled backup contains SQLite only. It is useful for quick database recovery, but it does not contain assets, job files, or reference files.
+
+Create a full, consistent volume backup during a short maintenance stop:
+
+```bash
+BACKUP_ROOT=/root/infinite-canvas-backups \
+DATA_VOLUME_NAME=infinite-canvas-data \
+sh ops/backup-volume.sh
+```
+
+Keep at least one copy on another machine or object-storage provider. Store the production environment file and `APP_ENCRYPTION_KEY` separately in an encrypted secret backup; do not place them beside the data archive. Test a restore monthly with the exact tested image tag or digest:
+
+```bash
+ARCHIVE=/root/infinite-canvas-backups/infinite-canvas-YYYYMMDDTHHMMSSZ.tar.gz \
+CONFIRM_RESTORE=infinite-canvas-data \
+DATA_VOLUME_NAME=infinite-canvas-data \
+IMAGE_REF="$IMAGE_REF" \
+sh ops/restore-volume.sh
+```
+
+The restore script validates the checksum and archive before stopping the app. It then creates a `pre-restore-*.tar.gz` safety archive before replacing the volume. If restore fails, the app deliberately remains stopped; diagnose the failure or restore that safety archive before starting the container.
+
+Backups created before checksum sidecars were introduced are rejected by default. Only for a trusted legacy archive, set `ALLOW_UNVERIFIED_RESTORE=1` explicitly; create a new verified backup immediately after recovery.
+
+## Operations Checklist
+
+- Keep public registration limited to invited users.
+- Confirm `ALLOW_NEW_USERS=0` after onboarding.
+- Initialize the administrator over loopback before opening `80/443`.
+- Monitor `/health`; HTTP 503 means SQLite is unavailable, disk is below the configured floor, or shutdown is in progress.
+- Alert at 20% disk free and keep `MIN_FREE_DISK_BYTES` at 512 MB or higher.
+- Keep Docker log rotation enabled.
+- Keep Watchtower disabled for the application container and deploy only a tested tag or digest.
+- Review failed/refunded generation usage and channel latency weekly.
+- Run one restore drill before opening the site publicly.

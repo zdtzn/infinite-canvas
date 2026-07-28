@@ -3,8 +3,9 @@ import localforage from "localforage";
 import { nanoid } from "nanoid";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { readImageMeta } from "@/lib/image-utils";
-import { deleteServerAsset, fetchServerAssetBlob, promoteServerJobAsset, uploadServerAsset } from "@/services/server-api";
+import { deleteServerAsset, fetchServerAssetBlob, fetchServerResource, promoteServerJobAsset, uploadServerAsset } from "@/services/server-api";
 import { assertImageUploadAllowed, assertStorageQuotaAvailable } from "@/services/upload-policy";
+import { useUserStore } from "@/stores/use-user-store";
 
 export type UploadedImage = {
     url: string;
@@ -31,6 +32,7 @@ type UploadImageOptions = {
     dimensions?: { width: number; height: number };
     createThumbnail?: boolean;
     previewUrl?: string;
+    expectedUserId?: string;
 };
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
@@ -38,19 +40,21 @@ const objectUrls = new Map<string, string>();
 const promotedJobImages = new Map<string, Promise<UploadedImage>>();
 
 export async function uploadImage(input: string | Blob, options?: UploadImageOptions): Promise<UploadedImage> {
+    const expectedUserId = options?.expectedUserId ?? useUserStore.getState().user?.id ?? "";
     if (PUBLIC_MODE && typeof input === "string" && canPromoteServerJobImage(input, options?.outputFormat)) {
-        const existing = promotedJobImages.get(input);
+        const promotionKey = `${expectedUserId}:${input}`;
+        const existing = promotedJobImages.get(promotionKey);
         if (existing) return existing;
-        const pending = promoteJobImage(input);
-        promotedJobImages.set(input, pending);
+        const pending = promoteJobImage(input, expectedUserId);
+        promotedJobImages.set(promotionKey, pending);
         try {
             return await pending;
         } finally {
-            if (promotedJobImages.get(input) === pending) promotedJobImages.delete(input);
+            if (promotedJobImages.get(promotionKey) === pending) promotedJobImages.delete(promotionKey);
         }
     }
 
-    const blob = await convertImageOutput(input, options?.outputFormat);
+    const blob = await convertImageOutput(input, options?.outputFormat, expectedUserId);
     const suppliedMeta = options?.imageMeta || options?.dimensions;
     const meta: ImageUploadMeta = validDimensions(suppliedMeta)
         ? { ...suppliedMeta, mimeType: options?.imageMeta?.mimeType || blob.type }
@@ -59,8 +63,8 @@ export async function uploadImage(input: string | Blob, options?: UploadImageOpt
     assertImageUploadAllowed({ bytes: blob.size, mimeType, width: meta.width, height: meta.height });
     const thumbnail = options?.createThumbnail === false ? null : await createThumbnail(blob, meta.width, meta.height);
     if (PUBLIC_MODE) {
-        const { asset } = await uploadServerAsset(blob, "image");
-        const thumbnailAsset = thumbnail ? (await uploadServerAsset(thumbnail, "image")).asset : undefined;
+        const { asset } = await uploadServerAsset(blob, "image", undefined, expectedUserId);
+        const thumbnailAsset = thumbnail ? (await uploadServerAsset(thumbnail, "image", undefined, expectedUserId)).asset : undefined;
         const url = options?.previewUrl ? rememberObjectUrl(asset.key, options.previewUrl) : asset.url;
         return { url, storageKey: asset.key, width: meta.width, height: meta.height, bytes: asset.bytes, mimeType: asset.mimeType, thumbnailKey: thumbnailAsset?.key, thumbnailUrl: thumbnailAsset?.url };
     }
@@ -85,24 +89,24 @@ export function canPromoteServerJobImage(input: string, outputFormat?: string) {
     return sourceMimeType === targetMimeType;
 }
 
-async function promoteJobImage(sourceUrl: string): Promise<UploadedImage> {
-    const { asset, width, height } = await promoteServerJobAsset(sourceUrl);
-    const meta = Number.isSafeInteger(width) && Number.isSafeInteger(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : await readImageMeta(sourceUrl);
+async function promoteJobImage(sourceUrl: string, expectedUserId: string): Promise<UploadedImage> {
+    const { asset, width, height } = await promoteServerJobAsset(sourceUrl, expectedUserId);
+    const meta = Number.isSafeInteger(width) && Number.isSafeInteger(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : await readBlobMeta(await readImageBlob(sourceUrl, expectedUserId));
     try {
         assertImageUploadAllowed({ bytes: asset.bytes, mimeType: asset.mimeType, width: meta.width, height: meta.height });
     } catch (error) {
-        await deleteServerAsset(asset.key).catch(() => undefined);
+        await deleteServerAsset(asset.key, expectedUserId).catch(() => undefined);
         throw error;
     }
     return { url: sourceUrl, storageKey: asset.key, width: meta.width, height: meta.height, bytes: asset.bytes, mimeType: asset.mimeType };
 }
 
-export async function readImageBlob(input: string | Blob) {
+export async function readImageBlob(input: string | Blob, expectedUserId = useUserStore.getState().user?.id || "") {
     const blob =
         typeof input === "string"
             ? /^data:/i.test(input)
                 ? decodeDataUrl(input)
-                : await fetch(input, { credentials: "same-origin" }).then(async (response) => {
+                : await fetchServerResource(input, {}, expectedUserId).then(async (response) => {
                       if (!response.ok) throw new Error(`读取图片失败（${response.status}）`);
                       return response.blob();
                   })
@@ -133,8 +137,8 @@ function decodeDataUrl(value: string) {
 }
 
 /** Encode a generated result locally when its gateway ignores output_format. */
-export async function convertImageOutput(input: string | Blob, outputFormat?: string) {
-    const blob = await readImageBlob(input);
+export async function convertImageOutput(input: string | Blob, outputFormat?: string, expectedUserId = useUserStore.getState().user?.id || "") {
+    const blob = await readImageBlob(input, expectedUserId);
     const targetMimeType = imageOutputFormatMimeType(outputFormat);
     if (!targetMimeType || blob.type.toLowerCase() === targetMimeType) return blob;
     if (typeof document === "undefined") throw new Error("当前环境无法转换图片格式");
@@ -208,30 +212,30 @@ export async function resolveImageUrl(storageKey?: string, fallback = "") {
     return url;
 }
 
-export async function getImageBlob(storageKey: string) {
-    if (PUBLIC_MODE) return fetchServerAssetBlob(storageKey);
+export async function getImageBlob(storageKey: string, expectedUserId = useUserStore.getState().user?.id || "") {
+    if (PUBLIC_MODE) return fetchServerAssetBlob(storageKey, expectedUserId);
     return store.getItem<Blob>(storageKey);
 }
 
-export async function setImageBlob(storageKey: string, blob: Blob) {
-    if (PUBLIC_MODE) return (await uploadServerAsset(blob, storageKey.split(":")[0] || "image", storageKey)).asset.url;
+export async function setImageBlob(storageKey: string, blob: Blob, expectedUserId = useUserStore.getState().user?.id || "") {
+    if (PUBLIC_MODE) return (await uploadServerAsset(blob, storageKey.split(":")[0] || "image", storageKey, expectedUserId)).asset.url;
     await store.setItem(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
 }
 
-export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }) {
+export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }, expectedUserId = useUserStore.getState().user?.id || "") {
     const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
     if (!url || url.startsWith("data:")) return url;
-    return blobToDataUrl(await (await fetch(url)).blob());
+    return blobToDataUrl(await readImageBlob(url, expectedUserId));
 }
 
-export async function deleteStoredImages(keys: Iterable<string>) {
+export async function deleteStoredImages(keys: Iterable<string>, expectedUserId = useUserStore.getState().user?.id || "") {
     const uniqueKeys = Array.from(new Set(keys));
     uniqueKeys.forEach(forgetObjectUrl);
     if (PUBLIC_MODE) {
-        await Promise.all(uniqueKeys.map((key) => deleteServerAsset(key).catch(() => undefined)));
+        await Promise.all(uniqueKeys.map((key) => deleteServerAsset(key, expectedUserId).catch(() => undefined)));
         return;
     }
     await Promise.all(

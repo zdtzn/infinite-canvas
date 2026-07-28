@@ -7,6 +7,7 @@ import { cancelServerJob, fetchServerJobs, removeServerJob, retryServerJob, type
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { formatDuration } from "@/lib/image-utils";
+import { useUserStore } from "@/stores/use-user-store";
 import { taskProgressProps } from "./task-progress";
 
 const statusColors: Record<ServerJob["status"], string> = { queued: "default", running: "processing", succeeded: "success", failed: "error", canceled: "default" };
@@ -17,11 +18,15 @@ export function TaskCenter() {
     const [open, setOpen] = useState(false);
     const [jobs, setJobs] = useState<ServerJob[]>([]);
     const [loadingId, setLoadingId] = useState("");
+    const userId = useUserStore((state) => state.user?.id || "");
     const activeCount = useMemo(() => jobs.filter((job) => job.status === "queued" || job.status === "running").length, [jobs]);
 
     const refresh = async (silent = true) => {
+        const expectedUserId = userId;
+        if (!expectedUserId) return;
         try {
-            setJobs((await fetchServerJobs()).items);
+            const items = (await fetchServerJobs(expectedUserId)).items;
+            if (useUserStore.getState().user?.id === expectedUserId) setJobs(items);
         } catch (error) {
             if (!silent) message.error(error instanceof Error ? error.message : "任务列表加载失败");
         }
@@ -32,16 +37,18 @@ export function TaskCenter() {
         void refresh();
         const timer = window.setInterval(() => void refresh(), 3000);
         return () => window.clearInterval(timer);
-    }, []);
+    }, [userId]);
 
     if (!PUBLIC_MODE) return null;
 
     const act = async (job: ServerJob, action: "cancel" | "retry" | "remove") => {
+        const expectedUserId = userId;
+        if (!expectedUserId) return;
         setLoadingId(job.id);
         try {
-            if (action === "cancel") await cancelServerJob(job.id);
-            if (action === "retry") await retryServerJob(job.id);
-            if (action === "remove") await removeServerJob(job.id);
+            if (action === "cancel") await cancelServerJob(job.id, expectedUserId);
+            if (action === "retry") await retryServerJob(job.id, expectedUserId);
+            if (action === "remove") await removeServerJob(job.id, expectedUserId);
             await refresh(false);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "操作失败");

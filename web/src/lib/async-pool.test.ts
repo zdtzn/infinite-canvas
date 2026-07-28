@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { runWithConcurrency } from "./async-pool";
+import { runWithConcurrency, settleWithConcurrency } from "./async-pool";
 
 describe("async work pool", () => {
     test("never exceeds the requested concurrency and preserves result order", async () => {
@@ -28,5 +28,22 @@ describe("async work pool", () => {
             active -= 1;
         });
         expect(maximum).toBe(1);
+    });
+
+    test("continues queued work after an individual operation fails", async () => {
+        let active = 0;
+        let maximum = 0;
+        const results = await settleWithConcurrency([1, 2, 3, 4], 2, async (value) => {
+            active += 1;
+            maximum = Math.max(maximum, active);
+            await Bun.sleep(2);
+            active -= 1;
+            if (value === 2) throw new Error("failed");
+            return value * 2;
+        });
+
+        expect(maximum).toBe(2);
+        expect(results.map((item) => item.status)).toEqual(["fulfilled", "rejected", "fulfilled", "fulfilled"]);
+        expect(results[3]).toEqual({ status: "fulfilled", value: 8 });
     });
 });

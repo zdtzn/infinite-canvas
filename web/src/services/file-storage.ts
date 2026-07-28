@@ -1,17 +1,18 @@
 import localforage from "localforage";
 import { nanoid } from "nanoid";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
-import { deleteServerAsset, fetchServerAssetBlob, uploadServerAsset } from "@/services/server-api";
+import { deleteServerAsset, fetchServerAssetBlob, fetchServerResource, uploadServerAsset } from "@/services/server-api";
+import { useUserStore } from "@/stores/use-user-store";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "media_files" });
 const objectUrls = new Map<string, string>();
 
-export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
-    const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+export async function uploadMediaFile(input: string | Blob, prefix = "file", expectedUserId = useUserStore.getState().user?.id || ""): Promise<UploadedFile> {
+    const blob = typeof input === "string" ? await (await fetchServerResource(input, {}, expectedUserId)).blob() : input;
     if (PUBLIC_MODE) {
-        const { asset } = await uploadServerAsset(blob, prefix);
+        const { asset } = await uploadServerAsset(blob, prefix, undefined, expectedUserId);
         const meta = blob.type.startsWith("video/") ? await readVideoMeta(asset.url) : blob.type.startsWith("audio/") ? await readAudioMeta(asset.url) : {};
         return { url: asset.url, storageKey: asset.key, bytes: asset.bytes, mimeType: asset.mimeType, ...meta };
     }
@@ -35,22 +36,22 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     return url;
 }
 
-export async function getMediaBlob(storageKey: string) {
-    if (PUBLIC_MODE) return fetchServerAssetBlob(storageKey);
+export async function getMediaBlob(storageKey: string, expectedUserId = useUserStore.getState().user?.id || "") {
+    if (PUBLIC_MODE) return fetchServerAssetBlob(storageKey, expectedUserId);
     return store.getItem<Blob>(storageKey);
 }
 
-export async function setMediaBlob(storageKey: string, blob: Blob) {
-    if (PUBLIC_MODE) return (await uploadServerAsset(blob, storageKey.split(":")[0] || "file", storageKey)).asset.url;
+export async function setMediaBlob(storageKey: string, blob: Blob, expectedUserId = useUserStore.getState().user?.id || "") {
+    if (PUBLIC_MODE) return (await uploadServerAsset(blob, storageKey.split(":")[0] || "file", storageKey, expectedUserId)).asset.url;
     await store.setItem(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
 }
 
-export async function deleteStoredMedia(keys: Iterable<string>) {
+export async function deleteStoredMedia(keys: Iterable<string>, expectedUserId = useUserStore.getState().user?.id || "") {
     if (PUBLIC_MODE) {
-        await Promise.all(Array.from(new Set(keys)).map((key) => deleteServerAsset(key).catch(() => undefined)));
+        await Promise.all(Array.from(new Set(keys)).map((key) => deleteServerAsset(key, expectedUserId).catch(() => undefined)));
         return;
     }
     await Promise.all(

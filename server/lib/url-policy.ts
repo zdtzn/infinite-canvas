@@ -30,6 +30,59 @@ export function assertAllowedUpstreamUrl(value: string) {
     return url;
 }
 
+export function normalizePublicBaseUrl(value: string | undefined) {
+    const input = String(value || "").trim();
+    if (!input) return "";
+    let url: URL;
+    try {
+        url = new URL(input);
+    } catch {
+        throw new Error("PUBLIC_BASE_URL 格式无效");
+    }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+        throw new Error("PUBLIC_BASE_URL 必须是标准 HTTP(S) 站点地址");
+    }
+    if (url.pathname !== "/" && url.pathname !== "") throw new Error("PUBLIC_BASE_URL 不能包含路径");
+    return url.origin;
+}
+
+export function isSameApplicationOrigin(requestUrl: string, origin: string, publicBaseUrl = "") {
+    try {
+        const expected = new URL(publicBaseUrl || requestUrl).origin;
+        return new URL(origin).origin === expected;
+    } catch {
+        return false;
+    }
+}
+
+export function isLoopbackRequestUrl(value: string) {
+    try {
+        const hostname = new URL(value).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+        return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    } catch {
+        return false;
+    }
+}
+
+export function isLoopbackAddress(value: string) {
+    const normalized = String(value || "")
+        .trim()
+        .replace(/^\[|\]$/g, "")
+        .toLowerCase();
+    if (isIP(normalized) === 4) return normalized.startsWith("127.");
+    if (isIP(normalized) !== 6) return false;
+    try {
+        const canonical = new URL(`http://[${normalized}]/`).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+        return canonical === "::1" || /^::ffff:7f[0-9a-f]{2}:/.test(canonical);
+    } catch {
+        return false;
+    }
+}
+
+export function isLoopbackSetupRequest(requestUrl: string, peerAddress: string) {
+    return isLoopbackRequestUrl(requestUrl) && isLoopbackAddress(peerAddress);
+}
+
 export async function assertResolvedPublicUpstreamUrl(value: string | URL) {
     const url = assertAllowedUpstreamUrl(String(value));
     const hostname = url.hostname.replace(/^\[|\]$/g, "");

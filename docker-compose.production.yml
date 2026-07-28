@@ -1,0 +1,11 @@
+services:
+  app:
+    image: ${IMAGE_REF:?Set IMAGE_REF to a version tag or immutable GHCR digest}
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to the canonical HTTPS origin}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?Set APP_ENCRYPTION_KEY to a stable random secret}
+      TRUST_PROXY: "1"
+      FORCE_SECURE_COOKIES: "1"
+  caddy:
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN to the public hostname}

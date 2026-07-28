@@ -132,6 +132,7 @@ type ConfigStore = {
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
     setPlatformChannels: (channels: ModelChannel[]) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
+    clearSensitiveSession: () => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean, tab?: ConfigTabKey) => void;
     setConfigDialogOpen: (isOpen: boolean) => void;
@@ -210,6 +211,15 @@ export const useConfigStore = create<ConfigStore>()(
                         [key]: value,
                     },
                 })),
+            clearSensitiveSession: () =>
+                set((state) => ({
+                    config: {
+                        ...state.config,
+                        apiKey: "",
+                        channels: state.config.channels.map((channel) => ({ ...channel, apiKey: "" })),
+                    },
+                    webdav: { ...state.webdav, password: "" },
+                })),
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
             openConfigDialog: (shouldPromptContinue = false, configTab = "channels") => set({ isConfigOpen: true, shouldPromptContinue, configTab }),
             setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
@@ -217,15 +227,20 @@ export const useConfigStore = create<ConfigStore>()(
         }),
         {
             name: CONFIG_STORE_KEY,
-            version: 2,
+            version: 3,
             partialize: (state) => ({
                 config: {
                     ...state.config,
                     apiKey: "",
                     channels: state.config.channels.map((channel) => ({ ...channel, apiKey: "" })),
                 },
-                webdav: state.webdav,
+                webdav: { ...state.webdav, password: "" },
             }),
+            migrate: (persisted) => {
+                const value = (persisted || {}) as Partial<ConfigStore>;
+                const webdav = (value.webdav || {}) as Partial<WebdavSyncConfig>;
+                return { ...value, webdav: { ...webdav, password: "" } } as ConfigStore;
+            },
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
@@ -236,7 +251,7 @@ export const useConfigStore = create<ConfigStore>()(
                 const models = modelOptionsFromChannels(channels);
                 return {
                     ...current,
-                    webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav },
+                    webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav, password: "" },
                     config: {
                         ...config,
                         channelMode: "local",

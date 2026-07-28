@@ -140,6 +140,56 @@ describe("cultivation quota and settlement", () => {
     }
   });
 
+  test("consumes accepted proxy work without awarding image XP or image totals", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      service.reserveGeneration({
+        jobId: "proxy-work",
+        userId: "user",
+        channelId: "video-channel",
+        model: "video-model",
+        count: 1,
+        referenceCount: 0,
+        hasMask: false,
+        activeJobs: 0,
+      });
+
+      expect(service.getGenerationUsage("proxy-work")?.status).toBe(
+        "reserved",
+      );
+      service.consumeGeneration("proxy-work", 350);
+      service.consumeGeneration("proxy-work", 500);
+
+      const profile = service.getProfile("user");
+      expect(profile.usedToday).toBe(1);
+      expect(profile.remainingToday).toBe(9);
+      expect(profile.totalXp).toBe(0);
+      expect(profile.totalImages).toBe(0);
+      expect(service.getGenerationUsage("proxy-work")?.status).toBe(
+        "settled",
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+  test("does not allow cultivation administration to disable the administrator", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("admin", true);
+      expect(() =>
+        service.updateUser("admin", "admin", { status: "DISABLED" }, ""),
+      ).toThrow("不能停用管理员账号");
+      expect(() =>
+        service.updateUser("admin", "missing", { currentXp: 10 }, ""),
+      ).toThrow("用户不存在");
+      expect(service.getProfile("admin").userId).toBe("admin");
+    } finally {
+      store.close();
+    }
+  });
+
   test("records administrative changes with optional reasons and exposes paginated logs", () => {
     const { store, service } = setup();
     try {
@@ -174,6 +224,20 @@ describe("cultivation quota and settlement", () => {
       expect(auditLog.reason).toBe("manual adjustment");
       expect(auditLog.admin_name).toBe("Admin");
       expect(auditLog.target_name).toBe("User");
+
+      service.recordLogin({
+        userId: "user",
+        displayName: "User",
+        result: "success",
+        ip: "203.0.113.10",
+        userAgent: "test-agent",
+        secret: "test-secret",
+      });
+      const loginLogs = service.listLoginLogs(1, 20);
+      expect(loginLogs.total).toBe(1);
+      expect((loginLogs.items[0] as { display_name: string }).display_name).toBe(
+        "User",
+      );
 
       expect(() =>
         service.updateUser(

@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 
 import { buildApiUrl, type AiConfig } from "@/stores/use-config-store";
+import { useUserStore } from "@/stores/use-user-store";
 
 export type ManagedAiConfig = AiConfig & { channelId?: string; serverManaged?: boolean };
 
@@ -18,17 +19,19 @@ export function geminiApiBase(config: ManagedAiConfig) {
     return /\/(?:v1|v1beta)$/i.test(normalized) ? normalized : `${normalized}/v1beta`;
 }
 
-export function providerHeaders(config: ManagedAiConfig, contentType?: string) {
+export function providerHeaders(config: ManagedAiConfig, contentType?: string, expectedUserId = useUserStore.getState().user?.id || "") {
     return {
         ...(isServerManagedConfig(config) ? {} : { Authorization: `Bearer ${config.apiKey}` }),
+        ...(isServerManagedConfig(config) && expectedUserId ? { "X-Expected-User-Id": expectedUserId } : {}),
         ...(contentType ? { "Content-Type": contentType } : {}),
         "Idempotency-Key": nanoid(),
     };
 }
 
-export function geminiProviderHeaders(config: ManagedAiConfig) {
+export function geminiProviderHeaders(config: ManagedAiConfig, expectedUserId = useUserStore.getState().user?.id || "") {
     return {
         ...(isServerManagedConfig(config) ? {} : { "x-goog-api-key": config.apiKey }),
+        ...(isServerManagedConfig(config) && expectedUserId ? { "X-Expected-User-Id": expectedUserId } : {}),
         "Content-Type": "application/json",
         "Idempotency-Key": nanoid(),
     };

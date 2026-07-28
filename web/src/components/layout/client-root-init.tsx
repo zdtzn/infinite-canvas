@@ -24,7 +24,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const hydrateAssetsFromServer = useAssetStore((state) => state.hydrateFromServer);
 
     usePromptSourceScheduler();
-    useProjectServerSync();
+    useProjectServerSync(user?.id);
 
     useLayoutEffect(() => {
         if (PUBLIC_MODE && user?.id) prepareAssetsForUser(user.id);

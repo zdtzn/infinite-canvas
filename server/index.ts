@@ -1,69 +1,29 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, statSync, unlinkSync, utimesSync } from "node:fs";
 import { isIP } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem } from "./lib/asset-library";
+import { AsyncSemaphore } from "./lib/async-semaphore";
 import { canAccessUserAvatar } from "./lib/avatar-access";
-import { decryptSecret, encryptSecret } from "./lib/crypto-store";
+import { decryptSecret, encryptSecret, normalizeEncryptionSecret } from "./lib/crypto-store";
 import { GenerationHistoryInputError, normalizeGenerationHistory, normalizeGenerationHistoryItem } from "./lib/generation-history";
+import { parseSingleByteRange } from "./lib/http-range";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
+import { isAllowedMediaMimeType, resolveMediaMimeType } from "./lib/media-mime";
+import { createMediaTaskStore, type MediaTaskKind } from "./lib/media-task-store";
 import { listPlatformChannels, normalizeChannelModels, platformChannelKey, platformChannelModels, resolvePlatformChannel } from "./lib/platform-channels";
+import { isValidProjectPayload } from "./lib/project-payload";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
-import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
+import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
+import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, isLoopbackSetupRequest, isSameApplicationOrigin, normalizePublicBaseUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
 import type { ChannelRecord, GenerationHistoryKind, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
-
-class AsyncSemaphore {
-    private active = 0;
-    private readonly waiters: Array<() => void> = [];
-
-    constructor(private readonly limit: number) {}
-
-    async run<T>(signal: AbortSignal, operation: () => Promise<T>) {
-        await this.acquire(signal);
-        try {
-            return await operation();
-        } finally {
-            this.release();
-        }
-    }
-
-    private async acquire(signal: AbortSignal) {
-        if (signal.aborted) throw abortError(signal);
-        if (this.active < this.limit) {
-            this.active += 1;
-            return;
-        }
-        await new Promise<void>((resolve, reject) => {
-            const resume = () => {
-                signal.removeEventListener("abort", onAbort);
-                resolve();
-            };
-            const onAbort = () => {
-                const index = this.waiters.indexOf(resume);
-                if (index >= 0) this.waiters.splice(index, 1);
-                reject(abortError(signal));
-            };
-            signal.addEventListener("abort", onAbort, { once: true });
-            this.waiters.push(resume);
-        });
-    }
-
-    private release() {
-        const next = this.waiters.shift();
-        if (next) {
-            next();
-            return;
-        }
-        this.active = Math.max(0, this.active - 1);
-    }
-}
 
 const PORT = positiveInt(process.env.PORT, 3000);
 const DATA_DIR = resolve(process.env.DATA_DIR || "/data");
@@ -73,20 +33,32 @@ const ASSET_ROOT = join(DATA_DIR, "assets");
 const PROMPT_CACHE_ROOT = join(DATA_DIR, "prompt-cache");
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const MAX_IMAGE_JOB_JSON_BYTES = 32 * 1024 * 1024;
-const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
-const MAX_ASSET_BYTES = 16 * 1024 * 1024;
-const MAX_ASSET_UPLOAD_BYTES = MAX_ASSET_BYTES + 256 * 1024;
+const MAX_REQUEST_BYTES = 36 * 1024 * 1024;
+const MAX_IMAGE_ASSET_BYTES = 16 * 1024 * 1024;
+const MAX_VIDEO_ASSET_BYTES = 32 * 1024 * 1024;
+const MAX_AUDIO_ASSET_BYTES = 16 * 1024 * 1024;
+const MAX_ASSET_BYTES = MAX_VIDEO_ASSET_BYTES;
+const MAX_ASSET_UPLOAD_BYTES = MAX_ASSET_BYTES + 512 * 1024;
 const AVATAR_ASSET_KEY = "image:avatar";
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const MAX_AVATAR_UPLOAD_BYTES = MAX_AVATAR_BYTES + 256 * 1024;
 const MAX_USER_ASSET_BYTES = Math.max(MAX_ASSET_BYTES, positiveInt(process.env.MAX_USER_ASSET_BYTES, 2 * 1024 * 1024 * 1024));
 const MAX_UPSTREAM_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_UPSTREAM_IMAGE_BYTES = 32 * 1024 * 1024;
+const MAX_USER_JOB_FILE_BYTES = Math.max(MAX_UPSTREAM_IMAGE_BYTES, positiveInt(process.env.MAX_USER_JOB_FILE_BYTES, 2 * 1024 * 1024 * 1024));
 const MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES = Math.max(MAX_UPSTREAM_JSON_BYTES, Math.min(48 * 1024 * 1024, positiveInt(process.env.MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES, 48 * 1024 * 1024)));
 const MAX_PROMPT_PROXY_BYTES = 20 * 1024 * 1024;
-const MAX_PROXY_BODY_BYTES = 16 * 1024 * 1024;
+const MAX_PROXY_BODY_BYTES = 33 * 1024 * 1024;
+const MAX_PROMPT_CHARS = Math.max(1_000, positiveInt(process.env.MAX_PROMPT_CHARS, 20_000));
+const MAX_PROJECTS_PER_USER = Math.max(10, positiveInt(process.env.MAX_PROJECTS_PER_USER, 100));
+const MAX_PROJECT_BYTES_PER_USER = Math.max(8 * 1024 * 1024, positiveInt(process.env.MAX_PROJECT_BYTES_PER_USER, 128 * 1024 * 1024));
+const MIN_FREE_DISK_BYTES = Math.max(64 * 1024 * 1024, positiveInt(process.env.MIN_FREE_DISK_BYTES, 512 * 1024 * 1024));
+const MAX_PROMPT_CACHE_ENTRIES = Math.max(50, positiveInt(process.env.MAX_PROMPT_CACHE_ENTRIES, 500));
+const MAX_PROMPT_CACHE_BYTES = Math.max(MAX_PROMPT_PROXY_BYTES, positiveInt(process.env.MAX_PROMPT_CACHE_BYTES, 256 * 1024 * 1024));
 const JOB_RETENTION_MS = Math.max(60 * 60_000, positiveInt(process.env.JOB_RETENTION_MS, 30 * 24 * 60 * 60_000));
 const MAX_TERMINAL_JOBS_PER_USER = Math.max(20, positiveInt(process.env.MAX_TERMINAL_JOBS_PER_USER, 200));
+const MEDIA_TASK_RETENTION_MS = Math.max(24 * 60 * 60_000, positiveInt(process.env.MEDIA_TASK_RETENTION_MS, 30 * 24 * 60 * 60_000));
+const MEDIA_TASK_ACTIVE_TTL_MS = Math.max(10 * 60_000, positiveInt(process.env.MEDIA_TASK_ACTIVE_TTL_MS, 2 * 60 * 60_000));
 const GEMINI_IMAGE_CONCURRENCY = Math.max(1, Math.min(4, positiveInt(process.env.GEMINI_IMAGE_CONCURRENCY, 2)));
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const JOB_CONCURRENCY = Math.max(1, Math.min(4, positiveInt(process.env.JOB_CONCURRENCY, 2)));
@@ -97,25 +69,45 @@ const UU_ASYNC_MAX_WAIT_MS = Math.max(UU_ASYNC_POLL_INTERVAL_MS, positiveInt(pro
 const PROMPT_PROXY_CONCURRENCY = Math.max(1, Math.min(8, positiveInt(process.env.PROMPT_PROXY_CONCURRENCY, 3)));
 const PROMPT_PROXY_TIMEOUT_MS = Math.max(3_000, Math.min(30_000, positiveInt(process.env.PROMPT_PROXY_TIMEOUT_MS, 8_000)));
 const PROMPT_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif", "image/svg+xml", "image/bmp", "image/tiff"]);
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").trim();
+const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL);
 const secureCookies = PUBLIC_BASE_URL.startsWith("https://") || process.env.FORCE_SECURE_COOKIES === "1";
 const TRUST_PROXY = process.env.TRUST_PROXY === "1";
+const ALLOW_NEW_USERS = process.env.ALLOW_NEW_USERS !== "0";
+const MAX_REGISTERED_USERS = Math.max(2, Math.min(10_000, positiveInt(process.env.MAX_REGISTERED_USERS, 20)));
 const RATE_BUCKET_LIMIT = Math.max(100, positiveInt(process.env.RATE_BUCKET_LIMIT, 10_000));
 const BACKUP_ENABLED = process.env.BACKUP_ENABLED !== "0";
 const BACKUP_DIR = resolve(process.env.BACKUP_DIR || join(DATA_DIR, "backups"));
 const BACKUP_INTERVAL_HOURS = Math.max(1, positiveInt(process.env.BACKUP_INTERVAL_HOURS, 24));
 const BACKUP_RETENTION_COUNT = Math.max(2, positiveInt(process.env.BACKUP_RETENTION_COUNT, 14));
+const SHUTDOWN_GRACE_MS = Math.max(5_000, Math.min(60_000, positiveInt(process.env.SHUTDOWN_GRACE_MS, 20_000)));
+const HEAVY_REQUEST_CONCURRENCY = Math.max(1, Math.min(8, positiveInt(process.env.HEAVY_REQUEST_CONCURRENCY, 4)));
+const APP_VERSION = readAppVersion();
+const APP_COMMIT = (process.env.APP_COMMIT || "unknown").trim();
 
 mkdirSync(DATA_DIR, { recursive: true });
 mkdirSync(JOB_FILE_ROOT, { recursive: true });
 mkdirSync(ASSET_ROOT, { recursive: true });
 mkdirSync(PROMPT_CACHE_ROOT, { recursive: true });
+prunePromptCache();
 
 const appDatabase = openAppDatabase({ dataDir: DATA_DIR });
 let state = appDatabase.loadState();
 const assetBytesByUser = new Map<string, number>();
 for (const asset of Object.values(state.assets)) assetBytesByUser.set(asset.userId, (assetBytesByUser.get(asset.userId) || 0) + asset.bytes);
+const jobFileBytesByUser = new Map<string, number>();
+const jobFileBytesByJob = new Map<string, number>();
+for (const job of Object.values(state.jobs)) {
+    const bytes = (job.result?.images || []).reduce((total, image) => total + Math.max(0, Number(image.bytes) || 0), 0);
+    if (bytes) {
+        jobFileBytesByJob.set(job.id, bytes);
+        jobFileBytesByUser.set(job.input.userId, (jobFileBytesByUser.get(job.input.userId) || 0) + bytes);
+    } else if (["failed", "canceled"].includes(job.status)) {
+        cleanupJobOutputFilesFor(job.input.userId, job.id);
+    }
+}
 const cultivation = appDatabase.raw ? createCultivationService(appDatabase.raw) : null;
+const mediaTasks = appDatabase.raw ? createMediaTaskStore(appDatabase.raw, MEDIA_TASK_RETENTION_MS, MEDIA_TASK_ACTIVE_TTL_MS) : null;
+mediaTasks?.prune();
 const backupManager = appDatabase.raw
     ? createSqliteBackupManager({
           database: appDatabase.raw,
@@ -126,21 +118,29 @@ const backupManager = appDatabase.raw
       })
     : null;
 for (const user of Object.values(state.users)) cultivation?.ensureUser(user.userId, Boolean(user.admin));
-const configuredEncryptionSecret = process.env.APP_ENCRYPTION_KEY?.trim();
-if (PUBLIC_BASE_URL.startsWith("https://") && !configuredEncryptionSecret) throw new Error("公网部署必须设置 APP_ENCRYPTION_KEY");
+const configuredEncryptionSecret = normalizeEncryptionSecret(process.env.APP_ENCRYPTION_KEY, PUBLIC_BASE_URL.startsWith("https://"));
 const encryptionSecret = configuredEncryptionSecret || state.auth.sessionSecret;
-const previousEncryptionSecrets = (process.env.APP_ENCRYPTION_KEY_PREVIOUS || "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
+const previousEncryptionSecrets = [
+    ...(process.env.APP_ENCRYPTION_KEY_PREVIOUS || "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ...(configuredEncryptionSecret ? [state.auth.sessionSecret] : []),
+].filter((value, index, values) => value !== encryptionSecret && values.indexOf(value) === index);
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+const activeMediaProxyRequests = new Map<string, number>();
+const activeMediaProxyUsageIds = new Set<string>();
 const requestClientIps = new WeakMap<Request, string>();
+const requestPeerIps = new WeakMap<Request, string>();
 let stateWriteQueued = false;
 let nextRateBucketSweepAt = 0;
 let authMutation = Promise.resolve();
 let assetMutation = Promise.resolve();
+let shuttingDown = false;
+let shutdownPromise: Promise<void> | null = null;
 const geminiImageSemaphore = new AsyncSemaphore(GEMINI_IMAGE_CONCURRENCY);
 const promptProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
+const heavyRequestSemaphore = new AsyncSemaphore(HEAVY_REQUEST_CONCURRENCY);
 
 const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
     concurrency: JOB_CONCURRENCY,
@@ -149,6 +149,9 @@ const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
         state.jobs[job.id] = job;
         appDatabase.saveJob(job);
         if (["succeeded", "failed", "canceled"].includes(job.status)) pruneTerminalJobs();
+    },
+    onInitializationFailure: (job) => {
+        cultivation?.refundGeneration(job.id, "initial job persistence failed");
     },
 });
 
@@ -163,6 +166,7 @@ for (const job of Object.values(state.jobs)) {
             job.error = "服务器重启时任务仍在运行，为避免重复扣费，请手动重试";
             job.finishedAt = Date.now();
             cultivation?.refundGeneration(job.id, "server restarted while job was running");
+            cleanupJobOutputFilesFor(job.input.userId, job.id);
         }
     }
     imageQueue.restore(job);
@@ -184,6 +188,7 @@ server = Bun.serve({
     maxRequestBodySize: MAX_REQUEST_BYTES,
     async fetch(request) {
         const remoteAddress = server.requestIP(request)?.address || "unknown";
+        requestPeerIps.set(request, remoteAddress);
         requestClientIps.set(request, resolveClientIp(request, remoteAddress));
         const startedAt = Date.now();
         const requestId = randomUUID();
@@ -193,7 +198,7 @@ server = Bun.serve({
         } catch (error) {
             response = errorResponse(error, requestId);
         }
-        const secured = withSecurityHeaders(response, requestId);
+        const secured = withSecurityHeaders(response, requestId, request);
         logRequest(request, secured, requestId, Date.now() - startedAt);
         return secured;
     },
@@ -206,12 +211,15 @@ console.info(
         dataDir: DATA_DIR,
         webRoot: WEB_ROOT,
         jobConcurrency: JOB_CONCURRENCY,
+        version: APP_VERSION,
+        commit: APP_COMMIT,
     }),
 );
 
 async function route(request: Request, requestId: string) {
     const url = new URL(request.url);
-    if (url.pathname === "/health") return json({ status: "ok", version: 1 });
+    if (url.pathname === "/health") return healthResponse();
+    if (shuttingDown) throw new HttpError(503, "服务正在平滑重启，请稍后重试");
     if (url.pathname === "/config.js") return runtimeConfigResponse();
     if (url.pathname.startsWith("/prompt-proxy/")) {
         const session = requireSession(request);
@@ -219,9 +227,19 @@ async function route(request: Request, requestId: string) {
         return proxyPromptAsset(request, url, requestId);
     }
     if (url.pathname === "/api/auth/status") return authStatus(request);
-    if (url.pathname === "/api/auth/setup" && request.method === "POST") return setupAuth(request);
-    if (url.pathname === "/api/auth/login" && request.method === "POST") return login(request);
-    if (url.pathname === "/api/auth/logout" && request.method === "POST") return logout();
+    if (url.pathname === "/api/auth/setup" && request.method === "POST") {
+        enforceSameOrigin(request);
+        if (!isLoopbackSetupRequest(request.url, requestPeerIps.get(request) || "unknown")) throw new HttpError(403, "管理员初始化只能通过服务器回环地址完成");
+        return setupAuth(request);
+    }
+    if (url.pathname === "/api/auth/login" && request.method === "POST") {
+        enforceSameOrigin(request);
+        return login(request);
+    }
+    if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+        enforceSameOrigin(request);
+        return logout();
+    }
     if (url.pathname.startsWith("/api/")) {
         enforceSameOrigin(request);
         const session = requireSession(request);
@@ -230,11 +248,11 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/channels/metrics" && request.method === "GET") return adminChannelMetrics(url, session);
         if (url.pathname === "/api/admin/users" && request.method === "GET") return listUsers(session);
         const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
-        if (userMatch && request.method === "PUT") return updateUserAccess(request, session, userMatch[1]);
+        if (userMatch && request.method === "PUT") return updateUserAccess(request, session, decodeRouteSegment(userMatch[1], "用户 ID"));
         if (url.pathname === "/api/cultivation/me" && request.method === "GET") return cultivationProfile(session);
         const profileAvatarMatch = url.pathname.match(/^\/api\/profile\/avatar\/([^/]+)$/);
-        if (profileAvatarMatch && request.method === "GET") return serveProfileAvatar(session, decodeURIComponent(profileAvatarMatch[1]));
-        if (url.pathname === "/api/profile/avatar" && request.method === "POST") return uploadProfileAvatar(request, session);
+        if (profileAvatarMatch && ["GET", "HEAD"].includes(request.method)) return serveProfileAvatar(request, session, decodeRouteSegment(profileAvatarMatch[1], "用户 ID"));
+        if (url.pathname === "/api/profile/avatar" && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => uploadProfileAvatar(request, session));
         if (url.pathname === "/api/profile/avatar" && request.method === "DELETE") return deleteProfileAvatar(session);
         const seenBreakthroughMatch = url.pathname.match(/^\/api\/cultivation\/breakthroughs\/([^/]+)\/seen$/);
         if (seenBreakthroughMatch && request.method === "POST") return markCultivationBreakthroughSeen(session, seenBreakthroughMatch[1]);
@@ -256,43 +274,46 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/cultivation/breakthroughs" && request.method === "GET") return adminCultivationBreakthroughs(url, session);
         if (url.pathname === "/api/channels" && request.method === "GET") return listChannels(session);
         const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)$/);
-        if (channelMatch && request.method === "PUT") return saveChannel(request, session, decodeURIComponent(channelMatch[1]));
-        if (channelMatch && request.method === "DELETE") return deleteChannel(session, decodeURIComponent(channelMatch[1]));
+        if (channelMatch && request.method === "PUT") return saveChannel(request, session, decodeRouteSegment(channelMatch[1], "渠道 ID"));
+        if (channelMatch && request.method === "DELETE") return deleteChannel(session, decodeRouteSegment(channelMatch[1], "渠道 ID"));
         if (url.pathname === "/api/library-assets" && request.method === "GET") return listLibraryAssets(session);
-        if (url.pathname === "/api/library-assets" && request.method === "PUT") return replaceLibraryAssets(request, session);
+        if (url.pathname === "/api/library-assets" && request.method === "PUT") return heavyRequestSemaphore.run(request.signal, () => replaceLibraryAssets(request, session));
         const libraryAssetMatch = url.pathname.match(/^\/api\/library-assets\/([^/]+)$/);
-        if (libraryAssetMatch && request.method === "PUT") return saveLibraryAsset(request, session, decodeURIComponent(libraryAssetMatch[1]));
-        if (libraryAssetMatch && request.method === "DELETE") return deleteLibraryAsset(session, decodeURIComponent(libraryAssetMatch[1]));
+        if (libraryAssetMatch && request.method === "PUT") return saveLibraryAsset(request, session, decodeRouteSegment(libraryAssetMatch[1], "资产记录 ID"));
+        if (libraryAssetMatch && request.method === "DELETE") return deleteLibraryAsset(session, decodeRouteSegment(libraryAssetMatch[1], "资产记录 ID"));
         const generationHistoryMatch = url.pathname.match(/^\/api\/generation-history\/(image|video)$/);
         if (generationHistoryMatch && request.method === "GET") return listGenerationHistory(session, generationHistoryMatch[1] as GenerationHistoryKind);
-        if (generationHistoryMatch && request.method === "PUT") return mergeGenerationHistory(request, session, generationHistoryMatch[1] as GenerationHistoryKind);
+        if (generationHistoryMatch && request.method === "PUT")
+            return heavyRequestSemaphore.run(request.signal, () => mergeGenerationHistory(request, session, generationHistoryMatch[1] as GenerationHistoryKind));
         const generationHistoryItemMatch = url.pathname.match(/^\/api\/generation-history\/(image|video)\/([^/]+)$/);
-        if (generationHistoryItemMatch && request.method === "PUT") return saveGenerationHistoryItem(request, session, generationHistoryItemMatch[1] as GenerationHistoryKind, decodeURIComponent(generationHistoryItemMatch[2]));
-        if (generationHistoryItemMatch && request.method === "DELETE") return deleteGenerationHistoryItem(session, generationHistoryItemMatch[1] as GenerationHistoryKind, decodeURIComponent(generationHistoryItemMatch[2]));
-        if (url.pathname === "/api/assets/from-job" && request.method === "POST") return promoteJobAsset(request, session);
-        if (url.pathname === "/api/assets" && request.method === "POST") return uploadAsset(request, session);
+        if (generationHistoryItemMatch && request.method === "PUT")
+            return saveGenerationHistoryItem(request, session, generationHistoryItemMatch[1] as GenerationHistoryKind, decodeRouteSegment(generationHistoryItemMatch[2], "生成记录 ID"));
+        if (generationHistoryItemMatch && request.method === "DELETE")
+            return deleteGenerationHistoryItem(session, generationHistoryItemMatch[1] as GenerationHistoryKind, decodeRouteSegment(generationHistoryItemMatch[2], "生成记录 ID"));
+        if (url.pathname === "/api/assets/from-job" && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => promoteJobAsset(request, session));
+        if (url.pathname === "/api/assets" && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => uploadAsset(request, session));
         const assetMatch = url.pathname.match(/^\/api\/assets\/([^/]+)$/);
-        if (assetMatch && request.method === "GET") return serveAsset(session, decodeURIComponent(assetMatch[1]));
-        if (assetMatch && request.method === "DELETE") return deleteAsset(session, decodeURIComponent(assetMatch[1]));
-        if (url.pathname === "/api/jobs/images" && request.method === "POST") return createImageJob(request, session);
+        if (assetMatch && ["GET", "HEAD"].includes(request.method)) return serveAsset(request, session, decodeRouteSegment(assetMatch[1], "素材 ID"));
+        if (assetMatch && request.method === "DELETE") return deleteAsset(session, decodeRouteSegment(assetMatch[1], "素材 ID"));
+        if (url.pathname === "/api/jobs/images" && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => createImageJob(request, session));
         if (url.pathname === "/api/jobs" && request.method === "GET") return listJobs(session);
         const retryMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/retry$/);
-        if (retryMatch && request.method === "POST") return retryJob(session, retryMatch[1]);
+        if (retryMatch && request.method === "POST") return retryJob(request, session, retryMatch[1]);
         const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/);
         if (jobMatch && request.method === "GET") return getJob(session, jobMatch[1]);
         if (jobMatch && request.method === "DELETE") return deleteJob(url, session, jobMatch[1]);
         const jobFileMatch = url.pathname.match(/^\/api\/job-files\/([^/]+)\/([^/]+)$/);
-        if (jobFileMatch && request.method === "GET") return serveJobFile(session, jobFileMatch[1], jobFileMatch[2]);
+        if (jobFileMatch && ["GET", "HEAD"].includes(request.method)) return serveJobFile(request, session, jobFileMatch[1], jobFileMatch[2]);
         if (url.pathname === "/api/projects" && request.method === "GET")
             return json({
                 items: Object.values(state.projects[session.userId] || {}),
                 deleted: Object.entries(state.projectTombstones[session.userId] || {}).map(([projectId, tombstone]) => ({ projectId, ...tombstone })),
             });
         const projectMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
-        if (projectMatch && request.method === "PUT") return saveProject(request, session, projectMatch[1]);
-        if (projectMatch && request.method === "DELETE") return deleteProject(url, session, projectMatch[1]);
+        if (projectMatch && request.method === "PUT") return heavyRequestSemaphore.run(request.signal, () => saveProject(request, session, decodeRouteSegment(projectMatch[1], "项目 ID")));
+        if (projectMatch && request.method === "DELETE") return deleteProject(url, session, decodeRouteSegment(projectMatch[1], "项目 ID"));
         const proxyMatch = url.pathname.match(/^\/api\/ai\/([^/]+)\/(openai|gemini)\/(.*)$/);
-        if (proxyMatch) return proxyAiRequest(request, session, decodeURIComponent(proxyMatch[1]), proxyMatch[2] as ProviderProtocol, `/${proxyMatch[3]}`, requestId);
+        if (proxyMatch) return proxyAiRequest(request, session, decodeRouteSegment(proxyMatch[1], "渠道 ID"), proxyMatch[2] as ProviderProtocol, `/${proxyMatch[3]}`, requestId);
         return json({ error: { message: "接口不存在" }, requestId }, 404);
     }
     return serveStatic(url.pathname, request.method);
@@ -403,6 +424,9 @@ async function login(request: Request) {
                 },
                 409,
             );
+        if (!existing && !ALLOW_NEW_USERS) return json({ error: { message: "新用户注册已关闭，请联系管理员开通账号" } }, 403);
+        if (!existing && Object.keys(state.users).length >= MAX_REGISTERED_USERS)
+            return json({ error: { message: `站点成员已达到上限（${MAX_REGISTERED_USERS} 人），请联系管理员` } }, 403);
         const user = existing || {
             userId: randomUUID(),
             displayName,
@@ -463,6 +487,8 @@ function requireSession(request: Request) {
     if (!session) throw new HttpError(401, "请先登录");
     const user = state.users[session.userId];
     if (!user || isUserDisabled(user)) throw new HttpError(403, "当前账号已停用");
+    const expectedUserId = request.headers.get("x-expected-user-id")?.trim();
+    if (expectedUserId && expectedUserId !== session.userId) throw new HttpError(409, "账号已经切换，本次后台同步已取消");
     return session;
 }
 
@@ -609,7 +635,7 @@ function adminCultivationUsers(url: URL, session: SessionPayload) {
 
 async function adminUpdateCultivationUser(request: Request, session: SessionPayload, encodedUserId: string) {
     requireAdmin(session);
-    const userId = decodeURIComponent(encodedUserId);
+    const userId = decodeRouteSegment(encodedUserId, "用户 ID");
     const body = await readJson<CultivationUserUpdate & { reason?: string }>(request);
     const profile = requireCultivation().updateUser(session.userId, userId, body, String(body.reason || ""));
     const user = state.users[userId];
@@ -634,21 +660,21 @@ async function adminUpdateRealm(request: Request, session: SessionPayload, encod
     requireAdmin(session);
     const body = await readJson<CultivationRealmUpdate & { reason?: string }>(request);
     const { reason, ...input } = body;
-    return json(requireCultivation().updateRealm(session.userId, decodeURIComponent(encodedRealmId), input, String(reason || "")));
+    return json(requireCultivation().updateRealm(session.userId, decodeRouteSegment(encodedRealmId, "境界 ID"), input, String(reason || "")));
 }
 
 async function adminUpdateStage(request: Request, session: SessionPayload, encodedStageId: string) {
     requireAdmin(session);
     const body = await readJson<CultivationStageUpdate & { reason?: string }>(request);
     const { reason, ...input } = body;
-    return json(requireCultivation().updateStage(session.userId, decodeURIComponent(encodedStageId), input, String(reason || "")));
+    return json(requireCultivation().updateStage(session.userId, decodeRouteSegment(encodedStageId, "阶段 ID"), input, String(reason || "")));
 }
 
 async function adminUpdateCapability(request: Request, session: SessionPayload, encodedCapabilityKey: string) {
     requireAdmin(session);
     const body = await readJson<CultivationCapabilityUpdate & { reason?: string }>(request);
     const { reason, ...input } = body;
-    return json(requireCultivation().updateCapability(session.userId, decodeURIComponent(encodedCapabilityKey), input, String(reason || "")));
+    return json(requireCultivation().updateCapability(session.userId, decodeRouteSegment(encodedCapabilityKey, "能力 ID"), input, String(reason || "")));
 }
 
 async function adminUpdateRewards(request: Request, session: SessionPayload) {
@@ -714,6 +740,7 @@ function listChannels(session: SessionPayload) {
 
 async function saveChannel(request: Request, session: SessionPayload, id: string) {
     requireAdmin(session);
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(id) || ["__proto__", "prototype", "constructor"].includes(id.toLowerCase())) throw new HttpError(400, "渠道 ID 无效");
     const body = await readJson<{
         name?: string;
         baseUrl?: string;
@@ -722,7 +749,12 @@ async function saveChannel(request: Request, session: SessionPayload, id: string
         models?: unknown;
     }>(request);
     const baseUrl = String(body.baseUrl || "").trim();
-    assertAllowedUpstreamUrl(baseUrl);
+    try {
+        const parsed = assertAllowedUpstreamUrl(baseUrl);
+        if (parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error("渠道地址不能包含账号、密码、查询参数或片段");
+    } catch (error) {
+        throw new HttpError(400, error instanceof Error ? error.message : "渠道地址无效");
+    }
     const apiFormat: ProviderProtocol = body.apiFormat === "gemini" ? "gemini" : "openai";
     const adminUserId = state.auth.adminUserId;
     if (!adminUserId) throw new HttpError(409, "Platform administrator is not configured");
@@ -733,9 +765,7 @@ async function saveChannel(request: Request, session: SessionPayload, id: string
     state.channels[key] = {
         id,
         userId: adminUserId,
-        name: String(body.name || existing?.name || "未命名渠道")
-            .trim()
-            .slice(0, 80),
+        name: normalizeShortText(body.name || existing?.name || "未命名渠道", 80, "渠道名称"),
         baseUrl,
         apiFormat,
         apiKey: plaintext ? encryptSecret(plaintext, encryptionSecret) : existing.apiKey,
@@ -816,14 +846,23 @@ function deleteGenerationHistoryItem(session: SessionPayload, kind: GenerationHi
 }
 
 async function uploadAsset(request: Request, session: SessionPayload) {
-    const { form, file } = await readAssetUploadForm(request, MAX_ASSET_UPLOAD_BYTES, MAX_ASSET_BYTES, "上传请求不能超过 16 MB", "单个素材不能超过 16 MB");
+    const { form, file } = await readAssetUploadForm(request, MAX_ASSET_UPLOAD_BYTES, MAX_ASSET_BYTES, "上传请求不能超过 32 MB", "单个素材不能超过 32 MB");
     const prefix = normalizeAssetPrefix(form.get("prefix"));
     const requestedKey = String(form.get("storageKey") || "").trim();
     const key = requestedKey || `${prefix}:${randomUUID()}`;
     if (!new RegExp(`^${escapeRegExp(prefix)}:[A-Za-z0-9._:-]{1,180}$`).test(key)) throw new HttpError(400, "素材标识无效");
     if (key === AVATAR_ASSET_KEY) throw new HttpError(400, "请通过个人头像入口上传头像");
-    const mimeType = prefix.startsWith("image") ? await resolveImageMimeType(file) : String(file.type || "application/octet-stream").toLowerCase();
-    if (prefix.startsWith("image") && !isAllowedImageMimeType(mimeType)) throw new HttpError(400, "图片素材格式无效，仅支持 PNG、JPEG、WebP 或 AVIF");
+    const kind = assetKindForPrefix(prefix);
+    const maxBytes = assetByteLimit(kind);
+    if (file.size > maxBytes) throw new HttpError(413, `${assetKindLabel(kind)}不能超过 ${Math.floor(maxBytes / 1024 / 1024)} MB`);
+    const mimeType =
+        kind === "image"
+            ? await resolveImageMimeType(file)
+            : kind === "audio" || kind === "video"
+              ? await resolveMediaMimeType(file, kind)
+              : "application/octet-stream";
+    if (kind === "image" && !isAllowedImageMimeType(mimeType)) throw new HttpError(400, "图片素材格式无效，仅支持 PNG、JPEG、WebP 或 AVIF");
+    if ((kind === "audio" || kind === "video") && !isAllowedMediaMimeType(mimeType, kind)) throw new HttpError(400, `${assetKindLabel(kind)}格式无效或文件内容与扩展名不一致`);
     const { asset, replaced } = await storeAsset(session, key, file, mimeType);
     return json({ asset: publicAsset(asset) }, replaced ? 200 : 201);
 }
@@ -861,7 +900,7 @@ async function uploadProfileAvatar(request: Request, session: SessionPayload) {
     const { file } = await readAssetUploadForm(request, MAX_AVATAR_UPLOAD_BYTES, MAX_AVATAR_BYTES, "头像文件不能超过 2 MB", "头像文件不能超过 2 MB");
     const mimeType = await resolveImageMimeType(file);
     if (!isAllowedImageMimeType(mimeType)) throw new HttpError(400, "头像格式无效，仅支持 PNG、JPEG、WebP 或 AVIF");
-    const { asset, replaced } = await storeAsset(session, AVATAR_ASSET_KEY, file, mimeType, true);
+    const { asset, replaced } = await storeAsset(session, AVATAR_ASSET_KEY, file, mimeType);
     return json({ asset: publicAsset(asset), avatarUrl: avatarUrlFor(session.userId) }, replaced ? 200 : 201);
 }
 
@@ -885,49 +924,103 @@ async function readAssetUploadForm(request: Request, maxUploadBytes: number, max
     return { form, file };
 }
 
-async function storeAsset(session: SessionPayload, key: string, file: Blob, mimeType: string, refreshCreatedAt = false) {
+async function storeAsset(session: SessionPayload, key: string, file: Blob, mimeType: string) {
     return withAssetMutation(async () => {
         const recordKey = assetKey(session.userId, key);
         const existing = state.assets[recordKey];
         const usedBytes = assetBytesByUser.get(session.userId) || 0;
         if (usedBytes - (existing?.bytes || 0) + file.size > MAX_USER_ASSET_BYTES) throw new HttpError(413, "服务端素材空间不足，请删除不再使用的素材");
-        const directory = join(ASSET_ROOT, safeSegment(session.userId));
+        assertDiskCapacity(Math.max(0, file.size - (existing?.bytes || 0)));
+        const directory = assetDirectory(session.userId);
         mkdirSync(directory, { recursive: true });
-        await Bun.write(join(directory, safeSegment(key)), file);
+        const finalPath = assetPath(session.userId, key);
+        const temporaryPath = `${finalPath}.${randomUUID()}.tmp`;
+        const backupPath = `${finalPath}.${randomUUID()}.bak`;
+        let installed = false;
+        let priorMoved = false;
+        let databaseSaved = false;
         const asset: StoredAsset = {
             key,
             userId: session.userId,
             mimeType,
             bytes: file.size,
-            createdAt: refreshCreatedAt || !existing ? Date.now() : existing.createdAt,
+            createdAt: nextAssetVersion(existing?.createdAt),
         };
-        state.assets[recordKey] = asset;
-        appDatabase.saveAsset(asset);
-        assetBytesByUser.set(session.userId, usedBytes - (existing?.bytes || 0) + asset.bytes);
-        return { asset, replaced: Boolean(existing) };
+        try {
+            await Bun.write(temporaryPath, file);
+            if (existsSync(finalPath)) {
+                renameSync(finalPath, backupPath);
+                priorMoved = true;
+            }
+            renameSync(temporaryPath, finalPath);
+            installed = true;
+            appDatabase.saveAsset(asset);
+            databaseSaved = true;
+            state.assets[recordKey] = asset;
+            assetBytesByUser.set(session.userId, usedBytes - (existing?.bytes || 0) + asset.bytes);
+            removeAssetFileBestEffort(backupPath, asset, "asset_backup_cleanup_failed");
+            const legacyPath = legacyAssetPath(session.userId, key);
+            if (legacyPath !== finalPath) removeAssetFileBestEffort(legacyPath, asset, "legacy_asset_cleanup_failed");
+            return { asset, replaced: Boolean(existing) };
+        } catch (error) {
+            rmSync(temporaryPath, { force: true });
+            if (!databaseSaved) {
+                if (installed) rmSync(finalPath, { force: true });
+                if (priorMoved && existsSync(backupPath)) renameSync(backupPath, finalPath);
+            }
+            throw error;
+        }
     });
 }
 
-function serveAsset(session: SessionPayload, key: string) {
+function serveAsset(request: Request, session: SessionPayload, key: string) {
     const asset = ownedAsset(session.userId, key);
-    return serveStoredAsset(asset);
+    return serveStoredAsset(request, asset);
 }
 
-function serveProfileAvatar(session: SessionPayload, userId: string) {
+function serveProfileAvatar(request: Request, session: SessionPayload, userId: string) {
     const requesterIsAdmin = Boolean(state.users[session.userId]?.admin);
     if (!canAccessUserAvatar(session.userId, userId, requesterIsAdmin)) throw new HttpError(403, "无权查看该用户头像");
-    return serveStoredAsset(ownedAsset(userId, AVATAR_ASSET_KEY));
+    return serveStoredAsset(request, ownedAsset(userId, AVATAR_ASSET_KEY));
 }
 
-function serveStoredAsset(asset: StoredAsset) {
-    const path = join(ASSET_ROOT, safeSegment(asset.userId), safeSegment(asset.key));
-    if (!existsSync(path)) throw new HttpError(404, "素材文件不存在");
-    return new Response(Bun.file(path), {
-        headers: {
-            "Content-Type": asset.mimeType,
-            "Content-Length": String(asset.bytes),
-            "Cache-Control": "private, max-age=31536000, immutable",
-        },
+function serveStoredAsset(request: Request, asset: StoredAsset) {
+    const path = existingAssetPath(asset.userId, asset.key);
+    if (!path) throw new HttpError(404, "素材文件不存在");
+    const etag = `"${createHash("sha256").update(`${asset.key}:${asset.createdAt}:${asset.bytes}`).digest("hex").slice(0, 24)}"`;
+    const file = Bun.file(path);
+    const size = file.size;
+    const cacheControl = assetCacheControl(request.url, asset.createdAt);
+    const rangeHeader = request.headers.get("if-range") && request.headers.get("if-range") !== etag ? null : request.headers.get("range");
+    const range = parseSingleByteRange(rangeHeader, size);
+    if (range === "invalid")
+        return new Response(null, {
+            status: 416,
+            headers: {
+                "Content-Range": `bytes */${size}`,
+                "Accept-Ranges": "bytes",
+                ETag: etag,
+                "Cache-Control": cacheControl,
+                Vary: "Cookie",
+            },
+        });
+    if (!range && request.headers.get("if-none-match") === etag)
+        return new Response(null, {
+            status: 304,
+            headers: { ETag: etag, "Accept-Ranges": "bytes", "Cache-Control": cacheControl, Vary: "Cookie" },
+        });
+    const headers = new Headers({
+        "Content-Type": asset.mimeType,
+        "Content-Length": String(range ? range.end - range.start + 1 : size),
+        "Accept-Ranges": "bytes",
+        "Cache-Control": cacheControl,
+        Vary: "Cookie",
+        ETag: etag,
+    });
+    if (range) headers.set("Content-Range", `bytes ${range.start}-${range.end}/${size}`);
+    return new Response(request.method === "HEAD" ? null : range ? file.slice(range.start, range.end + 1, asset.mimeType) : file, {
+        status: range ? 206 : 200,
+        headers,
     });
 }
 
@@ -938,13 +1031,15 @@ async function deleteAsset(session: SessionPayload, key: string) {
 
 async function removeAsset(session: SessionPayload, key: string) {
     const asset = ownedAsset(session.userId, key);
-    const path = join(ASSET_ROOT, safeSegment(session.userId), safeSegment(asset.key));
+    const paths = [assetPath(session.userId, asset.key)];
+    const legacyPath = legacyAssetPath(session.userId, asset.key);
+    if (!legacyAssetPathShared(session.userId, asset.key)) paths.push(legacyPath);
     return withAssetMutation(async () => {
         delete state.assets[assetKey(session.userId, key)];
         appDatabase.deleteAsset(session.userId, key);
         assetBytesByUser.set(session.userId, Math.max(0, (assetBytesByUser.get(session.userId) || 0) - asset.bytes));
         try {
-            if (existsSync(path)) unlinkSync(path);
+            for (const path of new Set(paths)) if (existsSync(path)) unlinkSync(path);
         } catch (error) {
             console.warn(
                 JSON.stringify({
@@ -960,7 +1055,7 @@ async function removeAsset(session: SessionPayload, key: string) {
 function publicAsset(asset: StoredAsset) {
     return {
         key: asset.key,
-        url: assetUrl(asset.key),
+        url: assetUrl(asset.key, asset.createdAt),
         mimeType: asset.mimeType,
         bytes: asset.bytes,
         createdAt: asset.createdAt,
@@ -972,28 +1067,29 @@ function avatarUrlFor(userId: string) {
     return asset ? `/api/profile/avatar/${encodeURIComponent(userId)}?v=${asset.createdAt}` : "";
 }
 
-function assetUrl(key: string) {
-    return `/api/assets/${encodeURIComponent(key)}`;
+function assetUrl(key: string, version?: number) {
+    return `/api/assets/${encodeURIComponent(key)}${version ? `?v=${version}` : ""}`;
 }
 
 async function createImageJob(request: Request, session: SessionPayload) {
+    const idempotencyKey = requiredIdempotencyKey(request);
+    const jobId = createHash("sha256").update(`${session.userId}:${idempotencyKey}`).digest("hex");
+    const existingBeforeRead = state.jobs[jobId];
+    if (existingBeforeRead) return json({ job: publicJob(existingBeforeRead) }, 200);
     const body = await readJson<Partial<ImageJobInput>>(request, MAX_IMAGE_JOB_JSON_BYTES);
     const channelId = String(body.channelId || "");
     const channel = platformChannel(channelId);
     const count = Math.max(1, Math.min(10, Math.floor(Number(body.count) || 1)));
     const references = Array.isArray(body.references) ? body.references.map(String) : [];
     if (references.length > 16) throw new HttpError(400, "参考图最多 16 张");
-    references.forEach(assertSafeDataImage);
-    if (body.mask) assertSafeDataImage(String(body.mask));
+    const referenceBytes = references.reduce((total, reference) => total + assertSafeDataImage(reference), 0);
+    const maskBytes = body.mask ? assertSafeDataImage(String(body.mask)) : 0;
     const prompt = String(body.prompt || "").trim();
     if (!prompt) throw new HttpError(400, "提示词不能为空");
-    const idempotencyKey = request.headers.get("idempotency-key")?.trim() || "";
-    if (idempotencyKey && !/^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey)) throw new HttpError(400, "幂等请求标识无效");
-    const jobId = idempotencyKey ? createHash("sha256").update(`${session.userId}:${idempotencyKey}`).digest("hex") : randomUUID();
-    if (idempotencyKey) {
-        const existing = state.jobs[jobId];
-        if (existing) return json({ job: publicJob(existing) }, 200);
-    }
+    if (prompt.length > MAX_PROMPT_CHARS) throw new HttpError(400, `提示词不能超过 ${MAX_PROMPT_CHARS.toLocaleString()} 个字符`);
+    assertDiskCapacity(referenceBytes + maskBytes);
+    const existing = state.jobs[jobId];
+    if (existing) return json({ job: publicJob(existing) }, 200);
     const model = String(body.model || "").trim();
     if (!model) throw new HttpError(400, "模型不能为空");
     assertPlatformModelAllowed(channelId, model, "image");
@@ -1032,6 +1128,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
         const job = imageQueue.add(input, jobId);
         return json({ job: publicJob(job) }, 202);
     } catch (error) {
+        cleanupJobFilesFor(session.userId, jobId);
         cultivation?.refundGeneration(jobId, "job creation failed");
         throw error;
     }
@@ -1051,10 +1148,15 @@ function getJob(session: SessionPayload, id: string) {
     return json({ job: publicJob(job) });
 }
 
-async function retryJob(session: SessionPayload, id: string) {
+async function retryJob(request: Request, session: SessionPayload, id: string) {
     const source = ownedJob(session.userId, id);
     if (["queued", "running"].includes(source.status)) throw new HttpError(409, "任务仍在运行");
-    const jobId = randomUUID();
+    const idempotencyKey = requiredIdempotencyKey(request);
+    const jobId = createHash("sha256").update(`${session.userId}:retry:${id}:${idempotencyKey}`).digest("hex");
+    const existing = state.jobs[jobId];
+    if (existing) return json({ job: publicJob(existing) }, 200);
+    const activeRetry = imageQueue.list().find((job) => job.input.userId === session.userId && job.input.retryOf === id && ["queued", "running"].includes(job.status));
+    if (activeRetry) return json({ job: publicJob(activeRetry) }, 200);
     cultivation?.reserveGeneration({
         jobId,
         userId: session.userId,
@@ -1067,7 +1169,7 @@ async function retryJob(session: SessionPayload, id: string) {
         activeJobs: activeUserJobs(session.userId),
     });
     try {
-        const input = await copyImageJobInputForRetry(source.input, jobId);
+        const input = await copyImageJobInputForRetry(source.input, jobId, id);
         const job = imageQueue.add(input, jobId);
         return json({ job: publicJob(job) }, 202);
     } catch (error) {
@@ -1077,17 +1179,20 @@ async function retryJob(session: SessionPayload, id: string) {
     }
 }
 
-async function copyImageJobInputForRetry(input: ImageJobInput, jobId: string): Promise<ImageJobInput> {
+async function copyImageJobInputForRetry(input: ImageJobInput, jobId: string, retryOf: string): Promise<ImageJobInput> {
     const references = await Promise.all(input.references.map(async (reference, index) => persistReference(DATA_DIR, input.userId, jobId, index, await materializeStoredImage(reference))));
     const mask = input.mask ? persistReference(DATA_DIR, input.userId, jobId, 10_000, await materializeStoredImage(input.mask)) : undefined;
-    return { ...input, references, mask, upstream: undefined };
+    const upstream = input.upstream && !["failed", "canceled", "unknown"].includes(input.upstream.status || "pending") ? { ...input.upstream } : undefined;
+    return { ...input, references, mask, retryOf: input.retryOf || retryOf, upstream };
 }
 
 async function deleteJob(url: URL, session: SessionPayload, id: string) {
     const job = ownedJob(session.userId, id);
     if (["queued", "running"].includes(job.status)) {
+        const previousStatus = job.status;
         if (imageQueue.cancel(id)) {
-            cultivation?.refundGeneration(id, "user canceled");
+            if (previousStatus === "queued") cultivation?.refundGeneration(id, "user canceled before submission");
+            else cultivation?.consumeGeneration(id, Math.max(0, Date.now() - (job.startedAt || Date.now())));
             void cancelUuImageTask(job.input).catch((error) =>
                 console.warn(
                     JSON.stringify({
@@ -1137,16 +1242,17 @@ function publicJob(job: StoredImageJob) {
 
 async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: QueueJob<ImageJobInput, ImageJobOutput>) {
     const startedAt = Date.now();
+    const upstreamRequestId = input.retryOf || job.id;
     try {
         const channel = platformChannel(input.channelId);
         const apiKey = decryptChannelApiKey(channel);
         const useUuAsync = input.apiFormat === "openai" && (hasUuAsyncTask(input) || (input.count === 1 && isUuImageAsyncChannel(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))));
         const rawImages =
             input.apiFormat === "gemini"
-                ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal)
+                ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
                 : useUuAsync
-                  ? await generateUuAsyncImages(channel, apiKey, input, job, signal)
-                  : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal);
+                  ? await generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId)
+                  : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
         const images: ImageJobImage[] = [];
         for (const raw of rawImages) {
             if (signal.aborted || job.status === "canceled") throw abortError(signal);
@@ -1167,6 +1273,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         });
         return result;
     } catch (error) {
+        cleanupJobOutputFilesFor(input.userId, job.id);
         if (job.status !== "canceled") cultivation?.refundGeneration(job.id, error instanceof Error ? error.message : "generation failed");
         throw error;
     }
@@ -1193,10 +1300,10 @@ type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & {
     mask?: string;
 };
 
-async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal) {
+async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal, upstreamRequestId: string) {
     const headers = {
         Authorization: `Bearer ${apiKey}`,
-        "Idempotency-Key": randomUUID(),
+        "Idempotency-Key": upstreamIdempotencyKey(upstreamRequestId),
     };
     const size = resolveOpenAiImageSize(input.size, input.quality);
     const requestOptions = buildOpenAiImageRequestOptions({
@@ -1235,12 +1342,12 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES,
         tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试",
     });
-    const data = Array.isArray(payload.data) ? payload.data : [];
+    const data: Array<Record<string, unknown>> = Array.isArray(payload.data) ? payload.data : [];
     const mimeType = imageOutputFormatMimeType(input.imageOutputFormat);
     return data.map((item) => (typeof item?.b64_json === "string" ? base64ImageDataUrl(item.b64_json, mimeType) : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
 }
 
-async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal) {
+async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal, upstreamRequestId: string) {
     if (!hasUuAsyncTask(input)) {
         const runtimeInput = await materializeImageInput(input);
         const requestOptions = buildUuAsyncImageRequest({
@@ -1262,7 +1369,7 @@ async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, inp
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${apiKey}`,
-                    "Idempotency-Key": randomUUID(),
+                    "Idempotency-Key": upstreamIdempotencyKey(upstreamRequestId),
                 },
                 body: form,
                 signal,
@@ -1347,9 +1454,9 @@ function abortError(signal: AbortSignal) {
     return signal.reason instanceof Error ? signal.reason : new Error("任务已取消");
 }
 
-async function generateGeminiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal) {
+async function generateGeminiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal, upstreamRequestId: string) {
     const outputs = await Promise.all(
-        Array.from({ length: input.count }, async () => {
+        Array.from({ length: input.count }, async (_, index) => {
             return geminiImageSemaphore.run(signal, async () => {
                 const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
                 input.references.forEach((dataUrl) => {
@@ -1368,7 +1475,7 @@ async function generateGeminiImages(channel: ChannelRecord, apiKey: string, inpu
                         headers: {
                             "Content-Type": "application/json",
                             "x-goog-api-key": apiKey,
-                            "Idempotency-Key": randomUUID(),
+                            "Idempotency-Key": upstreamIdempotencyKey(upstreamRequestId, index),
                         },
                         body: JSON.stringify({
                             contents: [{ role: "user", parts }],
@@ -1385,8 +1492,9 @@ async function generateGeminiImages(channel: ChannelRecord, apiKey: string, inpu
                     maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES,
                     tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试",
                 });
-                return (Array.isArray(payload.candidates) ? payload.candidates : [])
-                    .flatMap((candidate) => candidate?.content?.parts || [])
+                const candidates: Array<{ content?: { parts?: Array<Record<string, any>> } }> = Array.isArray(payload.candidates) ? payload.candidates : [];
+                return candidates
+                    .flatMap((candidate) => candidate.content?.parts || [])
                     .map((part) => {
                         const inline = part?.inlineData || part?.inline_data;
                         if (inline?.data) return `data:${inline.mimeType || inline.mime_type || "image/png"};base64,${inline.data}`;
@@ -1422,33 +1530,44 @@ async function persistJobImage(userId: string, jobId: string, value: string, dur
     const extension = imageExtension(mimeType);
     const filename = `${randomUUID()}${extension}`;
     const directory = join(JOB_FILE_ROOT, safeSegment(userId), safeSegment(jobId));
+    const outputPath = join(directory, filename);
     mkdirSync(directory, { recursive: true });
-    await Bun.write(join(directory, filename), bytes);
-    if (signal.aborted) {
-        unlinkSync(join(directory, filename));
-        throw abortError(signal);
+    assertDiskCapacity(bytes.byteLength);
+    reserveJobOutputBytes(userId, jobId, bytes.byteLength);
+    let persisted = false;
+    try {
+        await Bun.write(outputPath, bytes);
+        if (signal.aborted) throw abortError(signal);
+        const dimensions = readImageDimensions(bytes, mimeType);
+        persisted = true;
+        return {
+            id: randomUUID(),
+            dataUrl: `/api/job-files/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`,
+            bytes: bytes.byteLength,
+            durationMs,
+            mimeType,
+            ...(dimensions || {}),
+        };
+    } finally {
+        if (!persisted) {
+            rmSync(outputPath, { force: true });
+            releaseJobOutputBytes(userId, jobId, bytes.byteLength);
+        }
     }
-    const dimensions = readImageDimensions(bytes, mimeType);
-    return {
-        id: randomUUID(),
-        dataUrl: `/api/job-files/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`,
-        bytes: bytes.byteLength,
-        durationMs,
-        mimeType,
-        ...(dimensions || {}),
-    };
 }
 
-function serveJobFile(session: SessionPayload, jobId: string, filename: string) {
+function serveJobFile(request: Request, session: SessionPayload, jobId: string, filename: string) {
     ownedJob(session.userId, jobId);
     const safeName = safeSegment(filename);
     const path = join(JOB_FILE_ROOT, safeSegment(session.userId), safeSegment(jobId), safeName);
     const file = Bun.file(path);
     if (!existsSync(path)) throw new HttpError(404, "图片不存在");
-    return new Response(file, {
+    return new Response(request.method === "HEAD" ? null : file, {
         headers: {
             "Content-Type": file.type || "application/octet-stream",
+            "Content-Length": String(file.size),
             "Cache-Control": "private, max-age=31536000, immutable",
+            Vary: "Cookie",
         },
     });
 }
@@ -1457,8 +1576,17 @@ async function proxyAiRequest(request: Request, session: SessionPayload, channel
     const channel = platformChannel(channelId);
     if (channel.apiFormat !== protocol) throw new HttpError(400, "渠道协议不匹配");
     assertAllowedProxyRequest(request.method, protocol, path);
+    const mediaTaskRead = readMediaTaskRoute(request.method, protocol, path);
+    if (mediaTaskRead && !mediaTasks?.isOwnedBy(session.userId, channelId, mediaTaskRead.kind, mediaTaskRead.taskId)) {
+        throw new HttpError(404, "媒体任务不存在");
+    }
     const apiKey = decryptChannelApiKey(channel);
-    const target = buildUpstreamUrl(channel.baseUrl, protocol, path);
+    let target: string;
+    try {
+        target = buildUpstreamUrl(channel.baseUrl, protocol, path);
+    } catch (error) {
+        throw new HttpError(400, error instanceof Error ? error.message : "渠道地址无效");
+    }
     const headers = new Headers();
     for (const name of ["content-type", "accept", "idempotency-key"]) {
         const value = request.headers.get(name);
@@ -1469,11 +1597,77 @@ async function proxyAiRequest(request: Request, session: SessionPayload, channel
     if (protocol === "gemini") headers.set("x-goog-api-key", apiKey);
     else headers.set("authorization", `Bearer ${apiKey}`);
     const body = ["GET", "HEAD"].includes(request.method) ? undefined : await readRequestBytes(request, MAX_PROXY_BODY_BYTES, "代理请求内容过大");
+    let model = "";
     if (body) {
-        const model = await readProxyRequestModel(headers.get("content-type") || "", body);
+        const metadata = await readProxyRequestMetadata(headers.get("content-type") || "", body);
+        model = metadata.model;
+        if (metadata.promptCharacters > MAX_PROMPT_CHARS) throw new HttpError(400, `提示词不能超过 ${MAX_PROMPT_CHARS.toLocaleString()} 个字符`);
         assertPlatformModelAllowed(channelId, model, path.startsWith("/audio/") ? "audio" : "video");
     }
-    const response = await upstreamFetch(`${target}${new URL(request.url).search}`, { method: request.method, headers, body, signal: request.signal }, Boolean(headers.get("idempotency-key")));
+    const isGenerationSubmission = request.method === "POST";
+    const mediaTaskKind = mediaTaskSubmissionKind(protocol, path);
+    const usageId = isGenerationSubmission ? createHash("sha256").update(`${session.userId}:media:${requiredIdempotencyKey(request)}`).digest("hex") : "";
+    const cultivationService = isGenerationSubmission ? requireCultivation() : null;
+    if (usageId && cultivationService?.getGenerationUsage(usageId)) {
+        const existingTask = mediaTaskKind ? mediaTasks?.getByUsageId(usageId) : null;
+        if (existingTask && existingTask.userId === session.userId && existingTask.channelId === channelId && existingTask.kind === mediaTaskKind) {
+            return json({ id: existingTask.taskId, status: "queued", recovered: true }, 200, { "x-request-id": requestId });
+        }
+        throw new HttpError(409, "该生成请求已处理，请勿重复提交");
+    }
+    if (usageId && cultivationService) {
+        cultivationService.reserveGeneration({
+            jobId: usageId,
+            userId: session.userId,
+            channelId,
+            model,
+            count: 1,
+            referenceCount: 0,
+            hasMask: false,
+            activeJobs: activeUserJobs(session.userId),
+        });
+        activeMediaProxyRequests.set(session.userId, (activeMediaProxyRequests.get(session.userId) || 0) + 1);
+        activeMediaProxyUsageIds.add(usageId);
+    }
+    const startedAt = Date.now();
+    let submitted = false;
+    let response: Response;
+    try {
+        submitted = true;
+        response = await upstreamFetch(`${target}${new URL(request.url).search}`, { method: request.method, headers, body, signal: request.signal }, Boolean(headers.get("idempotency-key")));
+        if (response.ok && mediaTaskRead && request.method === "GET") {
+            response = await trackMediaTaskResponse(response, channelId, mediaTaskRead, path);
+        }
+        if (usageId && cultivationService) {
+            if (response.ok && mediaTaskKind) {
+                if (!mediaTasks) throw new HttpError(503, "媒体任务归属存储暂不可用");
+                const captured = await captureMediaTaskResponse(response);
+                response = captured.response;
+                mediaTasks.register({
+                    usageId,
+                    userId: session.userId,
+                    channelId,
+                    kind: mediaTaskKind,
+                    taskId: captured.taskId,
+                });
+            }
+            if (response.ok) cultivationService.consumeGeneration(usageId, Date.now() - startedAt);
+            else cultivationService.refundGeneration(usageId, `upstream rejected media request (${response.status})`);
+        }
+    } catch (error) {
+        if (usageId && cultivationService) {
+            if (submitted) cultivationService.consumeGeneration(usageId, Date.now() - startedAt);
+            else cultivationService.refundGeneration(usageId, "media request failed before submission");
+        }
+        throw error;
+    } finally {
+        if (usageId) {
+            const next = Math.max(0, (activeMediaProxyRequests.get(session.userId) || 1) - 1);
+            if (next) activeMediaProxyRequests.set(session.userId, next);
+            else activeMediaProxyRequests.delete(session.userId);
+            activeMediaProxyUsageIds.delete(usageId);
+        }
+    }
     const responseHeaders = new Headers();
     for (const name of ["content-type", "content-disposition", "cache-control"]) {
         const value = response.headers.get(name);
@@ -1490,7 +1684,7 @@ async function proxyAiRequest(request: Request, session: SessionPayload, channel
 function assertAllowedProxyRequest(method: string, protocol: ProviderProtocol, path: string) {
     const normalizedMethod = method.toUpperCase();
     const normalizedPath = `/${path.replace(/^\/+/, "")}`;
-    const openAiReadPath = /^\/(?:models(?:\/[^/]+)?|videos\/[^/]+(?:\/content)?|contents\/generations\/tasks(?:\/[^/]+)?)$/;
+    const openAiReadPath = /^\/(?:models(?:\/[^/]+)?|videos\/[^/]+(?:\/content)?|contents\/generations\/tasks\/[^/]+)$/;
     const openAiWritePath = /^\/(?:audio\/speech|videos|contents\/generations\/tasks)$/;
     const geminiReadPath = /^\/models(?:\/[^/]+)?$/;
     const allowed =
@@ -1500,28 +1694,119 @@ function assertAllowedProxyRequest(method: string, protocol: ProviderProtocol, p
     if (!allowed) throw new HttpError(403, "该渠道请求必须通过受控任务接口执行");
 }
 
-async function readProxyRequestModel(contentType: string, body: Uint8Array) {
+function mediaTaskSubmissionKind(protocol: ProviderProtocol, path: string): MediaTaskKind | null {
+    if (protocol !== "openai") return null;
+    const normalizedPath = `/${path.replace(/^\/+/, "")}`;
+    if (normalizedPath === "/videos") return "video";
+    if (normalizedPath === "/contents/generations/tasks") return "content";
+    return null;
+}
+
+function readMediaTaskRoute(method: string, protocol: ProviderProtocol, path: string): { kind: MediaTaskKind; taskId: string } | null {
+    if (protocol !== "openai" || !["GET", "HEAD"].includes(method.toUpperCase())) return null;
+    const normalizedPath = `/${path.replace(/^\/+/, "")}`;
+    const video = normalizedPath.match(/^\/videos\/([^/]+)(?:\/content)?$/);
+    const content = normalizedPath.match(/^\/contents\/generations\/tasks\/([^/]+)$/);
+    const match = video || content;
+    if (!match) return null;
+    let taskId: string;
+    try {
+        taskId = decodeURIComponent(match[1]).trim();
+    } catch {
+        throw new HttpError(400, "媒体任务 ID 无效");
+    }
+    if (!taskId || taskId.length > 512 || /\p{C}/u.test(taskId)) throw new HttpError(400, "媒体任务 ID 无效");
+    return { kind: video ? "video" : "content", taskId };
+}
+
+async function captureMediaTaskResponse(response: Response) {
+    const bytes = await readResponseBytes(response, MAX_UPSTREAM_JSON_BYTES, "上游媒体任务响应过大");
+    let payload: unknown;
+    try {
+        payload = bytes.byteLength ? JSON.parse(new TextDecoder().decode(bytes)) : {};
+    } catch {
+        throw new HttpError(502, "上游媒体接口未返回有效任务信息");
+    }
+    const root = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+    const data = root.data && typeof root.data === "object" && !Array.isArray(root.data) ? (root.data as Record<string, unknown>) : {};
+    const taskId = String(root.id || data.id || "").trim();
+    if (!taskId || taskId.length > 512 || /\p{C}/u.test(taskId)) throw new HttpError(502, "上游媒体接口未返回有效任务 ID");
+    return {
+        taskId,
+        response: responseWithBytes(response, bytes),
+    };
+}
+
+async function trackMediaTaskResponse(response: Response, channelId: string, task: { kind: MediaTaskKind; taskId: string }, path: string) {
+    if (task.kind === "video" && /\/content\/?$/.test(path)) {
+        mediaTasks?.markFinished(channelId, task.kind, task.taskId);
+        return response;
+    }
+    const bytes = await readResponseBytes(response, MAX_UPSTREAM_JSON_BYTES, "上游媒体任务响应过大");
+    try {
+        const payload = bytes.byteLength ? JSON.parse(new TextDecoder().decode(bytes)) : {};
+        if (isTerminalMediaTaskPayload(payload)) mediaTasks?.markFinished(channelId, task.kind, task.taskId);
+    } catch {
+        // Preserve an unusual but successful provider response; the next poll may still expose a terminal state.
+    }
+    return responseWithBytes(response, bytes);
+}
+
+function isTerminalMediaTaskPayload(payload: unknown) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+    const root = payload as Record<string, unknown>;
+    const data = root.data && typeof root.data === "object" && !Array.isArray(root.data) ? (root.data as Record<string, unknown>) : {};
+    const status = String(data.status || data.state || root.status || root.state || "")
+        .trim()
+        .toLowerCase();
+    if (["succeeded", "success", "completed", "done", "failed", "error", "cancelled", "canceled", "expired"].includes(status)) return true;
+    const content = data.content && typeof data.content === "object" && !Array.isArray(data.content) ? (data.content as Record<string, unknown>) : {};
+    return [data.video_url, data.result_url, data.url, content.video_url, content.url, root.video_url, root.result_url, root.url].some((value) => typeof value === "string" && value.trim());
+}
+
+function responseWithBytes(response: Response, bytes: Uint8Array) {
+    return new Response(requestBody(bytes), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+    });
+}
+
+async function readProxyRequestMetadata(contentType: string, body: Uint8Array) {
     try {
         let model = "";
+        let promptCharacters = 0;
         if (contentType.includes("application/json")) {
             const payload = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
             model = String(payload.model || "").trim();
+            promptCharacters = proxyPromptCharacterCount(payload);
         } else if (contentType.includes("multipart/form-data") || contentType.includes("application/x-www-form-urlencoded")) {
             const form = await new Request("http://localhost", {
                 method: "POST",
                 headers: { "Content-Type": contentType },
-                body,
+                body: requestBody(body),
             }).formData();
             model = String(form.get("model") || "").trim();
+            promptCharacters = ["prompt", "input", "instructions"].reduce((total, key) => {
+                const value = form.get(key);
+                return total + (typeof value === "string" ? value.length : 0);
+            }, 0);
         } else {
             throw new HttpError(400, "代理请求格式不受支持");
         }
         if (!model) throw new HttpError(400, "模型不能为空");
-        return model;
+        return { model, promptCharacters };
     } catch (error) {
         if (error instanceof HttpError) throw error;
         throw new HttpError(400, "代理请求内容格式无效");
     }
+}
+
+function proxyPromptCharacterCount(value: unknown, key = ""): number {
+    if (typeof value === "string") return ["prompt", "input", "instructions", "text"].includes(key) ? value.length : 0;
+    if (Array.isArray(value)) return value.reduce((total, item) => total + proxyPromptCharacterCount(item, key), 0);
+    if (!value || typeof value !== "object") return 0;
+    return Object.entries(value as Record<string, unknown>).reduce((total, [entryKey, item]) => total + proxyPromptCharacterCount(item, entryKey), 0);
 }
 
 function assertPlatformModelAllowed(channelId: string, model: string, capability?: "image" | "video" | "text" | "audio") {
@@ -1558,13 +1843,20 @@ async function saveProject(request: Request, session: SessionPayload, id: string
             },
             409,
         );
+    const projectBytes = Buffer.byteLength(JSON.stringify(body.project), "utf8");
+    if (projectBytes > MAX_JSON_BYTES) throw new HttpError(413, "单个画布数据不能超过 8 MB");
+    if (!current && Object.keys(projects).length >= MAX_PROJECTS_PER_USER) throw new HttpError(413, `每个用户最多保存 ${MAX_PROJECTS_PER_USER} 个画布`);
+    const currentBytes = current ? Buffer.byteLength(JSON.stringify(current.project), "utf8") : 0;
+    const totalBytes = Object.values(projects).reduce((total, item) => total + Buffer.byteLength(JSON.stringify(item.project), "utf8"), 0);
+    if (totalBytes - currentBytes + projectBytes > MAX_PROJECT_BYTES_PER_USER) throw new HttpError(413, `个人画布数据总量不能超过 ${Math.floor(MAX_PROJECT_BYTES_PER_USER / 1024 / 1024)} MB`);
+    assertDiskCapacity(Math.max(0, projectBytes - currentBytes));
     const next = {
         project: body.project,
         revision: (current?.revision || 0) + 1,
         updatedAt: Date.now(),
     };
-    projects[id] = next;
     appDatabase.saveProject(session.userId, id, next);
+    projects[id] = next;
     return json(next);
 }
 
@@ -1580,14 +1872,15 @@ function deleteProject(url: URL, session: SessionPayload, id: string) {
             },
             409,
         );
-    if (projects) delete projects[id];
     const tombstones = (state.projectTombstones[session.userId] ||= {});
     const previous = tombstones[id];
-    tombstones[id] = {
+    const nextTombstone = {
         revision: Math.max(current?.revision || 0, previous?.revision || 0) + 1,
         deletedAt: Date.now(),
     };
-    appDatabase.deleteProjectWithTombstone(session.userId, id, tombstones[id]);
+    appDatabase.deleteProjectWithTombstone(session.userId, id, nextTombstone);
+    if (projects) delete projects[id];
+    tombstones[id] = nextTombstone;
     return new Response(null, { status: 204 });
 }
 
@@ -1603,11 +1896,14 @@ async function upstreamFetch(url: string, init: RequestInit, retryable: boolean,
             await response.body?.cancel();
         } catch (error) {
             lastError = error;
-            if (attempt === attempts - 1 || init.signal?.aborted) throw error;
+            if (attempt === attempts - 1 || init.signal?.aborted) break;
         }
         await Bun.sleep(500 * 2 ** attempt + Math.floor(Math.random() * 200));
     }
-    throw lastError || new Error("上游请求失败");
+    if (lastError instanceof HttpError) throw lastError;
+    if (init.signal?.aborted) throw abortError(init.signal);
+    if (lastError instanceof DOMException && lastError.name === "TimeoutError") throw new HttpError(504, "上游接口响应超时");
+    throw new HttpError(502, "无法连接上游接口，请检查渠道地址、网络或接口状态");
 }
 
 async function fetchAllowedRedirects(url: string, init: RequestInit) {
@@ -1667,7 +1963,9 @@ async function proxyPromptAsset(request: Request, url: URL, requestId: string) {
             if (!response.ok) throw new HttpError(response.status, `提示词资源加载失败：${response.status}`);
             const bytes = await readResponseBytes(response, MAX_PROMPT_PROXY_BYTES, "提示词资源过大");
             const contentType = promptAssetContentType(response.headers.get("content-type"), bytes);
-            await Promise.all([Bun.write(cachePath, bytes), Bun.write(`${cachePath}.meta.json`, JSON.stringify({ contentType }))]);
+            assertDiskCapacity(bytes.byteLength);
+            await Promise.all([Bun.write(cachePath, bytes), Bun.write(`${cachePath}.meta.json`, JSON.stringify({ contentType, cachedAt: Date.now() }))]);
+            prunePromptCache();
             return new Response(bytes, {
                 headers: promptCacheHeaders(contentType, requestId),
             });
@@ -1685,9 +1983,47 @@ function isFreshPromptCache(path: string) {
 async function promptCachedResponse(path: string, requestId: string, stale = false) {
     const file = Bun.file(path);
     const contentType = await promptCacheContentType(path, file);
+    touchPromptCacheEntry(path);
     return new Response(file, {
         headers: promptCacheHeaders(contentType, requestId, stale),
     });
+}
+
+function touchPromptCacheEntry(path: string) {
+    const metadataPath = `${path}.meta.json`;
+    if (!existsSync(metadataPath)) return;
+    try {
+        const now = new Date();
+        utimesSync(metadataPath, now, now);
+    } catch {
+        // Cache access timestamps are best effort only.
+    }
+}
+
+function prunePromptCache() {
+    let entries: Array<{ path: string; metadataPath: string; bytes: number; accessedAt: number }>;
+    try {
+        entries = readdirSync(PROMPT_CACHE_ROOT, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && /^[a-f0-9]{64}$/.test(entry.name))
+            .map((entry) => {
+                const path = join(PROMPT_CACHE_ROOT, entry.name);
+                const metadataPath = `${path}.meta.json`;
+                const fileStat = statSync(path);
+                const accessedAt = existsSync(metadataPath) ? statSync(metadataPath).mtimeMs : fileStat.mtimeMs;
+                return { path, metadataPath, bytes: fileStat.size, accessedAt };
+            })
+            .sort((left, right) => left.accessedAt - right.accessedAt);
+    } catch {
+        return;
+    }
+    let totalBytes = entries.reduce((total, entry) => total + entry.bytes, 0);
+    while (entries.length > MAX_PROMPT_CACHE_ENTRIES || totalBytes > MAX_PROMPT_CACHE_BYTES) {
+        const entry = entries.shift();
+        if (!entry) break;
+        totalBytes -= entry.bytes;
+        rmSync(entry.path, { force: true });
+        rmSync(entry.metadataPath, { force: true });
+    }
 }
 
 function promptCacheHeaders(contentType: string, requestId: string, stale = false) {
@@ -1741,18 +2077,24 @@ function promptProxyTarget(pathname: string, search: string) {
 
 async function serveStatic(pathname: string, method: string) {
     if (!["GET", "HEAD"].includes(method)) return new Response(null, { status: 405 });
-    const decoded = decodeURIComponent(pathname);
+    let decoded: string;
+    try {
+        decoded = decodeURIComponent(pathname);
+    } catch {
+        throw new HttpError(400, "页面地址格式无效");
+    }
     const relative = normalize(decoded)
         .replace(/^(\.\.[/\\])+/, "")
         .replace(/^[/\\]+/, "");
     let path = resolve(WEB_ROOT, relative || "index.html");
     if (!(path === WEB_ROOT || path.startsWith(`${WEB_ROOT}${sep}`)) || !existsSync(path) || Bun.file(path).size === 0) path = join(WEB_ROOT, "index.html");
     const file = Bun.file(path);
-    const immutable = /\.[a-f0-9]{8,}\.(?:js|css|woff2?|svg)$/i.test(path);
+    const immutable = /-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2?|svg)$/.test(path);
+    const revalidate = path.endsWith("index.html") || path.endsWith("theme-init.js");
     return new Response(method === "HEAD" ? null : file, {
         headers: {
             "Content-Type": file.type || contentType(path),
-            "Cache-Control": immutable ? "public, max-age=31536000, immutable" : path.endsWith("index.html") ? "no-cache" : "public, max-age=3600",
+            "Cache-Control": immutable ? "public, max-age=31536000, immutable" : revalidate ? "no-cache" : "public, max-age=3600",
         },
     });
 }
@@ -1771,17 +2113,22 @@ function runtimeConfigResponse() {
     });
 }
 
-function withSecurityHeaders(response: Response, requestId: string) {
+function withSecurityHeaders(response: Response, requestId: string, request: Request) {
     const headers = new Headers(response.headers);
     headers.set("x-content-type-options", "nosniff");
     headers.set("x-frame-options", "DENY");
     headers.set("referrer-policy", "strict-origin-when-cross-origin");
     headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
     headers.set("cross-origin-opener-policy", "same-origin");
+    headers.set("cross-origin-resource-policy", "same-origin");
     headers.set("x-request-id", requestId);
+    const pathname = new URL(request.url).pathname;
+    if ((pathname.startsWith("/api/") || pathname === "/health" || pathname === "/config.js") && headers.get("content-type")?.includes("application/json")) {
+        headers.set("cache-control", "no-store");
+    }
     headers.set(
         "content-security-policy",
-        "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://www.googletagmanager.com https://hm.baidu.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' https://www.google-analytics.com https://hm.baidu.com; font-src 'self' data:; worker-src 'self' blob:; manifest-src 'self'",
+        "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://www.googletagmanager.com https://hm.baidu.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' https: data: blob:; font-src 'self' data:; worker-src 'self' blob:; manifest-src 'self'",
     );
     if (secureCookies) headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
     return new Response(response.body, {
@@ -1800,7 +2147,13 @@ function errorResponse(error: unknown, requestId: string) {
               : error instanceof DOMException && error.name === "TimeoutError"
                 ? 504
                 : 500;
-    const message = error instanceof Error ? error.message : "服务器内部错误";
+    const publicError =
+        error instanceof HttpError ||
+        error instanceof CultivationError ||
+        error instanceof AssetLibraryInputError ||
+        error instanceof GenerationHistoryInputError ||
+        (error instanceof DOMException && error.name === "TimeoutError");
+    const message = publicError && error instanceof Error ? error.message : status === 500 ? "服务器内部错误" : "请求处理失败";
     console.error(
         JSON.stringify({
             event: "request_error",
@@ -1826,11 +2179,22 @@ async function readJson<T>(request: Request, maxBytes = MAX_JSON_BYTES): Promise
     }
 }
 
+function requiredIdempotencyKey(request: Request) {
+    const value = request.headers.get("idempotency-key")?.trim() || "";
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(value)) throw new HttpError(400, "生成请求必须携带有效的幂等键");
+    return value;
+}
+
+function upstreamIdempotencyKey(requestId: string, index = 0) {
+    return createHash("sha256").update(`${requestId}:${index}`).digest("hex");
+}
+
 function enforceSameOrigin(request: Request) {
     if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return;
+    if (request.headers.get("sec-fetch-site") === "cross-site") throw new HttpError(403, "跨站请求已拒绝");
     const origin = request.headers.get("origin");
     if (!origin) return;
-    if (new URL(origin).host !== new URL(request.url).host) throw new HttpError(403, "跨站请求已拒绝");
+    if (!isSameApplicationOrigin(request.url, origin, PUBLIC_BASE_URL)) throw new HttpError(403, "跨站请求已拒绝");
 }
 
 function enforceRateLimit(key: string, limit: number) {
@@ -1905,7 +2269,7 @@ function resolveClientIp(request: Request, remoteAddress: string) {
 
 async function withAuthMutation<T>(operation: () => Promise<T>) {
     const previous = authMutation;
-    let release = () => undefined;
+    let release: () => void = () => undefined;
     authMutation = new Promise<void>((resolve) => {
         release = resolve;
     });
@@ -1919,7 +2283,7 @@ async function withAuthMutation<T>(operation: () => Promise<T>) {
 
 async function withAssetMutation<T>(operation: () => Promise<T>) {
     const previous = assetMutation;
-    let release = () => undefined;
+    let release: () => void = () => undefined;
     assetMutation = new Promise<void>((resolve) => {
         release = resolve;
     });
@@ -2000,30 +2364,61 @@ function cleanupJobFiles(job: StoredImageJob) {
 }
 
 function cleanupJobFilesFor(userId: string, jobId: string) {
+    cleanupJobOutputFilesFor(userId, jobId);
     const safeUserId = safeSegment(userId);
     const safeJobId = safeSegment(jobId);
-    for (const root of [JOB_FILE_ROOT, join(DATA_DIR, "job-references")]) {
-        try {
-            rmSync(join(root, safeUserId, safeJobId), {
-                recursive: true,
-                force: true,
-                maxRetries: 2,
-                retryDelay: 25,
-            });
-        } catch (error) {
-            console.warn(
-                JSON.stringify({
-                    event: "job_file_cleanup_failed",
-                    jobId,
-                    message: error instanceof Error ? error.message : "unknown error",
-                }),
-            );
-        }
+    removeJobDirectory(join(DATA_DIR, "job-references", safeUserId, safeJobId), jobId);
+}
+
+function cleanupJobOutputFilesFor(userId: string, jobId: string) {
+    const trackedBytes = jobFileBytesByJob.get(jobId) || 0;
+    if (trackedBytes) releaseJobOutputBytes(userId, jobId, trackedBytes);
+    removeJobDirectory(join(JOB_FILE_ROOT, safeSegment(userId), safeSegment(jobId)), jobId);
+}
+
+function removeJobDirectory(path: string, jobId: string) {
+    try {
+        rmSync(path, {
+            recursive: true,
+            force: true,
+            maxRetries: 2,
+            retryDelay: 25,
+        });
+    } catch (error) {
+        console.warn(
+            JSON.stringify({
+                event: "job_file_cleanup_failed",
+                jobId,
+                message: error instanceof Error ? error.message : "unknown error",
+            }),
+        );
     }
 }
 
+function reserveJobOutputBytes(userId: string, jobId: string, bytes: number) {
+    const userBytes = jobFileBytesByUser.get(userId) || 0;
+    if (userBytes + bytes > MAX_USER_JOB_FILE_BYTES) throw new HttpError(413, `个人任务文件总量不能超过 ${Math.floor(MAX_USER_JOB_FILE_BYTES / 1024 / 1024)} MB，请清理旧生成任务后重试`);
+    jobFileBytesByUser.set(userId, userBytes + bytes);
+    jobFileBytesByJob.set(jobId, (jobFileBytesByJob.get(jobId) || 0) + bytes);
+}
+
+function releaseJobOutputBytes(userId: string, jobId: string, bytes: number) {
+    const released = Math.min(Math.max(0, bytes), jobFileBytesByJob.get(jobId) || 0);
+    if (!released) return;
+    const remainingJobBytes = Math.max(0, (jobFileBytesByJob.get(jobId) || 0) - released);
+    if (remainingJobBytes) jobFileBytesByJob.set(jobId, remainingJobBytes);
+    else jobFileBytesByJob.delete(jobId);
+    const remainingUserBytes = Math.max(0, (jobFileBytesByUser.get(userId) || 0) - released);
+    if (remainingUserBytes) jobFileBytesByUser.set(userId, remainingUserBytes);
+    else jobFileBytesByUser.delete(userId);
+}
+
 function activeUserJobs(userId: string) {
-    return imageQueue.list().filter((job) => job.input.userId === userId && ["queued", "running"].includes(job.status)).length;
+    return (
+        imageQueue.list().filter((job) => job.input.userId === userId && ["queued", "running"].includes(job.status)).length +
+        (activeMediaProxyRequests.get(userId) || 0) +
+        (mediaTasks?.countActiveForUser(userId) || 0)
+    );
 }
 
 function ownedAsset(userId: string, key: string) {
@@ -2034,6 +2429,90 @@ function ownedAsset(userId: string, key: string) {
 
 function assetKey(userId: string, key: string) {
     return `${userId}:${key}`;
+}
+
+function assetDirectory(userId: string) {
+    return join(ASSET_ROOT, safeSegment(userId));
+}
+
+function assetPath(userId: string, key: string) {
+    return join(assetDirectory(userId), assetStorageFilename(key));
+}
+
+function legacyAssetPath(userId: string, key: string) {
+    return join(assetDirectory(userId), legacyAssetStorageFilename(key));
+}
+
+function existingAssetPath(userId: string, key: string) {
+    const current = assetPath(userId, key);
+    if (existsSync(current)) return current;
+    const legacy = legacyAssetPath(userId, key);
+    return existsSync(legacy) ? legacy : "";
+}
+
+function legacyAssetPathShared(userId: string, key: string) {
+    const filename = legacyAssetStorageFilename(key);
+    return Object.values(state.assets).some((asset) => asset.userId === userId && asset.key !== key && legacyAssetStorageFilename(asset.key) === filename);
+}
+
+function removeAssetFileBestEffort(path: string, asset: StoredAsset, event: string) {
+    try {
+        rmSync(path, { force: true });
+    } catch (error) {
+        console.warn(
+            JSON.stringify({
+                event,
+                userId: asset.userId,
+                key: asset.key,
+                message: error instanceof Error ? error.message : "unknown error",
+            }),
+        );
+    }
+}
+
+function requestBody(bytes: Uint8Array) {
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+type StoredAssetKind = "image" | "video" | "audio" | "file";
+
+function assetKindForPrefix(prefix: string): StoredAssetKind {
+    if (prefix.startsWith("image")) return "image";
+    if (prefix.startsWith("video")) return "video";
+    if (prefix.startsWith("audio")) return "audio";
+    return "file";
+}
+
+function assetByteLimit(kind: StoredAssetKind) {
+    if (kind === "video") return MAX_VIDEO_ASSET_BYTES;
+    if (kind === "audio") return MAX_AUDIO_ASSET_BYTES;
+    return MAX_IMAGE_ASSET_BYTES;
+}
+
+function assetKindLabel(kind: StoredAssetKind) {
+    if (kind === "image") return "图片";
+    if (kind === "video") return "视频";
+    if (kind === "audio") return "音频";
+    return "文件";
+}
+
+function availableDiskBytes() {
+    const stats = statfsSync(DATA_DIR);
+    return Number(stats.bavail) * Number(stats.bsize);
+}
+
+function assertDiskCapacity(incomingBytes = 0) {
+    try {
+        if (availableDiskBytes() - Math.max(0, incomingBytes) < MIN_FREE_DISK_BYTES) throw new HttpError(507, `服务器磁盘可用空间不足，至少需要保留 ${Math.ceil(MIN_FREE_DISK_BYTES / 1024 / 1024)} MB`);
+    } catch (error) {
+        if (error instanceof HttpError) throw error;
+        console.warn(
+            JSON.stringify({
+                event: "disk_capacity_check_failed",
+                message: error instanceof Error ? error.message : "unknown error",
+            }),
+        );
+    }
 }
 
 function queueStateWrite() {
@@ -2067,6 +2546,90 @@ function logRequest(request: Request, response: Response, requestId: string, dur
     );
 }
 
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));
+
+function healthResponse() {
+    let databaseOk = false;
+    let diskAvailableBytes = 0;
+    try {
+        databaseOk = Boolean(appDatabase.raw?.query("SELECT 1 AS ok").get());
+    } catch {
+        databaseOk = false;
+    }
+    try {
+        diskAvailableBytes = availableDiskBytes();
+    } catch {
+        diskAvailableBytes = 0;
+    }
+    const diskOk = diskAvailableBytes >= MIN_FREE_DISK_BYTES;
+    const healthy = !shuttingDown && databaseOk && diskOk;
+    return json(
+        {
+            status: healthy ? "ok" : "unhealthy",
+            version: APP_VERSION,
+            commit: APP_COMMIT,
+            checks: {
+                database: databaseOk ? "ok" : "failed",
+                disk: diskOk ? "ok" : "low",
+                diskAvailableBytes,
+                minimumFreeDiskBytes: MIN_FREE_DISK_BYTES,
+                shuttingDown,
+            },
+        },
+        healthy ? 200 : 503,
+    );
+}
+
+function shutdown(signal: string) {
+    if (shutdownPromise) return shutdownPromise;
+    shuttingDown = true;
+    imageQueue.pause();
+    backupManager?.stop();
+    const gracefulServerStop = Promise.resolve(server.stop(false)).catch(() => undefined);
+    shutdownPromise = (async () => {
+        const deadline = Date.now() + SHUTDOWN_GRACE_MS;
+        while ((imageQueue.activeCount() > 0 || activeMediaProxyUsageIds.size > 0) && Date.now() < deadline) await Bun.sleep(200);
+        const unfinishedMediaUsageIds = [...activeMediaProxyUsageIds];
+        for (const usageId of unfinishedMediaUsageIds) cultivation?.consumeGeneration(usageId, SHUTDOWN_GRACE_MS);
+        if (imageQueue.activeCount() > 0 || unfinishedMediaUsageIds.length > 0) {
+            await Promise.resolve(server.stop(true)).catch(() => undefined);
+        } else {
+            await Promise.race([gracefulServerStop, Bun.sleep(1_000)]);
+        }
+        try {
+            writeState();
+        } catch (error) {
+            console.error(
+                JSON.stringify({
+                    event: "shutdown_state_flush_failed",
+                    message: error instanceof Error ? error.message : "unknown error",
+                }),
+            );
+        }
+        const unfinishedJobs = imageQueue.activeCount();
+        if (!unfinishedJobs) appDatabase.close();
+        console.info(
+            JSON.stringify({
+                event: "server_stopped",
+                signal,
+                unfinishedJobs,
+                unfinishedMediaRequests: unfinishedMediaUsageIds.length,
+            }),
+        );
+        process.exit(0);
+    })();
+    return shutdownPromise;
+}
+
+function readAppVersion() {
+    try {
+        return readFileSync(join(import.meta.dir, "..", "VERSION"), "utf8").trim() || "unknown";
+    } catch {
+        return "unknown";
+    }
+}
+
 function normalizeDisplayName(value: unknown) {
     const displayName = String(value || "")
         .normalize("NFKC")
@@ -2087,6 +2650,26 @@ function normalizePersonalCode(value: unknown, minimumLength = 6) {
 function optionalString(value: unknown) {
     const text = typeof value === "string" ? value.trim() : "";
     return text || undefined;
+}
+
+function normalizeShortText(value: unknown, maxLength: number, label: string) {
+    const text = String(value || "")
+        .normalize("NFKC")
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, maxLength);
+    if (!text || /\p{C}/u.test(text)) throw new HttpError(400, `${label}无效`);
+    return text;
+}
+
+function decodeRouteSegment(value: string, label: string) {
+    try {
+        const decoded = decodeURIComponent(value).trim();
+        if (!decoded || decoded.length > 512 || /[\/\\]|\p{C}/u.test(decoded)) throw new Error("invalid");
+        return decoded;
+    } catch {
+        throw new HttpError(400, `${label}无效`);
+    }
 }
 
 function normalizeImageQuality(value: unknown) {
@@ -2131,26 +2714,6 @@ function normalizeJobSource(value: unknown): ImageJobInput["source"] {
     };
 }
 
-function isValidProjectPayload(value: unknown, id: string): value is Record<string, unknown> {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-    const project = value as Record<string, unknown>;
-    if (project.id !== id || typeof project.title !== "string" || project.title.length > 160) return false;
-    if (!Array.isArray(project.nodes) || !Array.isArray(project.connections) || project.nodes.length > 1_000 || project.connections.length > 4_000) return false;
-    const nodeIds = new Set<string>();
-    for (const node of project.nodes) {
-        if (!node || typeof node !== "object" || Array.isArray(node)) return false;
-        const record = node as Record<string, unknown>;
-        if (typeof record.id !== "string" || !record.id || record.id.length > 180 || nodeIds.has(record.id)) return false;
-        nodeIds.add(record.id);
-    }
-    for (const connection of project.connections) {
-        if (!connection || typeof connection !== "object" || Array.isArray(connection)) return false;
-        const record = connection as Record<string, unknown>;
-        if (typeof record.id !== "string" || typeof record.fromNodeId !== "string" || typeof record.toNodeId !== "string" || !nodeIds.has(record.fromNodeId) || !nodeIds.has(record.toNodeId)) return false;
-    }
-    return true;
-}
-
 function normalizeAssetPrefix(value: FormDataEntryValue | null) {
     const prefix = String(value || "file")
         .trim()
@@ -2165,7 +2728,7 @@ function escapeRegExp(value: string) {
 
 function assertSafeDataImage(value: string) {
     try {
-        decodeImageDataUrl(value);
+        return decodeImageDataUrl(value).bytes.byteLength;
     } catch (error) {
         const message = error instanceof Error ? error.message : "参考图格式无效";
         throw new HttpError(message.includes("超过") ? 413 : 400, message);

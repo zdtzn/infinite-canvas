@@ -3,13 +3,29 @@ services:
     image: ${IMAGE_REPOSITORY:-ghcr.io/zdtzn/infinite-canvas}:${IMAGE_TAG:-latest}
     container_name: infinite-canvas
     ports:
-      - "3000:3000"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
     environment:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
       JOB_CONCURRENCY: ${JOB_CONCURRENCY:-2}
+      HEAVY_REQUEST_CONCURRENCY: ${HEAVY_REQUEST_CONCURRENCY:-4}
       UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-600000}
+      ALLOW_NEW_USERS: ${ALLOW_NEW_USERS:-1}
+      MAX_REGISTERED_USERS: ${MAX_REGISTERED_USERS:-20}
       MAX_USER_ASSET_BYTES: ${MAX_USER_ASSET_BYTES:-2147483648}
+      MAX_USER_JOB_FILE_BYTES: ${MAX_USER_JOB_FILE_BYTES:-2147483648}
+      MAX_PROJECTS_PER_USER: ${MAX_PROJECTS_PER_USER:-100}
+      MAX_PROJECT_BYTES_PER_USER: ${MAX_PROJECT_BYTES_PER_USER:-134217728}
+      MAX_PROMPT_CACHE_ENTRIES: ${MAX_PROMPT_CACHE_ENTRIES:-500}
+      MAX_PROMPT_CACHE_BYTES: ${MAX_PROMPT_CACHE_BYTES:-268435456}
+      JOB_RETENTION_MS: ${JOB_RETENTION_MS:-2592000000}
+      MAX_TERMINAL_JOBS_PER_USER: ${MAX_TERMINAL_JOBS_PER_USER:-200}
+      MEDIA_TASK_RETENTION_MS: ${MEDIA_TASK_RETENTION_MS:-2592000000}
+      MEDIA_TASK_ACTIVE_TTL_MS: ${MEDIA_TASK_ACTIVE_TTL_MS:-7200000}
+      MIN_FREE_DISK_BYTES: ${MIN_FREE_DISK_BYTES:-536870912}
+      SHUTDOWN_GRACE_MS: ${SHUTDOWN_GRACE_MS:-20000}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      FORCE_SECURE_COOKIES: ${FORCE_SECURE_COOKIES:-0}
       BACKUP_ENABLED: ${BACKUP_ENABLED:-1}
       BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
       BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-14}
@@ -19,6 +35,16 @@ services:
     volumes:
       - infinite-canvas-data:/data
     restart: unless-stopped
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:3000/health');if(!r.ok)process.exit(1)"]
       interval: 30s
@@ -43,8 +69,17 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     restart: unless-stopped
+    stop_grace_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   infinite-canvas-data:
+    name: ${DATA_VOLUME_NAME:-infinite-canvas-data}
   caddy-data:
   caddy-config:

@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import type { Asset } from "@/stores/use-asset-store";
 import type { ApiCallFormat, ModelChannel } from "@/stores/use-config-store";
+import { useUserStore } from "@/stores/use-user-store";
 
 export type AuthUser = { userId: string; displayName: string; admin?: boolean; avatarUrl?: string };
 export type AuthStatus = { configured: boolean; authenticated: boolean; user: AuthUser | null; publicMode: boolean };
@@ -156,69 +157,70 @@ export async function deleteServerChannel(channelId: string) {
     await serverRequest(`/api/channels/${encodeURIComponent(channelId)}`, { method: "DELETE" });
 }
 
-export async function uploadServerAsset(blob: Blob, prefix: string, storageKey?: string) {
+export async function uploadServerAsset(blob: Blob, prefix: string, storageKey?: string, expectedUserId?: string) {
     const form = new FormData();
     form.set("file", blob, `asset.${mimeExtension(blob.type)}`);
     form.set("prefix", prefix);
     if (storageKey) form.set("storageKey", storageKey);
-    const response = await fetch("/api/assets", { method: "POST", body: form, credentials: "same-origin" });
+    const response = await fetch("/api/assets", { method: "POST", body: form, headers: expectedUserHeaders(undefined, expectedUserId), credentials: "same-origin" });
     return readJsonResponse<{ asset: ServerAsset }>(response);
 }
 
-export async function promoteServerJobAsset(sourceUrl: string) {
+export async function promoteServerJobAsset(sourceUrl: string, expectedUserId?: string) {
     return serverRequest<{ asset: ServerAsset; sourceUrl: string; width?: number; height?: number }>("/api/assets/from-job", {
         method: "POST",
         body: { sourceUrl },
+        expectedUserId,
     });
 }
 
-export async function fetchServerAssetBlob(storageKey: string) {
-    const response = await fetch(`/api/assets/${encodeURIComponent(storageKey)}`, { credentials: "same-origin" });
+export async function fetchServerAssetBlob(storageKey: string, expectedUserId?: string) {
+    const response = await fetch(`/api/assets/${encodeURIComponent(storageKey)}`, { headers: expectedUserHeaders(undefined, expectedUserId), credentials: "same-origin" });
     if (!response.ok) await throwResponseError(response);
     return response.blob();
 }
 
-export async function deleteServerAsset(storageKey: string) {
-    await serverRequest(`/api/assets/${encodeURIComponent(storageKey)}`, { method: "DELETE" });
+export async function deleteServerAsset(storageKey: string, expectedUserId?: string) {
+    await serverRequest(`/api/assets/${encodeURIComponent(storageKey)}`, { method: "DELETE", expectedUserId });
 }
 
-export async function fetchServerAssetLibrary() {
-    return serverRequest<ServerAssetLibrary>("/api/library-assets", { timeoutMs: 20_000 });
+export async function fetchServerAssetLibrary(expectedUserId?: string) {
+    return serverRequest<ServerAssetLibrary>("/api/library-assets", { timeoutMs: 20_000, expectedUserId });
 }
 
-export async function replaceServerAssetLibrary(items: Asset[], initializeOnly = false) {
-    return serverRequest<ServerAssetLibrary>("/api/library-assets", { method: "PUT", body: { items, initializeOnly }, timeoutMs: 30_000 });
+export async function replaceServerAssetLibrary(items: Asset[], initializeOnly = false, expectedUserId?: string) {
+    return serverRequest<ServerAssetLibrary>("/api/library-assets", { method: "PUT", body: { items, initializeOnly }, timeoutMs: 30_000, expectedUserId });
 }
 
-export async function upsertServerAssetLibraryItem(item: Asset) {
-    return serverRequest<{ item: Asset }>(`/api/library-assets/${encodeURIComponent(item.id)}`, { method: "PUT", body: { item } });
+export async function upsertServerAssetLibraryItem(item: Asset, expectedUserId?: string) {
+    return serverRequest<{ item: Asset }>(`/api/library-assets/${encodeURIComponent(item.id)}`, { method: "PUT", body: { item }, expectedUserId });
 }
 
-export async function deleteServerAssetLibraryItem(id: string) {
-    await serverRequest(`/api/library-assets/${encodeURIComponent(id)}`, { method: "DELETE" });
+export async function deleteServerAssetLibraryItem(id: string, expectedUserId?: string) {
+    await serverRequest(`/api/library-assets/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
 }
 
-export async function fetchServerGenerationHistory(kind: "image" | "video") {
-    return serverRequest<{ items: Record<string, unknown>[] }>(`/api/generation-history/${kind}`, { timeoutMs: 20_000 });
+export async function fetchServerGenerationHistory(kind: "image" | "video", expectedUserId?: string) {
+    return serverRequest<{ items: Record<string, unknown>[] }>(`/api/generation-history/${kind}`, { timeoutMs: 20_000, expectedUserId });
 }
 
-export async function mergeServerGenerationHistory(kind: "image" | "video", items: Record<string, unknown>[]) {
-    return serverRequest<{ items: Record<string, unknown>[] }>(`/api/generation-history/${kind}`, { method: "PUT", body: { items }, timeoutMs: 30_000 });
+export async function mergeServerGenerationHistory(kind: "image" | "video", items: Record<string, unknown>[], expectedUserId?: string) {
+    return serverRequest<{ items: Record<string, unknown>[] }>(`/api/generation-history/${kind}`, { method: "PUT", body: { items }, timeoutMs: 30_000, expectedUserId });
 }
 
-export async function upsertServerGenerationHistoryItem(kind: "image" | "video", item: Record<string, unknown>) {
+export async function upsertServerGenerationHistoryItem(kind: "image" | "video", item: Record<string, unknown>, expectedUserId?: string) {
     const id = String(item.id || "");
-    return serverRequest<{ item: Record<string, unknown> }>(`/api/generation-history/${kind}/${encodeURIComponent(id)}`, { method: "PUT", body: { item } });
+    return serverRequest<{ item: Record<string, unknown> }>(`/api/generation-history/${kind}/${encodeURIComponent(id)}`, { method: "PUT", body: { item }, expectedUserId });
 }
 
-export async function deleteServerGenerationHistoryItem(kind: "image" | "video", id: string) {
-    await serverRequest(`/api/generation-history/${kind}/${encodeURIComponent(id)}`, { method: "DELETE" });
+export async function deleteServerGenerationHistoryItem(kind: "image" | "video", id: string, expectedUserId?: string) {
+    await serverRequest(`/api/generation-history/${kind}/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
 }
 
 export async function uploadProfileAvatar(file: File) {
     const form = new FormData();
     form.set("file", file, file.name || `avatar.${mimeExtension(file.type)}`);
-    const response = await fetch("/api/profile/avatar", { method: "POST", body: form, credentials: "same-origin" });
+    const response = await fetch("/api/profile/avatar", { method: "POST", body: form, headers: expectedUserHeaders(), credentials: "same-origin" });
     return readJsonResponse<{ asset: ServerAsset; avatarUrl: string }>(response);
 }
 
@@ -240,28 +242,28 @@ export async function submitImageJob(input: {
     references: string[];
     mask?: string;
     source?: ServerJob["source"];
-}) {
-    return serverRequest<{ job: ServerJob }>("/api/jobs/images", { method: "POST", body: input, headers: { "Idempotency-Key": nanoid() }, timeoutMs: 60_000 });
+}, expectedUserId?: string) {
+    return serverRequest<{ job: ServerJob }>("/api/jobs/images", { method: "POST", body: input, headers: { "Idempotency-Key": nanoid() }, timeoutMs: 60_000, expectedUserId });
 }
 
-export async function fetchServerJobs() {
-    return serverRequest<{ items: ServerJob[] }>("/api/jobs", { timeoutMs: 12_000 });
+export async function fetchServerJobs(expectedUserId?: string) {
+    return serverRequest<{ items: ServerJob[] }>("/api/jobs", { timeoutMs: 12_000, expectedUserId });
 }
 
-export async function fetchServerJob(id: string) {
-    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}`, { timeoutMs: 12_000 });
+export async function fetchServerJob(id: string, expectedUserId?: string) {
+    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}`, { timeoutMs: 12_000, expectedUserId });
 }
 
-export async function cancelServerJob(id: string) {
-    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
+export async function cancelServerJob(id: string, expectedUserId?: string) {
+    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
 }
 
-export async function removeServerJob(id: string) {
-    await serverRequest(`/api/jobs/${encodeURIComponent(id)}?remove=1`, { method: "DELETE" });
+export async function removeServerJob(id: string, expectedUserId?: string) {
+    await serverRequest(`/api/jobs/${encodeURIComponent(id)}?remove=1`, { method: "DELETE", expectedUserId });
 }
 
-export async function retryServerJob(id: string) {
-    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}/retry`, { method: "POST" });
+export async function retryServerJob(id: string, expectedUserId?: string) {
+    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}/retry`, { method: "POST", headers: { "Idempotency-Key": nanoid() }, expectedUserId });
 }
 
 export async function fetchCultivationProfile() {
@@ -305,10 +307,10 @@ export async function fetchCultivationLog<T>(kind: "ledger" | "usage" | "audit-l
     return serverRequest<PagedResponse<T>>(`/api/admin/cultivation/${kind}?page=${page}&pageSize=${pageSize}${user}`);
 }
 
-export async function waitForServerJob(id: string, options?: { signal?: AbortSignal; onUpdate?: (job: ServerJob) => void }) {
+export async function waitForServerJob(id: string, options?: { signal?: AbortSignal; onUpdate?: (job: ServerJob) => void; expectedUserId?: string }) {
     for (;;) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const { job } = await fetchServerJob(id);
+        const { job } = await fetchServerJob(id, options?.expectedUserId);
         options?.onUpdate?.(job);
         if (job.status === "succeeded") return job;
         if (job.status === "failed") throw new Error(friendlyErrorMessage(job.error || "生成失败"));
@@ -317,17 +319,17 @@ export async function waitForServerJob(id: string, options?: { signal?: AbortSig
     }
 }
 
-export async function saveServerProject(project: Record<string, unknown>, revision: number) {
+export async function saveServerProject(project: Record<string, unknown>, revision: number, expectedUserId?: string) {
     const id = String(project.id || "");
-    return serverRequest<{ project: Record<string, unknown>; revision: number; updatedAt: number }>(`/api/projects/${encodeURIComponent(id)}`, { method: "PUT", body: { project, revision }, timeoutMs: 20_000 });
+    return serverRequest<{ project: Record<string, unknown>; revision: number; updatedAt: number }>(`/api/projects/${encodeURIComponent(id)}`, { method: "PUT", body: { project, revision }, timeoutMs: 20_000, expectedUserId });
 }
 
-export async function fetchServerProjects() {
-    return serverRequest<{ items: Array<{ project: Record<string, unknown>; revision: number; updatedAt: number }>; deleted: Array<{ projectId: string; revision: number; deletedAt: number }> }>("/api/projects", { timeoutMs: 20_000 });
+export async function fetchServerProjects(expectedUserId?: string) {
+    return serverRequest<{ items: Array<{ project: Record<string, unknown>; revision: number; updatedAt: number }>; deleted: Array<{ projectId: string; revision: number; deletedAt: number }> }>("/api/projects", { timeoutMs: 20_000, expectedUserId });
 }
 
-export async function deleteServerProject(projectId: string, revision: number) {
-    await serverRequest(`/api/projects/${encodeURIComponent(projectId)}?revision=${encodeURIComponent(String(revision))}`, { method: "DELETE" });
+export async function deleteServerProject(projectId: string, revision: number, expectedUserId?: string) {
+    await serverRequest(`/api/projects/${encodeURIComponent(projectId)}?revision=${encodeURIComponent(String(revision))}`, { method: "DELETE", expectedUserId });
 }
 
 export async function fetchServerMembers() {
@@ -338,20 +340,21 @@ export async function updateServerMember(userId: string, disabled: boolean) {
     return serverRequest<{ user: ServerMember }>(`/api/admin/users/${encodeURIComponent(userId)}`, { method: "PUT", body: { disabled } });
 }
 
-type ServerRequestOptions = Omit<RequestInit, "body"> & { body?: unknown; timeoutMs?: number };
+type ServerRequestOptions = Omit<RequestInit, "body"> & { body?: unknown; timeoutMs?: number; expectedUserId?: string };
 
 export async function serverRequest<T = unknown>(url: string, options: ServerRequestOptions = {}): Promise<T> {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(new DOMException("Timeout", "TimeoutError")), options.timeoutMs || 30_000);
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
-    const headers = new Headers(options.headers);
+    const headers = expectedUserHeaders(options.headers, options.expectedUserId);
     let body: BodyInit | undefined;
     if (options.body !== undefined) {
         headers.set("Content-Type", "application/json");
         body = JSON.stringify(options.body);
     }
+    const { body: _body, timeoutMs: _timeoutMs, expectedUserId: _expectedUserId, ...requestOptions } = options;
     try {
-        const response = await fetch(url, { ...options, headers, body, signal, credentials: "same-origin" });
+        const response = await fetch(url, { ...requestOptions, headers, body, signal, credentials: "same-origin" });
         if (response.status === 204) return undefined as T;
         return readJsonResponse<T>(response);
     } catch (error) {
@@ -361,6 +364,23 @@ export async function serverRequest<T = unknown>(url: string, options: ServerReq
     } finally {
         window.clearTimeout(timeout);
     }
+}
+
+function expectedUserHeaders(headers?: HeadersInit, expectedUserId?: string) {
+    const result = new Headers(headers);
+    const userId = expectedUserId === undefined ? useUserStore.getState().user?.id || "" : expectedUserId.trim();
+    if (userId) result.set("X-Expected-User-Id", userId);
+    return result;
+}
+
+export function fetchServerResource(input: RequestInfo | URL, init: RequestInit = {}, expectedUserId?: string) {
+    const target = typeof input === "string" || input instanceof URL ? String(input) : input.url;
+    const sameOrigin = typeof window === "undefined" || new URL(target, window.location.href).origin === window.location.origin;
+    return fetch(input, {
+        ...init,
+        headers: sameOrigin ? expectedUserHeaders(init.headers, expectedUserId) : init.headers,
+        credentials: "same-origin",
+    });
 }
 
 async function readJsonResponse<T>(response: Response) {

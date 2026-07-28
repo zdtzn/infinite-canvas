@@ -1,12 +1,13 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 
 import { AppTopNav } from "@/components/layout/app-top-nav";
 import { CultivationBreakthroughOverlay } from "@/features/cultivation/breakthrough-overlay";
 import { ImperialWelcome, useImperialMode } from "@/features/cultivation/imperial-mode";
+import { lazyRoute } from "@/lib/lazy-route";
 import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/use-agent-store";
 
-const AgentPanel = lazy(() => import("@/components/agent/agent-panel").then((module) => ({ default: module.AgentPanel })));
+const AgentPanel = lazyRoute(() => import("@/components/agent/agent-panel").then((module) => ({ default: module.AgentPanel })));
 
 export default function UserLayout({ children }: { children: ReactNode }) {
     const agentPanelOpen = useAgentStore((state) => state.panelOpen);

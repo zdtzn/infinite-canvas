@@ -120,7 +120,7 @@ export function createCultivationService(
       .query(
         "SELECT s.id, s.name FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.active = 1 AND r.active = 1 AND s.stage_order > ? ORDER BY s.stage_order LIMIT 1",
       )
-      .get(row.stage_order) as { id: string; name: string } | null;
+      .get(Number(row.stage_order)) as { id: string; name: string } | null;
     const totalImages = Number(
       (
         database
@@ -144,7 +144,7 @@ export function createCultivationService(
         .query(
           "SELECT sc.capability_key FROM stage_capabilities sc JOIN capability_definitions cd ON cd.capability_key = sc.capability_key WHERE sc.stage_id = ? AND sc.enabled = 1 AND cd.active = 1 ORDER BY sc.capability_key",
         )
-        .all(row.stage_id) as Array<{ capability_key: string }>
+        .all(String(row.stage_id)) as Array<{ capability_key: string }>
     ).map((item) => item.capability_key);
     const remaining = unlimited
       ? null
@@ -312,8 +312,8 @@ export function createCultivationService(
           success,
           failed,
           success,
-          usage.user_id,
-          usage.usage_date,
+          String(usage.user_id),
+          String(usage.usage_date),
         );
       database
         .query(
@@ -357,6 +357,52 @@ export function createCultivationService(
     })();
   }
 
+  function consumeGeneration(jobId: string, durationMs = 0) {
+    return database.transaction(() => {
+      const usage = database
+        .query("SELECT * FROM generation_usage WHERE job_id = ?")
+        .get(jobId) as Record<string, unknown> | null;
+      if (!usage || usage.status !== "reserved")
+        return usage ? getProfile(String(usage.user_id)) : null;
+      const requested = Number(usage.requested_count);
+      database
+        .query(
+          "UPDATE daily_usage SET reserved_count = MAX(0, reserved_count - ?), used_count = used_count + ? WHERE user_id = ? AND usage_date = ?",
+        )
+        .run(
+          requested,
+          requested,
+          String(usage.user_id),
+          String(usage.usage_date),
+        );
+      database
+        .query(
+          "UPDATE generation_usage SET success_count = 0, fail_count = 0, duration_ms = ?, status = 'settled', settled_at = ? WHERE job_id = ? AND status = 'reserved'",
+        )
+        .run(Math.max(0, durationMs), now().getTime(), jobId);
+      return getProfile(String(usage.user_id));
+    })();
+  }
+
+  function getGenerationUsage(jobId: string) {
+    const usage = database
+      .query(
+        "SELECT job_id, user_id, status, requested_count, created_at, settled_at FROM generation_usage WHERE job_id = ?",
+      )
+      .get(jobId) as Record<string, unknown> | null;
+    return usage
+      ? {
+          jobId: String(usage.job_id),
+          userId: String(usage.user_id),
+          status: String(usage.status),
+          requestedCount: Number(usage.requested_count),
+          createdAt: Number(usage.created_at),
+          settledAt:
+            usage.settled_at == null ? null : Number(usage.settled_at),
+        }
+      : null;
+  }
+
   function reconcileReservations(activeJobIds: Iterable<string>) {
     const activeJobs = new Set(activeJobIds);
     return database.transaction(() => {
@@ -380,12 +426,17 @@ export function createCultivationService(
       .query(
         "UPDATE daily_usage SET reserved_count = MAX(0, reserved_count - ?), refunded_count = refunded_count + ? WHERE user_id = ? AND usage_date = ?",
       )
-      .run(requested, requested, usage.user_id, usage.usage_date);
+      .run(
+        requested,
+        requested,
+        String(usage.user_id),
+        String(usage.usage_date),
+      );
     database
       .query(
         "UPDATE generation_usage SET fail_count = requested_count, status = 'refunded', settled_at = ? WHERE job_id = ? AND status = 'reserved'",
       )
-      .run(now().getTime(), usage.job_id);
+      .run(now().getTime(), String(usage.job_id));
   }
 
   function getConfiguration() {
@@ -410,7 +461,9 @@ export function createCultivationService(
           .query(
             "SELECT * FROM realm_stages WHERE realm_id = ? AND (active = 1 OR ? <> 'dou-emperor') ORDER BY stage_order",
           )
-          .all(realm.id, realm.code) as Array<Record<string, unknown>>
+          .all(String(realm.id), String(realm.code)) as Array<
+          Record<string, unknown>
+        >
       ).map((stage) => ({
         id: String(stage.id),
         name: String(stage.name),
@@ -422,7 +475,7 @@ export function createCultivationService(
             .query(
               "SELECT capability_key FROM stage_capabilities WHERE stage_id = ? AND enabled = 1 ORDER BY capability_key",
             )
-            .all(stage.id) as Array<{ capability_key: string }>
+            .all(String(stage.id)) as Array<{ capability_key: string }>
         ).map((item) => item.capability_key),
       })),
     }));
@@ -458,6 +511,17 @@ export function createCultivationService(
   ) {
     const adjustmentReason = normalizeAdminAdjustmentReason(reason);
     return database.transaction(() => {
+      const targetUser = database
+        .query("SELECT is_admin FROM users WHERE user_id = ?")
+        .get(userId) as { is_admin: number } | null;
+      if (!targetUser)
+        throw new CultivationError("用户不存在", 404, "USER_NOT_FOUND");
+      if (targetUser.is_admin && input.status && input.status !== "NORMAL")
+        throw new CultivationError(
+          "不能停用管理员账号",
+          400,
+          "ADMIN_STATUS_PROTECTED",
+        );
       ensureUser(userId, false);
       const before = {
         profile: getProfile(userId),
@@ -528,9 +592,9 @@ export function createCultivationService(
             "UPDATE users SET status = ?, internal_note = ?, public_message = ? WHERE user_id = ?",
           )
           .run(
-            input.status || user.status,
-            input.internalNote ?? user.internal_note,
-            input.publicMessage ?? user.public_message,
+            String(input.status || user.status || "NORMAL"),
+            String(input.internalNote ?? user.internal_note ?? ""),
+            String(input.publicMessage ?? user.public_message ?? ""),
             userId,
           );
       }
@@ -616,13 +680,17 @@ export function createCultivationService(
           "UPDATE realms SET name=?, color=?, icon_key=?, animation_preset=?, daily_limit=?, max_concurrency=?, promotion_policy='auto', active=? WHERE id=?",
         )
         .run(
-          input.name ?? before.name,
-          input.color ?? before.color,
-          input.iconKey ?? before.icon_key,
-          input.animationPreset ?? before.animation_preset,
-          dailyLimit,
-          maxConcurrency,
-          input.active === undefined ? before.active : input.active ? 1 : 0,
+          String(input.name ?? before.name ?? ""),
+          String(input.color ?? before.color ?? ""),
+          String(input.iconKey ?? before.icon_key ?? ""),
+          String(input.animationPreset ?? before.animation_preset ?? ""),
+          dailyLimit == null ? null : Number(dailyLimit),
+          Number(maxConcurrency),
+          input.active === undefined
+            ? Number(before.active)
+            : input.active
+              ? 1
+              : 0,
           realmId,
         );
       const after = database
@@ -673,11 +741,15 @@ export function createCultivationService(
           "UPDATE realm_stages SET name=?, required_xp=?, active=? WHERE id=?",
         )
         .run(
-          input.name ?? before.name,
+          String(input.name ?? before.name ?? ""),
           input.requiredXp === undefined
-            ? before.required_xp
+            ? Number(before.required_xp)
             : Math.max(0, Math.floor(input.requiredXp)),
-          input.active === undefined ? before.active : input.active ? 1 : 0,
+          input.active === undefined
+            ? Number(before.active)
+            : input.active
+              ? 1
+              : 0,
           stageId,
         );
       if (input.capabilities) {
@@ -757,8 +829,12 @@ export function createCultivationService(
         "UPDATE capability_definitions SET label = ?, active = ? WHERE capability_key = ?",
       )
       .run(
-        input.label ?? before.label,
-        input.active === undefined ? before.active : input.active ? 1 : 0,
+        String(input.label ?? before.label ?? ""),
+        input.active === undefined
+          ? Number(before.active)
+          : input.active
+            ? 1
+            : 0,
         capabilityKey,
       );
     const after = database
@@ -897,7 +973,16 @@ export function createCultivationService(
   }
 
   function listLoginLogs(page = 1, pageSize = 20) {
-    return paginated(database, "login_logs", "", [], page, pageSize);
+    return paginatedQuery(
+      database,
+      "SELECT * FROM login_logs",
+      "login_logs",
+      "",
+      [],
+      "created_at",
+      page,
+      pageSize,
+    );
   }
 
   function listBreakthroughs(userId: string | null, page = 1, pageSize = 20) {
@@ -951,6 +1036,8 @@ export function createCultivationService(
     reserveGeneration,
     settleGeneration,
     refundGeneration,
+    consumeGeneration,
+    getGenerationUsage,
     reconcileReservations,
     getConfiguration,
     updateUser,

@@ -1,15 +1,16 @@
 import { App, Button, Select, Switch, Tag } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
+import { Suspense, useState } from "react";
 
+import { lazyRoute } from "@/lib/lazy-route";
 import { PromptSourceContentModal } from "./prompt-source-content-modal";
 import { fetchPromptSourceStatuses, refreshAllSources, refreshSource } from "@/services/api/prompts";
 import { PROMPT_SOURCE_INTERVAL_OPTIONS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 
-const PromptSourceEditorDrawer = lazy(() => import("./prompt-source-editor-drawer").then((module) => ({ default: module.PromptSourceEditorDrawer })));
+const PromptSourceEditorDrawer = lazyRoute(() => import("./prompt-source-editor-drawer").then((module) => ({ default: module.PromptSourceEditorDrawer })));
 const STATUS_QUERY_KEY = ["prompt-source-statuses"];
 
 export function ConfigPromptSources() {

@@ -19,6 +19,18 @@ export function decryptSecret(value: EncryptedSecret, secret: string) {
     return Buffer.concat([decipher.update(Buffer.from(value.data, "base64url")), decipher.final()]).toString("utf8");
 }
 
+export function normalizeEncryptionSecret(value: string | undefined, required = false) {
+    const secret = String(value || "").trim();
+    if (!secret) {
+        if (required) throw new Error("公网部署必须设置 APP_ENCRYPTION_KEY");
+        return undefined;
+    }
+    if (secret.length < 32 || /^(?:replace-with|change-me|example|password|secret)/i.test(secret)) {
+        throw new Error("APP_ENCRYPTION_KEY 必须是至少 32 位的随机密钥，不能使用示例值");
+    }
+    return secret;
+}
+
 function encryptionKey(secret: string) {
     return createHash("sha256").update(secret).digest();
 }

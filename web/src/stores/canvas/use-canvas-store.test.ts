@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { normalizeCanvasProject } from "./use-canvas-store";
+import { normalizeCanvasProject, useCanvasStore } from "./use-canvas-store";
 
 describe("canvas project schema migration", () => {
     test("fills required fields for legacy or server-restored projects", () => {
@@ -21,5 +21,29 @@ describe("canvas project schema migration", () => {
 
     test("rejects records without a stable project id", () => {
         assert.equal(normalizeCanvasProject({ nodes: [], connections: [] }), null);
+    });
+
+    test("keeps projects for the same account and clears them before another account is prepared", () => {
+        const project = normalizeCanvasProject({ id: "private-a", nodes: [], connections: [] });
+        assert.ok(project);
+        useCanvasStore.setState({ hydrated: true, ownerUserId: "user-a", projects: [project] });
+
+        useCanvasStore.getState().prepareForUser("user-a");
+        assert.equal(useCanvasStore.getState().projects.length, 1);
+
+        useCanvasStore.getState().prepareForUser("user-b");
+        assert.equal(useCanvasStore.getState().ownerUserId, "user-b");
+        assert.deepEqual(useCanvasStore.getState().projects, []);
+    });
+
+    test("assigns legacy browser projects to the first authenticated account once", () => {
+        const project = normalizeCanvasProject({ id: "legacy-private", nodes: [], connections: [] });
+        assert.ok(project);
+        useCanvasStore.setState({ hydrated: true, ownerUserId: "", projects: [project] });
+
+        useCanvasStore.getState().prepareForUser("first-user");
+
+        assert.equal(useCanvasStore.getState().ownerUserId, "first-user");
+        assert.equal(useCanvasStore.getState().projects[0]?.id, "legacy-private");
     });
 });

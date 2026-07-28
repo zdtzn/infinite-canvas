@@ -143,9 +143,9 @@ export default function VideoPage() {
         const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= SEEDANCE_REFERENCE_LIMITS.imageMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length);
         const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/") && file.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.videos - videoReferences.length);
         const audioFiles = selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
-        if (selectedFiles.some((file) => file.type.startsWith("image/") && file.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes)) message.warning("已忽略超过 30MB 的参考图");
-        if (selectedFiles.some((file) => file.type.startsWith("video/") && file.size > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes)) message.warning("已忽略超过 50MB 的参考视频");
-        if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes)) message.warning("已忽略超过 15MB 的参考音频");
+        if (selectedFiles.some((file) => file.type.startsWith("image/") && file.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes)) message.warning("已忽略超过 16MB 的参考图");
+        if (selectedFiles.some((file) => file.type.startsWith("video/") && file.size > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes)) message.warning("已忽略超过 32MB 的参考视频");
+        if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes)) message.warning("已忽略超过 16MB 的参考音频");
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
                 const image = await uploadImage(file);
@@ -611,7 +611,7 @@ export default function VideoPage() {
                                             </button>
                                         </div>
                                     ))}
-                                    {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">暂无参考音频，最多 3 个，mp3/wav，单个 15MB 内</div> : null}
+                                    {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">暂无参考音频，最多 3 个，mp3/wav，单个 16MB 内</div> : null}
                                 </div>
                             </div>
 
@@ -924,31 +924,31 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     };
 }
 
-async function prepareVideoLogForServer(log: GenerationLog): Promise<GenerationLog> {
+async function prepareVideoLogForServer(log: GenerationLog, expectedUserId: string): Promise<GenerationLog> {
     const references = await Promise.all(
         log.references.map(async (item) => {
             if (item.storageKey || !item.dataUrl) return item;
-            const stored = await uploadImage(item.dataUrl);
+            const stored = await uploadImage(item.dataUrl, { expectedUserId });
             return { ...item, dataUrl: stored.url, storageKey: stored.storageKey, type: stored.mimeType };
         }),
     );
     const videoReferences = await Promise.all(
         log.videoReferences.map(async (item) => {
             if (item.storageKey || !item.url) return item;
-            const stored = await uploadMediaFile(item.url, "video-reference");
+            const stored = await uploadMediaFile(item.url, "video-reference", expectedUserId);
             return { ...item, url: stored.url, storageKey: stored.storageKey, type: stored.mimeType, bytes: stored.bytes, width: stored.width, height: stored.height, durationMs: stored.durationMs };
         }),
     );
     const audioReferences = await Promise.all(
         log.audioReferences.map(async (item) => {
             if (item.storageKey || !item.url) return item;
-            const stored = await uploadMediaFile(item.url, "audio-reference");
+            const stored = await uploadMediaFile(item.url, "audio-reference", expectedUserId);
             return { ...item, url: stored.url, storageKey: stored.storageKey, type: stored.mimeType, durationMs: stored.durationMs };
         }),
     );
     const video =
         log.video && !log.video.storageKey && log.video.url
-            ? await uploadMediaFile(log.video.url, "video").then((stored) => ({
+            ? await uploadMediaFile(log.video.url, "video", expectedUserId).then((stored) => ({
                   ...log.video!,
                   url: stored.url,
                   storageKey: stored.storageKey,

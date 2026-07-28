@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "strict": true,
+        "noEmit": true,
+        "skipLibCheck": true,
+        "allowImportingTsExtensions": true,
+        "types": ["bun"],
+        "typeRoots": ["../web/node_modules/@types"]
+    },
+    "include": ["./**/*.ts"],
+    "exclude": ["./**/*.test.ts"]
+}

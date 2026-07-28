@@ -90,7 +90,8 @@ export const useAssetStore = create<AssetStore>()(
                 const id = nanoid();
                 const item = { ...asset, id, createdAt: now, updatedAt: now } as Asset;
                 set((state) => ({ assets: [item, ...state.assets] }));
-                if (shouldSyncAssetLibrary(get())) enqueueAssetLibraryMutation(() => upsertServerAssetLibraryItem(item));
+                const current = get();
+                if (shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => upsertServerAssetLibraryItem(item, current.ownerUserId));
                 return id;
             },
             updateAsset: (id, patch) => {
@@ -102,22 +103,29 @@ export const useAssetStore = create<AssetStore>()(
                         return updated;
                     }),
                 }));
-                if (updated && shouldSyncAssetLibrary(get())) enqueueAssetLibraryMutation(() => upsertServerAssetLibraryItem(updated!));
+                const current = get();
+                if (updated && shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => upsertServerAssetLibraryItem(updated!, current.ownerUserId));
             },
             removeAsset: (id) => {
                 set((state) => {
                     const assets = state.assets.filter((asset) => asset.id !== id);
                     return { assets };
                 });
-                if (shouldSyncAssetLibrary(get())) enqueueAssetLibraryMutation(() => deleteServerAssetLibraryItem(id));
+                const current = get();
+                if (shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => deleteServerAssetLibraryItem(id, current.ownerUserId));
             },
             replaceAssets: (assets) => {
                 set({ assets });
-                if (shouldSyncAssetLibrary(get())) enqueueAssetLibraryMutation(() => replaceServerAssetLibrary(assets));
+                const current = get();
+                if (shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => replaceServerAssetLibrary(assets, false, current.ownerUserId));
             },
             prepareForUser: (userId) => {
                 if (!PUBLIC_MODE || !userId) return;
                 const current = get();
+                if (!current.ownerUserId) {
+                    set({ ownerUserId: userId });
+                    return;
+                }
                 if (current.ownerUserId && current.ownerUserId !== userId) {
                     assetHydrationVersion += 1;
                     set({ ownerUserId: userId, serverHydrated: false, assets: [] });
@@ -133,10 +141,10 @@ export const useAssetStore = create<AssetStore>()(
                 const localAlreadyMigrated = current.migratedUserIds.includes(userId);
                 if (!canMigrateLocal) set({ assets: [], ownerUserId: userId, serverHydrated: false });
 
-                const remote = await fetchServerAssetLibrary();
+                const remote = await fetchServerAssetLibrary(userId);
                 if (requestVersion !== assetHydrationVersion) return;
                 const remoteAssets = await Promise.all(remote.items.map(hydrateServerAsset));
-                const migration = localAlreadyMigrated ? { prepared: [] as Asset[], failed: [] as Asset[] } : await prepareAssetsForServer(localAssets);
+                const migration = localAlreadyMigrated ? { prepared: [] as Asset[], failed: [] as Asset[] } : await prepareAssetsForServer(localAssets, userId);
                 if (requestVersion !== assetHydrationVersion) return;
                 const plan = planAssetLibraryHydration({
                     local: migration.prepared,
@@ -144,7 +152,7 @@ export const useAssetStore = create<AssetStore>()(
                     remoteInitialized: remote.initialized,
                     localAlreadyMigrated,
                 });
-                const serverAssets = plan.writeServer ? await replaceServerAssetLibrary(plan.assets).then((result) => Promise.all(result.items.map(hydrateServerAsset))) : plan.assets;
+                const serverAssets = plan.writeServer ? await replaceServerAssetLibrary(plan.assets, false, userId).then((result) => Promise.all(result.items.map(hydrateServerAsset))) : plan.assets;
                 const assets = mergeAssetRecords(migration.failed, serverAssets);
                 if (requestVersion === assetHydrationVersion) {
                     set((state) => ({
@@ -208,9 +216,9 @@ async function hydrateServerAsset(asset: Asset): Promise<Asset> {
     return asset;
 }
 
-async function prepareAssetForServer(asset: Asset): Promise<Asset> {
+async function prepareAssetForServer(asset: Asset, expectedUserId: string): Promise<Asset> {
     if (asset.kind === "image" && !asset.data.storageKey) {
-        const stored = await uploadImage(asset.data.dataUrl);
+        const stored = await uploadImage(asset.data.dataUrl, { expectedUserId });
         return {
             ...asset,
             coverUrl: stored.url,
@@ -226,7 +234,7 @@ async function prepareAssetForServer(asset: Asset): Promise<Asset> {
         };
     }
     if (asset.kind === "video" && !asset.data.storageKey) {
-        const stored = await uploadMediaFile(asset.data.url, "video");
+        const stored = await uploadMediaFile(asset.data.url, "video", expectedUserId);
         return {
             ...asset,
             coverUrl: stored.url,
@@ -244,10 +252,10 @@ async function prepareAssetForServer(asset: Asset): Promise<Asset> {
     return asset;
 }
 
-async function prepareAssetsForServer(assets: Asset[]) {
+async function prepareAssetsForServer(assets: Asset[], expectedUserId: string) {
     const results = await runWithConcurrency(assets, ASSET_MIGRATION_CONCURRENCY, async (asset) => {
         try {
-            return { asset: await prepareAssetForServer(asset), failed: false as const };
+            return { asset: await prepareAssetForServer(asset, expectedUserId), failed: false as const };
         } catch {
             return { asset, failed: true as const };
         }

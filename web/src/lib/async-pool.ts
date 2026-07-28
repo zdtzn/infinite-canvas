@@ -18,3 +18,28 @@ export async function runWithConcurrency<T, R>(
     );
     return results;
 }
+
+export async function settleWithConcurrency<T, R>(
+    items: readonly T[],
+    limit: number,
+    worker: (item: T, index: number) => Promise<R>,
+) {
+    const results = new Array<PromiseSettledResult<R>>(items.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(items.length, Math.max(1, Math.floor(limit) || 1));
+    await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+            for (;;) {
+                const index = nextIndex;
+                nextIndex += 1;
+                if (index >= items.length) return;
+                try {
+                    results[index] = { status: "fulfilled", value: await worker(items[index], index) };
+                } catch (reason) {
+                    results[index] = { status: "rejected", reason };
+                }
+            }
+        }),
+    );
+    return results;
+}

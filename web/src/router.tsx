@@ -1,20 +1,22 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { createBrowserRouter, Outlet } from "react-router-dom";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
 import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
+import { lazyRoute } from "@/lib/lazy-route";
 import UserLayout from "@/layouts/user-layout";
-const AssetsPage = lazy(() => import("@/pages/assets"));
-const CanvasPage = lazy(() => import("@/pages/canvas"));
-const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
-const ConfigPage = lazy(() => import("@/pages/config"));
-const CultivationPage = lazy(() => import("@/pages/cultivation"));
-const AdminCultivationPage = lazy(() => import("@/pages/admin/cultivation"));
-const HomePage = lazy(() => import("@/pages/home"));
-const ImagePage = lazy(() => import("@/pages/image"));
-const NotFound = lazy(() => import("@/pages/not-found"));
-const PromptsPage = lazy(() => import("@/pages/prompts"));
-const VideoPage = lazy(() => import("@/pages/video"));
+import RouteErrorPage from "@/pages/route-error";
+const AssetsPage = lazyRoute(() => import("@/pages/assets"));
+const CanvasPage = lazyRoute(() => import("@/pages/canvas"));
+const CanvasProjectPage = lazyRoute(() => import("@/pages/canvas/project"));
+const ConfigPage = lazyRoute(() => import("@/pages/config"));
+const CultivationPage = lazyRoute(() => import("@/pages/cultivation"));
+const AdminCultivationPage = lazyRoute(() => import("@/pages/admin/cultivation"));
+const HomePage = lazyRoute(() => import("@/pages/home"));
+const ImagePage = lazyRoute(() => import("@/pages/image"));
+const NotFound = lazyRoute(() => import("@/pages/not-found"));
+const PromptsPage = lazyRoute(() => import("@/pages/prompts"));
+const VideoPage = lazyRoute(() => import("@/pages/video"));
 
 function RoutePage({ children }: { children: ReactNode }) {
     return <Suspense fallback={<RouteLoading />}>{children}</Suspense>;
@@ -27,6 +29,7 @@ function RouteLoading() {
 
 export const router = createBrowserRouter([
     {
+        errorElement: <RouteErrorPage />,
         element: (
             <UserLayout>
                 <AnalyticsTracker />
@@ -118,6 +121,7 @@ export const router = createBrowserRouter([
     },
     {
         path: "*",
+        errorElement: <RouteErrorPage />,
         element: (
             <RoutePage>
                 <NotFound />

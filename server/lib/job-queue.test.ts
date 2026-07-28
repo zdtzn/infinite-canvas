@@ -90,6 +90,7 @@ describe("persistent job queue runtime", () => {
 
     test("does not run a job whose initial persistence failed", async () => {
         let executed = false;
+        const initializationFailures: string[] = [];
         const queue = new JobQueue<number, number>({
             concurrency: 1,
             worker: async (value) => {
@@ -99,12 +100,40 @@ describe("persistent job queue runtime", () => {
             onChange: () => {
                 throw new Error("initial persistence failure");
             },
+            onInitializationFailure: (job) => {
+                initializationFailures.push(job.id);
+            },
         });
 
         const job = queue.add(1);
         await expect(queue.wait(job.id)).rejects.toThrow("initial persistence failure");
         expect(executed).toBe(false);
         expect(queue.get(job.id)?.status).toBe("failed");
+        expect(initializationFailures).toEqual([job.id]);
+    });
+
+    test("stops accepting and starting work while preserving queued jobs", async () => {
+        let release = () => undefined;
+        const executed: number[] = [];
+        const queue = new JobQueue<number, number>({
+            concurrency: 1,
+            worker: async (value) => {
+                executed.push(value);
+                if (value === 1) await new Promise<void>((resolve) => (release = resolve));
+                return value;
+            },
+        });
+
+        const running = queue.add(1);
+        const queued = queue.add(2);
+        await waitUntil(() => queue.activeCount() === 1);
+        queue.pause();
+        expect(() => queue.add(3)).toThrow("正在关闭");
+        release();
+        expect(await queue.wait(running.id)).toBe(1);
+        await Bun.sleep(20);
+        expect(queue.get(queued.id)?.status).toBe("queued");
+        expect(executed).toEqual([1]);
     });
 });
 

@@ -3,10 +3,15 @@
     "version": "0.1.0",
     "private": true,
     "type": "module",
+    "overrides": {
+        "dompurify": "^3.4.12",
+        "form-data": "^4.0.6",
+        "prismjs": "^1.30.0"
+    },
     "scripts": {
         "dev": "vite --host 0.0.0.0 --port 3000",
         "build": "vite build",
-        "typecheck": "tsc --noEmit",
+        "typecheck": "tsc --noEmit && tsc --project ../server/tsconfig.json",
         "test": "bun test ../server src",
         "start": "vite preview --host 0.0.0.0 --port 3000",
         "format": "prettier --write .",
@@ -20,7 +25,7 @@
         "@tanstack/react-query": "^5.100.9",
         "@uiw/react-codemirror": "^4.25.9",
         "antd": "^6.4.2",
-        "axios": "^1.16.0",
+        "axios": "^1.18.1",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "copy-to-clipboard": "^4.0.2",
@@ -36,7 +41,6 @@
         "react-dom": "19.2.5",
         "react-router": "^7.12.0",
         "react-router-dom": "^7.12.0",
-        "shadcn": "^4.7.0",
         "streamdown": "^2.5.0",
         "tailwind-merge": "^3.6.0",
         "tailwindcss": "^4",
@@ -45,6 +49,7 @@
     },
     "devDependencies": {
         "@tailwindcss/postcss": "^4",
+        "@types/bun": "^1.3.14",
         "@types/file-saver": "^2.0.7",
         "@types/node": "^20",
         "@types/react": "19.1.12",

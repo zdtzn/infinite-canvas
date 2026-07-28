@@ -8,6 +8,7 @@ import {
     startImageGeneration,
     subscribeImageGeneration,
     type GeneratedImage,
+    type ImageGenerationCompletion,
     type ImageGenerationSnapshot,
 } from "./image-generation-runtime";
 
@@ -60,5 +61,36 @@ test("replaces a displayed result with the persisted output format", async () =>
     const image = getImageGenerationSnapshot()?.results[0]?.image;
     assert.equal(image?.dataUrl, "/api/assets/image.jpg");
     assert.equal(image?.mimeType, "image/jpeg");
+    assert.equal(clearImageGenerationJob(), true);
+});
+
+test("limits parallel image slots without dropping failures or later work", async () => {
+    clearImageGenerationJob();
+    const snapshot = { text: "bounded generation", config: {} as ImageGenerationSnapshot["config"], references: [] };
+    const base: GeneratedImage = { id: "base", dataUrl: "data:image/png;base64,AA==", durationMs: 10, width: 1, height: 1, bytes: 1 };
+    let active = 0;
+    let maximum = 0;
+    const completed = new Promise<ImageGenerationCompletion>((resolve) => {
+        startImageGeneration(
+            snapshot,
+            4,
+            resolve,
+            async (_snapshot, index) => {
+                active += 1;
+                maximum = Math.max(maximum, active);
+                await Bun.sleep(5);
+                active -= 1;
+                if (index === 1) throw new Error("slot failed");
+                return { ...base, id: `slot-${index}` };
+            },
+            2,
+        );
+    });
+
+    const result = await completed;
+    assert.equal(maximum, 2);
+    assert.equal(result.successCount, 3);
+    assert.equal(result.failCount, 1);
+    assert.deepEqual(getImageGenerationSnapshot()?.results.map((item) => item.status), ["success", "failed", "success", "success"]);
     assert.equal(clearImageGenerationJob(), true);
 });

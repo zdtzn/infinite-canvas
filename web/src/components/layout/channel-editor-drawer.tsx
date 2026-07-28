@@ -1,7 +1,8 @@
 import { App, Button, Drawer, Input, Segmented, Select, Space } from "antd";
 import { ListPlus, Trash2 } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
+import { lazyRoute } from "@/lib/lazy-route";
 import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelSelectModal } from "./model-select-modal";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -19,7 +20,7 @@ const capabilityOptions: Array<{ label: string; value: ModelCapability }> = [
 ];
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
-const ModelScriptEditor = lazy(() => import("./model-script-editor").then((module) => ({ default: module.ModelScriptEditor })));
+const ModelScriptEditor = lazyRoute(() => import("./model-script-editor").then((module) => ({ default: module.ModelScriptEditor })));
 
 export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: boolean; channel: ModelChannel | null; onSave: (channel: ModelChannel) => void | Promise<void>; onClose: () => void }) {
     const { message } = App.useApp();

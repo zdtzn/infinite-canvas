@@ -8,12 +8,13 @@ import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { TaskCenter } from "@/components/layout/task-center";
 import { ImperialModeBadge, useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 import { CultivationStatusPill } from "@/features/cultivation/status-pill";
+import { lazyRoute } from "@/lib/lazy-route";
 import { cn } from "@/lib/utils";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { useConfigStore } from "@/stores/use-config-store";
 
-const AppConfigModal = lazy(() => import("@/components/layout/app-config-modal").then(({ AppConfigModal: Component }) => ({ default: Component })));
+const AppConfigModal = lazyRoute(() => import("@/components/layout/app-config-modal").then(({ AppConfigModal: Component }) => ({ default: Component })));
 
 function DeferredAppConfigModal() {
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);

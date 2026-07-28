@@ -58,6 +58,10 @@ export const useWorkbenchAgentStore = create<WorkbenchAgentStore>((set) => ({
     clearVideoCommand: () => set({ videoCommand: null }),
 }));
 
+export function resetWorkbenchAgentSession() {
+    useWorkbenchAgentStore.setState({ imageCommand: null, videoCommand: null, tasks: [] });
+}
+
 function createTask(kind: "image" | "video", commandNonce: number, prompt?: string): WorkbenchGenerationTask {
     const now = new Date().toISOString();
     return { id: `${kind}-${commandNonce}`, kind, status: "queued", prompt, createdAt: now, updatedAt: now };

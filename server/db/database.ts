@@ -320,6 +320,51 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 6").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS media_task_ownership (
+          usage_id TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          task_kind TEXT NOT NULL CHECK (task_kind IN ('video', 'content')),
+          task_id TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (channel_id, task_kind, task_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_media_task_user_created
+          ON media_task_ownership(user_id, created_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (6, ?)",
+        )
+        .run(Date.now());
+    })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 7").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        ALTER TABLE media_task_ownership
+          ADD COLUMN task_status TEXT NOT NULL DEFAULT 'active'
+          CHECK (task_status IN ('active', 'finished'));
+        ALTER TABLE media_task_ownership
+          ADD COLUMN finished_at INTEGER;
+        CREATE INDEX IF NOT EXISTS idx_media_task_user_status_created
+          ON media_task_ownership(user_id, task_status, created_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (7, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(

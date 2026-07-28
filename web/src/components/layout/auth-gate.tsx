@@ -92,8 +92,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     <Form.Item label={configured ? "访问口令" : "设置访问口令"} name="accessCode" rules={[{ required: true, min: 8, message: "口令至少 8 位" }]}>
                         <Input.Password autoComplete={configured ? "current-password" : "new-password"} placeholder="至少 8 位" />
                     </Form.Item>
-                    <Form.Item label={configured ? "个人密码" : "设置个人密码"} name="personalCode" rules={[{ required: true, min: 6, message: "个人密码至少 6 位" }]}>
-                        <Input.Password autoComplete={configured ? "current-password" : "new-password"} maxLength={128} placeholder="用于在其他设备进入自己的账号" />
+                    <Form.Item
+                        label={configured ? "个人密码" : "设置个人密码"}
+                        name="personalCode"
+                        rules={[{ required: true, min: configured ? 6 : 10, message: `个人密码至少 ${configured ? 6 : 10} 位` }]}
+                    >
+                        <Input.Password
+                            autoComplete={configured ? "current-password" : "new-password"}
+                            maxLength={128}
+                            placeholder={configured ? "用于进入你的个人账号" : "管理员个人密码至少 10 位"}
+                        />
                     </Form.Item>
                     <Button type="primary" htmlType="submit" block size="large" loading={submitting}>
                         {configured ? "进入" : "完成初始化"}

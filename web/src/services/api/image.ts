@@ -8,6 +8,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import { cancelServerJob, saveServerChannel, submitImageJob, waitForServerJob } from "@/services/server-api";
 import { deriveImageModelCapabilities, validateImageRequest } from "@/stores/model-capabilities";
+import { useUserStore } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { geminiApiBase, geminiProviderHeaders, isServerManagedConfig, openAiApiUrl, providerHeaders, type ManagedAiConfig } from "./gateway";
 import type { ReferenceImage } from "@/types/image";
@@ -105,7 +106,12 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-export type RequestOptions = { signal?: AbortSignal; onJobCreated?: (jobId: string) => void; source?: { route?: string; projectId?: string; nodeId?: string; label?: string } };
+export type RequestOptions = {
+    signal?: AbortSignal;
+    onJobCreated?: (jobId: string) => void;
+    source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
+    expectedUserId?: string;
+};
 
 const RESOLUTION_BASE: Record<string, number> = {
     low: 1024,
@@ -904,13 +910,14 @@ async function requestServerImageJob(
     count: number,
     options?: RequestOptions,
 ): Promise<RequestedImage[]> {
+    const expectedUserId = options?.expectedUserId ?? useUserStore.getState().user?.id ?? "";
     const capabilities = deriveImageModelCapabilities(requestConfig.model, requestConfig.apiFormat, requestConfig.baseUrl);
     const resolution = normalizeResolution(requestConfig.quality) || "low";
     const imageQuality = resolveSupportedImageQuality(requestConfig);
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
     validateImageRequest(capabilities, { resolution, imageQuality: imageQuality || "auto", imageOutputFormat: imageOutputFormat || "auto", size: requestConfig.size || "auto", background: requestConfig.background || "", referenceCount: references.length, count });
-    const referenceData = await Promise.all(references.map(imageToDataUrl));
-    const maskData = mask ? await imageToDataUrl(mask) : undefined;
+    const referenceData = await Promise.all(references.map((reference) => imageToDataUrl(reference, expectedUserId)));
+    const maskData = mask ? await imageToDataUrl(mask, expectedUserId) : undefined;
     const { job } = await submitImageJob({
         channelId: requestConfig.channelId,
         apiFormat: requestConfig.apiFormat,
@@ -925,12 +932,12 @@ async function requestServerImageJob(
         references: referenceData,
         mask: maskData,
         source: options?.source,
-    });
+    }, expectedUserId);
     options?.onJobCreated?.(job.id);
-    const abort = () => void cancelServerJob(job.id).catch(() => undefined);
+    const abort = () => void cancelServerJob(job.id, expectedUserId).catch(() => undefined);
     options?.signal?.addEventListener("abort", abort, { once: true });
     try {
-        const completed = await waitForServerJob(job.id, { signal: options?.signal });
+        const completed = await waitForServerJob(job.id, { signal: options?.signal, expectedUserId });
         return (completed.result?.images || []).map((image) => ({
             id: image.id,
             dataUrl: image.dataUrl,

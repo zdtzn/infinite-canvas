@@ -34,7 +34,7 @@ export function normalizeChannelModels(input: unknown): ChannelModelRecord[] {
   const seen = new Set<string>();
   const models: ChannelModelRecord[] = [];
   for (const item of input.slice(0, 500)) {
-    const source = item && typeof item === "object" ? (item as Record<string, unknown>) : { name: item };
+    const source: Record<string, unknown> = item && typeof item === "object" ? (item as Record<string, unknown>) : { name: item };
     const name = String(source.name || "").trim().slice(0, 200);
     if (!name || seen.has(name)) continue;
     seen.add(name);

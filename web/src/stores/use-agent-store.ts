@@ -12,6 +12,7 @@ export type AgentThreadSummary = { id: string; preview: string; name?: string | 
 export type AgentPanelTab = "chat" | "setup" | "history" | "log";
 
 const CONNECT_TIMEOUT_MS = 6000;
+const AGENT_OWNER_KEY = "canvas-agent-owner-user-id";
 let agentSource: EventSource | null = null;
 let connectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -119,3 +120,44 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     addEventLog: (item) => set((state) => ({ eventLogs: [...state.eventLogs.slice(-160), item] })),
     clearEventLogs: () => set({ eventLogs: [] }),
 }));
+
+export function prepareAgentForUser(userId: string) {
+    if (typeof window === "undefined") return;
+    const nextUserId = userId.trim();
+    const previousUserId = localStorage.getItem(AGENT_OWNER_KEY) || "";
+    if (previousUserId === nextUserId) return;
+
+    if (!previousUserId && nextUserId) {
+        localStorage.setItem(AGENT_OWNER_KEY, nextUserId);
+        return;
+    }
+
+    agentSource?.close();
+    agentSource = null;
+    if (connectTimer) clearTimeout(connectTimer);
+    connectTimer = null;
+    localStorage.removeItem("canvas-agent-token");
+    if (nextUserId) localStorage.setItem(AGENT_OWNER_KEY, nextUserId);
+    else localStorage.removeItem(AGENT_OWNER_KEY);
+    useAgentStore.setState({
+        token: "",
+        connected: false,
+        enabled: false,
+        silentConnect: false,
+        prompt: "",
+        attachments: [],
+        sending: false,
+        waiting: false,
+        messages: [],
+        eventLogs: [],
+        threads: [],
+        activeThreadId: "",
+        workspacePath: "",
+        loadingThreads: false,
+        activeTab: "setup",
+        activity: "离线",
+        connectError: "",
+        pendingTool: null,
+        canvasContext: null,
+    });
+}

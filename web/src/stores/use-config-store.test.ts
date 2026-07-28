@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyPlatformChannels, createModelChannel, defaultConfig, encodeChannelModel } from "./use-config-store";
+import { applyPlatformChannels, createModelChannel, defaultConfig, encodeChannelModel, useConfigStore } from "./use-config-store";
 
 describe("platform channel hydration", () => {
     test("preserves a valid selected model and never keeps a browser API key", () => {
@@ -43,5 +43,25 @@ describe("platform channel hydration", () => {
         expect(empty.channels).toEqual([]);
         expect(empty.models).toEqual([]);
         expect(empty.imageModel).toBe("");
+    });
+});
+
+describe("sensitive browser configuration", () => {
+    test("clears every in-memory credential when the account session changes", () => {
+        useConfigStore.setState((state) => ({
+            config: {
+                ...state.config,
+                apiKey: "legacy-browser-key",
+                channels: [createModelChannel({ id: "private", apiKey: "provider-key" })],
+            },
+            webdav: { ...state.webdav, password: "plain-text-secret" },
+        }));
+
+        useConfigStore.getState().clearSensitiveSession();
+
+        const state = useConfigStore.getState();
+        expect(state.webdav.password).toBe("");
+        expect(state.config.apiKey).toBe("");
+        expect(state.config.channels[0]?.apiKey).toBe("");
     });
 });

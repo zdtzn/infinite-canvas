@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { RealmIcon } from "@/features/cultivation/realm-icon";
-import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
+import { cultivationProfileQueryKey, cultivationProfileQueryKeyFor, useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationRealmHero } from "@/features/cultivation/realm-hero";
 import { cultivationCapabilityLabel, cultivationProgressPercent, cultivationStageLabel } from "@/features/cultivation/utils";
@@ -48,6 +48,7 @@ export default function CultivationPage() {
     const { isDouEmperor } = useImperialMode();
     const avatarInputRef = useRef<HTMLInputElement>(null);
     const [avatarUploading, setAvatarUploading] = useState(false);
+    const profileUserId = data?.userId || user?.id || "";
 
     const uploadAvatar = async (event: ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -66,7 +67,7 @@ export default function CultivationPage() {
         try {
             const result = await uploadProfileAvatar(file);
             if (user) setSession({ ...user, avatarUrl: result.avatarUrl });
-            queryClient.setQueryData<CultivationProfile>(cultivationProfileQueryKey, (profile) => (profile ? { ...profile, avatarUrl: result.avatarUrl } : profile));
+            if (profileUserId) queryClient.setQueryData<CultivationProfile>(cultivationProfileQueryKeyFor(profileUserId), (profile) => (profile ? { ...profile, avatarUrl: result.avatarUrl } : profile));
             void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
             message.success("头像已更新");
         } catch (reason) {

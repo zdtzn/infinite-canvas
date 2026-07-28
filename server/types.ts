@@ -86,6 +86,7 @@ export type ImageJobInput = {
     nodeId?: string;
     label?: string;
   };
+  retryOf?: string;
   upstream?: {
     provider: "uu-image";
     taskId: string;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { createIdentityToken, createSessionToken, hashAccessCode, readIdentityToken, readSessionToken, verifyAccessCode } from "./auth";
+import { createIdentityToken, createSessionToken, hashAccessCode, readCookie, readIdentityToken, readSessionToken, verifyAccessCode } from "./auth";
 
 describe("server authentication", () => {
     test("hashes access codes without storing the original value", async () => {
@@ -22,5 +22,10 @@ describe("server authentication", () => {
         expect(readIdentityToken(token, "secret", 2_000)).toBe("user-1");
         expect(readIdentityToken(`${token}x`, "secret", 2_000)).toBeNull();
         expect(readIdentityToken(token, "secret", 70_000)).toBeNull();
+    });
+
+    test("treats malformed cookie encoding as an invalid cookie", () => {
+        const request = new Request("https://canvas.example", { headers: { cookie: "canvas_session=%E0%A4%A" } });
+        expect(readCookie(request, "canvas_session")).toBe("");
     });
 });

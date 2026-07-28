@@ -6,6 +6,7 @@ import zhCN from "antd/locale/zh_CN";
 
 import { ClientRootInit } from "@/components/layout/client-root-init";
 import { AuthGate } from "@/components/layout/auth-gate";
+import { AccountSessionController } from "@/components/layout/account-session-controller";
 import { imperialModeChangeEvent, ImperialModeProvider } from "@/features/cultivation/imperial-mode";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -42,6 +43,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
         <ConfigProvider locale={zhCN} theme={getAntThemeConfig(dark)}>
             <App>
                 <QueryClientProvider client={queryClient}>
+                    <AccountSessionController />
                     <AuthGate>
                         <ImperialModeProvider>
                             <ClientRootInit>{children}</ClientRootInit>

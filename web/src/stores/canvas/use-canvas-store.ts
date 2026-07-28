@@ -23,7 +23,9 @@ export type CanvasProject = {
 
 type CanvasStore = {
     hydrated: boolean;
+    ownerUserId: string;
     projects: CanvasProject[];
+    prepareForUser: (userId: string) => void;
     createProject: (title?: string) => string;
     importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
@@ -36,7 +38,7 @@ type CanvasStore = {
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
-type PersistedCanvasState = Pick<CanvasStore, "projects">;
+type PersistedCanvasState = Pick<CanvasStore, "ownerUserId" | "projects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
 let queuedPersistValue: StorageValue<CanvasStore> | null = null;
@@ -72,7 +74,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
     },
     setItem: (name, value) => {
         const nextState = value.state as PersistedCanvasState;
-        if (queuedPersistState && queuedPersistState.projects === nextState.projects) return;
+        if (queuedPersistState && queuedPersistState.ownerUserId === nextState.ownerUserId && queuedPersistState.projects === nextState.projects) return;
         queuedPersistState = nextState;
         queuedPersistValue = value;
         queuedPersistName = name;
@@ -89,7 +91,19 @@ export const useCanvasStore = create<CanvasStore>()(
     persist(
         (set, get) => ({
             hydrated: false,
+            ownerUserId: "",
             projects: [],
+            prepareForUser: (userId) => {
+                const nextUserId = userId.trim();
+                if (!nextUserId) return;
+                const current = get();
+                if (current.ownerUserId === nextUserId) return;
+                if (!current.ownerUserId) {
+                    set({ ownerUserId: nextUserId });
+                    return;
+                }
+                set({ ownerUserId: nextUserId, projects: [] });
+            },
             createProject: (title = "未命名画布") => {
                 const now = new Date().toISOString();
                 const id = nanoid();
@@ -151,14 +165,18 @@ export const useCanvasStore = create<CanvasStore>()(
         }),
         {
             name: CANVAS_STORE_KEY,
-            version: 3,
+            version: 4,
             storage: canvasStorage,
             migrate: (persisted) => {
                 const value = (persisted || {}) as Partial<PersistedCanvasState>;
-                return { projects: Array.isArray(value.projects) ? value.projects.map(normalizeCanvasProject).filter((project): project is CanvasProject => Boolean(project)) : [] } as CanvasStore;
+                return {
+                    ownerUserId: typeof value.ownerUserId === "string" ? value.ownerUserId : "",
+                    projects: Array.isArray(value.projects) ? value.projects.map(normalizeCanvasProject).filter((project): project is CanvasProject => Boolean(project)) : [],
+                } as CanvasStore;
             },
             partialize: (state) =>
                 ({
+                    ownerUserId: state.ownerUserId,
                     projects: state.projects,
                 }) as StorageValue<CanvasStore>["state"],
             onRehydrateStorage: () => () => {

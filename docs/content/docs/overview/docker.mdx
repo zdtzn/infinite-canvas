@@ -18,7 +18,7 @@ docker compose ps
 curl http://127.0.0.1:3000/health
 ```
 
-健康检查返回 `{"status":"ok"}` 后，访问 `http://服务器IP:3000` 完成管理员和访问口令初始化。
+健康检查返回 `{"status":"ok"}` 后，可在服务器本机访问。域名尚未就绪、确需通过公网 IP 临时测试时，在 `.env` 中设置 `APP_BIND_ADDRESS=0.0.0.0`，同时保持 `PUBLIC_BASE_URL` 为空、`TRUST_PROXY=0`、`FORCE_SECURE_COOKIES=0`，并临时开放云防火墙的 `3000` 端口。测试结束后立即恢复为 `127.0.0.1` 并关闭该端口。
 
 `.env` 至少需要确认以下配置：
 
@@ -27,6 +27,7 @@ IMAGE_REPOSITORY=ghcr.io/zdtzn/infinite-canvas
 IMAGE_TAG=latest
 APP_ENCRYPTION_KEY=replace-with-a-long-random-secret
 JOB_CONCURRENCY=2
+DATA_VOLUME_NAME=infinite-canvas-data
 ```
 
 生成加密密钥：
@@ -37,16 +38,24 @@ openssl rand -base64 32
 
 `APP_ENCRYPTION_KEY` 用于加密渠道密钥。首次正式使用后必须保持不变；需要轮换时，将旧密钥临时放入 `APP_ENCRYPTION_KEY_PREVIOUS`。
 
+首次管理员账号应在只启动 `app`、尚未开放 Caddy 时通过服务器回环地址初始化，避免未配置站点被公网用户抢先注册。完整命令见 `docs/SECURE_PUBLIC_DEPLOYMENT.md`。受邀成员完成首次登录后，将 `ALLOW_NEW_USERS` 改为 `0` 并重建应用容器；已有成员仍可正常登录。
+
 ## 更新与回滚
 
+临时本机测试可继续使用 `IMAGE_REPOSITORY` 与 `IMAGE_TAG`。正式环境必须在 `.env` 中把 `IMAGE_REF` 设置为已通过 CI 的版本标签或不可变镜像摘要，然后使用生产 Compose 覆盖：
+
 ```bash
-docker compose pull app
-docker compose up -d app
+docker compose -f docker-compose.yml -f docker-compose.production.yml pull
+docker compose \
+  --profile https \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  up -d
 docker compose ps
 docker compose logs --tail=50 app
 ```
 
-正式环境建议将 `IMAGE_TAG` 固定为已验证的版本号。需要回滚时修改该值，再执行同一组命令。Watchtower 可以自动跟踪 `latest`，但会跳过人工验收，不建议作为唯一发布策略。
+需要回滚时把 `IMAGE_REF` 改回上一个已验证版本，再执行同一组命令。应用容器默认带有禁用 Watchtower 的标签，更新应在备份和验收后手动执行。
 
 ## 数据与数据卷
 
@@ -82,17 +91,15 @@ BACKUP_DIR=/data/backups
 
 管理员可在「掌教殿 > 用量」查看最近备份时间、大小和错误状态。默认备份与主库位于同一个数据卷，可防误操作和单库损坏；如需防整块磁盘故障，还应定期将备份复制到另一台机器或对象存储。
 
-复制一份离线数据卷备份到宿主机：
+创建一份一致的完整数据卷备份到宿主机。脚本会短暂停止应用，归档 SQLite、素材、任务文件与参考图，生成 SHA-256 校验文件后再恢复运行：
 
 ```bash
-mkdir -p /root/infinite-canvas-backup
-docker run --rm \
-  -v infinite-canvas-data:/source:ro \
-  -v /root/infinite-canvas-backup:/target \
-  alpine sh -c 'cp -a /source/. /target/'
+BACKUP_ROOT=/root/infinite-canvas-backups \
+DATA_VOLUME_NAME=infinite-canvas-data \
+sh ops/backup-volume.sh
 ```
 
-如果 `docker inspect` 返回的卷名不是 `infinite-canvas-data`，请将命令中的卷名替换为实际值。
+Compose 通过 `DATA_VOLUME_NAME` 显式固定卷名，默认就是 `infinite-canvas-data`。修改过该变量时，备份和恢复脚本必须传入同一个值。
 
 ## 恢复 SQLite 快照
 
@@ -106,7 +113,7 @@ docker exec infinite-canvas sh -c 'ls -lh /data/backups'
 
 ```bash
 DATA_VOLUME="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' infinite-canvas)"
-IMAGE="ghcr.io/zdtzn/infinite-canvas:latest"
+IMAGE_REF="ghcr.io/zdtzn/infinite-canvas@sha256:替换为已验证的镜像摘要"
 SNAPSHOT="app-YYYYMMDDTHHMMSSZ-0000000000000.sqlite"
 
 docker stop infinite-canvas
@@ -114,7 +121,7 @@ docker cp infinite-canvas:/data/app.sqlite "./app.sqlite.before-restore"
 
 docker run --rm --user root --entrypoint sh \
   -v "$DATA_VOLUME:/data" \
-  "$IMAGE" \
+  "$IMAGE_REF" \
   -c "cp '/data/backups/$SNAPSHOT' /data/app.sqlite && rm -f /data/app.sqlite-wal /data/app.sqlite-shm && chown bun:bun /data/app.sqlite"
 
 docker start infinite-canvas
@@ -123,7 +130,7 @@ docker inspect -f '{{.State.Health.Status}}' infinite-canvas
 docker logs --tail=50 infinite-canvas
 ```
 
-恢复时必须停止应用，并删除旧库对应的 `-wal`、`-shm` 文件，避免把恢复前的写入重新合并进快照。
+恢复时必须停止应用，并删除旧库对应的 `-wal`、`-shm` 文件，避免把恢复前的写入重新合并进快照。SQLite 快照不包含素材和任务文件；需要恢复完整数据卷时，应使用带校验和与恢复前安全备份的 `ops/restore-volume.sh`。
 
 ## HTTPS 与域名
 
@@ -140,7 +147,11 @@ APP_ENCRYPTION_KEY=你的固定加密密钥
 启动 Caddy：
 
 ```bash
-docker compose --profile https up -d
+docker compose \
+  --profile https \
+  -f docker-compose.yml \
+  -f docker-compose.production.yml \
+  up -d
 docker compose ps
 docker compose logs --tail=50 caddy
 curl -I https://mingche.click/health

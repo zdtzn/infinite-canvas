@@ -51,17 +51,6 @@ export default defineConfig({
         __APP_RELEASES__: JSON.stringify(parseChangelog(localChangelog)),
     },
     build: {
-        chunkSizeWarningLimit: 1200,
-        rollupOptions: {
-            output: {
-                manualChunks(id) {
-                    if (!id.includes("node_modules")) return;
-                    if (id.includes("@codemirror") || id.includes("@uiw/react-codemirror")) return "editor-vendor";
-                    if (id.includes("/antd/") || id.includes("@ant-design")) return "antd-vendor";
-                    if (id.includes("streamdown")) return "markdown-vendor";
-                    if (id.includes("localforage") || id.includes("file-saver") || id.includes("fflate")) return "storage-vendor";
-                },
-            },
-        },
+        chunkSizeWarningLimit: 1400,
     },
 });
