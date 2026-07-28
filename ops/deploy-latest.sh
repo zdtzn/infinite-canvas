@@ -15,10 +15,10 @@ case "$IMAGE_REF" in
   *@sha256:*) ;;
   *) echo "Unable to resolve latest image to an immutable digest" >&2; exit 1 ;;
 esac
-case "$EXPECTED_COMMIT" in
-  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
-  *) echo "Published image is missing a valid source revision label" >&2; exit 1 ;;
-esac
+if ! printf '%s' "$EXPECTED_COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then
+  echo "Published image is missing a valid source revision label" >&2
+  exit 1
+fi
 
 export IMAGE_REF EXPECTED_COMMIT
 exec "$SCRIPT_DIR/deploy-pinned.sh"

@@ -37,6 +37,10 @@ case "$FORCE_RECREATE" in
   0|1) ;;
   *) echo "FORCE_RECREATE must be 0 or 1" >&2; exit 1 ;;
 esac
+if [ -n "$EXPECTED_COMMIT" ] && ! printf '%s' "$EXPECTED_COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then
+  echo "EXPECTED_COMMIT must be a full lowercase Git commit SHA" >&2
+  exit 1
+fi
 
 docker volume inspect "$VOLUME_NAME" >/dev/null
 docker inspect "$CONTAINER_NAME" >/dev/null
@@ -63,25 +67,64 @@ health_file="/tmp/${CONTAINER_NAME}-deploy-health-$$.json"
 renamed=0
 deployment_complete=0
 
+wait_for_healthy() {
+  expected_revision="$1"
+  wait_attempt=0
+  wait_max_attempts=$((HEALTH_TIMEOUT_SECONDS / 2 + 1))
+
+  while [ "$wait_attempt" -lt "$wait_max_attempts" ]; do
+    wait_attempt=$((wait_attempt + 1))
+    container_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+    if [ "$container_health" = "healthy" ] && curl -fsS "http://127.0.0.1:${HOST_PORT}/health" >"$health_file" 2>/dev/null; then
+      if [ -z "$expected_revision" ] || grep -q "$expected_revision" "$health_file"; then
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+
+  return 1
+}
+
 recover_on_failure() {
   status=$?
+  trap - EXIT INT TERM
   rm -f "$health_file"
   if [ "$deployment_complete" != "1" ]; then
     echo "Deployment failed; restoring the previous container" >&2
+    restore_started=0
     if [ "$renamed" = "1" ]; then
       docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
       if docker inspect "$rollback_name" >/dev/null 2>&1; then
-        docker rename "$rollback_name" "$CONTAINER_NAME" >/dev/null
-        docker update --restart=unless-stopped "$CONTAINER_NAME" >/dev/null
-        docker start "$CONTAINER_NAME" >/dev/null
+        if docker rename "$rollback_name" "$CONTAINER_NAME" >/dev/null &&
+          docker update --restart=unless-stopped "$CONTAINER_NAME" >/dev/null &&
+          docker start "$CONTAINER_NAME" >/dev/null; then
+          restore_started=1
+        fi
       fi
     elif docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
-      docker start "$CONTAINER_NAME" >/dev/null 2>&1 || true
+      if docker start "$CONTAINER_NAME" >/dev/null 2>&1; then
+        restore_started=1
+      fi
+    fi
+
+    if [ "$restore_started" = "1" ] && docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+      echo "Waiting for the previous container to become healthy" >&2
+      if wait_for_healthy ""; then
+        echo "Previous container restored and healthy" >&2
+      else
+        echo "Previous container was restored but did not become healthy within ${HEALTH_TIMEOUT_SECONDS}s" >&2
+        docker logs --tail=120 "$CONTAINER_NAME" >&2 || true
+      fi
+    else
+      echo "Previous container could not be restored" >&2
     fi
   fi
   exit "$status"
 }
-trap recover_on_failure EXIT INT TERM
+trap recover_on_failure EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mkdir -p "$BACKUP_ROOT"
 docker stop -t 30 "$CONTAINER_NAME" >/dev/null
@@ -109,20 +152,8 @@ fi
 set -- "$@" "$IMAGE_REF"
 "$@" >/dev/null
 
-healthy=0
-attempt=0
-max_attempts=$((HEALTH_TIMEOUT_SECONDS / 2 + 1))
-while [ "$attempt" -lt "$max_attempts" ]; do
-  attempt=$((attempt + 1))
-  if curl -fsS "http://127.0.0.1:${HOST_PORT}/health" >"$health_file" 2>/dev/null; then
-    if [ -z "$EXPECTED_COMMIT" ] || grep -q "$EXPECTED_COMMIT" "$health_file"; then
-      healthy=1
-      break
-    fi
-  fi
-  sleep 2
-done
-if [ "$healthy" != "1" ]; then
+echo "Waiting for the new container to become healthy"
+if ! wait_for_healthy "$EXPECTED_COMMIT"; then
   docker logs --tail=120 "$CONTAINER_NAME" >&2 || true
   exit 1
 fi
