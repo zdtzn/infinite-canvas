@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { cultivationGenerationBlockReason, cultivationProgressPercent, cultivationStageLabel, quotaText, requiredCultivationCapabilities } from "./utils";
+import { cultivationGenerationBlockReason, cultivationProgressPercent, cultivationRefundNotice, cultivationStageLabel, quotaText, requiredCultivationCapabilities } from "./utils";
 
 describe("cultivation presentation helpers", () => {
     test("clamps experience progress and treats pending breakthroughs as complete", () => {
@@ -17,6 +17,14 @@ describe("cultivation presentation helpers", () => {
     test("formats finite and unlimited quotas", () => {
         expect(quotaText(8, false)).toBe("今日剩余 8 次");
         expect(quotaText(null, true)).toBe("今日不限次数");
+    });
+
+    test("does not describe quota refunds for unlimited users", () => {
+        expect(cultivationRefundNotice(false, "all")).toBe("，本次额度已自动退还");
+        expect(cultivationRefundNotice(false, "failed")).toBe("，失败额度已自动退还");
+        expect(cultivationRefundNotice(true, "all")).toBe("");
+        expect(cultivationRefundNotice(true, "failed")).toBe("");
+        expect(cultivationRefundNotice(undefined, "all")).toBe("");
     });
 
     test("derives generation capability requirements for the UI", () => {

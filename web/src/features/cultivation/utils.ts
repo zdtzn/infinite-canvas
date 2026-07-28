@@ -12,6 +12,11 @@ export function quotaText(remaining: number | null, unlimited: boolean) {
     return unlimited || remaining === null ? "今日不限次数" : `今日剩余 ${remaining} 次`;
 }
 
+export function cultivationRefundNotice(unlimited: boolean | undefined, scope: "all" | "failed") {
+    if (unlimited !== false) return "";
+    return scope === "failed" ? "，失败额度已自动退还" : "，本次额度已自动退还";
+}
+
 export function requiredCultivationCapabilities(input: { model: string; quality?: string; referenceCount: number; hasMask: boolean }) {
     const keys = new Set<string>();
     const model = input.model.toLowerCase();

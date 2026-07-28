@@ -1,5 +1,9 @@
 import { resolveOpenAiImageSize } from "./image-request";
 
+const UU_MIN_IMAGE_PIXELS = 655_360;
+const UU_MAX_IMAGE_PIXELS = 8_294_400;
+const UU_DIMENSION_STEP = 16;
+
 export type UuImageAsyncTaskStatus = "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
 
 export type UuImageAsyncTask = {
@@ -30,7 +34,8 @@ export function resolveUuAsyncImageSize(size?: string, quality?: string) {
     if (!match) return { width: 1024, height: 1024 };
     const width = Number(match[1]);
     const height = Number(match[2]);
-    return Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0 ? { width, height } : { width: 1024, height: 1024 };
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return { width: 1024, height: 1024 };
+    return fitUuImagePixelRange(width, height);
 }
 
 export function buildUuAsyncImageRequest({ size, quality, referenceCount }: { size?: string; quality?: string; referenceCount: number }) {
@@ -115,6 +120,19 @@ function normalizeStatus(value?: string): UuImageAsyncTaskStatus {
         default:
             return "unknown";
     }
+}
+
+function fitUuImagePixelRange(width: number, height: number) {
+    const pixels = width * height;
+    if (pixels >= UU_MIN_IMAGE_PIXELS && pixels <= UU_MAX_IMAGE_PIXELS) return { width, height };
+
+    const targetPixels = pixels < UU_MIN_IMAGE_PIXELS ? UU_MIN_IMAGE_PIXELS : UU_MAX_IMAGE_PIXELS;
+    const scale = Math.sqrt(targetPixels / pixels);
+    const round = pixels < UU_MIN_IMAGE_PIXELS ? Math.ceil : Math.floor;
+    return {
+        width: Math.max(UU_DIMENSION_STEP, round((width * scale) / UU_DIMENSION_STEP) * UU_DIMENSION_STEP),
+        height: Math.max(UU_DIMENSION_STEP, round((height * scale) / UU_DIMENSION_STEP) * UU_DIMENSION_STEP),
+    };
 }
 
 function collectImageUrls(...records: Array<Record<string, unknown> | undefined>) {

@@ -24,7 +24,7 @@ import type { ReferenceImage } from "@/types/image";
 import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialGenerationCue, useImperialMode } from "@/features/cultivation/imperial-mode";
-import { cultivationGenerationBlockReason, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
+import { cultivationGenerationBlockReason, cultivationRefundNotice, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, persistGenerationHistoryRecords, synchronizeGenerationHistory } from "@/services/generation-history";
 import { mergeServerJobsIntoImageHistory } from "@/services/image-generation-history";
@@ -224,10 +224,12 @@ export default function ImagePage() {
                     }),
                 );
                 if (successCount) {
-                    const settlement = failCount ? `成功 ${successCount} 张，失败 ${failCount} 张已自动退还额度` : `成功生成 ${successCount} 张图片`;
+                    const settlement = failCount
+                        ? `成功 ${successCount} 张，失败 ${failCount} 张${cultivationRefundNotice(cultivationProfile?.unlimited, "failed")}`
+                        : `成功生成 ${successCount} 张图片`;
                     message.success(generationSuccessMessage(settlement));
                 } else {
-                    message.error(`${error || "生成失败"}${cultivationProfile ? "，本次额度已自动退还" : ""}`);
+                    message.error(`${error || "生成失败"}${cultivationRefundNotice(cultivationProfile?.unlimited, "all")}`);
                 }
             },
             undefined,

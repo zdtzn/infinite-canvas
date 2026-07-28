@@ -19,6 +19,7 @@ import { listPlatformChannels, normalizeChannelModels, platformChannelKey, platf
 import { isValidProjectPayload } from "./lib/project-payload";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
+import { readUpstreamErrorMessage } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, isLoopbackSetupRequest, isSameApplicationOrigin, normalizePublicBaseUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { openAppDatabase, persistReference } from "./db/database";
@@ -1936,8 +1937,8 @@ async function parseUpstreamJson(response: Response, options: { maxBytes?: numbe
     } catch {
         if (!response.ok) throw new Error(`上游服务返回 ${response.status}：${text.slice(0, 200)}`);
     }
-    if (!response.ok || payload?.error?.message || (typeof payload?.code === "number" && payload.code !== 0)) {
-        throw new Error(payload?.error?.message || payload?.msg || `上游服务返回 ${response.status}`);
+    if (!response.ok || payload?.error || (typeof payload?.code === "number" && payload.code !== 0)) {
+        throw new Error(readUpstreamErrorMessage(payload) || `上游服务返回 ${response.status}`);
     }
     return payload;
 }
