@@ -2484,31 +2484,36 @@ html[data-imperial-mode="true"] {
         z-index: 0;
         pointer-events: none;
         background-image:
-            radial-gradient(circle at 12% 24%, rgb(255 255 255 / 90%) 0 1px, transparent 1.6px),
-            radial-gradient(circle at 68% 14%, rgb(245 220 156 / 85%) 0 0.9px, transparent 1.5px),
-            radial-gradient(circle at 84% 42%, rgb(216 232 255 / 80%) 0 0.8px, transparent 1.4px),
-            radial-gradient(circle at 34% 66%, rgb(255 255 255 / 70%) 0 0.7px, transparent 1.3px),
-            radial-gradient(circle at 52% 30%, rgb(230 204 145 / 75%) 0 0.8px, transparent 1.4px);
+            radial-gradient(circle at 12% 24%, rgb(255 255 255 / 95%) 0 1.2px, transparent 1.8px),
+            radial-gradient(circle at 68% 14%, rgb(245 220 156 / 92%) 0 1px, transparent 1.6px),
+            radial-gradient(circle at 84% 42%, rgb(216 232 255 / 88%) 0 0.9px, transparent 1.5px),
+            radial-gradient(circle at 34% 66%, rgb(255 255 255 / 80%) 0 0.8px, transparent 1.4px),
+            radial-gradient(circle at 52% 30%, rgb(230 204 145 / 85%) 0 0.9px, transparent 1.5px),
+            radial-gradient(circle at 22% 80%, rgb(255 255 255 / 75%) 0 0.7px, transparent 1.3px),
+            radial-gradient(circle at 90% 76%, rgb(245 220 156 / 80%) 0 0.8px, transparent 1.4px);
         background-size:
-            241px 197px,
-            311px 263px,
-            197px 281px,
-            283px 229px,
-            353px 307px;
-        opacity: 0.5;
-        animation: ming-stars-breathe 7s ease-in-out infinite;
+            211px 177px,
+            281px 233px,
+            177px 251px,
+            253px 199px,
+            313px 277px,
+            167px 223px,
+            293px 257px;
+        opacity: 0.68;
+        animation: ming-stars-breathe 9s ease-in-out infinite;
     }
 
-    /* 天地法则层:同心规则环 + 地平线金光,极淡 */
+    /* 天地法则层:同心规则环 + 地平线金光 + 标题后星云 */
     .ming-hero-rings {
         position: absolute;
         inset: -10%;
         z-index: 0;
         pointer-events: none;
         background-image:
-            repeating-radial-gradient(circle at 50% 118%, transparent 0 88px, rgb(230 204 145 / 10%) 89px, transparent 91px 142px),
-            radial-gradient(ellipse 68% 26% at 50% 100%, rgb(230 204 145 / 16%), transparent 72%);
-        opacity: 0.6;
+            repeating-radial-gradient(circle at 50% 118%, transparent 0 88px, rgb(230 204 145 / 17%) 89px, transparent 91px 142px),
+            radial-gradient(ellipse 68% 26% at 50% 100%, rgb(230 204 145 / 26%), transparent 72%),
+            radial-gradient(ellipse 42% 30% at 50% 38%, rgb(230 204 145 / 10%), transparent 70%);
+        opacity: 0.85;
     }
 
     /* 境界意境图压底,低存在感 */
@@ -2519,9 +2524,9 @@ html[data-imperial-mode="true"] {
         width: 100%;
         height: 100%;
         object-fit: cover;
-        opacity: 0.16;
-        mask-image: linear-gradient(180deg, transparent 0%, rgb(0 0 0 / 70%) 55%, rgb(0 0 0 / 90%) 100%);
-        -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgb(0 0 0 / 70%) 55%, rgb(0 0 0 / 90%) 100%);
+        opacity: 0.28;
+        mask-image: linear-gradient(180deg, transparent 0%, rgb(0 0 0 / 75%) 45%, rgb(0 0 0 / 95%) 100%);
+        -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgb(0 0 0 / 75%) 45%, rgb(0 0 0 / 95%) 100%);
         pointer-events: none;
     }
 
@@ -2703,11 +2708,11 @@ html[data-imperial-mode="true"] {
     @keyframes ming-stars-breathe {
         0%,
         100% {
-            opacity: 0.38;
+            opacity: 0.52;
         }
 
         50% {
-            opacity: 0.62;
+            opacity: 0.82;
         }
     }
 
