@@ -15,6 +15,22 @@ DEPLOY_MODE="${DEPLOY_MODE:-safe}"
 IMAGE_REF="${IMAGE_REF:-}"
 EXPECTED_COMMIT="${EXPECTED_COMMIT:-}"
 
+pull_image() {
+  pull_attempt=1
+  while [ "$pull_attempt" -le 3 ]; do
+    if docker pull "$1" >/dev/null; then
+      return 0
+    fi
+    if [ "$pull_attempt" -eq 3 ]; then
+      echo "Unable to pull image after 3 attempts: $1" >&2
+      return 1
+    fi
+    echo "Image pull failed; retrying in $((pull_attempt * 5))s" >&2
+    sleep $((pull_attempt * 5))
+    pull_attempt=$((pull_attempt + 1))
+  done
+}
+
 case "$IMAGE_REF" in
   *@sha256:*) ;;
   *) echo "IMAGE_REF must be an immutable repository digest" >&2; exit 1 ;;
@@ -50,7 +66,7 @@ fi
 docker volume inspect "$VOLUME_NAME" >/dev/null
 docker inspect "$CONTAINER_NAME" >/dev/null
 docker run --rm -v "${VOLUME_NAME}:/source:ro" alpine test -f /source/app.sqlite
-docker pull "$IMAGE_REF" >/dev/null
+pull_image "$IMAGE_REF"
 
 image_revision="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE_REF")"
 if [ -n "$EXPECTED_COMMIT" ] && [ "$image_revision" != "$EXPECTED_COMMIT" ]; then

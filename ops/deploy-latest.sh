@@ -4,7 +4,16 @@ set -eu
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-ghcr.io/zdtzn/infinite-canvas}"
 SCRIPT_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 
-docker pull "${IMAGE_REPOSITORY}:latest" >/dev/null
+pull_attempt=1
+while ! docker pull "${IMAGE_REPOSITORY}:latest" >/dev/null; do
+  if [ "$pull_attempt" -eq 3 ]; then
+    echo "Unable to pull ${IMAGE_REPOSITORY}:latest after 3 attempts" >&2
+    exit 1
+  fi
+  echo "Image pull failed; retrying in $((pull_attempt * 5))s" >&2
+  sleep $((pull_attempt * 5))
+  pull_attempt=$((pull_attempt + 1))
+done
 IMAGE_REF="$(
   docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "${IMAGE_REPOSITORY}:latest" |
     awk -v prefix="${IMAGE_REPOSITORY}@sha256:" 'index($0, prefix) == 1 { print; exit }'
