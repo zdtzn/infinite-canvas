@@ -215,9 +215,6 @@ export function useImperialLoadingText(fallback: string, scope: string) {
     return isImperialMode ? imperialQuoteFor(seed, imperialLoadingMessages) : fallback;
 }
 
-/* 原 ImperialModeBadge 已合并进 CultivationStatusPill(斗帝身份徽章),
-   顶部导航与画布顶栏不再单独挂载「帝临模式」徽章。 */
-
 export function ImperialModePreferences() {
     const { isDouEmperor, isImperialMode, imperialWelcomeEnabled, setImperialModeEnabled, setImperialWelcomeEnabled } = useImperialMode();
     if (!isDouEmperor) return null;

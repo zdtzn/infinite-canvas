@@ -45,7 +45,7 @@ export default function CultivationPage() {
     const { data, isLoading, isError, refetch } = useCultivationProfile();
     const user = useUserStore((state) => state.user);
     const setSession = useUserStore((state) => state.setSession);
-    const { isDouEmperor } = useImperialMode();
+    const { isDouEmperor, isImperialMode } = useImperialMode();
     const avatarInputRef = useRef<HTMLInputElement>(null);
     const [avatarUploading, setAvatarUploading] = useState(false);
     const profileUserId = data?.userId || user?.id || "";
@@ -103,7 +103,7 @@ export default function CultivationPage() {
 
     /* ── 帝临 · 斗帝专属视图:身份 > 核心文案 > 修为 > 数据。
        不显示下一等级/距离升级/经验条;保留专属文案与能力列表。 ── */
-    if (emperorFinalStage) {
+    if (emperorFinalStage && isImperialMode) {
         return (
             <main className="h-full overflow-y-auto bg-background text-foreground">
                 <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
@@ -124,17 +124,19 @@ export default function CultivationPage() {
                                 <ImagePlus className="size-4" />
                                 生图工作台
                             </Link>
-                            <Link to="/canvas">
-                                <Button type="primary" icon={<Maximize2 className="size-4" />}>
-                                    回到画布
-                                </Button>
+                            <Link
+                                to="/canvas"
+                                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-[#d8402a] px-3 text-sm font-medium text-[#fff7ee] transition-colors hover:bg-[#ee5038] hover:text-[#fff7ee] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d8402a]"
+                            >
+                                <Maximize2 className="size-4" aria-hidden="true" />
+                                回到画布
                             </Link>
                         </div>
                     </header>
 
                     {/* ── 帝临 Hero:浩瀚宇宙,天地规则,极致克制 ── */}
                     <section className="ming-hero ming-hero--emperor mt-8" aria-label="斗帝 · 诸天至尊">
-                        <img src={realmHero.imageSrc} alt="" aria-hidden className="ming-hero-realm-img" decoding="async" fetchPriority="high" />
+                        <img src={realmHero.imageSrc} alt="" aria-hidden width={1600} height={900} className="ming-hero-realm-img" decoding="async" fetchPriority="high" />
                         <div className="ming-hero-stars" aria-hidden />
                         <div className="ming-hero-rings" aria-hidden />
 
@@ -154,7 +156,7 @@ export default function CultivationPage() {
                                 <Tooltip title="上传头像">
                                     <button
                                         type="button"
-                                        className="absolute -bottom-1 -right-1 z-10 grid size-6 place-items-center rounded-full border border-[#e6cc91]/40 bg-[#0d1a2b] text-[#c9c4b9] transition-colors hover:text-[#f7f4ea]"
+                                        className="absolute -bottom-1 -right-1 z-10 grid size-6 place-items-center rounded-full border border-[#e6cc91]/40 bg-[#0d1a2b] text-[#c9c4b9] transition-colors hover:text-[#f7f4ea] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#e6cc91]"
                                         onClick={() => avatarInputRef.current?.click()}
                                         disabled={avatarUploading}
                                         aria-label="上传头像"
@@ -178,7 +180,7 @@ export default function CultivationPage() {
                             </div>
                             <h2 className="font-brush ming-hero-title">斗帝</h2>
                             <div className="font-display ming-hero-subtitle">诸天至尊</div>
-                            <p className="ming-hero-creed">已登临最高境界。天地无更高之境,创作永无止境。</p>
+                            <p className="ming-hero-creed">已登临斗帝之境。天地已无更高境界。创作永无止境。</p>
                             <p className="font-display ming-hero-quote">{realmHero.completedProgressMessage || "手握日月摘星辰 世间无我这般人!"}</p>
 
                             <div className="ming-data-strip" aria-label="修行数据">
@@ -195,8 +197,8 @@ export default function CultivationPage() {
                                     <span className="ming-data-label">创作天数</span>
                                 </div>
                                 <div className="ming-data-item">
-                                    <span className="font-display ming-data-value">{data.unlimited ? "不限" : `${remainingQuota} 次`}</span>
-                                    <span className="ming-data-label">{data.unlimited ? `今日创作 · 已用 ${data.usedToday}` : "今日剩余"}</span>
+                                    <span className="font-display ming-data-value">{data.usedToday.toLocaleString()}</span>
+                                    <span className="ming-data-label">今日创作</span>
                                 </div>
                             </div>
                         </div>
@@ -266,10 +268,12 @@ export default function CultivationPage() {
                             <ImagePlus className="size-4" />
                             生图工作台
                         </Link>
-                        <Link to="/canvas">
-                            <Button type="primary" icon={<Maximize2 className="size-4" />}>
-                                回到画布
-                            </Button>
+                        <Link
+                            to="/canvas"
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-[#d8402a] px-3 text-sm font-medium text-[#fff7ee] transition-colors hover:bg-[#ee5038] hover:text-[#fff7ee] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d8402a]"
+                        >
+                            <Maximize2 className="size-4" aria-hidden="true" />
+                            回到画布
                         </Link>
                     </div>
                 </header>
@@ -333,7 +337,7 @@ export default function CultivationPage() {
 
                             <div className="mt-6 flex flex-wrap items-end justify-between gap-4">
                                 {emperorFinalStage ? (
-                                    <p className="font-display text-base tracking-[0.1em] text-[#c9a86a]">手握日月摘星辰 世间无我这般人！</p>
+                                    <p className="font-display text-base tracking-[0.1em] text-[#c9a86a]">{realmHero.completedProgressMessage || "手握日月摘星辰 世间无我这般人！"}</p>
                                 ) : finalStage ? (
                                     <div>
                                         <div className="inline-flex items-center gap-2 text-sm text-[#c9c4b9]">
@@ -377,7 +381,7 @@ export default function CultivationPage() {
                                             <span className="font-display text-sm tracking-[0.1em] text-[#edede6]">修为成长</span>
                                             <span className="text-sm text-[#8a8a96]">累计 {data.totalXp.toLocaleString()}</span>
                                         </div>
-                                        <p className="font-display mt-3 text-sm leading-6 text-[#c9a86a]">已登临斗帝之境,天地已无更高境界,创作永无止境。</p>
+                                        <p className="font-display mt-3 text-sm leading-6 text-[#c9a86a]">已登临斗帝之境。天地已无更高境界。创作永无止境。</p>
                                     </div>
                                 ) : (
                                     <MetricBlock
@@ -388,13 +392,23 @@ export default function CultivationPage() {
                                         complete={finalStage}
                                     />
                                 )}
-                                <MetricBlock
-                                    label="今日创作"
-                                    value={data.unlimited ? "不限次数" : `剩余 ${remainingQuota} 次`}
-                                    helper={data.unlimited ? `今日已使用 ${data.usedToday} 次` : `已使用 ${data.usedToday} / ${data.dailyLimit} 次${data.reservedToday ? ` · ${data.reservedToday} 次生成中占用` : ""}`}
-                                    percent={quotaPercent}
-                                    quota
-                                />
+                                {emperorFinalStage ? (
+                                    <div>
+                                        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                                            <span className="font-display text-sm tracking-[0.1em] text-[#edede6]">今日创作</span>
+                                            <span className="text-sm text-[#c9c4b9]">{data.usedToday.toLocaleString()} 次</span>
+                                        </div>
+                                        <p className="mt-3 text-sm text-[#8a8a96]">今日创作持续累计</p>
+                                    </div>
+                                ) : (
+                                    <MetricBlock
+                                        label="今日创作"
+                                        value={data.unlimited ? "不限次数" : `剩余 ${remainingQuota} 次`}
+                                        helper={data.unlimited ? `今日已使用 ${data.usedToday} 次` : `已使用 ${data.usedToday} / ${data.dailyLimit} 次${data.reservedToday ? ` · ${data.reservedToday} 次生成中占用` : ""}`}
+                                        percent={quotaPercent}
+                                        quota
+                                    />
+                                )}
                             </div>
                         </section>
 

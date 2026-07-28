@@ -623,7 +623,7 @@ export default function ImagePage() {
                                         <ImagePlus className="size-5" />
                                     </span>
                                     <span className="empty-state-title">{running ? "正在准备生成结果" : "万象未生"}</span>
-                                    <span className="empty-state-desc">{running ? "结果生成后会保留在这里" : "暂无生成结果,从左侧提示词落下第一笔"}</span>
+                                    <span className="empty-state-desc">{running ? "结果生成后会保留在这里" : "暂无生成结果，从左侧提示词落下第一笔。"}</span>
                                 </div>
                             </div>
                         )}

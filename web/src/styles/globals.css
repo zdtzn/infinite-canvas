@@ -1395,64 +1395,6 @@
         filter: drop-shadow(0 0 8px rgb(230 201 126 / 32%));
     }
 
-    .imperial-mode-badge {
-        display: inline-flex;
-        height: 2rem;
-        flex: 0 0 auto;
-        align-items: center;
-        gap: 0.375rem;
-        padding: 0 0.5625rem;
-        border: 1px solid rgb(154 132 79 / 34%);
-        border-radius: 0.375rem;
-        color: #9b7a35;
-        background: rgb(173 142 72 / 7%);
-        font-size: 0.75rem;
-        font-weight: 650;
-        line-height: 1;
-        transition:
-            border-color 160ms ease,
-            color 160ms ease,
-            background-color 160ms ease,
-            box-shadow 160ms ease;
-    }
-
-    .dark .imperial-mode-badge {
-        color: #e6cc91;
-        background: rgb(228 201 139 / 8%);
-    }
-
-    .imperial-mode-badge:hover {
-        border-color: rgb(202 168 94 / 66%);
-        color: #a47d2d;
-        background: rgb(196 158 76 / 13%);
-    }
-
-    .dark .imperial-mode-badge:hover {
-        color: #f4dfad;
-        background: rgb(228 201 139 / 14%);
-    }
-
-    .imperial-mode-badge:focus-visible {
-        outline: 2px solid rgb(209 178 107 / 76%);
-        outline-offset: 2px;
-    }
-
-    .imperial-mode-badge-indicator {
-        width: 0.375rem;
-        height: 0.375rem;
-        border-radius: 999px;
-        background: currentColor;
-        opacity: 0.34;
-        transition:
-            opacity 160ms ease,
-            box-shadow 160ms ease;
-    }
-
-    .imperial-mode-badge[data-active="true"] .imperial-mode-badge-indicator {
-        opacity: 1;
-        box-shadow: 0 0 0 3px rgb(226 193 120 / 15%);
-    }
-
     .imperial-identity-card {
         display: grid;
         width: 14rem;
@@ -1859,14 +1801,6 @@
     }
 
     @media (max-width: 640px) {
-        .imperial-mode-badge {
-            padding: 0 0.5rem;
-        }
-
-        .imperial-mode-badge > span:not(.imperial-mode-badge-indicator) {
-            display: none;
-        }
-
         .imperial-welcome {
             top: 4rem;
         }
@@ -2461,7 +2395,7 @@ html[data-imperial-mode="true"] {
     .ming-hero {
         position: relative;
         overflow: hidden;
-        border-radius: 0.75rem;
+        border-radius: 0.5rem;
         isolation: isolate;
     }
 
@@ -2547,14 +2481,14 @@ html[data-imperial-mode="true"] {
         gap: 0.5rem;
         color: var(--realm-gold);
         font-size: 0.6875rem;
-        letter-spacing: 0.42em;
+        letter-spacing: 0;
         text-transform: uppercase;
     }
 
     .ming-hero-title {
         margin-top: 1.25rem;
         color: #f6ead0;
-        font-size: clamp(4.5rem, 10vw, 7.5rem);
+        font-size: 7rem;
         line-height: 1;
         text-shadow: 0 2px 40px rgb(0 0 0 / 65%);
     }
@@ -2563,8 +2497,7 @@ html[data-imperial-mode="true"] {
         margin-top: 1rem;
         color: var(--realm-gold-strong);
         font-size: 0.9375rem;
-        letter-spacing: 0.62em;
-        text-indent: 0.62em; /* 抵消末字间距,保持视觉居中 */
+        letter-spacing: 0;
     }
 
     .ming-hero-creed {
@@ -2579,7 +2512,7 @@ html[data-imperial-mode="true"] {
         margin-top: 0.875rem;
         color: var(--realm-gold);
         font-size: 0.9375rem;
-        letter-spacing: 0.12em;
+        letter-spacing: 0;
     }
 
     /* 数据带:修为 > 数据,一行到底,无卡片 */
@@ -2619,7 +2552,7 @@ html[data-imperial-mode="true"] {
     .ming-data-label {
         color: var(--fg-muted);
         font-size: 0.6875rem;
-        letter-spacing: 0.18em;
+        letter-spacing: 0;
     }
 
     /* 头像 · 淡金规则光环:仅 opacity 呼吸,不旋转不闪烁 */
@@ -2687,7 +2620,7 @@ html[data-imperial-mode="true"] {
         color: var(--foreground);
         font-size: 0.9375rem;
         font-weight: 600;
-        letter-spacing: 0.06em;
+        letter-spacing: 0;
     }
 
     .empty-state-desc {
@@ -2744,6 +2677,10 @@ html[data-imperial-mode="true"] {
         /* 左上头像块与中央眉线错开 */
         .ming-hero-content {
             padding-top: 5.25rem;
+        }
+
+        .ming-hero-title {
+            font-size: 4.75rem;
         }
 
         .ming-data-strip {
