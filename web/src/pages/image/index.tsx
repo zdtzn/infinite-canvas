@@ -296,10 +296,10 @@ export default function ImagePage() {
                 data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
                 metadata: { source: "image-page", prompt },
             });
-            message.success("已加入藏卷阁");
+            message.success("已入藏卷阁");
         } catch (error) {
             console.error("Failed to save generated image as an asset", error);
-            message.error(error instanceof Error ? `添加到藏卷阁失败：${error.message}` : "添加到藏卷阁失败，请重试");
+            message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
         } finally {
             savingAssetIdsRef.current.delete(image.id);
             setSavingAssetIds((ids) => ids.filter((id) => id !== image.id));
@@ -722,9 +722,9 @@ function ResultImageCard({
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
                 <div className="grid min-w-0 grid-cols-3 gap-2">
-                    <Tooltip title="添加到藏卷阁">
+                    <Tooltip title="入藏卷阁">
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} loading={savingAsset} disabled={savingAsset} onClick={() => void onSaveAsset(image, index)}>
-                            添加到藏卷阁
+                            入藏卷阁
                         </Button>
                     </Tooltip>
                     <Tooltip title="加入参考图">
