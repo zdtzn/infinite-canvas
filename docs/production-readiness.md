@@ -53,6 +53,14 @@ sh ops/deploy-pinned.sh
 Keep `/root/infinite-canvas.env` mode `600` when production environment variables are added. The script uses that file automatically when it exists.
 When only deployment settings or environment variables changed, set `FORCE_RECREATE=1` so the same pinned image is recreated safely.
 
+During frequent pre-launch UI work, use the fast deployment command after the image workflow succeeds:
+
+```bash
+sh ops/deploy-fast.sh
+```
+
+Fast mode skips the full-volume archive and accepts the new container after `/health` reports the expected source revision. It still deploys an immutable digest and restores the previous container when startup fails. Use it only for frontend UI, copy, styles, and other changes that cannot alter persisted data. Continue using `deploy-latest.sh` for server code, authentication, permissions, provider configuration, storage, SQLite, migrations, environment changes, and every production release.
+
 ## Required Secrets
 
 Keep these in a root-readable environment file outside the repository:
