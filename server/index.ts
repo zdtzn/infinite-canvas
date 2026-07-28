@@ -11,7 +11,7 @@ import { decryptSecret, encryptSecret, normalizeEncryptionSecret } from "./lib/c
 import { generationHistoryJobIdsForDeletion, GenerationHistoryInputError, normalizeGenerationHistory, normalizeGenerationHistoryDeletion, normalizeGenerationHistoryItem } from "./lib/generation-history";
 import { parseSingleByteRange } from "./lib/http-range";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
-import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./lib/image-request";
+import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { isAllowedMediaMimeType, resolveMediaMimeType } from "./lib/media-mime";
 import { createMediaTaskStore, type MediaTaskKind } from "./lib/media-task-store";
@@ -1375,7 +1375,23 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         background: input.background,
     });
     let response: Response;
-    if (input.references.length) {
+    if (usesJsonReferenceGeneration(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))) {
+        response = await upstreamFetch(
+            buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations"),
+            {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    model: input.model,
+                    prompt: input.prompt,
+                    image: input.references,
+                    ...requestOptions,
+                }),
+                signal,
+            },
+            true,
+        );
+    } else if (input.references.length) {
         const form = new FormData();
         form.set("model", input.model);
         form.set("prompt", input.prompt);
@@ -1403,7 +1419,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES,
         tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试",
     });
-    const data: Array<Record<string, unknown>> = Array.isArray(payload.data) ? payload.data : [];
+    const data = imageResponseItems(payload);
     const mimeType = imageOutputFormatMimeType(input.imageOutputFormat);
     return data.map((item) => (typeof item?.b64_json === "string" ? base64ImageDataUrl(item.b64_json, mimeType) : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
 }

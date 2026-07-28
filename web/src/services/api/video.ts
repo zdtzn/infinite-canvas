@@ -2,6 +2,7 @@ import axios from "axios";
 import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
+import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
@@ -342,17 +343,7 @@ function videoResultUrl(payload: VideoResponse | SeedanceTask) {
 }
 
 function readApiErrorMessage(value: unknown): string {
-    if (!value) return "";
-    if (typeof value === "string") {
-        try {
-            return readApiErrorMessage(JSON.parse(value)) || value;
-        } catch {
-            return value;
-        }
-    }
-    if (typeof value !== "object") return "";
-    const payload = value as { msg?: unknown; message?: unknown; error?: { message?: unknown } };
-    return readApiErrorMessage(payload.msg) || readApiErrorMessage(payload.message) || readApiErrorMessage(payload.error?.message);
+    return extractApiErrorMessage(value);
 }
 
 function readAxiosError(error: unknown, fallback: string) {
@@ -368,7 +359,10 @@ function readAxiosError(error: unknown, fallback: string) {
 function statusMessage(status: number | undefined, fallback: string) {
     if (status === 401 || status === 403) return "鉴权失败，请检查 API Key、套餐权限或模型权限";
     if (status === 429) return "请求被限流或额度不足，请稍后重试";
-    return status ? `${fallback}（${status}）` : fallback;
+    if (status === 404) return "接口地址不存在（404），请检查 Base URL 和模型选择";
+    if (status === 502) return "网关错误（502），接口服务暂时不可用，请稍后重试";
+    if (status === 503) return "服务繁忙（503），请稍后重试";
+    return status ? `${fallback}（HTTP ${status}）` : fallback;
 }
 
 async function assertVideoBlob(blob: Blob) {

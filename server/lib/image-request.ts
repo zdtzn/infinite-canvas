@@ -15,6 +15,31 @@ type OpenAiImageRequestOptionsInput = {
     background?: string;
 };
 
+export function imageResponseItems(payload: unknown): Array<Record<string, unknown>> {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+    const record = payload as Record<string, unknown>;
+    let emptyItems: Array<Record<string, unknown>> | undefined;
+    for (const key of ["data", "images", "results"]) {
+        const value = record[key];
+        if (!Array.isArray(value)) continue;
+        const items = value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+        if (items.length) return items;
+        emptyItems ??= items;
+    }
+    return emptyItems || [];
+}
+
+export function usesJsonReferenceGeneration(baseUrl: string, model: string, referenceCount: number, hasMask: boolean) {
+    if (!referenceCount || hasMask) return false;
+    const normalizedModel = model.toLowerCase();
+    if (normalizedModel.includes("seedream") || normalizedModel.includes("doubao-seedream")) return true;
+    try {
+        return new URL(baseUrl).hostname.toLowerCase() === "ark.cn-beijing.volces.com";
+    } catch {
+        return false;
+    }
+}
+
 /** Keep the common Images API payload compatible with strict OpenAI-style gateways. */
 export function buildOpenAiImageRequestOptions({ count, quality, outputFormat, size, background }: OpenAiImageRequestOptionsInput) {
     return {

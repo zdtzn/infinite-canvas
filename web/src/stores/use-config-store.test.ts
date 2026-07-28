@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyPlatformChannels, createModelChannel, defaultConfig, encodeChannelModel, useConfigStore } from "./use-config-store";
+import { applyPlatformChannels, createModelChannel, defaultConfig, encodeChannelModel, resolveModelForCapability, useConfigStore } from "./use-config-store";
 
 describe("platform channel hydration", () => {
     test("preserves a valid selected model and never keeps a browser API key", () => {
@@ -43,6 +43,20 @@ describe("platform channel hydration", () => {
         expect(empty.channels).toEqual([]);
         expect(empty.models).toEqual([]);
         expect(empty.imageModel).toBe("");
+    });
+
+    test("keeps text reasoning automatic by default and rejects a model from another capability", () => {
+        const channel = createModelChannel({
+            id: "shared",
+            models: [
+                { name: "image-model", capability: "image" },
+                { name: "text-model", capability: "text" },
+            ],
+        });
+        const config = applyPlatformChannels(defaultConfig, [channel]);
+
+        expect(config.reasoningEffort).toBe("auto");
+        expect(resolveModelForCapability(config, encodeChannelModel("shared", "image-model"), "text")).toBe(encodeChannelModel("shared", "text-model"));
     });
 });
 

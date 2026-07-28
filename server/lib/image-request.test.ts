@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { buildOpenAiImageRequestOptions, resolveOpenAiImageSize } from "./image-request";
+import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./image-request";
 
 test("converts workbench ratio presets to OpenAI pixel dimensions", () => {
     expect(resolveOpenAiImageSize("1:1")).toBe("1024x1024");
@@ -27,4 +27,19 @@ test("keeps output resolution independent from provider generation quality", () 
     const size = resolveOpenAiImageSize("1:1", "medium");
     expect(size).toBe("2048x2048");
     expect(buildOpenAiImageRequestOptions({ count: 1, quality: "high", outputFormat: "webp", size })).toEqual({ quality: "high", output_format: "webp", size: "2048x2048", response_format: "b64_json" });
+});
+
+test("reads common image response arrays", () => {
+    expect(imageResponseItems({ data: [{ url: "data" }] })).toEqual([{ url: "data" }]);
+    expect(imageResponseItems({ images: [{ url: "images" }] })).toEqual([{ url: "images" }]);
+    expect(imageResponseItems({ results: [{ b64_json: "result" }] })).toEqual([{ b64_json: "result" }]);
+    expect(imageResponseItems({ data: [], images: [{ url: "fallback" }] })).toEqual([{ url: "fallback" }]);
+    expect(imageResponseItems({ data: "invalid" })).toEqual([]);
+});
+
+test("uses JSON reference generation only for compatible Seedream requests", () => {
+    expect(usesJsonReferenceGeneration("https://ark.cn-beijing.volces.com/api/v3", "doubao-seedream-4", 1, false)).toBe(true);
+    expect(usesJsonReferenceGeneration("https://gateway.example.com/v1", "seedream-4", 2, false)).toBe(true);
+    expect(usesJsonReferenceGeneration("https://gateway.example.com/v1", "gpt-image-2", 1, false)).toBe(false);
+    expect(usesJsonReferenceGeneration("https://ark.cn-beijing.volces.com/api/v3", "doubao-seedream-4", 1, true)).toBe(false);
 });

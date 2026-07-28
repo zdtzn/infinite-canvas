@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { friendlyErrorMessage } from "./friendly-error";
+import { extractApiErrorMessage, friendlyErrorMessage } from "./friendly-error";
 
 test("turns common upstream failures into actionable Chinese messages", () => {
     assert.equal(friendlyErrorMessage("Invalid request"), "当前渠道不支持这组生成参数，请检查模型、尺寸、质量和参考图设置");
@@ -13,4 +13,11 @@ test("turns common upstream failures into actionable Chinese messages", () => {
 test("preserves useful application errors and handles empty server failures", () => {
     assert.equal(friendlyErrorMessage("今日斗气已经耗尽"), "今日斗气已经耗尽");
     assert.equal(friendlyErrorMessage("", 503), "上游生图服务暂时不可用，任务记录已保留，请稍后重试");
+});
+
+test("extracts nested and serialized upstream messages", () => {
+    expect(extractApiErrorMessage({ error: { message: "provider rejected request" } })).toBe("provider rejected request");
+    expect(extractApiErrorMessage({ detail: JSON.stringify({ msg: "nested gateway error" }) })).toBe("nested gateway error");
+    expect(extractApiErrorMessage(new Error(JSON.stringify({ error: { message: "serialized error" } })))).toBe("serialized error");
+    expect(extractApiErrorMessage("<html><body>bad gateway</body></html>")).toBe("上游服务返回了 HTML 错误页面");
 });

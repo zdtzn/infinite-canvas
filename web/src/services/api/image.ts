@@ -4,6 +4,7 @@ import { defaultConfig, resolveModelRequestConfig, resolveModelScript, type AiCo
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
+import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import { cancelServerJob, saveServerChannel, submitImageJob, waitForServerJob } from "@/services/server-api";
@@ -84,6 +85,8 @@ type ResponseStreamState = { buffer: string; text: string; payload?: ResponseApi
 
 type ImageApiResponse = {
     data?: Array<Record<string, unknown>>;
+    images?: Array<Record<string, unknown>>;
+    results?: Array<Record<string, unknown>>;
     error?: { message?: string };
     code?: number;
     msg?: string;
@@ -294,8 +297,9 @@ function parseImagePayload(payload: ImageApiResponse, mimeType = "image/png") {
     if (typeof payload.code === "number" && payload.code !== 0) {
         throw new Error(payload.msg || "请求失败");
     }
+    const imageItems = [payload.data, payload.images, payload.results].find((items) => Array.isArray(items) && items.length > 0) || [];
     const images =
-        payload.data
+        imageItems
             ?.map((item) => resolveImageDataUrl(item, mimeType))
             .filter((value): value is string => Boolean(value))
             .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
@@ -309,18 +313,20 @@ function parseImagePayload(payload: ImageApiResponse, mimeType = "image/png") {
 
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
-        const responseData = error.response?.data;
-        return responseData?.msg || responseData?.error?.message || readStatusError(error.response?.status, fallback);
+    if (axios.isAxiosError(error)) {
+        return extractApiErrorMessage(error.response?.data) || readStatusError(error.response?.status, fallback) || error.message || fallback;
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
-    return error instanceof Error ? error.message : fallback;
+    return extractApiErrorMessage(error) || fallback;
 }
 
 function readStatusError(status: number | undefined, fallback: string) {
     if (status === 401 || status === 403) return "鉴权失败，请检查 API Key、套餐权限或模型权限";
     if (status === 429) return "请求被限流或额度不足，请稍后重试";
-    return status ? `${fallback}：${status}` : fallback;
+    if (status === 404) return "接口地址不存在（404），请检查 Base URL 和模型选择";
+    if (status === 502) return "网关错误（502），接口服务暂时不可用，请稍后重试";
+    if (status === 503) return "服务繁忙（503），请稍后重试";
+    return status ? `${fallback}（HTTP ${status}）` : fallback;
 }
 
 function withSystemPrompt(config: AiConfig, prompt: string) {
@@ -764,6 +770,17 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
 }
 
+function usesJsonReferenceGeneration(config: ManagedAiConfig, referenceCount: number, hasMask: boolean) {
+    if (!referenceCount || hasMask) return false;
+    const model = config.model.toLowerCase();
+    if (model.includes("seedream") || model.includes("doubao-seedream")) return true;
+    try {
+        return new URL(config.baseUrl).hostname.toLowerCase() === "ark.cn-beijing.volces.com";
+    } catch {
+        return false;
+    }
+}
+
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions): Promise<RequestedImage[]> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
@@ -796,6 +813,34 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
         try {
             return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
+    if (usesJsonReferenceGeneration(requestConfig, references.length, Boolean(mask))) {
+        const resolution = normalizeResolution(config.quality);
+        const imageQuality = resolveSupportedImageQuality(requestConfig);
+        const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
+        const requestSize = resolveImageRequestSize(resolution, config.size);
+        const background = normalizeBackground(config.background);
+        const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+        try {
+            const response = await axios.post<ImageApiResponse>(
+                aiApiUrl(requestConfig, "/images/generations"),
+                {
+                    model: requestConfig.model,
+                    prompt: withSystemPrompt(requestConfig, requestPrompt),
+                    image: refs,
+                    ...(n > 1 ? { n } : {}),
+                    ...(imageQuality ? { quality: imageQuality } : {}),
+                    ...(imageOutputFormat ? { output_format: imageOutputFormat } : {}),
+                    ...(requestSize ? { size: requestSize } : {}),
+                    ...(background ? { background } : {}),
+                    response_format: "b64_json",
+                },
+                { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal },
+            );
+            return parseImagePayload(response.data, imageOutputFormatMimeType(imageOutputFormat));
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
@@ -864,6 +909,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
         const answer = (await requestStreamingResponse(requestConfig, {
             model: requestConfig.model,
             input: toResponseInput(withSystemMessage(requestConfig, messages)),
+            ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
         }, onDelta, options)).content || "没有返回内容";
         if (answer === "没有返回内容") onDelta(answer);
         return answer;

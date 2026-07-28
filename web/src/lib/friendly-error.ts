@@ -1,7 +1,7 @@
 const MAX_ERROR_LENGTH = 300;
 
 export function friendlyErrorMessage(value: unknown, status?: number) {
-    const raw = errorText(value).replace(/\s+/g, " ").trim().slice(0, MAX_ERROR_LENGTH);
+    const raw = extractApiErrorMessage(value).replace(/\s+/g, " ").trim().slice(0, MAX_ERROR_LENGTH);
     const normalized = raw.toLowerCase();
 
     if (/(content policy|safety|moderation|blocked prompt|content_filter)/i.test(raw)) {
@@ -30,8 +30,22 @@ export function friendlyErrorMessage(value: unknown, status?: number) {
     return status ? `请求失败（${status}）` : "操作失败，请稍后重试";
 }
 
-function errorText(value: unknown) {
-    if (value instanceof Error) return value.message;
-    if (typeof value === "string") return value;
+export function extractApiErrorMessage(value: unknown, depth = 0): string {
+    if (depth > 5 || value === null || value === undefined) return "";
+    if (value instanceof Error) return extractApiErrorMessage(value.message, depth + 1);
+    if (typeof value === "string") {
+        const text = value.trim();
+        if (!text) return "";
+        try {
+            const parsed = JSON.parse(text);
+            return extractApiErrorMessage(parsed, depth + 1) || text;
+        } catch {
+            return /<[a-z][\s\S]*>/i.test(text) ? "上游服务返回了 HTML 错误页面" : text;
+        }
+    }
+    if (typeof value === "object") {
+        const payload = value as { msg?: unknown; message?: unknown; error?: unknown; detail?: unknown };
+        return extractApiErrorMessage(payload.msg, depth + 1) || extractApiErrorMessage(payload.message, depth + 1) || extractApiErrorMessage(payload.error, depth + 1) || extractApiErrorMessage(payload.detail, depth + 1);
+    }
     return "";
 }

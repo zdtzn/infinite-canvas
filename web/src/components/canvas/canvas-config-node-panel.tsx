@@ -3,12 +3,13 @@ import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings
 import { Button, Segmented } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
-import { defaultConfig, modelMatchesCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
+import { CanvasTextSettingsPopover } from "./canvas-text-settings-popover";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import { useImperialGenerationCue } from "@/features/cultivation/imperial-mode";
 
@@ -97,7 +98,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                 </button>
             </div>
 
-            <div className={`mb-2 grid min-w-0 cursor-default items-center gap-2 ${mode === "image" || mode === "video" || mode === "audio" ? "grid-cols-[minmax(0,1fr)_148px]" : "grid-cols-1"}`} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="mb-2 grid min-w-0 cursor-default grid-cols-[minmax(0,1fr)_148px] items-center gap-2" onMouseDown={(event) => event.stopPropagation()}>
                 <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={() => openConfigDialog(true)} fullWidth />
                 {mode === "video" ? (
                     <CanvasVideoSettingsPopover
@@ -121,7 +122,14 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                         buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
                         onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))}
                     />
-                ) : null}
+                ) : (
+                    <CanvasTextSettingsPopover
+                        config={config}
+                        placement="topRight"
+                        buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
+                        onConfigChange={(_, value) => onConfigChange(node.id, { reasoningEffort: value })}
+                    />
+                )}
             </div>
 
             <Button
@@ -168,13 +176,10 @@ function InputChip({ label, value, style }: { label: string; value: string; styl
 }
 
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasGenerationMode): AiConfig {
-    const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : mode === "audio" ? globalConfig.audioModel : globalConfig.textModel;
-    const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
-    const currentModel = node.metadata?.model;
-    const model = currentModel && modelMatchesCapability(globalConfig, currentModel, mode) ? currentModel : defaultModel && modelMatchesCapability(globalConfig, defaultModel, mode) ? defaultModel : fallbackModel;
     return {
         ...globalConfig,
-        model,
+        model: resolveModelForCapability(globalConfig, node.metadata?.model, mode),
+        reasoningEffort: node.metadata?.reasoningEffort || globalConfig.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         imageQuality: node.metadata?.imageQuality ?? globalConfig.imageQuality ?? defaultConfig.imageQuality,
         imageOutputFormat: node.metadata?.imageOutputFormat ?? globalConfig.imageOutputFormat ?? defaultConfig.imageOutputFormat,

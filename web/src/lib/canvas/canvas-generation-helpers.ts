@@ -1,4 +1,4 @@
-import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
@@ -90,10 +90,10 @@ export function getInputSummary(inputs: NodeGenerationInput[]) {
 }
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
-    const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : mode === "audio" ? config.audioModel : config.textModel;
     return {
         ...config,
-        model: node?.metadata?.model || defaultModel || (mode === "audio" ? defaultConfig.audioModel : config.model || defaultConfig.model),
+        model: resolveModelForCapability(config, node?.metadata?.model, mode),
+        reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
         imageQuality: node?.metadata?.imageQuality ?? config.imageQuality ?? defaultConfig.imageQuality,
         imageOutputFormat: node?.metadata?.imageOutputFormat ?? config.imageOutputFormat ?? defaultConfig.imageOutputFormat,
