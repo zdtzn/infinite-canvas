@@ -34,6 +34,25 @@ docker compose --profile https -f docker-compose.yml -f docker-compose.productio
 
 The image workflow runs type checking, all tests, and the production build before publishing any image.
 
+## Repeat Deployments Before Launch
+
+For the current single-server workflow, deploy only after the GitHub Actions checks and image workflow have succeeded. The helper resolves the verified `latest` tag to its immutable digest before changing the running container:
+
+```bash
+sh ops/deploy-latest.sh
+```
+
+The deployment script stops the app briefly, creates and verifies a full-volume backup, starts the new image by digest, checks `/health` and the source revision, and restores the previous container automatically on failure. For a specific release, bypass tag resolution and provide both immutable values explicitly:
+
+```bash
+IMAGE_REF='ghcr.io/zdtzn/infinite-canvas@sha256:REPLACE_WITH_TESTED_DIGEST' \
+EXPECTED_COMMIT='REPLACE_WITH_FULL_GIT_SHA' \
+sh ops/deploy-pinned.sh
+```
+
+Keep `/root/infinite-canvas.env` mode `600` when production environment variables are added. The script uses that file automatically when it exists.
+When only deployment settings or environment variables changed, set `FORCE_RECREATE=1` so the same pinned image is recreated safely.
+
 ## Required Secrets
 
 Keep these in a root-readable environment file outside the repository:
