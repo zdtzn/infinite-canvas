@@ -7,6 +7,9 @@ export function friendlyErrorMessage(value: unknown, status?: number) {
     if (/(content policy|safety|moderation|blocked prompt|content_filter)/i.test(raw)) {
         return "提示词或参考图触发了渠道内容限制，请调整内容后重试";
     }
+    if (/上游服务返回\s*524/i.test(raw) || status === 524) {
+        return "上游渠道等待生成超时（524），请求可能仍在处理并产生费用，请先到渠道后台确认后再重试";
+    }
     if (/(invalid request|invalid_request|bad request|unsupported parameter|unknown parameter)/i.test(raw)) {
         return "当前渠道不支持这组生成参数，请检查模型、尺寸、质量和参考图设置";
     }
@@ -40,7 +43,9 @@ export function extractApiErrorMessage(value: unknown, depth = 0): string {
             const parsed = JSON.parse(text);
             return extractApiErrorMessage(parsed, depth + 1) || text;
         } catch {
-            return /<[a-z][\s\S]*>/i.test(text) ? "上游服务返回了 HTML 错误页面" : text;
+            if (!/<[a-z!][\s\S]*>/i.test(text)) return text;
+            const statusMatch = text.match(/上游服务返回\s*(\d{3})/i);
+            return statusMatch ? `上游服务返回 ${statusMatch[1]}` : "上游服务返回了 HTML 错误页面";
         }
     }
     if (typeof value === "object") {

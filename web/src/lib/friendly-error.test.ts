@@ -13,6 +13,7 @@ test("turns common upstream failures into actionable Chinese messages", () => {
 test("preserves useful application errors and handles empty server failures", () => {
     assert.equal(friendlyErrorMessage("今日斗气已经耗尽"), "今日斗气已经耗尽");
     assert.equal(friendlyErrorMessage("", 503), "上游生图服务暂时不可用，任务记录已保留，请稍后重试");
+    assert.equal(friendlyErrorMessage("上游服务返回 524：<!DOCTYPE html><html><body>timeout</body></html>"), "上游渠道等待生成超时（524），请求可能仍在处理并产生费用，请先到渠道后台确认后再重试");
 });
 
 test("extracts nested and serialized upstream messages", () => {
@@ -20,4 +21,5 @@ test("extracts nested and serialized upstream messages", () => {
     expect(extractApiErrorMessage({ detail: JSON.stringify({ msg: "nested gateway error" }) })).toBe("nested gateway error");
     expect(extractApiErrorMessage(new Error(JSON.stringify({ error: { message: "serialized error" } })))).toBe("serialized error");
     expect(extractApiErrorMessage("<html><body>bad gateway</body></html>")).toBe("上游服务返回了 HTML 错误页面");
+    expect(extractApiErrorMessage("上游服务返回 524：<!DOCTYPE html><html><body>timeout</body></html>")).toBe("上游服务返回 524");
 });

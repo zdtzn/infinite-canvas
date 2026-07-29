@@ -11,6 +11,7 @@ CONTAINER_PORT="${CONTAINER_PORT:-3000}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
 BACKUP_RETENTION_COUNT="${BACKUP_RETENTION_COUNT:-7}"
 FORCE_RECREATE="${FORCE_RECREATE:-0}"
+ALLOW_ACTIVE_JOBS="${ALLOW_ACTIVE_JOBS:-0}"
 DEPLOY_MODE="${DEPLOY_MODE:-safe}"
 IMAGE_REF="${IMAGE_REF:-}"
 EXPECTED_COMMIT="${EXPECTED_COMMIT:-}"
@@ -54,6 +55,10 @@ case "$FORCE_RECREATE" in
   0|1) ;;
   *) echo "FORCE_RECREATE must be 0 or 1" >&2; exit 1 ;;
 esac
+case "$ALLOW_ACTIVE_JOBS" in
+  0|1) ;;
+  *) echo "ALLOW_ACTIVE_JOBS must be 0 or 1" >&2; exit 1 ;;
+esac
 case "$DEPLOY_MODE" in
   safe|fast) ;;
   *) echo "DEPLOY_MODE must be safe or fast" >&2; exit 1 ;;
@@ -66,6 +71,31 @@ fi
 docker volume inspect "$VOLUME_NAME" >/dev/null
 docker inspect "$CONTAINER_NAME" >/dev/null
 docker run --rm -v "${VOLUME_NAME}:/source:ro" alpine test -f /source/app.sqlite
+
+assert_no_active_jobs() {
+  if [ "$ALLOW_ACTIVE_JOBS" = "1" ]; then
+    return 0
+  fi
+
+  container_running="$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+  if [ "$container_running" != "true" ]; then
+    return 0
+  fi
+
+  if ! active_jobs="$(docker exec "$CONTAINER_NAME" bun -e 'import { Database } from "bun:sqlite"; const db = new Database("/data/app.sqlite", { readonly: true }); const rows = db.query("SELECT payload_json FROM jobs").all(); console.log(rows.filter((row) => { try { return ["queued", "running"].includes(JSON.parse(row.payload_json).status); } catch { return false; } }).length);' | tr -d '\r\n')"; then
+    echo "Unable to determine active generation job count" >&2
+    exit 1
+  fi
+  case "$active_jobs" in
+    ''|*[!0-9]*) echo "Unable to determine active generation job count" >&2; exit 1 ;;
+  esac
+  if [ "$active_jobs" -gt 0 ]; then
+    echo "Deployment blocked: ${active_jobs} generation job(s) are queued or running. Wait for them to finish, or set ALLOW_ACTIVE_JOBS=1 only for an intentional interruption." >&2
+    exit 1
+  fi
+}
+
+assert_no_active_jobs
 pull_image "$IMAGE_REF"
 
 image_revision="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE_REF")"
@@ -160,6 +190,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 mkdir -p "$BACKUP_ROOT"
+assert_no_active_jobs
 docker stop -t 30 "$CONTAINER_NAME" >/dev/null
 if [ "$DEPLOY_MODE" = "safe" ]; then
   archive="infinite-canvas-${timestamp}.tar.gz"

@@ -19,7 +19,7 @@ import { listPlatformChannels, normalizeChannelModels, platformChannelKey, platf
 import { isValidProjectPayload } from "./lib/project-payload";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
-import { readUpstreamErrorMessage } from "./lib/upstream-error";
+import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, isLoopbackSetupRequest, isSameApplicationOrigin, normalizePublicBaseUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { openAppDatabase, persistReference } from "./db/database";
@@ -1366,6 +1366,8 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         Authorization: `Bearer ${apiKey}`,
         "Idempotency-Key": upstreamIdempotencyKey(upstreamRequestId),
     };
+    // Compatible gateways do not consistently honor idempotency keys. Never replay a paid synchronous generation automatically.
+    const retryPaidRequest = false;
     const size = resolveOpenAiImageSize(input.size, input.quality);
     const requestOptions = buildOpenAiImageRequestOptions({
         count: input.count,
@@ -1389,7 +1391,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
                 }),
                 signal,
             },
-            true,
+            retryPaidRequest,
         );
     } else if (input.references.length) {
         const form = new FormData();
@@ -1398,7 +1400,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         Object.entries(requestOptions).forEach(([key, value]) => form.set(key, String(value)));
         input.references.forEach((dataUrl, index) => form.append("image", dataUrlBlob(dataUrl), `reference-${index + 1}.png`));
         if (input.mask) form.set("mask", dataUrlBlob(input.mask), "mask.png");
-        response = await upstreamFetch(buildUpstreamUrl(channel.baseUrl, "openai", "/images/edits"), { method: "POST", headers, body: form, signal }, true);
+        response = await upstreamFetch(buildUpstreamUrl(channel.baseUrl, "openai", "/images/edits"), { method: "POST", headers, body: form, signal }, retryPaidRequest);
     } else {
         response = await upstreamFetch(
             buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations"),
@@ -1412,7 +1414,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
                 }),
                 signal,
             },
-            true,
+            retryPaidRequest,
         );
     }
     const payload = await parseUpstreamJson(response, {
@@ -2011,7 +2013,7 @@ async function parseUpstreamJson(response: Response, options: { maxBytes?: numbe
     try {
         payload = text ? JSON.parse(text) : {};
     } catch {
-        if (!response.ok) throw new Error(`上游服务返回 ${response.status}：${text.slice(0, 200)}`);
+        throw new Error(readUpstreamNonJsonError(response.status, text));
     }
     if (!response.ok || payload?.error || (typeof payload?.code === "number" && payload.code !== 0)) {
         throw new Error(readUpstreamErrorMessage(payload) || `上游服务返回 ${response.status}`);

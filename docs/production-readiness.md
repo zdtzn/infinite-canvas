@@ -61,6 +61,8 @@ sh ops/deploy-fast.sh
 
 Fast mode skips the full-volume archive and accepts the new container after `/health` reports the expected source revision. It still deploys an immutable digest and restores the previous container when startup fails. Use it only for frontend UI, copy, styles, and other changes that cannot alter persisted data. Continue using `deploy-latest.sh` for server code, authentication, permissions, provider configuration, storage, SQLite, migrations, environment changes, and every production release.
 
+All deployment modes now refuse to stop the container while generation jobs are queued or running. Wait for those jobs to finish before deploying. `ALLOW_ACTIVE_JOBS=1` is an emergency override and may cause a paid synchronous upstream request to finish without its result being recoverable, so it should not be used during normal updates.
+
 ## Required Secrets
 
 Keep these in a root-readable environment file outside the repository:
