@@ -32,7 +32,7 @@ docker compose -f docker-compose.yml -f docker-compose.production.yml pull
 docker compose --profile https -f docker-compose.yml -f docker-compose.production.yml up -d
 ```
 
-The image workflow runs type checking, all tests, and the production build before publishing any image.
+The image workflow runs type checking, all tests, and the production build before publishing any image. Branch pushes build only `linux/amd64` for the production server, while version tags build both `amd64` and `arm64`. A manual workflow run can also enable the `multiarch` input. Image compilation runs in parallel with verification, but tags are published only after verification succeeds.
 
 ## Repeat Deployments Before Launch
 
@@ -41,6 +41,17 @@ For the current single-server workflow, deploy only after the GitHub Actions che
 ```bash
 sh ops/deploy-latest.sh
 ```
+
+From a Windows development machine with the dedicated deployment key installed, use the remote helper. It waits until GHCR publishes the requested commit, deploys its immutable digest, and verifies the public health endpoint:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ops/deploy-remote.ps1 `
+  -HostName 118.190.159.129 `
+  -Commit (git rev-parse HEAD) `
+  -Mode safe
+```
+
+Use `-Mode fast` only for UI, copy, and style changes. The default `safe` mode remains required for server code, authentication, permissions, provider configuration, storage, SQLite, migrations, and releases.
 
 The deployment script stops the app briefly, creates and verifies a full-volume backup, starts the new image by digest, checks `/health` and the source revision, and restores the previous container automatically on failure. For a specific release, bypass tag resolution and provide both immutable values explicitly:
 
