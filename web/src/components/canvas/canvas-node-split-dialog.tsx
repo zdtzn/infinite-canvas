@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Button, InputNumber, Modal } from "antd";
-import { Grid2x2, ListRestart, PanelTop, Rows3, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { Button, InputNumber, Modal, Tooltip } from "antd";
+import { Grid2x2, ListRestart, PanelTop, Redo2, Rows3, Trash2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 
-import { readImageMeta } from "@/lib/image-utils";
+import { useImageEditorViewport } from "@/components/canvas/use-image-editor-viewport";
 import type { ImageSplitParams } from "@/lib/canvas/canvas-image-data";
+import { readImageMeta } from "@/lib/image-utils";
 
 export type CanvasImageSplitParams = ImageSplitParams;
 
 const defaultParams: CanvasImageSplitParams = { rows: 2, columns: 2, horizontalLines: [0.5], verticalLines: [0.5] };
 const maxGridSize = 12;
+const maxHistory = 50;
 type ActiveLine = { axis: "horizontal" | "vertical"; index: number } | null;
 
 export function CanvasNodeSplitDialog({
@@ -29,7 +31,13 @@ export function CanvasNodeSplitDialog({
     const [params, setParams] = useState(defaultParams);
     const [image, setImage] = useState<{ width: number; height: number } | null>(null);
     const [active, setActive] = useState<ActiveLine>(null);
-    const previewRef = useRef<HTMLDivElement>(null);
+    const historyRef = useRef<CanvasImageSplitParams[]>([]);
+    const redoRef = useRef<CanvasImageSplitParams[]>([]);
+    const dragAbortRef = useRef<AbortController | null>(null);
+    const [historySize, setHistorySize] = useState(0);
+    const [redoSize, setRedoSize] = useState(0);
+    const viewport = useImageEditorViewport(image, open);
+    const previewRef = viewport.stageRef;
     const horizontalLines = params.horizontalLines || [];
     const verticalLines = params.verticalLines || [];
     const rows = horizontalLines.length + 1;
@@ -38,37 +46,58 @@ export function CanvasNodeSplitDialog({
     const pieceSize = image ? { width: Math.max(1, Math.floor(image.width / columns)), height: Math.max(1, Math.floor(image.height / rows)) } : null;
 
     useEffect(() => {
-        if (!open) return;
+        if (!open) {
+            historyRef.current = [];
+            redoRef.current = [];
+            dragAbortRef.current?.abort();
+            setHistorySize(0);
+            setRedoSize(0);
+            return;
+        }
         setParams(defaultParams);
         setActive(null);
         setImage(validImageSize(imageWidth, imageHeight));
+        historyRef.current = [];
+        redoRef.current = [];
+        setHistorySize(0);
+        setRedoSize(0);
     }, [dataUrl, imageHeight, imageWidth, open]);
 
     useEffect(() => {
         if (!open || validImageSize(imageWidth, imageHeight)) return;
-        let active = true;
+        let activeRead = true;
         void readImageMeta(dataUrl).then((meta) => {
-            if (active) setImage(meta);
+            if (activeRead) setImage(meta);
         });
         return () => {
-            active = false;
+            activeRead = false;
         };
     }, [dataUrl, imageHeight, imageWidth, open]);
 
+    useEffect(() => {
+        if (!open) dragAbortRef.current?.abort();
+        return () => dragAbortRef.current?.abort();
+    }, [open]);
+
     const update = (key: "rows" | "columns", value: string | number | null) => {
         const count = clampGrid(value ?? params[key]);
+        pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
         setActive(null);
         setParams((current) => ({ ...current, [key]: count, [key === "rows" ? "horizontalLines" : "verticalLines"]: buildGridLines(count) }));
     };
+
     const addLine = (axis: "horizontal" | "vertical") => {
-        setParams((current) => {
-            const key = axis === "horizontal" ? "horizontalLines" : "verticalLines";
-            const lines = [...(current[key] || []), findLineSpot(current[key] || [])].sort((a, b) => a - b);
-            return { ...current, [key]: lines, rows: axis === "horizontal" ? lines.length + 1 : current.rows, columns: axis === "vertical" ? lines.length + 1 : current.columns };
-        });
+        pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
+        const key = axis === "horizontal" ? "horizontalLines" : "verticalLines";
+        const spot = findLineSpot(params[key] || []);
+        const lines = [...(params[key] || []), spot].sort((a, b) => a - b);
+        setActive({ axis, index: lines.indexOf(spot) });
+        setParams({ ...params, [key]: lines, rows: axis === "horizontal" ? lines.length + 1 : params.rows, columns: axis === "vertical" ? lines.length + 1 : params.columns });
     };
+
     const deleteLine = () => {
         if (!active) return;
+        pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
         setParams((current) => {
             const key = active.axis === "horizontal" ? "horizontalLines" : "verticalLines";
             const lines = (current[key] || []).filter((_, index) => index !== active.index);
@@ -76,19 +105,24 @@ export function CanvasNodeSplitDialog({
         });
         setActive(null);
     };
+
     const startDrag = (axis: "horizontal" | "vertical", index: number, event: ReactPointerEvent) => {
         event.preventDefault();
+        event.stopPropagation();
         setActive({ axis, index });
         const box = previewRef.current?.getBoundingClientRect();
         if (!box) return;
+        pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
+        dragAbortRef.current?.abort();
+        const controller = new AbortController();
+        dragAbortRef.current = controller;
         const move = (moveEvent: PointerEvent) => setLine(axis, index, axis === "horizontal" ? (moveEvent.clientY - box.top) / box.height : (moveEvent.clientX - box.left) / box.width);
-        const up = () => {
-            window.removeEventListener("pointermove", move);
-            window.removeEventListener("pointerup", up);
-        };
-        window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", up);
+        const stop = () => controller.abort();
+        window.addEventListener("pointermove", move, { signal: controller.signal });
+        window.addEventListener("pointerup", stop, { signal: controller.signal });
+        window.addEventListener("pointercancel", stop, { signal: controller.signal });
     };
+
     const setLine = (axis: "horizontal" | "vertical", index: number, value: number) => {
         setParams((current) => {
             const key = axis === "horizontal" ? "horizontalLines" : "verticalLines";
@@ -97,47 +131,119 @@ export function CanvasNodeSplitDialog({
             return { ...current, [key]: lines };
         });
     };
+
     const resetLines = () => {
+        pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
         setActive(null);
         setParams((current) => ({ ...current, horizontalLines: buildGridLines(current.rows), verticalLines: buildGridLines(current.columns) }));
     };
+
+    const undoSplit = useCallback(() => {
+        const previous = historyRef.current.pop();
+        if (!previous) return;
+        redoRef.current.push(cloneSplitParams(params));
+        setParams(previous);
+        setActive(null);
+        setHistorySize(historyRef.current.length);
+        setRedoSize(redoRef.current.length);
+    }, [params]);
+
+    const redoSplit = useCallback(() => {
+        const next = redoRef.current.pop();
+        if (!next) return;
+        historyRef.current.push(cloneSplitParams(params));
+        setParams(next);
+        setActive(null);
+        setHistorySize(historyRef.current.length);
+        setRedoSize(redoRef.current.length);
+    }, [params]);
+
+    useEffect(() => {
+        if (!open) return;
+        const handleKeyDown = (event: KeyboardEvent) => {
+            const target = event.target instanceof Element ? event.target : null;
+            if (target?.closest("input,textarea,[contenteditable='true']")) return;
+            const key = event.key.toLowerCase();
+            const isUndo = (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && key === "z";
+            const isRedo = (event.metaKey || event.ctrlKey) && !event.altKey && ((event.shiftKey && key === "z") || (!event.shiftKey && key === "y"));
+            const isDelete = event.key === "Delete" || event.key === "Backspace";
+            if (!isUndo && !isRedo && !isDelete) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            if (isDelete) deleteLine();
+            else if (isRedo) redoSplit();
+            else undoSplit();
+        };
+        window.addEventListener("keydown", handleKeyDown, true);
+        return () => window.removeEventListener("keydown", handleKeyDown, true);
+    }, [active, open, params, redoSplit, undoSplit]);
+
     const confirmParams = { ...params, horizontalLines, verticalLines, rows, columns };
 
     return (
-        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={780} centered destroyOnHidden>
-            <div className="space-y-5">
+        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={800} centered destroyOnHidden>
+            <div className="space-y-5" data-canvas-no-zoom>
                 <div>
                     <h2 className="text-xl font-semibold">切分图片</h2>
                     <p className="mt-1 text-sm opacity-60">生成 {total} 个图片子节点，并按原图网格排列到画布右侧</p>
                 </div>
+
                 <div className="grid gap-6 md:grid-cols-[minmax(260px,1fr)_280px]">
                     <div className="rounded-xl border p-4">
-                        <div className="grid min-h-[300px] place-items-center rounded-lg bg-black/5">
-                            <div ref={previewRef} className="relative inline-block max-w-full overflow-hidden rounded-lg bg-black shadow-xl">
-                                <img
-                                    src={dataUrl}
-                                    alt=""
-                                    className="block max-h-[340px] max-w-full object-contain opacity-95"
-                                    draggable={false}
-                                    decoding="async"
-                                    onLoad={(event) => setImage(renderedImageSize(event.currentTarget))}
-                                />
-                                <SplitGrid horizontalLines={horizontalLines} verticalLines={verticalLines} active={active} onPointerDown={startDrag} />
+                        <div
+                            ref={viewport.viewportRef}
+                            {...viewport.panHandlers}
+                            className={`relative isolate h-[340px] min-h-[300px] rounded-lg bg-black/5 ${viewport.scrollClassName} ${viewport.isPanning ? "cursor-grabbing" : viewport.spacePressed ? "cursor-grab" : ""}`}
+                        >
+                            <div className="relative" style={viewport.contentStyle}>
+                                <div ref={previewRef} className="absolute isolate overflow-hidden rounded-lg bg-black [backface-visibility:hidden] [contain:layout_paint] [transform:translateZ(0)]" style={viewport.stageStyle}>
+                                    <div className="absolute left-0 top-0 [backface-visibility:hidden]" style={viewport.mediaStyle}>
+                                        <img src={dataUrl} alt="" className="block h-full w-full object-contain" draggable={false} decoding="async" />
+                                    </div>
+                                    <SplitGrid horizontalLines={horizontalLines} verticalLines={verticalLines} active={active} onPointerDown={startDrag} />
+                                </div>
                             </div>
                         </div>
+
                         <div className="mt-3 flex items-center justify-between text-sm">
-                            <span className="opacity-60">原图</span>
+                            <div className="flex items-center gap-1">
+                                <Tooltip title="撤回调整">
+                                    <Button type="text" icon={<Undo2 className="size-4" />} disabled={!historySize} aria-label="撤回切分调整" onClick={undoSplit} />
+                                </Tooltip>
+                                <Tooltip title="重做调整">
+                                    <Button type="text" icon={<Redo2 className="size-4" />} disabled={!redoSize} aria-label="重做切分调整" onClick={redoSplit} />
+                                </Tooltip>
+                                <Tooltip title="缩小">
+                                    <Button type="text" icon={<ZoomOut className="size-4" />} disabled={!viewport.canZoomOut} aria-label="缩小切分预览" onClick={viewport.zoomOut} />
+                                </Tooltip>
+                                <button type="button" className="min-w-14 text-center text-xs font-semibold tabular-nums opacity-70" aria-label="重置切分预览缩放" onClick={viewport.resetZoom}>
+                                    {Math.round(viewport.zoom * 100)}%
+                                </button>
+                                <Tooltip title="放大">
+                                    <Button type="text" icon={<ZoomIn className="size-4" />} disabled={!viewport.canZoomIn} aria-label="放大切分预览" onClick={viewport.zoomIn} />
+                                </Tooltip>
+                            </div>
                             <span className="font-semibold">{image ? `${image.width} x ${image.height} px` : "读取中"}</span>
                         </div>
                     </div>
+
                     <div className="space-y-5 py-2">
                         <NumberField label="行数" value={rows} onChange={(value) => update("rows", value)} />
                         <NumberField label="列数" value={columns} onChange={(value) => update("columns", value)} />
                         <div className="grid grid-cols-2 gap-2">
-                            <Button icon={<Rows3 className="size-4" />} onClick={() => addLine("horizontal")}>横向线</Button>
-                            <Button icon={<PanelTop className="size-4 rotate-90" />} onClick={() => addLine("vertical")}>纵向线</Button>
-                            <Button icon={<Trash2 className="size-4" />} disabled={!active} onClick={deleteLine}>删除线</Button>
-                            <Button icon={<ListRestart className="size-4" />} onClick={resetLines}>重置线</Button>
+                            <Button icon={<Rows3 className="size-4" />} onClick={() => addLine("horizontal")}>
+                                横向线
+                            </Button>
+                            <Button icon={<PanelTop className="size-4 rotate-90" />} onClick={() => addLine("vertical")}>
+                                纵向线
+                            </Button>
+                            <Button icon={<Trash2 className="size-4" />} disabled={!active} onClick={deleteLine}>
+                                删除线
+                            </Button>
+                            <Button icon={<ListRestart className="size-4" />} onClick={resetLines}>
+                                重置线
+                            </Button>
                         </div>
                         <div className="rounded-xl border px-4 py-3 text-sm">
                             <div className="flex items-center justify-between">
@@ -161,10 +267,6 @@ export function CanvasNodeSplitDialog({
 
 function validImageSize(width?: number, height?: number) {
     return Number.isFinite(width) && Number.isFinite(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : null;
-}
-
-function renderedImageSize(image: HTMLImageElement) {
-    return validImageSize(image.naturalWidth, image.naturalHeight);
 }
 
 function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (value: string | number | null) => void }) {
@@ -218,4 +320,20 @@ function clampLine(value: number, min: number, max: number) {
 function clampGrid(value: string | number) {
     const numberValue = Number(value);
     return Math.min(maxGridSize, Math.max(1, Math.round(Number.isFinite(numberValue) ? numberValue : 1)));
+}
+
+function cloneSplitParams(params: CanvasImageSplitParams) {
+    return {
+        ...params,
+        horizontalLines: [...(params.horizontalLines || [])],
+        verticalLines: [...(params.verticalLines || [])],
+    };
+}
+
+function pushHistory(historyRef: { current: CanvasImageSplitParams[] }, redoRef: { current: CanvasImageSplitParams[] }, params: CanvasImageSplitParams, setHistorySize: (size: number) => void, setRedoSize: (size: number) => void) {
+    historyRef.current.push(cloneSplitParams(params));
+    if (historyRef.current.length > maxHistory) historyRef.current.shift();
+    redoRef.current = [];
+    setHistorySize(historyRef.current.length);
+    setRedoSize(0);
 }
