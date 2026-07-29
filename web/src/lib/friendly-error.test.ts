@@ -8,6 +8,7 @@ test("turns common upstream failures into actionable Chinese messages", () => {
     assert.equal(friendlyErrorMessage("Upstream service temporarily unavailable"), "当前渠道或模型暂时不可用，请刷新模型列表或更换渠道后重试");
     assert.equal(friendlyErrorMessage("request timed out"), "上游生成等待超时，任务记录已保留，可在任务中心重试");
     assert.equal(friendlyErrorMessage("content policy violation"), "提示词或参考图触发了渠道内容限制，请调整内容后重试");
+    assert.equal(friendlyErrorMessage("图片生成失败：上游服务请求过于频繁，请稍后重试。"), "上游请求过于频繁，请稍后重试");
 });
 
 test("preserves useful application errors and handles empty server failures", () => {

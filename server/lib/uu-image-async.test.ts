@@ -52,6 +52,14 @@ test("reads completed UU task images and task failures", () => {
             task: { task_id: "task-failed", status: "failed", error: { message: "upstream rejected the prompt" } },
         }),
     ).toEqual({ taskId: "task-failed", status: "failed", expiresAt: undefined, imageUrls: [], message: "upstream rejected the prompt" });
+
+    expect(
+        readUuAsyncTask({
+            code: 0,
+            message: "success",
+            data: { task_id: "task-rate-limited", status: "failed", error_message: "图片生成失败：上游服务请求过于频繁，请稍后重试。" },
+        }),
+    ).toEqual({ taskId: "task-rate-limited", status: "failed", expiresAt: undefined, imageUrls: [], message: "图片生成失败：上游服务请求过于频繁，请稍后重试。" });
 });
 
 test("does not treat an outer success acknowledgement as a completed task", () => {

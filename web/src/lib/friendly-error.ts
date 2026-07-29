@@ -19,8 +19,8 @@ export function friendlyErrorMessage(value: unknown, status?: number) {
     if (/(timeout|timed out|deadline exceeded)/i.test(raw)) {
         return "上游生成等待超时，任务记录已保留，可在任务中心重试";
     }
-    if (/(rate limit|too many requests|quota exceeded|insufficient quota)/i.test(raw) || status === 429) {
-        return "渠道请求过于频繁或额度不足，请稍后重试";
+    if (/(rate limit|too many requests|quota exceeded|insufficient quota|请求过于频繁|访问过于频繁|频率限制|限流)/i.test(raw) || status === 429) {
+        return "上游请求过于频繁，请稍后重试";
     }
     if (/(invalid api key|incorrect api key|authentication failed|unauthorized)/i.test(raw)) {
         return "身份验证失败，请重新登录或检查渠道 API Key";
