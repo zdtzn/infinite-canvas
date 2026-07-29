@@ -226,10 +226,20 @@ export default function AssetsPage() {
                             }}
                         />
                         <div className="flex flex-wrap items-center gap-4">
-                            <button type="button" className="text-sm text-[#c9c4b9] transition-colors hover:text-[#f7f4ea]" onClick={() => void exportAllAssets()}>
+                            <button
+                                type="button"
+                                className="asset-transfer-button inline-flex h-10 items-center gap-2 rounded-md border border-[rgb(201_168_106/0.16)] bg-white/[0.025] px-3 text-sm font-medium text-[#c9c4b9] transition-[color,background-color,border-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a86a]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e0e12]"
+                                onClick={() => void exportAllAssets()}
+                            >
+                                <Download className="size-4 text-[#8a8a96] transition-colors duration-200" aria-hidden />
                                 导出资产
                             </button>
-                            <button type="button" className="text-sm text-[#c9c4b9] transition-colors hover:text-[#f7f4ea]" onClick={() => assetInputRef.current?.click()}>
+                            <button
+                                type="button"
+                                className="asset-transfer-button inline-flex h-10 items-center gap-2 rounded-md border border-[rgb(201_168_106/0.16)] bg-white/[0.025] px-3 text-sm font-medium text-[#c9c4b9] transition-[color,background-color,border-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a86a]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e0e12]"
+                                onClick={() => assetInputRef.current?.click()}
+                            >
+                                <Upload className="size-4 text-[#8a8a96] transition-colors duration-200" aria-hidden />
                                 导入资产
                             </button>
                             <button type="button" onClick={openCreate} className="inline-flex items-center rounded-md bg-[#d8402a] px-5 py-2.5 text-sm font-medium tracking-[0.1em] text-[#fff7ee] transition-colors duration-300 hover:bg-[#ee5038]">

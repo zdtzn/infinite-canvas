@@ -224,6 +224,22 @@
         font-weight: 700;
     }
 
+    .asset-transfer-button:hover {
+        border-color: rgb(201 168 106 / 48%);
+        background: rgb(201 168 106 / 10%);
+        color: #f7f4ea;
+        transform: translateY(-1px);
+    }
+
+    .asset-transfer-button:hover svg {
+        color: #c9a86a;
+    }
+
+    .asset-transfer-button:active {
+        background: rgb(201 168 106 / 14%);
+        transform: translateY(0);
+    }
+
     .thin-scrollbar {
         scrollbar-color: rgba(120, 113, 108, 0.45) transparent;
         scrollbar-width: thin;
