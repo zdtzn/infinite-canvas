@@ -12,6 +12,7 @@ import { deriveImageModelCapabilities, validateImageRequest } from "@/stores/mod
 import { useUserStore } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { geminiApiBase, geminiProviderHeaders, isServerManagedConfig, openAiApiUrl, providerHeaders, type ManagedAiConfig } from "./gateway";
+import { chatCompletionPayloadText, consumeChatCompletionStreamText, openAiTextEndpoint, type ChatCompletionStreamState } from "./openai-text-protocol";
 import type { ReferenceImage } from "@/types/image";
 
 export type RequestedImage = {
@@ -516,6 +517,44 @@ async function requestStreamingResponse(config: AiConfig, body: Record<string, u
     return { ...result, content: state.text || result.content };
 }
 
+async function requestStreamingChatCompletion(config: AiConfig, messages: AiTextMessage[], onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    const response = await fetch(aiApiUrl(config, "/chat/completions"), {
+        method: "POST",
+        headers: { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" },
+        body: JSON.stringify({
+            model: config.model,
+            messages: withSystemMessage(config, messages),
+            stream: true,
+            ...(config.reasoningEffort === "auto" ? {} : { reasoning_effort: config.reasoningEffort }),
+        }),
+        signal: options?.signal,
+    });
+    if (!response.ok) throw new Error(await readFetchError(response, "Request failed"));
+
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.body || !contentType.includes("text/event-stream")) {
+        const payload = (await response.json()) as unknown;
+        const error = responseErrorMessage(payload);
+        if (error) throw new Error(error);
+        const content = chatCompletionPayloadText(payload);
+        if (content) onDelta?.(content);
+        return { content, toolCalls: [] };
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const state: ChatCompletionStreamState = { buffer: "", text: "" };
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        consumeChatCompletionStreamText(state, decoder.decode(value, { stream: true }), onDelta);
+        if (state.error) throw new Error(state.error);
+    }
+    consumeChatCompletionStreamText(state, decoder.decode(), onDelta, true);
+    if (state.error) throw new Error(state.error);
+    return { content: state.text, toolCalls: [] };
+}
+
 function toGeminiBody(config: AiConfig, messages: ResponseInputMessage[], extra?: Record<string, unknown>) {
     const systemText = [
         config.systemPrompt.trim(),
@@ -906,11 +945,20 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             if (answer === "没有返回内容") onDelta(answer);
             return answer;
         }
-        const answer = (await requestStreamingResponse(requestConfig, {
-            model: requestConfig.model,
-            input: toResponseInput(withSystemMessage(requestConfig, messages)),
-            ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
-        }, onDelta, options)).content || "没有返回内容";
+        const result =
+            openAiTextEndpoint(messages) === "/chat/completions"
+                ? await requestStreamingChatCompletion(requestConfig, messages, onDelta, options)
+                : await requestStreamingResponse(
+                      requestConfig,
+                      {
+                          model: requestConfig.model,
+                          input: toResponseInput(withSystemMessage(requestConfig, messages)),
+                          ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
+                      },
+                      onDelta,
+                      options,
+                  );
+        const answer = result.content || "没有返回内容";
         if (answer === "没有返回内容") onDelta(answer);
         return answer;
     } catch (error) {

@@ -34,7 +34,8 @@ export function proxyRequestKind(
   )
     return "read";
   if (normalizedMethod !== "POST") return null;
-  if (normalizedPath === "/responses") return "text";
+  if (normalizedPath === "/responses" || normalizedPath === "/chat/completions")
+    return "text";
   if (normalizedPath === "/audio/speech") return "audio";
   if (
     normalizedPath === "/videos" ||

@@ -5,10 +5,12 @@ import { proxyPathModel, proxyRequestKind } from "./ai-proxy-policy";
 describe("managed AI proxy policy", () => {
   test("allows only the OpenAI text endpoint needed by the canvas", () => {
     expect(proxyRequestKind("POST", "openai", "/responses")).toBe("text");
+    expect(proxyRequestKind("POST", "openai", "/chat/completions")).toBe(
+      "text",
+    );
     expect(
       proxyRequestKind("POST", "openai", "/images/generations"),
     ).toBeNull();
-    expect(proxyRequestKind("POST", "openai", "/chat/completions")).toBeNull();
   });
 
   test("keeps existing model and media routes available", () => {
