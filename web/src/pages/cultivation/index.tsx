@@ -228,13 +228,10 @@ export default function CultivationPage() {
                     <div className="flex h-full min-w-0 flex-col gap-6">
                         {/* ── 今日修行 ── */}
                         <section className="shj-panel p-6" aria-label="今日修行">
-                            <div className="grid gap-6 sm:grid-cols-2">
+                            <div className="grid gap-0 sm:grid-cols-2">
                                 {emperorFinalStage ? (
-                                    <div>
-                                        <div className="flex items-baseline justify-between gap-2">
-                                            <span className="font-display text-sm tracking-[0.1em] text-[#edede6]">修为成长</span>
-                                            <span className="text-sm text-[#8a8a96]">累计 {data.totalXp.toLocaleString()}</span>
-                                        </div>
+                                    <div className="min-w-0 pb-6 sm:pb-0 sm:pr-8">
+                                        <span className="font-display text-sm tracking-[0.1em] text-[#edede6]">修为成长</span>
                                         <p className="font-display mt-3 text-sm leading-6 text-[#c9a86a]">已登临斗帝之境。天地已无更高境界。创作永无止境。</p>
                                     </div>
                                 ) : (
@@ -247,12 +244,13 @@ export default function CultivationPage() {
                                     />
                                 )}
                                 {emperorFinalStage ? (
-                                    <div>
-                                        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                                            <span className="font-display text-sm tracking-[0.1em] text-[#edede6]">今日创作</span>
-                                            <span className="text-sm text-[#c9c4b9]">{data.usedToday.toLocaleString()} 次</span>
+                                    <div className="min-w-0 border-t border-[rgb(237_237_230/0.09)] pt-6 sm:border-l sm:border-t-0 sm:pl-8 sm:pt-0">
+                                        <span className="font-display text-sm tracking-[0.1em] text-[#edede6]">今日创作</span>
+                                        <div className="mt-3 flex items-baseline gap-1.5">
+                                            <span className="font-display text-3xl leading-none text-[#edede6]">{data.usedToday.toLocaleString()}</span>
+                                            <span className="text-sm text-[#c9c4b9]">次</span>
                                         </div>
-                                        <p className="mt-3 text-sm text-[#8a8a96]">今日创作持续累计</p>
+                                        <p className="mt-2 text-sm text-[#8a8a96]">今日创作持续累计</p>
                                     </div>
                                 ) : (
                                     <MetricBlock
