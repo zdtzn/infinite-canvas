@@ -24,6 +24,17 @@ export function createCanvasNode(type: CanvasNodeTypeId, position: Position, met
     };
 }
 
+export function createPendingImageUploadNode(file: Pick<File, "name" | "size" | "type">, previewUrl: string, position: Position): CanvasNodeData {
+    const node = createCanvasNode(CanvasNodeType.Image, position, {
+        content: previewUrl,
+        status: "success",
+        uploading: true,
+        bytes: file.size,
+        mimeType: file.type || "image/png",
+    });
+    return { ...node, title: file.name || "图片" };
+}
+
 export function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
     return { content: image.url, storageKey: image.storageKey, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType };
 }

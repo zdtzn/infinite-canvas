@@ -45,7 +45,7 @@ import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildCanvasResourceIndex, buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
-import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
+import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, createPendingImageUploadNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { findContainingGroupId, findGroupDropTarget, getConnectionTargetAnchor, isHiddenBatchChild, isHiddenBatchConnectionEndpoint, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
     audioExtension,
@@ -119,6 +119,12 @@ type CanvasGenerationRequest = {
     originNodeId: string;
     runningNodeId: string;
     controller: AbortController;
+};
+
+type PendingImageUpload = {
+    previewUrl: string;
+    canceled: boolean;
+    previousNode?: CanvasNodeData;
 };
 
 const VIDEO_NODE_MAX_WIDTH = 420;
@@ -264,6 +270,7 @@ function InfiniteCanvasPage() {
     const selectionBoxRef = useRef(selectionBox);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
+    const pendingImageUploadsRef = useRef(new Map<string, PendingImageUpload>());
     const restoreAbortRef = useRef<AbortController | null>(null);
 
     const createHistoryEntry = useCallback(
@@ -406,7 +413,13 @@ function InfiniteCanvasPage() {
     }, [openAgentPanel, projectLoaded, searchParams]);
 
     useEffect(() => {
-        if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
+        if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current || pendingImageUploadsRef.current.size) {
+            if (pendingImageUploadsRef.current.size && historyCommitTimerRef.current) {
+                clearTimeout(historyCommitTimerRef.current);
+                historyCommitTimerRef.current = null;
+            }
+            return;
+        }
         const next = createHistoryEntry();
         const previous = lastHistoryRef.current;
         if (
@@ -421,6 +434,10 @@ function InfiniteCanvasPage() {
 
         if (historyCommitTimerRef.current) clearTimeout(historyCommitTimerRef.current);
         historyCommitTimerRef.current = setTimeout(() => {
+            if (pendingImageUploadsRef.current.size) {
+                historyCommitTimerRef.current = null;
+                return;
+            }
             const current = createHistoryEntry();
             const last = lastHistoryRef.current;
             if (!last) return;
@@ -440,7 +457,7 @@ function InfiniteCanvasPage() {
     }, [activeChatId, backgroundMode, chatSessions, connections, createHistoryEntry, nodes, projectLoaded, showImageInfo]);
 
     useEffect(() => {
-        if (!projectLoaded || historyPausedRef.current) return;
+        if (!projectLoaded || historyPausedRef.current || pendingImageUploadsRef.current.size) return;
         updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
     }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
 
@@ -472,6 +489,11 @@ function InfiniteCanvasPage() {
         () => () => {
             generationRequestsRef.current.forEach((request) => request.controller.abort());
             generationRequestsRef.current.clear();
+            pendingImageUploadsRef.current.forEach((pending) => {
+                pending.canceled = true;
+                URL.revokeObjectURL(pending.previewUrl);
+            });
+            pendingImageUploadsRef.current.clear();
         },
         [],
     );
@@ -784,6 +806,13 @@ function InfiniteCanvasPage() {
             nodesRef.current.forEach((node) => {
                 if (ids.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => allIds.add(childId));
             });
+            allIds.forEach((id) => {
+                const pending = pendingImageUploadsRef.current.get(id);
+                if (!pending) return;
+                pending.canceled = true;
+                pendingImageUploadsRef.current.delete(id);
+                URL.revokeObjectURL(pending.previewUrl);
+            });
             setNodes((prev) => {
                 const next = prev.filter((node) => !allIds.has(node.id));
                 return next.map((node) => {
@@ -844,6 +873,11 @@ function InfiniteCanvasPage() {
     }, [cancelPendingConnectionCreate]);
 
     const clearCanvas = useCallback(() => {
+        pendingImageUploadsRef.current.forEach((pending) => {
+            pending.canceled = true;
+            URL.revokeObjectURL(pending.previewUrl);
+        });
+        pendingImageUploadsRef.current.clear();
         setNodes([]);
         setConnections([]);
         setInfoNodeId(null);
@@ -859,7 +893,7 @@ function InfiniteCanvasPage() {
 
     const duplicateNode = useCallback((nodeId: string) => {
         const source = nodesRef.current.find((node) => node.id === nodeId);
-        if (!source) return;
+        if (!source || source.metadata?.uploading) return;
 
         const id = `${source.type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const next: CanvasNodeData = {
@@ -880,7 +914,7 @@ function InfiniteCanvasPage() {
         if (!selectedIds.size) return;
 
         const copiedNodes = nodesRef.current
-            .filter((node) => selectedIds.has(node.id))
+            .filter((node) => selectedIds.has(node.id) && !node.metadata?.uploading)
             .map((node) => ({
                 ...node,
                 position: { ...node.position },
@@ -888,10 +922,11 @@ function InfiniteCanvasPage() {
             }));
 
         if (!copiedNodes.length) return;
+        const copiedIds = new Set(copiedNodes.map((node) => node.id));
 
         clipboardRef.current = {
             nodes: copiedNodes,
-            connections: connectionsRef.current.filter((connection) => selectedIds.has(connection.fromNodeId) && selectedIds.has(connection.toNodeId)).map((connection) => ({ ...connection })),
+            connections: connectionsRef.current.filter((connection) => copiedIds.has(connection.fromNodeId) && copiedIds.has(connection.toNodeId)).map((connection) => ({ ...connection })),
         };
     }, []);
 
@@ -1367,25 +1402,123 @@ function InfiniteCanvasPage() {
         };
     }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
 
-    const createImageFileNode = useCallback(async (file: File, position: Position) => {
-        const image = await uploadImage(file);
-        const size = fitNodeSize(image.width, image.height);
-        const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        const newNode: CanvasNodeData = {
-            id,
-            type: CanvasNodeType.Image,
-            title: file.name,
-            position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
-            width: size.width,
-            height: size.height,
-            metadata: imageMetadata(image),
-        };
-
-        setNodes((prev) => [...prev, newNode]);
-        setSelectedNodeIds(new Set([id]));
-        setSelectedConnectionId(null);
-        setDialogNodeId(id);
+    const startPendingImageUpload = useCallback((nodeId: string, pending: PendingImageUpload) => {
+        const previous = pendingImageUploadsRef.current.get(nodeId);
+        if (previous) {
+            previous.canceled = true;
+            URL.revokeObjectURL(previous.previewUrl);
+        }
+        pendingImageUploadsRef.current.set(nodeId, pending);
+        if (historyCommitTimerRef.current) {
+            clearTimeout(historyCommitTimerRef.current);
+            historyCommitTimerRef.current = null;
+        }
     }, []);
+
+    const persistPendingImageUpload = useCallback(async (file: File, nodeId: string, pending: PendingImageUpload) => {
+        try {
+            const meta = await readImageMeta(pending.previewUrl);
+            if (pending.canceled || pendingImageUploadsRef.current.get(nodeId) !== pending) {
+                URL.revokeObjectURL(pending.previewUrl);
+                return false;
+            }
+
+            const previewSize = fitNodeSize(meta.width, meta.height);
+            setNodes((current) =>
+                current.map((node) =>
+                    node.id === nodeId
+                        ? {
+                              ...node,
+                              position: {
+                                  x: node.position.x + node.width / 2 - previewSize.width / 2,
+                                  y: node.position.y + node.height / 2 - previewSize.height / 2,
+                              },
+                              width: previewSize.width,
+                              height: previewSize.height,
+                              metadata: {
+                                  ...node.metadata,
+                                  naturalWidth: meta.width,
+                                  naturalHeight: meta.height,
+                                  mimeType: file.type || meta.mimeType,
+                              },
+                          }
+                        : node,
+                ),
+            );
+
+            const image = await uploadImage(file, {
+                imageMeta: { width: meta.width, height: meta.height, mimeType: file.type || meta.mimeType },
+                createThumbnail: false,
+                previewUrl: pending.previewUrl,
+            });
+            if (pending.canceled || pendingImageUploadsRef.current.get(nodeId) !== pending) {
+                await deleteStoredImages([image.storageKey]);
+                return false;
+            }
+
+            pendingImageUploadsRef.current.delete(nodeId);
+            setNodes((current) =>
+                current.map((node) =>
+                    node.id === nodeId
+                        ? {
+                              ...node,
+                              metadata: {
+                                  ...node.metadata,
+                                  ...imageMetadata(image),
+                                  uploading: undefined,
+                                  errorDetails: undefined,
+                              },
+                          }
+                        : node,
+                ),
+            );
+            return true;
+        } catch (error) {
+            if (pendingImageUploadsRef.current.get(nodeId) === pending) pendingImageUploadsRef.current.delete(nodeId);
+            URL.revokeObjectURL(pending.previewUrl);
+            if (pending.canceled) return false;
+
+            setNodes((current) => {
+                if (pending.previousNode) {
+                    return current.map((node) =>
+                        node.id === nodeId
+                            ? {
+                                  ...pending.previousNode!,
+                                  position: node.position,
+                              }
+                            : node,
+                    );
+                }
+                return current.filter((node) => node.id !== nodeId);
+            });
+            if (!pending.previousNode) setConnections((current) => current.filter((connection) => connection.fromNodeId !== nodeId && connection.toNodeId !== nodeId));
+            if (!pending.previousNode) {
+                setSelectedNodeIds((current) => {
+                    const next = new Set(current);
+                    next.delete(nodeId);
+                    return next;
+                });
+                setDialogNodeId((current) => (current === nodeId ? null : current));
+            }
+            throw error;
+        }
+    }, []);
+
+    const createImageFileNode = useCallback(
+        async (file: File, position: Position) => {
+            const previewUrl = URL.createObjectURL(file);
+            const newNode = createPendingImageUploadNode(file, previewUrl, position);
+            const pending: PendingImageUpload = { previewUrl, canceled: false };
+            startPendingImageUpload(newNode.id, pending);
+
+            setNodes((prev) => [...prev, newNode]);
+            setSelectedNodeIds(new Set([newNode.id]));
+            setSelectedConnectionId(null);
+
+            if (await persistPendingImageUpload(file, newNode.id, pending)) setDialogNodeId(newNode.id);
+        },
+        [persistPendingImageUpload, startPendingImageUpload],
+    );
 
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
         const video = await uploadMediaFile(file, "video");
@@ -1473,7 +1606,7 @@ function InfiniteCanvasPage() {
             if (!imageType) return;
             const blob = await imageItem.getType(imageType);
             const file = new File([blob], "clipboard-image.png", { type: imageType });
-            void createImageFileNode(file, getCanvasCenter());
+            void createImageFileNode(file, getCanvasCenter()).catch((error) => message.warning(`剪切板图片添加失败：${error instanceof Error ? error.message : "请检查图片格式或大小"}`));
             message.success("已从剪切板添加图片");
             return;
         }
@@ -2049,7 +2182,11 @@ function InfiniteCanvasPage() {
             try {
                 if (target?.nodeId) {
                     const targetNode = nodesRef.current.find((node) => node.id === target.nodeId);
-                    const adjacentPosition = target.position || (targetNode ? { x: targetNode.position.x + targetNode.width + 40, y: targetNode.position.y + targetNode.height / 2 } : screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2));
+                    const adjacentPosition =
+                        target.position ||
+                        (targetNode
+                            ? { x: targetNode.position.x + targetNode.width + 40, y: targetNode.position.y + targetNode.height / 2 }
+                            : screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2));
                     try {
                         if (isAudioFile(file)) {
                             const audio = await uploadMediaFile(file, "audio");
@@ -2093,8 +2230,19 @@ function InfiniteCanvasPage() {
                             setSelectedConnectionId(null);
                             setDialogNodeId(target.nodeId);
                         } else {
-                            const image = await uploadImage(file);
-                            const imageSize = fitNodeSize(image.width, image.height);
+                            if (!targetNode) throw new Error("目标节点不存在");
+                            const previewUrl = URL.createObjectURL(file);
+                            const previousPending = pendingImageUploadsRef.current.get(target.nodeId);
+                            const pending: PendingImageUpload = {
+                                previewUrl,
+                                canceled: false,
+                                previousNode: previousPending?.previousNode || targetNode,
+                            };
+                            const pendingMetadata = createPendingImageUploadNode(file, previewUrl, {
+                                x: targetNode.position.x + targetNode.width / 2,
+                                y: targetNode.position.y + targetNode.height / 2,
+                            }).metadata;
+                            startPendingImageUpload(target.nodeId, pending);
                             setNodes((prev) =>
                                 prev.map((node) =>
                                     node.id === target.nodeId
@@ -2102,11 +2250,10 @@ function InfiniteCanvasPage() {
                                               ...node,
                                               type: CanvasNodeType.Image,
                                               title: file.name,
-                                              width: imageSize.width,
-                                              height: imageSize.height,
                                               metadata: {
                                                   ...node.metadata,
-                                                  ...imageMetadata(image),
+                                                  ...pendingMetadata,
+                                                  storageKey: undefined,
                                                   errorDetails: undefined,
                                                   freeResize: false,
                                                   isBatchRoot: undefined,
@@ -2131,7 +2278,7 @@ function InfiniteCanvasPage() {
                             );
                             setSelectedNodeIds(new Set([target.nodeId]));
                             setSelectedConnectionId(null);
-                            setDialogNodeId(target.nodeId);
+                            if (await persistPendingImageUpload(file, target.nodeId, pending)) setDialogNodeId(target.nodeId);
                         }
                     } catch (error) {
                         message.warning(`${file.name} 添加失败：${error instanceof Error ? error.message : "请检查格式或文件大小"}`);
@@ -2146,7 +2293,7 @@ function InfiniteCanvasPage() {
                 event.target.value = "";
             }
         },
-        [createMediaFileNodes, message, screenToCanvas, size.height, size.width],
+        [createMediaFileNodes, message, persistPendingImageUpload, screenToCanvas, size.height, size.width, startPendingImageUpload],
     );
 
     const handleDrop = useCallback(
@@ -2351,54 +2498,50 @@ function InfiniteCanvasPage() {
                     if (count > 1) startGenerationRequest(rootId, nodeId, nodeId, controller);
                     let hasSuccess = false;
                     let hasFailure = false;
-                    await runWithConcurrency(
-                        targetIds,
-                        cultivationProfile?.maxConcurrency || 1,
-                        async (targetId) => {
-                            try {
-                                const image = referenceImages.length
-                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, imageRequestOptions(nodeId, controller)).then((items) => items[0])
-                                    : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, imageRequestOptions(nodeId, controller)).then((items) => items[0]);
-                                const uploaded = await uploadImage(image.dataUrl, { outputFormat: generationConfig.imageOutputFormat });
-                                const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
-                                setNodes((prev) => {
-                                    const root = prev.find((node) => node.id === rootId);
-                                    return prev.map((node) => {
-                                        if (node.id !== targetId && node.id !== rootId) return node;
-                                        const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
-                                        if (node.id === rootId && (targetId === rootId || !root?.metadata?.primaryImageId))
-                                            return {
-                                                ...node,
-                                                position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
-                                                width: imageSize.width,
-                                                height: imageSize.height,
-                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), primaryImageId: targetId },
-                                            };
-                                        if (node.id === targetId)
-                                            return {
-                                                ...node,
-                                                position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
-                                                width: imageSize.width,
-                                                height: imageSize.height,
-                                                metadata: { ...node.metadata, ...imageMetadata(uploaded) },
-                                            };
-                                        return node;
-                                    });
+                    await runWithConcurrency(targetIds, cultivationProfile?.maxConcurrency || 1, async (targetId) => {
+                        try {
+                            const image = referenceImages.length
+                                ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, imageRequestOptions(nodeId, controller)).then((items) => items[0])
+                                : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, imageRequestOptions(nodeId, controller)).then((items) => items[0]);
+                            const uploaded = await uploadImage(image.dataUrl, { outputFormat: generationConfig.imageOutputFormat });
+                            const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
+                            setNodes((prev) => {
+                                const root = prev.find((node) => node.id === rootId);
+                                return prev.map((node) => {
+                                    if (node.id !== targetId && node.id !== rootId) return node;
+                                    const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
+                                    if (node.id === rootId && (targetId === rootId || !root?.metadata?.primaryImageId))
+                                        return {
+                                            ...node,
+                                            position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
+                                            width: imageSize.width,
+                                            height: imageSize.height,
+                                            metadata: { ...node.metadata, ...imageMetadata(uploaded), primaryImageId: targetId },
+                                        };
+                                    if (node.id === targetId)
+                                        return {
+                                            ...node,
+                                            position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
+                                            width: imageSize.width,
+                                            height: imageSize.height,
+                                            metadata: { ...node.metadata, ...imageMetadata(uploaded) },
+                                        };
+                                    return node;
                                 });
-                                hasSuccess = true;
-                                if (isConfigNode) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
-                                return true;
-                            } catch (error) {
-                                if (isGenerationCanceled(error)) return false;
-                                const errorDetails = error instanceof Error ? error.message : "生成失败";
-                                hasFailure = true;
-                                setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
-                            } finally {
-                                finishGenerationRequest(targetId, controller);
-                            }
-                            return false;
-                        },
-                    );
+                            });
+                            hasSuccess = true;
+                            if (isConfigNode) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
+                            return true;
+                        } catch (error) {
+                            if (isGenerationCanceled(error)) return false;
+                            const errorDetails = error instanceof Error ? error.message : "生成失败";
+                            hasFailure = true;
+                            setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
+                        } finally {
+                            finishGenerationRequest(targetId, controller);
+                        }
+                        return false;
+                    });
                     void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
                     if (count > 1) finishGenerationRequest(rootId, controller);
                     if (controller.signal.aborted) {
