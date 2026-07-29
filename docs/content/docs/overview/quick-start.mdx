@@ -1,48 +1,71 @@
 ---
 title: 快速开始
-description: 用最少步骤把无限画布跑起来
+description: 使用 Docker 启动当前 Bun + SQLite 完整版本
 ---
 
 # 快速开始
 
-如果你只是想先把项目跑起来，优先部署或启动 `web/` 前端。
+当前版本包含登录、SQLite、服务端渠道、持久任务和用户数据隔离。推荐使用 Docker 启动完整应用，不再推荐只部署静态前端到 Vercel。
 
-## Vercel 部署
-
-在 Vercel 中导入仓库即可，根目录 `vercel.json` 会构建 `web/`。当前版本的 AI 请求由浏览器前台直连用户自己的 OpenAI 兼容地址，不需要额外配置服务端。
-
-## 本地启动
+## Docker 启动
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
+git clone https://github.com/zdtzn/infinite-canvas.git
 cd infinite-canvas
+cp .env.example .env
+```
+
+生成固定加密密钥，并填入 `.env` 的 `APP_ENCRYPTION_KEY`：
+
+```bash
+openssl rand -base64 32
+```
+
+启动应用：
+
+```bash
+docker compose up -d app
+docker compose ps
+curl http://127.0.0.1:3000/health
+```
+
+`/health` 返回 `status: "ok"` 后，服务已经可以使用。Compose 默认只绑定服务器回环地址；需要通过公网 IP 临时测试时，可在 `.env` 将 `APP_BIND_ADDRESS` 改为 `0.0.0.0`，测试结束后应恢复。
+
+## 首次管理员
+
+首次管理员初始化接口只接受服务器回环地址，并且只能成功一次。不要在管理员建立前直接把未初始化站点开放到公网。
+
+完整初始化命令、HTTPS、成员开放和关闭注册步骤见：
+
+- [安全公网部署](https://github.com/zdtzn/infinite-canvas/blob/main/docs/SECURE_PUBLIC_DEPLOYMENT.md)
+- [Docker 部署](/docs/overview/docker)
+
+## 首次使用
+
+1. 管理员登录后，在「工作台设置 > 渠道」配置 Base URL、API Key、协议和模型。
+2. API Key 会由服务端加密写入 `/data`，普通成员只会看到管理员开放的渠道和模型。
+3. 受邀成员使用站点口令、自己的昵称和个人密码创建账号；所有成员进入后可将 `ALLOW_NEW_USERS` 设为 `0`。
+4. 创建画布或进入丹青台完成一次最小生图请求，确认任务、额度、历史记录和藏卷阁均正常。
+
+## 本地前端调试
+
+仅调试前端界面时：
+
+```bash
 cd web
 bun install
 bun run dev
 ```
 
-启动后访问：
-
-```text
-http://localhost:3000
-```
-
-## Docker 启动
-
-如果你需要基于当前源码构建镜像：
+Vite 开发模式默认属于浏览器本地模式，不启用正式登录和服务端数据能力。需要测试完整链路时使用：
 
 ```bash
-docker build -t infinite-canvas .
-docker run --rm -p 3000:3000 infinite-canvas
+docker compose -f docker-compose.local.yml up -d --build
 ```
 
-## 首次使用建议
+## 数据说明
 
-- 先打开右上角配置弹窗，填入自己的 `Base URL`、`API Key` 和模型名。
-- 如果需要提示词仓库内容，打开 `/prompts` 会由浏览器前端直连拉取并缓存到 IndexedDB。
-- 如果需要跨设备同步画布、素材和生成记录，可在配置弹窗中填写 WebDAV。
-
-## 说明
-
-- 当前画布项目和“我的素材”主要保存在浏览器本地，WebDAV 同步需要用户自行配置。
-- AI API Key 保存在浏览器本地，并由前端直接请求 OpenAI 兼容接口。
+- 正式模式的数据根目录为 `/data`，必须挂载持久化数据卷。
+- 项目、素材、头像、任务结果和生成历史按账号隔离并可跨设备恢复。
+- WebDAV 是可选备份/同步方式，不是正式服务端数据卷的替代品。
+- 不要执行 `docker compose down -v`，除非明确要删除全部数据。

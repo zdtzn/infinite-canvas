@@ -1,126 +1,132 @@
 <p align="center">
-  <img src="web/public/logo.svg" width="96" alt="infinite-canvas logo">
+  <img src="web/public/logo.svg" width="96" alt="无限画布 logo">
 </p>
 
-<h1 align="center">无限画布 (infinite-canvas)</h1>
+<h1 align="center">无限画布（Infinite Canvas）</h1>
 
 <p align="center">
-  <a href="https://linux.do/"><img src="https://img.shields.io/badge/Linux.do-Community-2b6de8?style=flat-square" alt="Linux.do"></a>
-  <a href="https://render.com/deploy?repo=https://github.com/basketikun/infinite-canvas"><img src="https://img.shields.io/badge/Render-Deploy-46e3b7?style=flat-square&logo=render&logoColor=111111" alt="Deploy to Render"></a>
-  <a href="https://github.com/basketikun/infinite-canvas"><img src="https://img.shields.io/github/stars/basketikun/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
-  <a href="https://github.com/basketikun/infinite-canvas/tags"><img src="https://img.shields.io/github/v/tag/basketikun/infinite-canvas?style=flat-square&label=version" alt="Version"></a>
+  面向 AI 图片创作的无限画布工作台，将生图、参考图编辑、节点编排、提示词与个人素材放进同一条创作流程。
+</p>
+
+<p align="center">
+  <a href="https://github.com/zdtzn/infinite-canvas"><img src="https://img.shields.io/github/stars/zdtzn/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/zdtzn/infinite-canvas/tags"><img src="https://img.shields.io/github/v/tag/zdtzn/infinite-canvas?style=flat-square&label=version" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
-  <a href="https://vite.dev/"><img src="https://img.shields.io/badge/Vite-7-646cff?style=flat-square&logo=vite&logoColor=white" alt="Vite"></a>
-  <a href="https://reactrouter.com/"><img src="https://img.shields.io/badge/React_Router-7-ca4245?style=flat-square&logo=reactrouter&logoColor=white" alt="React Router"></a>
+  <a href="https://bun.sh/"><img src="https://img.shields.io/badge/runtime-Bun-111111?style=flat-square&logo=bun" alt="Bun"></a>
+  <a href="docs/content/docs/overview/docker.mdx"><img src="https://img.shields.io/badge/deploy-Docker-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker"></a>
 </p>
 
 <p align="center">
-  <a href="https://trendshift.io/repositories/50077?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-50077" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/50077/daily?language=TypeScript" alt="basketikun%2Finfinite-canvas | Trendshift" width="250" height="55"></a>
+  <a href="docs/content/docs/overview/quick-start.mdx">快速开始</a> ·
+  <a href="docs/content/docs/overview/features.mdx">功能介绍</a> ·
+  <a href="docs/content/docs/overview/docker.mdx">Docker 部署</a> ·
+  <a href="docs/SECURE_PUBLIC_DEPLOYMENT.md">安全公网部署</a> ·
+  <a href="docs/content/docs/canvas/canvas-node-manual.mdx">画布手册</a> ·
+  <a href="SECURITY.md">安全策略</a>
 </p>
 
-<p align="center">
-  <a href="docs/content/docs/overview/quick-start.mdx">快速开始</a> · <a href="docs/content/docs/overview/features.mdx">功能介绍</a> · <a href="docs/content/docs/overview/render.mdx">Render 部署</a> · <a href="docs/content/docs/overview/docker.mdx">Docker 部署</a> · <a href="docs/content/docs/canvas/canvas-node-manual.mdx">画布节点操作手册</a> · <a href="docs/content/docs/canvas/canvas-shortcuts.mdx">画布快捷键</a> · <a href="CLA.md">贡献者协议</a> · <a href="SECURITY.md">漏洞提交</a> · <a href="docs/content/docs/progress/todo.mdx">待办事项</a> · <a href="canvas-agent/README.md">本地 Canvas Agent</a> · <a href="plugins/infinite-canvas">Codex app 插件</a>
-</p>
+> [!IMPORTANT]
+> 本仓库是基于 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas) 持续维护的二次开发版本。当前仓库、镜像、版本检查和部署文档均以 `zdtzn/infinite-canvas` 为准；上游项目署名、AGPL-3.0 许可及第三方依赖信息继续保留。
 
-无限画布是一款面向图片创作的开源工作台。它把画布编排、AI 图片生成、参考图编辑、对话助手、提示词库和素材沉淀放在同一个界面里，适合用来探索视觉方案并连续迭代图片结果。
+## 当前定位
 
-> [!CAUTION]
-> 项目目前处于开发阶段，不保证历史数据兼容。各种本地存储格式都可能直接调整，欢迎关注后续更新，当前更适合个人/本地部署，不建议直接公网多人共用。
->
-> 如果你需要稳定维护自己的分支，建议自行 fork 后独立开发。二次开发与 PR 请保留原作者信息和前端页面标识。
+本项目不是单纯的浏览器前端，也不是游戏化产品。当前版本采用 **React + Bun + SQLite 的轻量单体架构**，面向小团队或受邀用户共同使用：
 
-## 核心功能
+- 用户登录后拥有独立的画布项目、藏卷阁素材、生成历史和个人资料。
+- 管理员统一配置模型渠道与 API Key，普通用户直接选择已开放的渠道和模型。
+- 生图任务由服务端持久化执行，支持排队、取消、重试、失败返还额度和服务重启后的状态恢复。
+- 修炼系统仅作为轻量成长反馈与额度管理层，不改变 AI 创作工作台的核心定位。
 
-- 无限画布：多画布项目、节点拖拽缩放、连线、小地图、撤销重做、导入导出。
-- AI 创作：浏览器前台直连你配置的 OpenAI 兼容接口，支持文生图、图生图、参考图编辑、文本问答、音频和视频生成。
-- 画布助手：围绕选中节点和上游节点对话、生图，并把结果插回画布。
-- 本地 Agent：通过本机 Canvas Agent 连接 Codex / Claude Code，让 Agent 通过 MCP 操作当前画布；
-- Codex App 插件：提供 Codex app 插件，安装后会自动注册 MCP 并尝试拉起本地 Agent。
-- 插件系统：支持通过 URL 动态安装 / 启用 / 更新 / 卸载远程节点插件，并提供 TypeScript SDK 自行开发画布节点插件。
-- 自定义接口调用：可自定义生图 / 视频接口的调用方式，灵活适配各类中转站与自建服务。
-- 提示词库：浏览器前端直连多个 GitHub 开源项目，并缓存到 IndexedDB。
+## 主要能力
 
-完整功能说明见 [功能介绍](docs/content/docs/overview/features.mdx)。
+- **无限画布**：多项目、节点拖拽缩放、连线、框选、多选、撤销重做、小地图、导入导出和自动保存。
+- **AI 创作**：文生图、图生图、参考图编辑、局部遮罩、裁剪、切分、放大、图片问答及视频生成。
+- **丹青台**：提示词、模型、比例、清晰度、格式和高级参数统一配置，并保留可恢复的生成记录。
+- **藏卷阁**：按账号保存图片、视频、音频、头像和生成作品，不同用户互不影响。
+- **提示词库**：可信提示词来源、服务端图片代理、缓存回退、原图查看与下载。
+- **账号与后台**：成员登录、停用、管理员渠道配置、用量统计、任务状态、日志及 SQLite 备份状态。
+- **修炼成长**：境界、星级、修为、每日额度、并发限制、能力键和后台动态配置。
+- **本地 Agent**：通过 Canvas Agent 与 Codex / Claude Code 连接，由 Agent 读取和操作当前画布。
 
-如果你在为担心没有合适的生图API来发愁，可以查看该免费生图项目：[chatgpt2api](https://github.com/basketikun/chatgpt2api)
+## 架构
+
+| 层级   | 实现                                                                            |
+| ------ | ------------------------------------------------------------------------------- |
+| 前端   | React 19、Vite、React Router、Zustand、React Query、Ant Design                  |
+| 服务端 | Bun 单体 HTTP 服务，统一提供静态页面、认证、数据 API、AI 代理和任务队列         |
+| 数据库 | SQLite + WAL，启动时自动迁移，并兼容旧 `state.json` 数据导入                    |
+| 文件   | `/data/assets`、`/data/job-files`、`/data/job-references`、`/data/prompt-cache` |
+| 部署   | Docker / Docker Compose，生产环境推荐 Caddy HTTPS 反向代理                      |
 
 ## 快速开始
 
-AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器本地。
-
-### 本地开发
+### Docker
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
+git clone https://github.com/zdtzn/infinite-canvas.git
 cd infinite-canvas
-cd web
+cp .env.example .env
+```
+
+先生成并写入固定的渠道加密密钥：
+
+```bash
+openssl rand -base64 32
+```
+
+将结果填入 `.env` 的 `APP_ENCRYPTION_KEY`，然后启动：
+
+```bash
+docker compose up -d app
+docker compose ps
+curl http://127.0.0.1:3000/health
+```
+
+管理员首次初始化只能通过服务器回环地址完成。公网部署、成员开放、HTTPS、备份与回滚步骤见 [安全公网部署](docs/SECURE_PUBLIC_DEPLOYMENT.md)。
+
+### 本地前端开发
+
+```bash
+git clone https://github.com/zdtzn/infinite-canvas.git
+cd infinite-canvas/web
 bun install
 bun run dev
 ```
 
-### Docker 运行
+Vite 开发模式用于前端调试，默认使用浏览器本地配置与本地数据。需要验证登录、SQLite、用户隔离、后台渠道和持久任务时，请使用完整 Docker 模式：
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
-docker compose up -d
+docker compose -f docker-compose.local.yml up -d --build
 ```
 
-运行后默认端口3000，可访问 `http://localhost:3000`。
+## 数据与升级
 
-首次打开后进入右上角配置，填入自己的 OpenAI 兼容 `Base URL` 和 `API Key`。
+正式部署必须将 Docker 数据卷挂载到 `/data`。重建容器不会删除数据卷，但不要执行 `docker compose down -v`，除非明确要删除全部数据。
 
-如果默认的OpenAI接口调用方式与您的API不同，可自定义生图/视频脚本调用。
+升级前建议创建完整数据卷备份：
 
-## 效果展示
+```bash
+BACKUP_ROOT=/root/infinite-canvas-backups \
+DATA_VOLUME_NAME=infinite-canvas-data \
+sh ops/backup-volume.sh
+```
 
-<table width="100%">
-  <tr>
-    <td width="50%"><img src="https://i.ibb.co/TDFvGWDT/image.png" alt="image" border="0"></td>
-    <td width="50%"><img src="https://i.ibb.co/zVwJq3YS/image.png" alt="image" border="0"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://i.ibb.co/PvY3qhhK/image.png" alt="image" border="0"></td>
-    <td width="50%"><img src="https://i.ibb.co/7D04LwN/image.png" alt="image" border="0"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://i.ibb.co/bj30FtS5/5.png" alt="5" border="0"></td>
-    <td width="50%"><img src="https://i.ibb.co/hxRvjw51/image.png" alt="image" border="0"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://i.ibb.co/jkWsF8q1/image.png" alt="image" border="0"></td>
-    <td width="50%"><img src="https://i.ibb.co/XrnfXHx7/image.png" alt="image" border="0"></td>
-  </tr>
-</table>
+生产环境应固定经过验证的镜像标签或摘要，不建议让 Watchtower 自动更新应用容器。详细说明见 [Docker 部署](docs/content/docs/overview/docker.mdx)。
 
-## 联系方式
+## 本地 Canvas Agent
 
-项目定制二次开发需求 / 生图 API 需求可联系。
+当前 npm 包仍由上游项目以 `@basketikun/canvas-agent` 发布，因此命令和包名不能改成 `@zdtzn/*`：
 
-邮箱：1844025705@qq.com · QQ：1844025705
+```bash
+npx -y @basketikun/canvas-agent
+```
 
-## 赞助支持
+使用说明见 [canvas-agent/README.md](canvas-agent/README.md) 和 [Codex App 插件](docs/content/docs/overview/codex-app-plugin.mdx)。
 
-本项目长期开放广告赞助合作，欢迎品牌 / 产品投放，你的支持是持续更新的动力！
+## 上游与授权
 
-有广告赞助意向请通过上方联系方式沟通。
+- 上游项目：[basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas)
+- 当前维护仓库：[zdtzn/infinite-canvas](https://github.com/zdtzn/infinite-canvas)
+- 开源许可：[GNU Affero General Public License v3.0](LICENSE)
 
-## 社区支持
-
-学 AI，上 L 站：[LinuxDO](https://linux.do/)
-
-点击链接加入群聊【AI开源交流】：https://qm.qq.com/q/DFnKzZ807u
-
-## 开源协议
-
-本项目使用 GNU Affero General Public License v3.0，见 [LICENSE](LICENSE)。
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=basketikun%2Finfinite-canvas&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=basketikun/infinite-canvas&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=basketikun/infinite-canvas&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=basketikun/infinite-canvas&type=date&legend=top-left" />
- </picture>
-</a>
+本仓库保留上游版权、许可和提交历史。提交代码或文档前请阅读 [CLA.md](CLA.md)；安全问题请按 [SECURITY.md](SECURITY.md) 中的私密报告流程处理。

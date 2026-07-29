@@ -2,79 +2,82 @@
 
 ## Supported Versions
 
-infinite-canvas is in active development. Security fixes are accepted for the
-`main` branch and the latest tagged release. Older versions may be handled on a
-best-effort basis.
+Security fixes are accepted for the `main` branch and the latest tagged release
+of `zdtzn/infinite-canvas`. Older versions are handled on a best-effort basis.
 
 ## Reporting a Vulnerability
 
-Please do not open a public issue with exploit details, credentials, private
-API keys, proof-of-concept code, or screenshots that reveal sensitive data.
+Do not publish exploit details, credentials, API keys, private user data, or
+unredacted screenshots in a public issue.
 
-Preferred reporting channels:
+Preferred reporting process:
 
-1. Use GitHub private vulnerability reporting or a GitHub Security Advisory for
-   this repository, if available.
-2. If a private GitHub report is not available, email `1844025705@qq.com` with
-   the subject `[infinite-canvas security]`.
-3. If neither private channel is available, open a public issue that asks for a
-   private contact channel and does not include technical exploit details.
+1. Use GitHub private vulnerability reporting or open a draft Security Advisory
+   for this repository, if that option is available.
+2. If no private GitHub channel is available, open a public issue that only asks
+   the maintainers to provide a private contact channel. Do not include technical
+   exploit details in that issue.
 
-Please include:
+Include the affected version or commit, reproduction steps, expected impact,
+deployment mode, and redacted supporting evidence.
 
-- Affected version, commit, branch, or deployment mode.
-- Clear reproduction steps.
-- Impact and attack scenario.
-- Any relevant logs, screenshots, or proof of concept, with secrets removed.
-- Whether the issue affects local-only usage, hosted deployments, browser
-  storage, WebDAV sync, AI provider configuration, or API proxy behavior.
+## Security Model
 
-## Scope
+The production Docker build runs a Bun monolith with authenticated APIs, SQLite,
+server-managed AI channels, and per-user project and media storage. Relevant
+security boundaries include:
 
-### Canvas node plugins
+- Authentication, session cookies, account disablement, and administrator APIs.
+- Horizontal authorization for projects, assets, generation history, jobs,
+  avatars, cultivation data, and file downloads.
+- Encryption and non-disclosure of platform AI provider credentials.
+- Generation quota, concurrency, idempotency, refunds, and reward settlement.
+- Upstream URL validation, redirects, SSRF controls, prompt-image proxying, and
+  response-size limits.
+- File type validation, path traversal prevention, storage quotas, imports, and
+  exports.
+- SQLite migration, backup, restore, and cross-account cache isolation.
 
-The canvas supports third-party node plugins loaded from a remote URL. By
-design, an installed plugin's code runs directly inside the web app with full
-access to the page, including locally stored data such as AI API keys. This is
-an intentional trade-off for extensibility, and the installer shows a warning
-before installing. Therefore:
+The Vite development server is a separate local-only mode. In that mode, project
+data and user-supplied API credentials may be stored in the browser. Do not use
+the local development mode as the security model for a multi-user deployment.
 
-- Only install plugins from sources you trust.
-- Reports that a *malicious plugin* can access page data or API keys are **out
-  of scope** — that is the documented behavior of the trust model.
-- Reports **in scope** include: the app loading/executing plugin code without
-  the install confirmation, a plugin escaping its declared node type to break
-  core app integrity in ways not implied by "runs in the page", or the plugin
-  source cache being writable by an unrelated origin.
+## Canvas Node Plugins
 
-Examples of in-scope reports:
+Production public mode only enables trusted built-in prompt adapters and does
+not allow ordinary users to execute arbitrary remote plugin or source scripts.
 
-- Cross-site scripting or token exfiltration in the web app.
-- Exposure of locally stored API keys or synced canvas data caused by project
-  code.
-- Unsafe file handling, import/export behavior, or WebDAV proxy behavior.
-- Authentication, authorization, or access-control flaws in project-managed
-  features.
-- Supply-chain issues that are exploitable through this repository's shipped
-  code or default configuration.
+In local mode, a node plugin installed from a URL executes inside the web page
+and can access data available to that page. Only install plugins from sources
+you trust. The documented access of an explicitly installed malicious plugin is
+not, by itself, a vulnerability. Bypassing installation confirmation, escaping
+public-mode restrictions, or accessing another account's server data remains in
+scope.
 
-Examples that are usually out of scope:
+## In Scope
 
-- Vulnerabilities in third-party AI providers, model APIs, hosting platforms,
-  or browser extensions outside this repository.
-- Compromise of a user's own API key outside the app.
-- Denial-of-service reports that require unrealistic traffic volume or physical
-  access to the user's device.
-- Missing security headers without a demonstrated exploit path.
-- Social engineering, phishing, spam, or account recovery requests.
-- Dependency reports without a practical impact on this project.
+- XSS, CSRF, authentication bypass, privilege escalation, or session theft.
+- Cross-user access to projects, assets, history, jobs, profiles, or admin data.
+- API key disclosure, broken channel encryption, or secrets exposed in logs.
+- SSRF, unsafe redirects, path traversal, unsafe upload/import handling, or
+  unauthorized file access.
+- Duplicate charging/reward settlement or quota bypass caused by concurrency or
+  idempotency flaws.
+- Exploitable supply-chain issues in code or default configuration shipped by
+  this repository.
+
+## Usually Out of Scope
+
+- Vulnerabilities in third-party AI providers, hosting platforms, browser
+  extensions, or the upstream npm registry outside this repository's control.
+- A user voluntarily exposing their own credentials outside the application.
+- Missing headers without a practical exploit path.
+- Social engineering, spam, account recovery requests, or unrealistic denial of
+  service scenarios.
+- Dependency reports without demonstrated impact on this project.
 
 ## Disclosure
 
-The maintainers aim to acknowledge valid reports within 7 days and coordinate a
-fix before public disclosure. Response and fix timelines are best effort for
-this community project.
-
-Please allow time for investigation and remediation before publishing details.
-Credit will be given on request unless you prefer to remain anonymous.
-
+Maintainers aim to acknowledge valid reports within seven days and coordinate a
+fix before public disclosure. Timelines are best effort for this community
+project. Credit is available on request.

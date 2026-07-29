@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { App } from "antd";
-import { APP_VERSION } from "@/constant/env";
+import { APP_VERSION, RAW_REPOSITORY_URL } from "@/constant/env";
 import { parseChangelog, type ReleaseInfo } from "@/lib/release";
 
-const latestVersionUrl = "https://raw.githubusercontent.com/basketikun/infinite-canvas/main/VERSION";
-const latestChangelogUrl = "https://raw.githubusercontent.com/basketikun/infinite-canvas/main/CHANGELOG.md";
+const latestVersionUrl = `${RAW_REPOSITORY_URL}/VERSION`;
+const latestChangelogUrl = `${RAW_REPOSITORY_URL}/CHANGELOG.md`;
 
 function readLocalReleases(): ReleaseInfo[] {
     return __APP_RELEASES__ || [];

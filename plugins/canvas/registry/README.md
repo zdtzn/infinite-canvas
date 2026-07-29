@@ -1,39 +1,44 @@
-# 官方插件注册表(集中构建 + 远程发布)
+# 官方插件注册表（集中构建 + 远程发布）
 
-本目录**只放构建脚本**,不放构建产物。官方插件由 CI 构建后发布到孤儿分支 `plugins-dist`,画布经 jsDelivr 从该分支远程拉取并一键安装。第三方插件不进本流程,由用户自行填 JS URL 安装。
+本目录只保存构建脚本，不把构建产物提交到 `main`。官方插件由 CI 构建后发布到当前仓库的孤儿分支 `plugins-dist`，画布再通过 jsDelivr 拉取清单与 bundle。
 
-```
+```text
 registry/
-  package.json    # 构建依赖(esbuild + SDK)
-  build.mjs       # 一次进程构建所有官方插件 → dist/(gitignore)+ 生成清单
-  dist/           # 构建产物(gitignore,不提交;CI 发布到 plugins-dist 分支)
+  package.json    # esbuild 与本地 SDK 依赖
+  build.mjs       # 构建全部官方插件并生成清单
+  dist/           # 构建产物，已被 gitignore
 ```
 
-**产物不进 git**:`dist/` 与 `node_modules/` 均被 `.gitignore` 覆盖。`main` 分支只有源码与脚本。
+## 当前清单地址
 
-## 发布流程(CI 自动)
-
-`.github/workflows/publish-plugins.yml` 在**打版本 tag(`v*`)**或手动触发(`workflow_dispatch`)时,与 GitHub Pages 发布一起跑:
-
-1. `npm install && npm run build` → 在 `dist/` 产出各 `<id>.js` 与 `official-plugins.json`;
-2. 把 `dist/` 强推到孤儿分支 **`plugins-dist`**(仅含产物,force-push 覆盖)。
-
-前端默认从下面地址读取(可用 `VITE_PLUGIN_REGISTRY_URL` 覆盖):
-
-```
-https://cdn.jsdelivr.net/gh/basketikun/infinite-canvas@plugins-dist/official-plugins.json
+```text
+https://cdn.jsdelivr.net/gh/zdtzn/infinite-canvas@plugins-dist/official-plugins.json
 ```
 
-清单里每条的 `entry`(相对文件名)由前端解析成与清单同目录的绝对 URL,再走既有 URL 安装流程。jsDelivr 对分支有缓存(约数小时),需要立即生效可对该分支目录做 purge。
+前端可通过 `VITE_PLUGIN_REGISTRY_URL` 覆盖为其他可信清单。正式公网模式不会向普通用户开放任意远程插件脚本执行。
 
-## 新增 / 更新官方插件
+## 发布流程
 
-- 改完某官方插件源码后,在 `build.mjs` 的 `OFFICIAL` 里保持登记(新增插件在此加一条),提交到 `main`;
-- 下次打版本 tag(或手动 `workflow_dispatch`)时,CI 自动重新构建并发布到 `plugins-dist`。
+`.github/workflows/publish-plugins.yml` 在版本标签 `v*` 或手动触发时执行：
 
-## 本地自测官方面板
+1. 在本目录安装构建依赖。
+2. 运行 `npm run build` 生成 `<id>.js` 和 `official-plugins.json`。
+3. 将 `dist/` 强制发布到当前 GitHub 仓库的 `plugins-dist` 孤儿分支。
+
+清单中的相对 `entry` 会由前端解析为清单同目录下的绝对 URL。jsDelivr 可能缓存数小时，紧急更新时需要对对应路径执行 purge。
+
+## 新增或更新插件
+
+- 修改插件源码后，确认 `build.mjs` 的 `OFFICIAL` 数组仍包含该插件。
+- 在本地运行构建并检查清单与 bundle。
+- 提交 `main` 后通过版本标签或 workflow dispatch 发布。
+
+## 本地验证
 
 ```bash
-cd plugins/canvas/registry && npm install && npm run build   # 产出 dist/
-# 用任意静态服务器伺服 dist/,把 VITE_PLUGIN_REGISTRY_URL 指向其 official-plugins.json
+cd plugins/canvas/registry
+npm install
+npm run build
 ```
+
+使用任意静态服务器提供 `dist/`，再把 `VITE_PLUGIN_REGISTRY_URL` 指向本地 `official-plugins.json`。不要把 `dist/`、`node_modules/` 或第三方插件产物提交到 `main`。

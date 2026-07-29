@@ -3,7 +3,6 @@ import { ArrowUpRight, BookOpen, Rocket } from 'lucide-react';
 import { appName, gitConfig } from '@/lib/shared';
 
 const githubUrl = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
-const demoUrl = 'https://canvas.best/';
 const starHistoryUrl = `https://www.star-history.com/?repos=${gitConfig.user}%2F${gitConfig.repo}&type=date`;
 const starHistoryChart = `https://api.star-history.com/chart?repos=${gitConfig.user}/${gitConfig.repo}&type=date&transparent=true`;
 const darkStarHistoryChart = `${starHistoryChart}&theme=dark`;
@@ -59,15 +58,6 @@ export default function HomePage() {
             >
               <img src="/github.svg" alt="" className="size-4" />
               GitHub
-            </a>
-            <a
-              href={demoUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="inline-flex items-center justify-center gap-2 rounded-full border border-zinc-300 px-5 py-3 text-sm font-medium text-zinc-900 transition hover:border-zinc-900 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-100 dark:hover:border-zinc-500 dark:hover:bg-zinc-900"
-            >
-              在线体验
-              <ArrowUpRight className="size-4" />
             </a>
           </div>
         </div>

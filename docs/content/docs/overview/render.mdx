@@ -1,28 +1,64 @@
 ---
-title: Render 部署
-description: 使用 Render 部署无限画布
+title: Render 部署说明
+description: Render 部署限制、持久磁盘和安全配置要求
 ---
 
-# Render 部署
+# Render 部署说明
 
-点击下面链接即可部署到 Render：
+当前版本不是纯静态前端，必须同时运行 Bun 服务端、SQLite 和 `/data` 文件目录。Render 可以运行 Docker 镜像，但不再是本项目推荐的正式部署方式。
 
-[部署到 Render](https://render.com/deploy?repo=https://github.com/basketikun/infinite-canvas)
+## 为什么不推荐免费实例
 
-## 部署步骤
+Render 免费 Web Service 的文件系统不是可靠的长期持久化存储。重新部署、实例迁移或休眠恢复后，SQLite、素材、任务结果和渠道配置可能丢失。
 
-1. 点击 `Deploy to Render`。
-2. 登录 Render，并按页面提示连接 GitHub。
-3. 确认部署。
+因此：
 
-部署完成后，打开 Render 分配的 `.onrender.com` 域名即可访问。
+- 不要把免费 Render 实例用于真实用户数据。
+- 不要把 WebDAV 当作 SQLite 和服务端文件目录的替代品。
+- 正式使用必须购买并挂载 Persistent Disk 到 `/data`。
+- 更推荐使用 [Docker + Caddy](/docs/overview/docker) 部署到自己的 Linux 服务器。
 
-## 免费版说明
+## 必要配置
 
-默认使用 Render 免费 Web Service：
+如果仍要使用 Render，请创建 Docker Web Service，并至少配置：
 
-- 空闲约 15 分钟后会休眠，下次访问会自动唤醒。
-- 当前主应用数据默认保存在浏览器本地；第三方提示词由浏览器前端直连拉取。
-- 适合体验和演示，不适合长期保存正式数据。
+| 配置                       | 值                                       |
+| -------------------------- | ---------------------------------------- |
+| Health Check Path          | `/health`                                |
+| Persistent Disk Mount Path | `/data`                                  |
+| `APP_ENCRYPTION_KEY`       | 固定的长随机密钥                         |
+| `PUBLIC_BASE_URL`          | Render 分配的完整 HTTPS 地址或自定义域名 |
+| `TRUST_PROXY`              | `1`                                      |
+| `FORCE_SECURE_COOKIES`     | `1`                                      |
 
-长期使用建议优先部署到 Vercel，或自行配置 WebDAV 同步浏览器本地数据。
+镜像可使用：
+
+```text
+ghcr.io/zdtzn/infinite-canvas:latest
+```
+
+正式环境仍建议固定版本标签或镜像摘要，不要长期跟随 `latest`。
+
+## 首次管理员初始化
+
+管理员初始化接口只接受服务端回环请求。实例启动后，需要在 Render Shell 内创建初始化 JSON，并请求：
+
+```bash
+curl -fsS \
+  -H 'Content-Type: application/json' \
+  --data-binary @/tmp/initial-admin.json \
+  http://127.0.0.1:${PORT:-3000}/api/auth/setup
+```
+
+初始化文件包含站点口令和管理员个人密码，使用后应立即删除。不要把内容写入仓库、构建日志或公开工单。
+
+## 备份与更新
+
+Render Persistent Disk 仍然需要独立备份。每次升级前至少确认：
+
+- `/health` 正常。
+- 最新 SQLite 快照可读取。
+- 媒体文件与数据库位于同一个持久磁盘。
+- 已记录当前可回滚的镜像摘要。
+
+如果无法满足这些条件，请使用自管 Docker 部署。

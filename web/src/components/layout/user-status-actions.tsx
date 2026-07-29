@@ -3,7 +3,7 @@ import { BookOpen, Crown, Keyboard, LogOut, MoreHorizontal, Puzzle, Settings2 } 
 import { Dropdown, type MenuProps } from "antd";
 
 import { VersionReleaseModal } from "@/components/layout/version-release-modal";
-import { DOCS_URL } from "@/constant/env";
+import { DOCS_URL, REPOSITORY_URL } from "@/constant/env";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useConfigStore } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -65,7 +65,7 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, va
         {
             key: "github",
             label: "GitHub",
-            onClick: () => window.open("https://github.com/basketikun/infinite-canvas", "_blank", "noopener,noreferrer"),
+            onClick: () => window.open(REPOSITORY_URL, "_blank", "noopener,noreferrer"),
         },
         PUBLIC_MODE
             ? {
@@ -93,16 +93,7 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, va
                 <button type="button" className={cn(naturalIconClass, isDouEmperor && "imperial-avatar-menu-trigger", isImperialMode && "is-active")} style={iconStyle} aria-label="打开应用菜单" title="应用菜单">
                     {isDouEmperor ? (
                         user?.avatarUrl ? (
-                            <ProfileAvatarImage
-                                src={user.avatarUrl}
-                                alt=""
-                                fallback={<Crown className="size-4" />}
-                                width={24}
-                                height={24}
-                                loading="eager"
-                                fetchPriority="high"
-                                className="size-6 rounded-full"
-                            />
+                            <ProfileAvatarImage src={user.avatarUrl} alt="" fallback={<Crown className="size-4" />} width={24} height={24} loading="eager" fetchPriority="high" className="size-6 rounded-full" />
                         ) : (
                             <Crown className="size-4" />
                         )
