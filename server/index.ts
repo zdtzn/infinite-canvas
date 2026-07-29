@@ -17,6 +17,7 @@ import { isAllowedMediaMimeType, resolveMediaMimeType } from "./lib/media-mime";
 import { createMediaTaskStore, type MediaTaskKind } from "./lib/media-task-store";
 import { listPlatformChannels, normalizeChannelModels, platformChannelKey, platformChannelModels, resolvePlatformChannel } from "./lib/platform-channels";
 import { isValidProjectPayload } from "./lib/project-payload";
+import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
@@ -1377,7 +1378,28 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         background: input.background,
     });
     let response: Response;
-    if (usesJsonReferenceGeneration(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))) {
+    if (isSadaiImage2Channel(channel.baseUrl, input.model) && !input.mask) {
+        response = await upstreamFetch(
+            buildUpstreamUrl(channel.baseUrl, "openai", input.references.length ? "/images/edits" : "/images/generations"),
+            {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    model: input.model,
+                    prompt: input.prompt,
+                    ...buildSadaiImageRequestOptions({
+                        count: input.count,
+                        size: input.size,
+                        outputResolution: input.quality,
+                        generationQuality: input.imageQuality,
+                        references: input.references,
+                    }),
+                }),
+                signal,
+            },
+            retryPaidRequest,
+        );
+    } else if (usesJsonReferenceGeneration(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))) {
         response = await upstreamFetch(
             buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations"),
             {

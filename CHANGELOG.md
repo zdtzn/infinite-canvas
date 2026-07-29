@@ -2,6 +2,7 @@
 
 ## Unreleased
 
++ [修复] sadAI `gpt-image-2` 按官方 Image2 文档发送 `aspect_ratio`、`resolution` 与 `images` 字段，并使用独立 API 域名避开网站 Cloudflare 超时链路。
 + [修复] 上游返回 Cloudflare 524/HTML 错误页时展示明确的超时与可能扣费提示；同步付费生图不再自动重复 POST，部署脚本也会在存在运行中任务时拒绝重启容器。
 + [文档] 重写 README、功能、开发、数据、安全和部署文档，使仓库说明与当前 Bun + SQLite 多用户版本一致；仓库链接、版本检查和文档镜像切换到 `zdtzn/infinite-canvas`，同时保留上游署名与 `@basketikun/canvas-agent` 真实依赖说明。
 + [优化] 画布裁剪、局部遮罩与图片切分编辑器增加轻量缩放平移、裁剪比例预设和会话内撤销重做，同时保留现有异步蒙版编码与切分子节点处理链路。
