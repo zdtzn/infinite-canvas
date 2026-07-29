@@ -23,6 +23,7 @@ import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChan
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, isLoopbackSetupRequest, isSameApplicationOrigin, normalizePublicBaseUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
+import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
 import type { ChannelRecord, GenerationHistoryKind, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
@@ -1676,7 +1677,8 @@ function serveJobFile(request: Request, session: SessionPayload, jobId: string, 
 async function proxyAiRequest(request: Request, session: SessionPayload, channelId: string, protocol: ProviderProtocol, path: string, requestId: string) {
     const channel = platformChannel(channelId);
     if (channel.apiFormat !== protocol) throw new HttpError(400, "渠道协议不匹配");
-    assertAllowedProxyRequest(request.method, protocol, path);
+    const requestKind = proxyRequestKind(request.method, protocol, path);
+    if (!requestKind) throw new HttpError(403, "该渠道请求必须通过受控任务接口执行");
     const mediaTaskRead = readMediaTaskRoute(request.method, protocol, path);
     if (mediaTaskRead && !mediaTasks?.isOwnedBy(session.userId, channelId, mediaTaskRead.kind, mediaTaskRead.taskId)) {
         throw new HttpError(404, "媒体任务不存在");
@@ -1700,12 +1702,12 @@ async function proxyAiRequest(request: Request, session: SessionPayload, channel
     const body = ["GET", "HEAD"].includes(request.method) ? undefined : await readRequestBytes(request, MAX_PROXY_BODY_BYTES, "代理请求内容过大");
     let model = "";
     if (body) {
-        const metadata = await readProxyRequestMetadata(headers.get("content-type") || "", body);
+        const metadata = await readProxyRequestMetadata(headers.get("content-type") || "", body, proxyPathModel(protocol, path));
         model = metadata.model;
         if (metadata.promptCharacters > MAX_PROMPT_CHARS) throw new HttpError(400, `提示词不能超过 ${MAX_PROMPT_CHARS.toLocaleString()} 个字符`);
-        assertPlatformModelAllowed(channelId, model, path.startsWith("/audio/") ? "audio" : "video");
+        assertPlatformModelAllowed(channelId, model, requestKind === "read" ? undefined : requestKind);
     }
-    const isGenerationSubmission = request.method === "POST";
+    const isGenerationSubmission = request.method === "POST" && requestKind !== "read";
     const mediaTaskKind = mediaTaskSubmissionKind(protocol, path);
     const usageId = isGenerationSubmission ? createHash("sha256").update(`${session.userId}:media:${requiredIdempotencyKey(request)}`).digest("hex") : "";
     const cultivationService = isGenerationSubmission ? requireCultivation() : null;
@@ -1780,19 +1782,6 @@ async function proxyAiRequest(request: Request, session: SessionPayload, channel
         status: response.status,
         headers: responseHeaders,
     });
-}
-
-function assertAllowedProxyRequest(method: string, protocol: ProviderProtocol, path: string) {
-    const normalizedMethod = method.toUpperCase();
-    const normalizedPath = `/${path.replace(/^\/+/, "")}`;
-    const openAiReadPath = /^\/(?:models(?:\/[^/]+)?|videos\/[^/]+(?:\/content)?|contents\/generations\/tasks\/[^/]+)$/;
-    const openAiWritePath = /^\/(?:audio\/speech|videos|contents\/generations\/tasks)$/;
-    const geminiReadPath = /^\/models(?:\/[^/]+)?$/;
-    const allowed =
-        protocol === "gemini"
-            ? ["GET", "HEAD"].includes(normalizedMethod) && geminiReadPath.test(normalizedPath)
-            : (["GET", "HEAD"].includes(normalizedMethod) && openAiReadPath.test(normalizedPath)) || (normalizedMethod === "POST" && openAiWritePath.test(normalizedPath));
-    if (!allowed) throw new HttpError(403, "该渠道请求必须通过受控任务接口执行");
 }
 
 function mediaTaskSubmissionKind(protocol: ProviderProtocol, path: string): MediaTaskKind | null {
@@ -1873,13 +1862,13 @@ function responseWithBytes(response: Response, bytes: Uint8Array) {
     });
 }
 
-async function readProxyRequestMetadata(contentType: string, body: Uint8Array) {
+async function readProxyRequestMetadata(contentType: string, body: Uint8Array, fallbackModel = "") {
     try {
         let model = "";
         let promptCharacters = 0;
         if (contentType.includes("application/json")) {
             const payload = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
-            model = String(payload.model || "").trim();
+            model = String(payload.model || fallbackModel).trim();
             promptCharacters = proxyPromptCharacterCount(payload);
         } else if (contentType.includes("multipart/form-data") || contentType.includes("application/x-www-form-urlencoded")) {
             const form = await new Request("http://localhost", {
@@ -1887,7 +1876,7 @@ async function readProxyRequestMetadata(contentType: string, body: Uint8Array) {
                 headers: { "Content-Type": contentType },
                 body: requestBody(body),
             }).formData();
-            model = String(form.get("model") || "").trim();
+            model = String(form.get("model") || fallbackModel).trim();
             promptCharacters = ["prompt", "input", "instructions"].reduce((total, key) => {
                 const value = form.get(key);
                 return total + (typeof value === "string" ? value.length : 0);
