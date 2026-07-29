@@ -14,7 +14,7 @@ export function friendlyErrorMessage(value: unknown, status?: number) {
         return "当前渠道不支持这组生成参数，请检查模型、尺寸、质量和参考图设置";
     }
     if (/(upstream service temporarily unavailable|service unavailable|bad gateway|gateway timeout|overloaded)/i.test(raw) || [502, 503, 504, 524].includes(status || 0)) {
-        return "上游生图服务暂时不可用，任务记录已保留，请稍后重试";
+        return "当前渠道或模型暂时不可用，请刷新模型列表或更换渠道后重试";
     }
     if (/(timeout|timed out|deadline exceeded)/i.test(raw)) {
         return "上游生成等待超时，任务记录已保留，可在任务中心重试";
@@ -26,7 +26,7 @@ export function friendlyErrorMessage(value: unknown, status?: number) {
         return "身份验证失败，请重新登录或检查渠道 API Key";
     }
     if (/(failed to fetch|network error|connection refused|connection reset|dns)/i.test(raw)) {
-        return "无法连接生图渠道，请检查渠道地址和网络后重试";
+        return "无法连接当前 AI 渠道，请检查渠道地址和网络后重试";
     }
     if (raw) return raw;
     if (status && status >= 500) return "服务暂时不可用，请稍后重试";
