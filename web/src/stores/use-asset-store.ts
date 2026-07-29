@@ -9,6 +9,7 @@ import { deleteServerAssetLibraryItem, fetchServerAssetLibrary, replaceServerAss
 import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { mergeAssetRecords, planAssetLibraryHydration } from "./asset-library-sync";
+import { normalizeAssetSource } from "./asset-source";
 
 export type AssetKind = "text" | "image" | "video";
 export type TextAsset = AssetBase<"text"> & { data: { content: string } };
@@ -56,7 +57,8 @@ const assetStorage: PersistStorage<AssetStore> = {
         const parsed = JSON.parse(value) as StorageValue<AssetStore>;
         parsed.state.assets = Array.isArray(parsed.state.assets) ? parsed.state.assets : [];
         parsed.state.assets = await Promise.all(
-            parsed.state.assets.map(async (asset) => {
+            parsed.state.assets.map(async (storedAsset) => {
+                const asset = normalizeAssetRecord(storedAsset);
                 if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
                 if (asset.kind !== "image") return asset;
                 if (asset.data.storageKey) {
@@ -88,7 +90,7 @@ export const useAssetStore = create<AssetStore>()(
             addAsset: (asset) => {
                 const now = new Date().toISOString();
                 const id = nanoid();
-                const item = { ...asset, id, createdAt: now, updatedAt: now } as Asset;
+                const item = normalizeAssetRecord({ ...asset, id, createdAt: now, updatedAt: now } as Asset);
                 set((state) => ({ assets: [item, ...state.assets] }));
                 const current = get();
                 if (shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => upsertServerAssetLibraryItem(item, current.ownerUserId));
@@ -99,7 +101,7 @@ export const useAssetStore = create<AssetStore>()(
                 set((state) => ({
                     assets: state.assets.map((asset) => {
                         if (asset.id !== id) return asset;
-                        updated = { ...asset, ...patch, id, updatedAt: new Date().toISOString() } as Asset;
+                        updated = normalizeAssetRecord({ ...asset, ...patch, id, updatedAt: new Date().toISOString() } as Asset);
                         return updated;
                     }),
                 }));
@@ -115,9 +117,10 @@ export const useAssetStore = create<AssetStore>()(
                 if (shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => deleteServerAssetLibraryItem(id, current.ownerUserId));
             },
             replaceAssets: (assets) => {
-                set({ assets });
+                const normalizedAssets = assets.map(normalizeAssetRecord);
+                set({ assets: normalizedAssets });
                 const current = get();
-                if (shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => replaceServerAssetLibrary(assets, false, current.ownerUserId));
+                if (shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => replaceServerAssetLibrary(normalizedAssets, false, current.ownerUserId));
             },
             prepareForUser: (userId) => {
                 if (!PUBLIC_MODE || !userId) return;
@@ -179,7 +182,7 @@ export const useAssetStore = create<AssetStore>()(
                     ownerUserId: typeof value.ownerUserId === "string" ? value.ownerUserId : "",
                     serverHydrated: false,
                     migratedUserIds: Array.isArray(value.migratedUserIds) ? value.migratedUserIds.filter((item): item is string => typeof item === "string") : [],
-                    assets: Array.isArray(value.assets) ? value.assets : [],
+                    assets: Array.isArray(value.assets) ? value.assets.map(normalizeAssetRecord) : [],
                 } as AssetStore;
             },
             partialize: (state) => ({ ownerUserId: state.ownerUserId, migratedUserIds: state.migratedUserIds, assets: state.assets }) as StorageValue<AssetStore>["state"],
@@ -205,6 +208,7 @@ function enqueueAssetLibraryMutation(operation: () => Promise<unknown>) {
 }
 
 async function hydrateServerAsset(asset: Asset): Promise<Asset> {
+    asset = normalizeAssetRecord(asset);
     if (asset.kind === "image" && asset.data.storageKey) {
         const dataUrl = await resolveImageUrl(asset.data.storageKey);
         return { ...asset, coverUrl: dataUrl, data: { ...asset.data, dataUrl } };
@@ -214,6 +218,11 @@ async function hydrateServerAsset(asset: Asset): Promise<Asset> {
         return { ...asset, coverUrl: url, data: { ...asset.data, url } };
     }
     return asset;
+}
+
+function normalizeAssetRecord<T extends Asset>(asset: T): T {
+    const source = normalizeAssetSource(asset.source);
+    return source === asset.source ? asset : ({ ...asset, source } as T);
 }
 
 async function prepareAssetForServer(asset: Asset, expectedUserId: string): Promise<Asset> {

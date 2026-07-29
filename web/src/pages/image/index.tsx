@@ -18,6 +18,7 @@ import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { convertImageOutput, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { clearImageGenerationJob, getImageGenerationSnapshot, replaceImageGenerationResult, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
+import { IMAGE_WORKBENCH_ASSET_SOURCE } from "@/stores/asset-source";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
@@ -291,7 +292,7 @@ export default function ImagePage() {
                 title: `生成结果 ${index + 1}`,
                 coverUrl: stored.url,
                 tags: [],
-                source: "生图工作台",
+                source: IMAGE_WORKBENCH_ASSET_SOURCE,
                 data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
                 metadata: { source: "image-page", prompt },
             });
