@@ -25,6 +25,7 @@ import type { ReferenceImage } from "@/types/image";
 import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialGenerationCue, useImperialMode } from "@/features/cultivation/imperial-mode";
+import { GenerationFailureToast, generationFailureFeedback, generationFailureText } from "@/features/cultivation/generation-messages";
 import { cultivationGenerationBlockReason, cultivationRefundNotice, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, persistGenerationHistoryRecords, synchronizeGenerationHistory } from "@/services/generation-history";
@@ -204,7 +205,14 @@ export default function ImagePage() {
             generationCount,
             async ({ successImages, successCount, failCount, error, durationMs }) => {
                 void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
-                if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
+                const failureFeedback = successCount ? undefined : generationFailureFeedback(error, { isDouEmperor });
+                if (agentTaskId)
+                    updateAgentTask(agentTaskId, {
+                        status: successCount ? "succeeded" : "failed",
+                        successCount,
+                        failCount,
+                        error: failureFeedback ? generationFailureText(failureFeedback) : undefined,
+                    });
                 const logImages = await Promise.all(
                     successImages.map(async (image) => {
                         const stored = await uploadImage(image.dataUrl, { outputFormat: snapshot.config.imageOutputFormat });
@@ -228,8 +236,11 @@ export default function ImagePage() {
                 if (successCount) {
                     const settlement = failCount ? `成功 ${successCount} 张，失败 ${failCount} 张${cultivationRefundNotice(cultivationProfile?.unlimited, "failed")}` : `成功生成 ${successCount} 张图片`;
                     message.success(generationSuccessMessage(settlement));
-                } else {
-                    message.error(`${error || "生成失败"}${cultivationRefundNotice(cultivationProfile?.unlimited, "all")}`);
+                } else if (failureFeedback) {
+                    message.error({
+                        content: <GenerationFailureToast feedback={failureFeedback} supplementary={cultivationRefundNotice(cultivationProfile?.unlimited, "all").replace(/^，/, "")} />,
+                        duration: 2,
+                    });
                 }
             },
             undefined,
@@ -609,7 +620,7 @@ export default function ImagePage() {
                                             onSaveAsset={saveResultToAssets}
                                         />
                                     ) : result.status === "failed" ? (
-                                        <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
+                                        <FailedImageCard key={result.id} id={result.id} error={result.error} isDouEmperor={isDouEmperor} onRetry={() => retryResult(index)} />
                                     ) : (
                                         <PendingImageCard key={result.id} />
                                     ),
@@ -798,13 +809,15 @@ function PendingImageCard() {
     );
 }
 
-function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => void }) {
+function FailedImageCard({ id, error, isDouEmperor, onRetry }: { id: string; error?: string; isDouEmperor: boolean; onRetry: () => void }) {
+    const feedback = generationFailureFeedback(error, { isDouEmperor, seed: `${id}:${error || ""}` });
+
     return (
         <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
             <div className="flex aspect-square flex-col items-center justify-center gap-3 p-5 text-center">
-                <div className="text-sm font-medium text-red-600 dark:text-red-300">生成失败</div>
+                <div className="text-sm font-medium text-red-600 dark:text-red-300">{feedback.title}</div>
                 <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
-                    {error}
+                    {feedback.description}
                 </Typography.Paragraph>
             </div>
             <div className="flex justify-end border-t border-red-200 p-3 dark:border-red-950">

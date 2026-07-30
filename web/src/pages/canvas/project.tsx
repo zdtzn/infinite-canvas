@@ -72,6 +72,7 @@ import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-mana
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
+import { GenerationFailureToast, generationFailureFeedback } from "@/features/cultivation/generation-messages";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
 import { runWithConcurrency } from "@/lib/async-pool";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
@@ -2057,15 +2058,15 @@ function InfiniteCanvasPage() {
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
-                const errorDetails = error instanceof Error ? error.message : "局部修改失败";
-                message.error(errorDetails);
+                const errorDetails = friendlyErrorMessage(error);
+                message.error({ content: <GenerationFailureToast feedback={generationFailureFeedback(errorDetails, { isDouEmperor })} />, duration: 2 });
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
                 finishGenerationRequest(childId, controller);
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, isDouEmperor, message, openConfigDialog, startGenerationRequest],
     );
 
     const upscaleImageNode = useCallback(
@@ -2151,13 +2152,14 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = friendlyErrorMessage(error);
+                message.error({ content: <GenerationFailureToast feedback={generationFailureFeedback(errorDetails, { isDouEmperor })} />, duration: 2 });
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
                 finishGenerationRequest(childId, controller);
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, openConfigDialog, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isDouEmperor, message, openConfigDialog, startGenerationRequest],
     );
 
     const handleFontSizeChange = useCallback((nodeId: string, fontSize: number) => {
@@ -2366,7 +2368,7 @@ function InfiniteCanvasPage() {
                 } catch (error) {
                     if (!isGenerationCanceled(error)) {
                         const errorDetails = friendlyErrorMessage(error);
-                        message.error(errorDetails);
+                        message.error({ content: <GenerationFailureToast feedback={generationFailureFeedback(errorDetails, { isDouEmperor })} />, duration: 2 });
                         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
                     }
                 } finally {
@@ -2499,6 +2501,7 @@ function InfiniteCanvasPage() {
                     if (count > 1) startGenerationRequest(rootId, nodeId, nodeId, controller);
                     let hasSuccess = false;
                     let hasFailure = false;
+                    let failureReason: unknown;
                     await runWithConcurrency(targetIds, cultivationProfile?.maxConcurrency || 1, async (targetId) => {
                         try {
                             const image = referenceImages.length
@@ -2537,6 +2540,7 @@ function InfiniteCanvasPage() {
                             if (isGenerationCanceled(error)) return false;
                             const errorDetails = friendlyErrorMessage(error);
                             hasFailure = true;
+                            failureReason ??= errorDetails;
                             setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
                         } finally {
                             finishGenerationRequest(targetId, controller);
@@ -2550,7 +2554,12 @@ function InfiniteCanvasPage() {
                         return;
                     }
                     if (hasSuccess && isDouEmperor) message.success(generationSuccessMessage("图片已生成"));
-                    if (hasFailure) message.error(hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
+                    if (hasFailure) {
+                        message.error({
+                            content: <GenerationFailureToast feedback={generationFailureFeedback(failureReason, { isDouEmperor })} supplementary={hasSuccess ? "已成的画卷已保留，未成部分可再次执笔。" : undefined} />,
+                            duration: 2,
+                        });
+                    }
                     setNodes((prev) =>
                         prev.map((node) =>
                             node.id === nodeId && isConfigNode
@@ -2730,7 +2739,8 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = friendlyErrorMessage(error);
-                message.error(errorDetails);
+                if (mode === "image") message.error({ content: <GenerationFailureToast feedback={generationFailureFeedback(errorDetails, { isDouEmperor })} />, duration: 2 });
+                else message.error(errorDetails);
                 setNodes((prev) =>
                     prev.map((node) => (node.id === nodeId || pendingChildIds.includes(node.id) ? (node.id === nodeId && !markSourceStatus ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } }) : node)),
                 );
@@ -2739,7 +2749,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [cultivationProfile?.maxConcurrency, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, queryClient, startGenerationRequest],
+        [cultivationProfile?.maxConcurrency, effectiveConfig, finishGenerationRequest, generationSuccessMessage, isAiConfigReady, isDouEmperor, message, openConfigDialog, queryClient, startGenerationRequest],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
@@ -2875,14 +2885,14 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = friendlyErrorMessage(error);
-                message.error(errorDetails);
+                message.error({ content: <GenerationFailureToast feedback={generationFailureFeedback(errorDetails, { isDouEmperor })} />, duration: 2 });
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
                 finishGenerationRequest(node.id, controller);
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, isDouEmperor, message, openConfigDialog, startGenerationRequest],
     );
 
     const generateImageFromTextNode = useCallback(
@@ -3167,6 +3177,7 @@ function InfiniteCanvasPage() {
                             isFocusRelated={activeNodeId === node.id}
                             isConnectionTarget={connectionTargetNodeId === node.id}
                             isConnecting={Boolean(connectingParams)}
+                            isDouEmperor={isDouEmperor}
                             editRequestNonce={editingNodeId === node.id ? editRequestNonce : 0}
                             showPanel={dialogNodeId === node.id && !selectionBox && !getNodeDefinition(node.type)?.hidePanel}
                             batchCount={batchChildCountById.get(node.id) || 0}

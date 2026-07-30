@@ -6,6 +6,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
+import { generationFailureFeedback } from "@/features/cultivation/generation-messages";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
@@ -23,6 +24,7 @@ type CanvasNodeProps = {
     isFocusRelated: boolean;
     isConnectionTarget: boolean;
     isConnecting: boolean;
+    isDouEmperor?: boolean;
     editRequestNonce?: number;
     showPanel: boolean;
     showImageInfo: boolean;
@@ -75,6 +77,7 @@ type NodeContentRendererProps = {
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
     groupChildCount: number;
+    isDouEmperor: boolean;
 };
 
 export const CanvasNode = React.memo(function CanvasNode({
@@ -85,6 +88,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     isFocusRelated,
     isConnectionTarget,
     isConnecting,
+    isDouEmperor = false,
     editRequestNonce = 0,
     showPanel,
     showImageInfo,
@@ -414,6 +418,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         isEditingContent={isEditingContent}
                         textareaRef={textareaRef}
                         isBatchRoot={isBatchRoot}
+                        isDouEmperor={isDouEmperor}
                         batchCount={batchCount}
                         batchExpanded={batchExpanded}
                         batchOpening={batchOpening}
@@ -457,7 +462,7 @@ function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
     if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
-    if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
+    if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} isDouEmperor={props.isDouEmperor} />;
 
     const Renderer = nodeContentRenderers[props.node.type as CanvasNodeType];
     if (Renderer) return <Renderer {...props} />;
@@ -506,10 +511,20 @@ function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
     );
 }
 
-function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
+function ErrorContent({ node, theme, onRetry, isDouEmperor }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry" | "isDouEmperor">) {
+    const isImageCreation = node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Config;
+    const feedback = isImageCreation ? generationFailureFeedback(node.metadata?.errorDetails, { isDouEmperor, seed: `${node.id}:${node.metadata?.errorDetails || ""}` }) : null;
+
     return (
         <div className="flex max-w-[260px] flex-col items-center gap-3 px-5 text-center">
-            <div className="text-xs leading-5 text-red-300">{node.metadata?.errorDetails || "生成失败"}</div>
+            {feedback ? (
+                <div className="flex flex-col gap-1 text-xs leading-5 text-red-300">
+                    <strong className="font-medium">{feedback.title}</strong>
+                    <span>{feedback.description}</span>
+                </div>
+            ) : (
+                <div className="text-xs leading-5 text-red-300">{node.metadata?.errorDetails || "未能完成此项创作"}</div>
+            )}
             <button
                 type="button"
                 className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
@@ -591,7 +606,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             props.node.metadata?.status === "loading" ? (
                 <LoadingContent theme={props.theme} />
             ) : props.node.metadata?.status === "error" ? (
-                <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />
+                <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} isDouEmperor={props.isDouEmperor} />
             ) : (
                 <EmptyImageContent {...props} isBatchRoot={false} />
             );
