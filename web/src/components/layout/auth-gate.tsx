@@ -79,9 +79,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     </span>
                     <div>
                         <Typography.Title level={3} className="!mb-0">
-                            {configured ? "进入 AI 画布" : "初始化 AI 画布"}
+                            {configured ? "欢迎道友进入修炼圣地" : "初始化 AI 画布"}
                         </Typography.Title>
-                        <Typography.Text type="secondary">{configured ? "共享口令进入站点，个人密码保护你的项目" : "首次使用，请设置管理员与站点口令"}</Typography.Text>
+                        <Typography.Text type="secondary">{configured ? "发挥汝之想象，寻觅机缘，大道法则就在其中" : "首次使用，请设置管理员与站点口令"}</Typography.Text>
                     </div>
                 </div>
                 {error ? <Alert className="mb-4" type="error" showIcon message={error} /> : null}
