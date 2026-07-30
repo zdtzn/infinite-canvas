@@ -8,8 +8,10 @@ import { useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationStageLabel, quotaText } from "@/features/cultivation/utils";
 import { promptImageCandidates, promptOriginalUrl, promptServerThumbnailUrl, PromptCover } from "@/components/prompts/prompt-cover";
-import { fetchPrompts, type Prompt } from "@/services/api/prompts";
+import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
 import { cn } from "@/lib/utils";
+
+import { HOMEPAGE_PROMPT_SOURCE_ID, selectHomepagePromptShowcase } from "./showcase";
 
 /**
  * 山门 · 首页(方案B「山海境」开场版)
@@ -60,8 +62,8 @@ export default function IndexPage() {
     const { isImperialMode } = useImperialMode();
 
     useEffect(() => {
-        void fetchPrompts({ pageSize: 12 })
-            .then((data) => setPromptShowcase(data.items))
+        void fetchSourcePrompts(HOMEPAGE_PROMPT_SOURCE_ID)
+            .then((items) => setPromptShowcase(selectHomepagePromptShowcase(items)))
             .catch((error) => message.error(error instanceof Error ? error.message : "获取提示词失败"));
     }, [message]);
 
