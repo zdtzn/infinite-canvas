@@ -275,7 +275,7 @@ export function ImperialWelcome() {
             setVisible(false);
             return;
         }
-        const key = `${preferenceKey(userId, "welcome-seen")}:${localDayKey()}`;
+        const key = `${preferenceKey(userId, "welcome-seen")}:v2:${localDayKey()}`;
         if (handledKey.current === key) return;
         if (readBoolean(key, false)) {
             setVisible(false);
