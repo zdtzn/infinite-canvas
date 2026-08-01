@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { BookOpen, Crown, Keyboard, LogOut, MoreHorizontal, Puzzle, Settings2 } from "lucide-react";
+import { BookOpen, CircleUserRound, Crown, Keyboard, LogOut, Moon, MoreHorizontal, Puzzle, Settings2, Sun } from "lucide-react";
 import { Dropdown, type MenuProps } from "antd";
 
 import { VersionReleaseModal } from "@/components/layout/version-release-modal";
@@ -59,6 +59,7 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, va
             : null,
         {
             key: "theme",
+            icon: theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />,
             label: theme === "dark" ? "切换至浅色主题" : "切换至深色主题",
             onClick: () => setTheme(theme === "dark" ? "light" : "dark"),
         },
@@ -67,15 +68,6 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, va
             label: "GitHub",
             onClick: () => window.open(REPOSITORY_URL, "_blank", "noopener,noreferrer"),
         },
-        PUBLIC_MODE
-            ? {
-                  key: "logout",
-                  icon: <LogOut className="size-4" />,
-                  danger: true,
-                  label: "退出登录",
-                  onClick: () => void logoutAccess().finally(clearSession),
-              }
-            : null,
         onOpenShortcuts
             ? {
                   key: "shortcuts",
@@ -85,23 +77,60 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, va
               }
             : null,
     ].filter(Boolean) as MenuProps["items"];
+    const accountMenuItems: MenuProps["items"] = PUBLIC_MODE
+        ? [
+              {
+                  key: "account",
+                  label: user?.displayName || user?.username || "当前账号",
+                  disabled: true,
+              },
+              { type: "divider" },
+              {
+                  key: "logout",
+                  icon: <LogOut className="size-4" />,
+                  danger: true,
+                  label: "退出登录",
+                  onClick: () => void logoutAccess().finally(clearSession),
+              },
+          ]
+        : [];
 
     return (
         <div className="inline-flex shrink-0 items-center gap-1">
             {showTaskCenter ? <TaskCenter /> : null}
             <Dropdown menu={{ items: menuItems }} trigger={["click"]}>
-                <button type="button" className={cn(naturalIconClass, isDouEmperor && "imperial-avatar-menu-trigger", isImperialMode && "is-active")} style={iconStyle} aria-label="打开应用菜单" title="应用菜单">
-                    {isDouEmperor ? (
-                        user?.avatarUrl ? (
-                            <ProfileAvatarImage src={user.avatarUrl} alt="" fallback={<Crown className="size-4" />} width={24} height={24} loading="eager" fetchPriority="high" className="size-6 rounded-full" />
-                        ) : (
-                            <Crown className="size-4" />
-                        )
-                    ) : (
-                        <MoreHorizontal className="size-4" />
-                    )}
+                <button type="button" className={naturalIconClass} style={iconStyle} aria-label="打开工作台菜单" title="工作台菜单">
+                    <MoreHorizontal className="size-4" />
                 </button>
             </Dropdown>
+            {PUBLIC_MODE ? (
+                <Dropdown menu={{ items: accountMenuItems }} trigger={["click"]}>
+                    <button
+                        type="button"
+                        className={cn(naturalIconClass, isDouEmperor && "imperial-avatar-menu-trigger", isImperialMode && "is-active")}
+                        style={iconStyle}
+                        aria-label="打开账户菜单"
+                        title={user?.displayName || user?.username || "当前账号"}
+                    >
+                        {user?.avatarUrl ? (
+                            <ProfileAvatarImage
+                                src={user.avatarUrl}
+                                alt=""
+                                fallback={isDouEmperor ? <Crown className="size-4" /> : <CircleUserRound className="size-4" />}
+                                width={24}
+                                height={24}
+                                loading="eager"
+                                fetchPriority="high"
+                                className="size-6 rounded-full"
+                            />
+                        ) : isDouEmperor ? (
+                            <Crown className="size-4" />
+                        ) : (
+                            <CircleUserRound className="size-4" />
+                        )}
+                    </button>
+                </Dropdown>
+            ) : null}
             <VersionReleaseModal style={versionStyle} />
         </div>
     );
