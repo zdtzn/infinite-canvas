@@ -45,6 +45,19 @@ describe("platform channel hydration", () => {
         expect(empty.imageModel).toBe("");
     });
 
+    test("preserves the configured platform channel order for model pickers", () => {
+        const first = createModelChannel({ id: "first", sortOrder: 0, models: [{ name: "image-first", capability: "image" }] });
+        const later = createModelChannel({ id: "later", sortOrder: 1, models: [{ name: "image-later", capability: "image" }] });
+
+        const config = applyPlatformChannels(defaultConfig, [later, first]);
+
+        expect(config.channels.map((channel) => [channel.id, channel.sortOrder])).toEqual([
+            ["later", 1],
+            ["first", 0],
+        ]);
+        expect(config.models).toEqual([encodeChannelModel("later", "image-later"), encodeChannelModel("first", "image-first")]);
+    });
+
     test("keeps text reasoning automatic by default and rejects a model from another capability", () => {
         const channel = createModelChannel({
             id: "shared",

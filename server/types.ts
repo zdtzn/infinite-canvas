@@ -23,6 +23,7 @@ export type ChannelRecord = {
   id: string;
   userId: string;
   name: string;
+  sortOrder?: number;
   baseUrl: string;
   apiFormat: ProviderProtocol;
   apiKey: EncryptedSecret;

@@ -12,10 +12,19 @@ export function platformChannelKey(adminUserId: string, channelId: string) {
 export function listPlatformChannels(state: ServerState) {
   const adminUserId = state.auth.adminUserId;
   if (!adminUserId) return [];
-  return Object.values(state.channels)
-    .filter((channel) => channel.userId === adminUserId)
+  const channels = Object.values(state.channels).filter((channel) => channel.userId === adminUserId);
+  const legacyOrder = new Map(
+    [...channels]
+      .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
+      .map((channel, index) => [channel.id, index]),
+  );
+  return channels
     .map((channel) => ({ ...channel, models: platformChannelModels(state, channel.id) }))
-    .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+    .sort(
+      (left, right) =>
+        channelSortOrder(left.sortOrder, legacyOrder.get(left.id) || 0) - channelSortOrder(right.sortOrder, legacyOrder.get(right.id) || 0) ||
+        left.name.localeCompare(right.name, "zh-CN"),
+    );
 }
 
 export function resolvePlatformChannel(state: ServerState, channelId: string) {
@@ -63,4 +72,9 @@ function guessModelCapability(name: string): ChannelCapability {
   if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
   if (IMAGE_KEYWORDS.some((keyword) => value.includes(keyword))) return "image";
   return "text";
+}
+
+function channelSortOrder(value: unknown, fallback: number) {
+  const sortOrder = Number(value);
+  return Number.isInteger(sortOrder) && sortOrder >= 0 ? sortOrder : fallback;
 }

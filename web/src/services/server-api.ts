@@ -149,8 +149,13 @@ export async function saveServerChannel(channel: ModelChannel) {
             apiFormat: channel.apiFormat,
             apiKey: channel.apiKey,
             models: channel.models.map(({ name, capability }) => ({ name, capability })),
+            sortOrder: channel.sortOrder,
         },
     });
+}
+
+export async function reorderServerChannels(channelIds: string[]) {
+    await serverRequest("/api/channels/order", { method: "PUT", body: { channelIds } });
 }
 
 export async function deleteServerChannel(channelId: string) {

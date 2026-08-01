@@ -18,22 +18,20 @@ import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 type UserStatusActionsProps = {
     showConfig?: boolean;
     showTaskCenter?: boolean;
+    showWorkspaceMenu?: boolean;
     variant?: "default" | "canvas";
     onOpenShortcuts?: () => void;
     onOpenPlugins?: () => void;
 };
 
-export function UserStatusActions({ showConfig = true, showTaskCenter = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
+const naturalIconClass = "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white [&_svg]:size-4";
+
+export function WorkspaceMenuAction({ showConfig = true, variant = "default", onOpenShortcuts, onOpenPlugins }: Omit<UserStatusActionsProps, "showTaskCenter" | "showWorkspaceMenu">) {
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
-    const user = useUserStore((state) => state.user);
-    const clearSession = useUserStore((state) => state.clearSession);
-    const { isDouEmperor, isImperialMode } = useImperialMode();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const canvasTheme = canvasThemes[theme];
-    const naturalIconClass = "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white [&_svg]:size-4";
     const iconStyle: CSSProperties | undefined = variant === "canvas" ? { color: canvasTheme.node.text } : undefined;
-    const versionStyle = iconStyle;
     const menuItems: MenuProps["items"] = [
         onOpenPlugins
             ? {
@@ -77,6 +75,23 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, va
               }
             : null,
     ].filter(Boolean) as MenuProps["items"];
+
+    return (
+        <Dropdown menu={{ items: menuItems }} trigger={["click"]}>
+            <button type="button" className={naturalIconClass} style={iconStyle} aria-label="打开工作台菜单" title="工作台菜单">
+                <MoreHorizontal className="size-4" />
+            </button>
+        </Dropdown>
+    );
+}
+
+export function UserStatusActions({ showConfig = true, showTaskCenter = true, showWorkspaceMenu = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
+    const theme = useThemeStore((state) => state.theme);
+    const user = useUserStore((state) => state.user);
+    const clearSession = useUserStore((state) => state.clearSession);
+    const { isDouEmperor, isImperialMode } = useImperialMode();
+    const canvasTheme = canvasThemes[theme];
+    const versionStyle: CSSProperties | undefined = variant === "canvas" ? { color: canvasTheme.node.text } : undefined;
     const accountMenuItems: MenuProps["items"] = PUBLIC_MODE
         ? [
               {
@@ -98,17 +113,13 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, va
     return (
         <div className="inline-flex shrink-0 items-center gap-1">
             {showTaskCenter ? <TaskCenter /> : null}
-            <Dropdown menu={{ items: menuItems }} trigger={["click"]}>
-                <button type="button" className={naturalIconClass} style={iconStyle} aria-label="打开工作台菜单" title="工作台菜单">
-                    <MoreHorizontal className="size-4" />
-                </button>
-            </Dropdown>
+            {showWorkspaceMenu ? <WorkspaceMenuAction showConfig={showConfig} variant={variant} onOpenShortcuts={onOpenShortcuts} onOpenPlugins={onOpenPlugins} /> : null}
             {PUBLIC_MODE ? (
                 <Dropdown menu={{ items: accountMenuItems }} trigger={["click"]}>
                     <button
                         type="button"
                         className={cn(naturalIconClass, isDouEmperor && "imperial-avatar-menu-trigger", isImperialMode && "is-active")}
-                        style={iconStyle}
+                        style={versionStyle}
                         aria-label="打开账户菜单"
                         title={user?.displayName || user?.username || "当前账号"}
                     >

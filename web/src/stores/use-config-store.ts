@@ -17,6 +17,7 @@ export type ChannelModel = {
 export type ModelChannel = {
     id: string;
     name: string;
+    sortOrder?: number;
     baseUrl: string;
     apiKey: string;
     credentialState?: "missing" | "saved";
@@ -81,6 +82,7 @@ export const defaultConfig: AiConfig = {
         {
             id: "default",
             name: "默认渠道",
+            sortOrder: 0,
             baseUrl: OPENAI_BASE_URL,
             apiKey: "",
             credentialState: "missing",
@@ -317,6 +319,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
     return {
         id: channel?.id?.trim() || nanoid(),
         name: channel?.name?.trim() || "新渠道",
+        sortOrder: normalizeChannelSortOrder(channel?.sortOrder),
         baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
         apiKey: channel?.apiKey || "",
         credentialState: channel?.credentialState || (channel?.apiKey ? "saved" : "missing"),
@@ -425,6 +428,7 @@ function normalizeChannels(config: AiConfig) {
             ...channel,
             id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
             name: channel.name || (index === 0 ? "默认渠道" : `渠道 ${index + 1}`),
+            sortOrder: channel.sortOrder ?? index,
             models: normalizeChannelModels(channel.models),
         }),
     );
@@ -433,6 +437,7 @@ function normalizeChannels(config: AiConfig) {
             createModelChannel({
                 id: "default",
                 name: "默认渠道",
+                sortOrder: 0,
                 baseUrl: config.baseUrl || defaultConfig.baseUrl,
                 apiKey: config.apiKey || "",
                 apiFormat: config.apiFormat || defaultConfig.apiFormat,
@@ -449,6 +454,11 @@ export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
     return apiFormat === "gemini" ? "gemini" : "openai";
+}
+
+function normalizeChannelSortOrder(value: unknown) {
+    const sortOrder = Number(value);
+    return Number.isInteger(sortOrder) && sortOrder >= 0 && sortOrder <= 100_000 ? sortOrder : undefined;
 }
 
 function normalizeImageQuality(value: unknown) {

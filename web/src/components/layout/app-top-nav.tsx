@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { navigationSceneNames, primaryNavigationTools, secondaryNavigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
-import { UserStatusActions } from "@/components/layout/user-status-actions";
+import { UserStatusActions, WorkspaceMenuAction } from "@/components/layout/user-status-actions";
 import { TaskCenter } from "@/components/layout/task-center";
 import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 import { CultivationStatusPill } from "@/features/cultivation/status-pill";
@@ -143,8 +143,9 @@ export function AppTopNav() {
                                     <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label="打开 Agent" />
                                 </Tooltip>
                             </span>
+                            <WorkspaceMenuAction />
                             <CultivationStatusPill />
-                            <UserStatusActions showTaskCenter={false} />
+                            <UserStatusActions showTaskCenter={false} showWorkspaceMenu={false} />
                         </div>
                     </div>
                 </header>

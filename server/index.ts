@@ -276,6 +276,7 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/cultivation/login-logs" && request.method === "GET") return adminCultivationLoginLogs(url, session);
         if (url.pathname === "/api/admin/cultivation/breakthroughs" && request.method === "GET") return adminCultivationBreakthroughs(url, session);
         if (url.pathname === "/api/channels" && request.method === "GET") return listChannels(session);
+        if (url.pathname === "/api/channels/order" && request.method === "PUT") return reorderChannels(request, session);
         const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)$/);
         if (channelMatch && request.method === "PUT") return saveChannel(request, session, decodeRouteSegment(channelMatch[1], "渠道 ID"));
         if (channelMatch && request.method === "DELETE") return deleteChannel(session, decodeRouteSegment(channelMatch[1], "渠道 ID"));
@@ -751,6 +752,7 @@ async function saveChannel(request: Request, session: SessionPayload, id: string
         apiFormat?: ProviderProtocol;
         apiKey?: string;
         models?: unknown;
+        sortOrder?: unknown;
     }>(request);
     const baseUrl = String(body.baseUrl || "").trim();
     try {
@@ -764,12 +766,15 @@ async function saveChannel(request: Request, session: SessionPayload, id: string
     if (!adminUserId) throw new HttpError(409, "Platform administrator is not configured");
     const key = platformChannelKey(adminUserId, id);
     const existing = state.channels[key];
+    const currentChannels = listPlatformChannels(state);
+    const fallbackSortOrder = existing?.sortOrder ?? (existing ? Math.max(0, currentChannels.findIndex((channel) => channel.id === id)) : currentChannels.length);
     const plaintext = String(body.apiKey || "").trim();
     if (!plaintext && !existing) throw new HttpError(400, "首次保存渠道时必须填写 API Key");
     state.channels[key] = {
         id,
         userId: adminUserId,
         name: normalizeShortText(body.name || existing?.name || "未命名渠道", 80, "渠道名称"),
+        sortOrder: normalizeChannelSortOrder(body.sortOrder, fallbackSortOrder),
         baseUrl,
         apiFormat,
         apiKey: plaintext ? encryptSecret(plaintext, encryptionSecret) : existing.apiKey,
@@ -779,6 +784,31 @@ async function saveChannel(request: Request, session: SessionPayload, id: string
     writeState();
     const { apiKey: _apiKey, userId: _userId, ...channel } = state.channels[key];
     return json({ ok: true, channel: { ...channel, hasApiKey: true } });
+}
+
+async function reorderChannels(request: Request, session: SessionPayload) {
+    requireAdmin(session);
+    const body = await readJson<{ channelIds?: unknown }>(request);
+    if (!Array.isArray(body.channelIds) || body.channelIds.length > 200) throw new HttpError(400, "渠道排序无效");
+
+    const channelIds = body.channelIds.map((value) => String(value));
+    const uniqueIds = new Set(channelIds);
+    if (uniqueIds.size !== channelIds.length || channelIds.some((id) => !/^[A-Za-z0-9._-]{1,128}$/.test(id))) throw new HttpError(400, "渠道排序无效");
+
+    const adminUserId = state.auth.adminUserId;
+    if (!adminUserId) throw new HttpError(409, "Platform administrator is not configured");
+    const existing = listPlatformChannels(state).map((channel) => channel.id);
+    if (channelIds.length !== existing.length || existing.some((id) => !uniqueIds.has(id))) throw new HttpError(409, "渠道列表已变化，请刷新后重试");
+
+    const updatedAt = Date.now();
+    channelIds.forEach((id, sortOrder) => {
+        const channel = state.channels[platformChannelKey(adminUserId, id)];
+        if (!channel) throw new HttpError(409, "渠道列表已变化，请刷新后重试");
+        channel.sortOrder = sortOrder;
+        channel.updatedAt = updatedAt;
+    });
+    writeState();
+    return json({ ok: true });
 }
 
 function deleteChannel(session: SessionPayload, id: string) {
@@ -2750,6 +2780,11 @@ function normalizeShortText(value: unknown, maxLength: number, label: string) {
         .slice(0, maxLength);
     if (!text || /\p{C}/u.test(text)) throw new HttpError(400, `${label}无效`);
     return text;
+}
+
+function normalizeChannelSortOrder(value: unknown, fallback: number) {
+    const sortOrder = Number(value);
+    return Number.isInteger(sortOrder) && sortOrder >= 0 && sortOrder <= 100_000 ? sortOrder : fallback;
 }
 
 function decodeRouteSegment(value: string, label: string) {

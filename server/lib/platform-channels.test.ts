@@ -35,6 +35,25 @@ describe("platform channels", () => {
     expect(platformChannelModels(state, "shared")).toEqual([{ name: "gpt-image-2", capability: "image" }]);
   });
 
+  test("uses the administrator's saved channel order before channel names", () => {
+    const state = createState();
+    state.channels["admin:shared"].sortOrder = 2;
+    state.channels["admin:alpha"] = {
+      ...state.channels["admin:shared"],
+      id: "alpha",
+      name: "Alpha",
+      sortOrder: 1,
+    };
+    state.channels["admin:beta"] = {
+      ...state.channels["admin:shared"],
+      id: "beta",
+      name: "Beta",
+      sortOrder: 0,
+    };
+
+    expect(listPlatformChannels(state).map((channel) => channel.id)).toEqual(["beta", "alpha", "shared"]);
+  });
+
   test("normalizes model capabilities and removes duplicates", () => {
     expect(
       normalizeChannelModels([

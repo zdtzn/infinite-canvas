@@ -1,5 +1,5 @@
-import { App, Button, Form, Input, Modal, Progress, Select, Tabs } from "antd";
-import { Cloud, Pencil, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
+import { App, Button, Form, Input, Modal, Progress, Select, Tabs, Tooltip } from "antd";
+import { ArrowDown, ArrowUp, Cloud, Pencil, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -7,7 +7,7 @@ import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
-import { deleteServerChannel, saveServerChannel } from "@/services/server-api";
+import { deleteServerChannel, reorderServerChannels, saveServerChannel } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { ConfigMembers } from "@/components/layout/config-members";
 import { ImperialModePreferences } from "@/features/cultivation/imperial-mode";
@@ -69,6 +69,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const { message } = App.useApp();
     const [activeTab, setActiveTab] = useState<ConfigTabKey>(initialTab);
     const [editingChannelId, setEditingChannelId] = useState("");
+    const [reorderingChannels, setReorderingChannels] = useState(false);
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
@@ -105,9 +106,33 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
 
     const addChannel = () => {
         if (!canManageChannels) return;
-        const channel = createModelChannel({ name: `渠道 ${config.channels.length + 1}` });
+        const channel = createModelChannel({ name: `渠道 ${config.channels.length + 1}`, sortOrder: nextChannelSortOrder(config.channels) });
         updateChannels([...config.channels, channel]);
         setEditingChannelId(channel.id);
+    };
+
+    const moveChannel = async (index: number, offset: -1 | 1) => {
+        if (!canManageChannels || reorderingChannels) return;
+        const nextIndex = index + offset;
+        if (nextIndex < 0 || nextIndex >= config.channels.length) return;
+
+        const previousChannels = config.channels;
+        const nextChannels = [...config.channels];
+        [nextChannels[index], nextChannels[nextIndex]] = [nextChannels[nextIndex], nextChannels[index]];
+        const orderedChannels = nextChannels.map((channel, sortOrder) => ({ ...channel, sortOrder }));
+        updateChannels(orderedChannels);
+
+        if (!PUBLIC_MODE) return;
+        setReorderingChannels(true);
+        try {
+            await reorderServerChannels(orderedChannels.map((channel) => channel.id));
+            message.success("渠道顺序已保存");
+        } catch (error) {
+            updateChannels(previousChannels);
+            message.error(error instanceof Error ? error.message : "渠道排序保存失败");
+        } finally {
+            setReorderingChannels(false);
+        }
     };
 
     const deleteChannel = (id: string) => {
@@ -197,7 +222,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                     </Button>
                                 </div>
                                 <div className="space-y-2">
-                                    {config.channels.map((channel) => (
+                                    {config.channels.map((channel, index) => (
                                         <div key={channel.id} className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-4 py-3 dark:border-stone-800">
                                             <div className="min-w-0">
                                                 <div className="truncate text-sm font-semibold">{channel.name || "未命名渠道"}</div>
@@ -205,7 +230,20 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                                     {apiFormatLabel(channel.apiFormat)} · {channel.models.length} 个模型 · {channel.baseUrl || "未填写接口地址"}
                                                 </div>
                                             </div>
-                                            <div className="flex shrink-0 gap-2">
+                                            <div className="flex shrink-0 items-center gap-1">
+                                                <Tooltip title="上移">
+                                                    <Button type="text" size="small" icon={<ArrowUp className="size-3.5" />} disabled={reorderingChannels || index === 0} onClick={() => void moveChannel(index, -1)} aria-label="上移渠道" />
+                                                </Tooltip>
+                                                <Tooltip title="下移">
+                                                    <Button
+                                                        type="text"
+                                                        size="small"
+                                                        icon={<ArrowDown className="size-3.5" />}
+                                                        disabled={reorderingChannels || index === config.channels.length - 1}
+                                                        onClick={() => void moveChannel(index, 1)}
+                                                        aria-label="下移渠道"
+                                                    />
+                                                </Tooltip>
                                                 <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingChannelId(channel.id)}>
                                                     编辑
                                                 </Button>
@@ -374,6 +412,15 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         textModel: pickDefaultModel(next, "text", config.textModel),
         audioModel: pickDefaultModel(next, "audio", config.audioModel),
     };
+}
+
+function nextChannelSortOrder(channels: ModelChannel[]) {
+    return (
+        channels.reduce((highest, channel, index) => {
+            const sortOrder = Number(channel.sortOrder);
+            return Math.max(highest, Number.isInteger(sortOrder) && sortOrder >= 0 ? sortOrder : index);
+        }, -1) + 1
+    );
 }
 
 function pickDefaultModel(config: AiConfig, capability: ModelCapability, current: string) {
