@@ -64,7 +64,21 @@ function initialCoverStatus(sourceKey: string): CoverStatus {
     return { sourceKey, index: 0, failed: false, loaded: false, retry: 0 };
 }
 
-export function PromptCover({ sources, alt, className, loading = "lazy", fetchPriority = "auto", timeoutMs = IMAGE_LOAD_TIMEOUT_MS }: { sources?: string[]; alt: string; className: string; loading?: "eager" | "lazy"; fetchPriority?: "high" | "low" | "auto"; timeoutMs?: number }) {
+export function PromptCover({
+    sources,
+    alt,
+    className,
+    loading = "lazy",
+    fetchPriority = "auto",
+    timeoutMs = IMAGE_LOAD_TIMEOUT_MS,
+}: {
+    sources?: string[];
+    alt: string;
+    className: string;
+    loading?: "eager" | "lazy";
+    fetchPriority?: "high" | "low" | "auto";
+    timeoutMs?: number;
+}) {
     const candidates = uniqueUrls(sources || []);
     const sourceKey = candidates.join("\n");
     const [status, setStatus] = useState<CoverStatus>(() => initialCoverStatus(sourceKey));
@@ -103,7 +117,11 @@ export function PromptCover({ sources, alt, className, loading = "lazy", fetchPr
                     title="重新加载"
                     aria-label="重新加载图片"
                     className="flex size-8 items-center justify-center rounded border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-300 dark:hover:bg-stone-900"
-                    onClick={() => setStatus({ sourceKey, index: 0, failed: false, loaded: false, retry: activeStatus.retry + 1 })}
+                    onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setStatus({ sourceKey, index: 0, failed: false, loaded: false, retry: activeStatus.retry + 1 });
+                    }}
                 >
                     <RotateCcw className="size-4" />
                 </button>
