@@ -22,6 +22,7 @@ import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
+import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, isLoopbackSetupRequest, isSameApplicationOrigin, normalizePublicBaseUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { openAppDatabase, persistReference } from "./db/database";
@@ -2246,10 +2247,7 @@ function withSecurityHeaders(response: Response, requestId: string, request: Req
     if ((pathname.startsWith("/api/") || pathname === "/health" || pathname === "/config.js") && headers.get("content-type")?.includes("application/json")) {
         headers.set("cache-control", "no-store");
     }
-    headers.set(
-        "content-security-policy",
-        "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://www.googletagmanager.com https://hm.baidu.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' https: data: blob:; font-src 'self' data:; worker-src 'self' blob:; manifest-src 'self'",
-    );
+    headers.set("content-security-policy", CONTENT_SECURITY_POLICY);
     if (secureCookies) headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
     return new Response(response.body, {
         status: response.status,

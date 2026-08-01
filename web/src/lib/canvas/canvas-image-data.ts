@@ -184,6 +184,11 @@ export async function upscaleImageBlob(dataUrl: string, params: ImageUpscalePara
     }
 }
 
+export async function upscaleDataUrl(dataUrl: string, params: ImageUpscaleParams) {
+    const { blob } = await upscaleImageBlob(dataUrl, params);
+    return blobToDataUrl(blob);
+}
+
 export function resolveUpscaleSize(width: number, height: number, targetLongEdge: number) {
     const longEdge = Math.max(1, width, height);
     const target = Math.min(MAX_UPSCALE_LONG_EDGE, Math.max(1, Math.round(targetLongEdge)));
@@ -263,6 +268,15 @@ function loadImage(dataUrl: string) {
 function canvasToBlob(canvas: HTMLCanvasElement) {
     return new Promise<Blob>((resolve, reject) => {
         canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Failed to encode the image"))), "image/png");
+    });
+}
+
+function blobToDataUrl(blob: Blob) {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Failed to read the resized image"));
+        reader.readAsDataURL(blob);
     });
 }
 

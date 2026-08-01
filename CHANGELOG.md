@@ -2,6 +2,7 @@
 
 ## Unreleased
 
++ [新增] 安全移植上游 Canvas Agent 0.3.1，增加连续会话、历史、日志、流式进度、模型与推理强度选择及 Codex 权限审批；保留现有画布、生图、资产和站点工具，并将画布写入默认设为手动确认、账号切换恢复最小权限、附件历史按用户隔离。
 + [修复] sadAI `gpt-image-2` 按官方 Image2 文档发送 `aspect_ratio`、`resolution` 与 `images` 字段，并使用独立 API 域名避开网站 Cloudflare 超时链路。
 + [修复] 上游返回 Cloudflare 524/HTML 错误页时展示明确的超时与可能扣费提示；同步付费生图不再自动重复 POST，部署脚本也会在存在运行中任务时拒绝重启容器。
 + [文档] 重写 README、功能、开发、数据、安全和部署文档，使仓库说明与当前 Bun + SQLite 多用户版本一致；仓库链接、版本检查和文档镜像切换到 `zdtzn/infinite-canvas`，同时保留上游署名与 `@basketikun/canvas-agent` 真实依赖说明。
