@@ -23,7 +23,7 @@ describe("image model capabilities", () => {
         assert.deepEqual(capabilities.generationQualities, ["auto", "low", "medium", "high"]);
         assert.deepEqual(capabilities.outputFormats, ["auto", "png", "jpeg", "webp"]);
         assert.doesNotThrow(() => validateImageRequest(capabilities, { resolution: "medium", imageQuality: "high", imageOutputFormat: "webp", size: "1:1", background: "", referenceCount: 0 }));
-        assert.throws(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "transparent", referenceCount: 0 }), /JPEG/);
+        assert.throws(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "transparent", referenceCount: 0 }), /透明背景/);
     });
 
     test("UU async GPT Image keeps quality automatic but allows a locally encoded output format", () => {
@@ -41,6 +41,26 @@ describe("image model capabilities", () => {
         assert.equal(capabilities.transparentBackground, false);
         assert.deepEqual(capabilities.outputFormats, ["auto"]);
         assert.deepEqual(capabilities.sizes, ["1:1", "4:3", "3:4", "16:9", "9:16"]);
+    });
+
+    test("standard GPT Image 2 channels expose the documented flexible ratio range", () => {
+        for (const baseUrl of ["https://yundu.lat", "https://chiyicn.com/v1", "https://tken.me", "https://api-slb.muskapi.cc"]) {
+            const capabilities = deriveImageModelCapabilities("gpt-image-2", "openai", baseUrl);
+            assert.equal(capabilities.customSize, true);
+            assert.equal(capabilities.transparentBackground, false);
+            assert.deepEqual(capabilities.sizes, ["1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "9:21", "3:1", "1:3"]);
+        }
+
+        const uu = deriveImageModelCapabilities("gpt-image-2", "openai", "https://uuapi.cc");
+        assert.equal(uu.customSize, false);
+        assert.deepEqual(uu.sizes, ["1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "9:21", "3:1", "1:3"]);
+    });
+
+    test("older GPT Image models keep their documented fixed size choices", () => {
+        const capabilities = deriveImageModelCapabilities("gpt-image-1.5", "openai");
+        assert.deepEqual(capabilities.resolutions, ["low"]);
+        assert.equal(capabilities.customSize, false);
+        assert.deepEqual(capabilities.sizes, ["1:1", "3:2", "2:3"]);
     });
 
     test("Gemini models without imageSize support keep resolution automatic", () => {

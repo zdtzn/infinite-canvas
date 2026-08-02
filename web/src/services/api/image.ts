@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
+import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { imageToDataUrl } from "@/services/image-storage";
 import { cancelServerJob, saveServerChannel, submitImageJob, waitForServerJob } from "@/services/server-api";
 import { deriveImageModelCapabilities, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
@@ -15,6 +16,8 @@ import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { geminiApiBase, geminiProviderHeaders, isServerManagedConfig, openAiApiUrl, providerHeaders, type ManagedAiConfig } from "./gateway";
 import { chatCompletionPayloadText, consumeChatCompletionStreamText, openAiTextEndpoint, type ChatCompletionStreamState } from "./openai-text-protocol";
 import type { ReferenceImage } from "@/types/image";
+
+export { resolveImageRequestSize } from "@/lib/image-request-size";
 
 export type RequestedImage = {
     id: string;
@@ -130,10 +133,6 @@ const RESOLUTION_ALIASES: Record<string, string> = {
     "2k": "medium",
     "4k": "high",
 };
-const IMAGE_SIZE_STEP = 16;
-const IMAGE_MIN_PIXELS = 262144;
-const IMAGE_MAX_PIXELS = 14745600;
-const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 const GEMINI_IMAGE_SIZE_BY_RESOLUTION: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
@@ -182,27 +181,6 @@ function normalizeBackground(background: string | undefined) {
     return background?.trim().toLowerCase() === "transparent" ? "transparent" : undefined;
 }
 
-/** Map a selected resolution and ratio to an explicit request dimension. */
-function resolveSize(resolution: string | undefined, ratio: string): string {
-    const parsedRatio = parseImageRatio(ratio);
-    const basePixels = (resolution && RESOLUTION_BASE[resolution]) || RESOLUTION_BASE.low;
-    const divisor = greatestCommonDivisor(parsedRatio.width, parsedRatio.height);
-    const ratioWidth = parsedRatio.width / divisor;
-    const ratioHeight = parsedRatio.height / divisor;
-    const scale = Math.max(1, Math.round(basePixels / (Math.max(ratioWidth, ratioHeight) * IMAGE_SIZE_STEP)));
-    const width = ratioWidth * IMAGE_SIZE_STEP * scale;
-    const height = ratioHeight * IMAGE_SIZE_STEP * scale;
-    validateImageSize(width, height);
-    return `${width}x${height}`;
-}
-
-function greatestCommonDivisor(left: number, right: number) {
-    let a = Math.abs(left);
-    let b = Math.abs(right);
-    while (b) [a, b] = [b, a % b];
-    return a || 1;
-}
-
 function parseRatioValue(value: string) {
     const parts = value.split(":");
     if (parts.length !== 2) throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
@@ -222,30 +200,6 @@ function parseImageDimensions(value: string) {
     const match = value.match(/^(\d+)x(\d+)$/i);
     if (!match) return null;
     return { width: Number(match[1]), height: Number(match[2]) };
-}
-
-function validateImageSize(width: number, height: number) {
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error("图像尺寸必须是正整数，例如 1024x1024");
-    if (width % IMAGE_SIZE_STEP !== 0 || height % IMAGE_SIZE_STEP !== 0) throw new Error("图像尺寸的宽高必须是 16 的倍数，请调整尺寸");
-    if (Math.max(width, height) > IMAGE_MAX_EDGE) throw new Error("图像尺寸最长边不能超过 3840px，请调整尺寸");
-    if (Math.max(width, height) / Math.min(width, height) > IMAGE_MAX_RATIO) throw new Error("图像宽高比不能超过 3:1，请调整尺寸");
-    const pixels = width * height;
-    if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error(`图像总像素需在 ${IMAGE_MIN_PIXELS} 到 ${IMAGE_MAX_PIXELS} 之间，请调整尺寸`);
-}
-
-export function resolveImageRequestSize(resolution: string | undefined, size: string) {
-    return resolveRequestSize(normalizeResolution(resolution), size);
-}
-
-function resolveRequestSize(resolution: string | undefined, size: string) {
-    const value = normalizeImageSizeSelection(size);
-    const dimensions = parseImageDimensions(value);
-    if (dimensions) {
-        validateImageSize(dimensions.width, dimensions.height);
-        return `${dimensions.width}x${dimensions.height}`;
-    }
-    if (value.includes(":")) return resolveSize(resolution, value);
-    throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
 }
 
 function resolveGeminiImageConfig(config: AiConfig) {
@@ -769,7 +723,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         const resolution = effectiveConfig.quality === "auto" ? undefined : normalizeResolution(effectiveConfig.quality);
         const imageQuality = resolveSupportedImageQuality(requestConfig);
         const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size);
+        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size, requestConfig.model);
         const background = normalizeBackground(effectiveConfig.background);
         try {
             const result = await runModelPlugin({
@@ -796,7 +750,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const resolution = normalizeResolution(effectiveConfig.quality);
     const imageQuality = resolveSupportedImageQuality(requestConfig);
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-    const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size);
+    const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size, requestConfig.model);
     const background = normalizeBackground(effectiveConfig.background);
     try {
         const response = await axios.post<ImageApiResponse>(
@@ -846,7 +800,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         const resolution = effectiveConfig.quality === "auto" ? undefined : normalizeResolution(effectiveConfig.quality);
         const imageQuality = resolveSupportedImageQuality(requestConfig);
         const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size);
+        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size, requestConfig.model);
         const background = normalizeBackground(effectiveConfig.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -876,7 +830,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         const resolution = normalizeResolution(effectiveConfig.quality);
         const imageQuality = resolveSupportedImageQuality(requestConfig);
         const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size);
+        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size, requestConfig.model);
         const background = normalizeBackground(effectiveConfig.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -903,7 +857,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const resolution = normalizeResolution(effectiveConfig.quality);
     const imageQuality = resolveSupportedImageQuality(requestConfig);
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-    const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size);
+    const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size, requestConfig.model);
     const background = normalizeBackground(effectiveConfig.background);
     const formData = new FormData();
     formData.set("model", requestConfig.model);

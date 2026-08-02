@@ -67,6 +67,9 @@ test("image settings expose only parameters the selected provider can honor", ()
     assert.match(geminiHtml, /当前模型由上游自动决定输出分辨率/);
     assert.match(geminiHtml, /max="4"/);
     assert.doesNotMatch(geminiHtml, />4K<\/button>/);
+    assert.match(geminiHtml, />1:8<\/span>/);
+    assert.match(geminiHtml, />21:9<\/span>/);
+    assert.doesNotMatch(geminiHtml, />9:21<\/span>/);
 
     const uuChannel = createModelChannel({ id: "uu", baseUrl: "https://uuapi.net/v1", models: [{ name: "gpt-image-2", capability: "image" }] });
     const uuModel = encodeChannelModel(uuChannel.id, "gpt-image-2");
@@ -97,4 +100,24 @@ test("image settings expose only parameters the selected provider can honor", ()
     assert.doesNotMatch(sadaiHtml, />2:3<\/span>/);
     assert.doesNotMatch(sadaiHtml, />3:2<\/span>/);
     assert.match(sadaiHtml, />3:4<\/span>/);
+});
+
+test("GPT Image 2 settings show flexible ratios and their constrained request dimensions", () => {
+    const channel = createModelChannel({ id: "tokenai", baseUrl: "https://tken.me", models: [{ name: "gpt-image-2", capability: "image" }] });
+    const model = encodeChannelModel(channel.id, "gpt-image-2");
+    const html = renderToStaticMarkup(
+        createElement(ImageSettingsPanel, {
+            config: { ...defaultConfig, channels: [channel], model, imageModel: model, quality: "low", size: "16:9" },
+            selectedModel: model,
+            onConfigChange: () => undefined,
+            theme: canvasThemes.light,
+            showTitle: false,
+        } as Parameters<typeof ImageSettingsPanel>[0]),
+    );
+
+    assert.match(html, />5:4<\/span>/);
+    assert.match(html, />3:1<\/span>/);
+    assert.match(html, /value="1280"/);
+    assert.match(html, /value="720"/);
+    assert.doesNotMatch(html, />1:4<\/span>/);
 });

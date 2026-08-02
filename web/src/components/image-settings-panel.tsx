@@ -2,6 +2,7 @@ import { type ReactNode, useState } from "react";
 import { ConfigProvider, Select, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
+import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { modelOptionName, normalizeImageSizeSelection, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 
@@ -28,12 +29,22 @@ const DIMENSION_STEP = 16;
 
 const aspectOptions = [
     { value: "1:1", label: "1:1", width: 1024, height: 1024, icon: "square" },
-    { value: "3:2", label: "3:2", width: 1536, height: 1024, icon: "landscape" },
-    { value: "2:3", label: "2:3", width: 1024, height: 1536, icon: "portrait" },
+    { value: "5:4", label: "5:4", width: 1280, height: 1024, icon: "landscape" },
+    { value: "4:5", label: "4:5", width: 1024, height: 1280, icon: "portrait" },
     { value: "4:3", label: "4:3", width: 1360, height: 1024, icon: "landscape" },
     { value: "3:4", label: "3:4", width: 1024, height: 1360, icon: "portrait" },
+    { value: "3:2", label: "3:2", width: 1536, height: 1024, icon: "landscape" },
+    { value: "2:3", label: "2:3", width: 1024, height: 1536, icon: "portrait" },
     { value: "16:9", label: "16:9", width: 1824, height: 1024, icon: "landscape" },
     { value: "9:16", label: "9:16", width: 1024, height: 1824, icon: "portrait" },
+    { value: "21:9", label: "21:9", width: 2384, height: 1024, icon: "landscape" },
+    { value: "9:21", label: "9:21", width: 1024, height: 2384, icon: "portrait" },
+    { value: "3:1", label: "3:1", width: 3072, height: 1024, icon: "landscape" },
+    { value: "1:3", label: "1:3", width: 1024, height: 3072, icon: "portrait" },
+    { value: "4:1", label: "4:1", width: 4096, height: 1024, icon: "landscape" },
+    { value: "1:4", label: "1:4", width: 1024, height: 4096, icon: "portrait" },
+    { value: "8:1", label: "8:1", width: 4096, height: 512, icon: "landscape" },
+    { value: "1:8", label: "1:8", width: 512, height: 4096, icon: "portrait" },
 ];
 
 export const imageResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
@@ -80,7 +91,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
     const activeSize = normalizeImageSizeSelection(effectiveConfig.size);
     const transparentBackground = effectiveConfig.background === "transparent";
     const selectedAspect = aspectOptions.find((item) => item.value === activeSize);
-    const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0], resolution);
+    const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0], resolution, selectedModelName);
     const customSizeActive = /^\d+x\d+$/i.test(activeSize);
     const selectAspect = (value: string) => {
         const option = aspectOptions.find((item) => item.value === value);
@@ -363,35 +374,17 @@ function SettingTitle({ children, color }: { children: string; color: string }) 
     );
 }
 
-function readSizeDimensions(size: string, fallback: { value?: string; width: number; height: number }, resolution: string) {
+function readSizeDimensions(size: string, fallback: { value?: string; width: number; height: number }, resolution: string, model: string) {
     const match = size?.match(/^(\d+)x(\d+)$/);
     if (match) return { width: Number(match[1]), height: Number(match[2]) };
-    const ratioDimensions = ratioSizeDimensions(size, resolution) || ratioSizeDimensions(fallback.value || "1:1", resolution);
-    return {
-        width: ratioDimensions?.width || fallback.width,
-        height: ratioDimensions?.height || fallback.height,
-    };
-}
-
-function ratioSizeDimensions(value: string, resolution: string) {
-    const match = value.match(/^(\d+)\s*:\s*(\d+)$/);
-    if (!match) return null;
-    const ratioWidth = Number(match[1]);
-    const ratioHeight = Number(match[2]);
-    if (!Number.isFinite(ratioWidth) || !Number.isFinite(ratioHeight) || ratioWidth <= 0 || ratioHeight <= 0) return null;
-    const requestedLongSide = ({ low: 1024, medium: 2048, high: 3840 } as Record<string, number>)[resolution] || 1024;
-    const divisor = greatestCommonDivisor(ratioWidth, ratioHeight);
-    const normalizedWidth = ratioWidth / divisor;
-    const normalizedHeight = ratioHeight / divisor;
-    const scale = Math.max(1, Math.round(requestedLongSide / (Math.max(normalizedWidth, normalizedHeight) * DIMENSION_STEP)));
-    return { width: normalizedWidth * DIMENSION_STEP * scale, height: normalizedHeight * DIMENSION_STEP * scale };
-}
-
-function greatestCommonDivisor(left: number, right: number) {
-    let a = Math.abs(left);
-    let b = Math.abs(right);
-    while (b) [a, b] = [b, a % b];
-    return a || 1;
+    try {
+        const resolved = resolveImageRequestSize(resolution, size || fallback.value || "1:1", model);
+        const dimensions = resolved.match(/^(\d+)x(\d+)$/);
+        if (dimensions) return { width: Number(dimensions[1]), height: Number(dimensions[2]) };
+    } catch {
+        // Keep the settings panel usable while an invalid stale value is corrected.
+    }
+    return { width: fallback.width, height: fallback.height };
 }
 
 function alignDimension(value: number, enabled: boolean) {

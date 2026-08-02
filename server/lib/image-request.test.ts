@@ -19,6 +19,26 @@ test("preserves explicit pixel dimensions and migrates legacy auto sizing to squ
     expect(resolveOpenAiImageSize("auto", "medium")).toBe("2048x2048");
 });
 
+test("fits GPT Image 2 ratios into the official pixel constraints", () => {
+    expect(resolveOpenAiImageSize("16:9", "low", "gpt-image-2")).toBe("1280x720");
+    expect(resolveOpenAiImageSize("3:1", "low", "gpt-image-2")).toBe("1440x480");
+    expect(resolveOpenAiImageSize("1:1", "high", "gpt-image-2")).toBe("2880x2880");
+    expect(resolveOpenAiImageSize("21:9", "medium", "gpt-image-2")).toBe("2016x864");
+});
+
+test("rejects invalid explicit GPT Image 2 dimensions before calling upstream", () => {
+    expect(() => resolveOpenAiImageSize("3840x3840", "high", "gpt-image-2")).toThrow("GPT Image 2 size must contain between 655360 and 8294400 pixels");
+    expect(() => resolveOpenAiImageSize("512x512", "low", "gpt-image-2")).toThrow("GPT Image 2 size must contain between 655360 and 8294400 pixels");
+    expect(resolveOpenAiImageSize("1280x720", "low", "gpt-image-2")).toBe("1280x720");
+});
+
+test("maps older GPT Image models to their fixed documented dimensions", () => {
+    expect(resolveOpenAiImageSize("1:1", "high", "gpt-image-1.5")).toBe("1024x1024");
+    expect(resolveOpenAiImageSize("3:2", "high", "gpt-image-1.5")).toBe("1536x1024");
+    expect(resolveOpenAiImageSize("2:3", "high", "gpt-image-1")).toBe("1024x1536");
+    expect(() => resolveOpenAiImageSize("2048x2048", "high", "gpt-image-1.5")).toThrow("Legacy GPT Image models only support");
+});
+
 test("uses the documented minimal request body for a single image", () => {
     expect(buildOpenAiImageRequestOptions({ count: 1, size: "1024x1024" })).toEqual({ size: "1024x1024", response_format: "b64_json" });
     expect(buildOpenAiImageRequestOptions({ count: 2, quality: "high", size: "2048x2048" })).toEqual({ n: 2, quality: "high", size: "2048x2048", response_format: "b64_json" });

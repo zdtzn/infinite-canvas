@@ -18,8 +18,8 @@ test("identifies the UU gpt-image-2 channel independently of job mode", () => {
 
 test("converts workbench sizing into UU async width and height", () => {
     expect(resolveUuAsyncImageSize("1:1")).toEqual({ width: 1024, height: 1024 });
-    expect(resolveUuAsyncImageSize("16:9")).toEqual({ width: 1088, height: 608 });
-    expect(resolveUuAsyncImageSize("9:16")).toEqual({ width: 608, height: 1088 });
+    expect(resolveUuAsyncImageSize("16:9")).toEqual({ width: 1280, height: 720 });
+    expect(resolveUuAsyncImageSize("9:16")).toEqual({ width: 720, height: 1280 });
     expect(resolveUuAsyncImageSize("1:1", "medium")).toEqual({ width: 2048, height: 2048 });
     expect(resolveUuAsyncImageSize("1:1", "high")).toEqual({ width: 2880, height: 2880 });
     expect(resolveUuAsyncImageSize("3:2")).toEqual({ width: 1008, height: 672 });
@@ -28,7 +28,7 @@ test("converts workbench sizing into UU async width and height", () => {
 });
 
 test("builds UU async form fields for text and image modes", () => {
-    expect(buildUuAsyncImageRequest({ size: "16:9", referenceCount: 0 })).toEqual({ mode: "text", width: 1088, height: 608 });
+    expect(buildUuAsyncImageRequest({ size: "16:9", referenceCount: 0 })).toEqual({ mode: "text", width: 1280, height: 720 });
     expect(buildUuAsyncImageRequest({ size: "1:1", quality: "medium", referenceCount: 1 })).toEqual({ mode: "image", width: 2048, height: 2048 });
 });
 

@@ -12,6 +12,8 @@ export type ImageModelCapabilities = {
 };
 
 const COMMON_SIZES = ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"];
+const GPT_IMAGE_2_SIZES = ["1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "9:21", "3:1", "1:3"];
+const LEGACY_GPT_IMAGE_SIZES = ["1:1", "3:2", "2:3"];
 const SADAI_SIZES = ["1:1", "4:3", "3:4", "16:9", "9:16"];
 const OUTPUT_RESOLUTIONS = ["low", "medium", "high"];
 
@@ -22,7 +24,7 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
             resolutions: ["low", "medium"],
             generationQualities: ["auto"],
             outputFormats: ["auto"],
-            sizes: COMMON_SIZES,
+            sizes: GPT_IMAGE_2_SIZES,
             customSize: false,
             transparentBackground: false,
             maxReferences: 16,
@@ -51,6 +53,30 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
             transparentBackground: false,
             maxReferences: 10,
             maxOutputs: 4,
+        };
+    }
+    if (name === "gpt-image-2") {
+        return {
+            resolutions: OUTPUT_RESOLUTIONS,
+            generationQualities: ["auto", "low", "medium", "high"],
+            outputFormats: ["auto", "png", "jpeg", "webp"],
+            sizes: GPT_IMAGE_2_SIZES,
+            customSize: true,
+            transparentBackground: false,
+            maxReferences: 16,
+            maxOutputs: 10,
+        };
+    }
+    if (isLegacyGptImageModel(name)) {
+        return {
+            resolutions: ["low"],
+            generationQualities: ["auto", "low", "medium", "high"],
+            outputFormats: ["auto", "png", "jpeg", "webp"],
+            sizes: LEGACY_GPT_IMAGE_SIZES,
+            customSize: false,
+            transparentBackground: true,
+            maxReferences: 16,
+            maxOutputs: 10,
         };
     }
     if (name.includes("gpt-image")) {
@@ -126,4 +152,8 @@ function isSadaiImage2Model(baseUrl: string, model: string) {
     } catch {
         return false;
     }
+}
+
+function isLegacyGptImageModel(model: string) {
+    return /^gpt-image-1(?:$|[.-])/.test(model.trim().toLowerCase());
 }

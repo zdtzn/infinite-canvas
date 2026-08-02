@@ -1402,7 +1402,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
     };
     // Compatible gateways do not consistently honor idempotency keys. Never replay a paid synchronous generation automatically.
     const retryPaidRequest = false;
-    const size = resolveOpenAiImageSize(input.size, input.quality);
+    const size = resolveOpenAiImageSize(input.size, input.quality, input.model);
     const requestOptions = buildOpenAiImageRequestOptions({
         count: input.count,
         quality: input.imageQuality,
