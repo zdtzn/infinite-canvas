@@ -12,6 +12,7 @@ export type ImageModelCapabilities = {
 };
 
 const COMMON_SIZES = ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"];
+const SADAI_SIZES = ["1:1", "4:3", "3:4", "16:9", "9:16"];
 const OUTPUT_RESOLUTIONS = ["low", "medium", "high"];
 
 export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFormat, baseUrl = ""): ImageModelCapabilities {
@@ -33,7 +34,7 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
             resolutions: OUTPUT_RESOLUTIONS,
             generationQualities: ["auto", "low", "medium", "high"],
             outputFormats: ["auto"],
-            sizes: COMMON_SIZES,
+            sizes: SADAI_SIZES,
             customSize: false,
             transparentBackground: false,
             maxReferences: 16,

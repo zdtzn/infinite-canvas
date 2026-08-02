@@ -55,3 +55,14 @@ test("migrates legacy automatic ratios to square and reduces explicit dimensions
         }),
     ).toEqual({ n: 1, aspect_ratio: "4:3", resolution: "4k" });
 });
+
+test("rejects aspect ratios that SADAI Image2 does not support", () => {
+    expect(() =>
+        buildSadaiImageRequestOptions({
+            count: 1,
+            size: "2:3",
+            outputResolution: "low",
+            references: [],
+        }),
+    ).toThrow("SADAI Image2 does not support aspect ratio 2:3");
+});

@@ -40,6 +40,7 @@ describe("image model capabilities", () => {
         assert.equal(capabilities.customSize, false);
         assert.equal(capabilities.transparentBackground, false);
         assert.deepEqual(capabilities.outputFormats, ["auto"]);
+        assert.deepEqual(capabilities.sizes, ["1:1", "4:3", "3:4", "16:9", "9:16"]);
     });
 
     test("Gemini models without imageSize support keep resolution automatic", () => {

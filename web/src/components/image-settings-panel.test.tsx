@@ -82,4 +82,19 @@ test("image settings expose only parameters the selected provider can honor", ()
     assert.match(uuHtml, /当前异步渠道由模型自动控制/);
     assert.doesNotMatch(uuHtml, />4K<\/button>/);
     assert.doesNotMatch(uuHtml, /16倍数对齐/);
+
+    const sadaiChannel = createModelChannel({ id: "sadai", baseUrl: "https://api.sadai.top/v1", models: [{ name: "gpt-image-2", capability: "image" }] });
+    const sadaiModel = encodeChannelModel(sadaiChannel.id, "gpt-image-2");
+    const sadaiHtml = renderToStaticMarkup(
+        createElement(ImageSettingsPanel, {
+            config: { ...defaultConfig, channels: [sadaiChannel], model: sadaiModel, imageModel: sadaiModel, size: "2:3" },
+            selectedModel: sadaiModel,
+            onConfigChange: () => undefined,
+            theme: canvasThemes.light,
+            showTitle: false,
+        } as Parameters<typeof ImageSettingsPanel>[0]),
+    );
+    assert.doesNotMatch(sadaiHtml, />2:3<\/span>/);
+    assert.doesNotMatch(sadaiHtml, />3:2<\/span>/);
+    assert.match(sadaiHtml, />3:4<\/span>/);
 });
