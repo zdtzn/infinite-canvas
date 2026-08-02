@@ -29,6 +29,7 @@ export type ServerJob = {
     imageQuality?: string;
     imageOutputFormat?: string;
     size?: string;
+    background?: string;
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
     result?: { images: ServerJobImage[]; successCount: number; failCount: number; durationMs: number };
 };

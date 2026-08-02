@@ -17,7 +17,7 @@ export function mergeServerJobsIntoImageHistory<T extends ImageHistoryRecord>(hi
     for (const job of jobs) {
         if (!["succeeded", "failed", "canceled"].includes(job.status) || job.source?.route !== "/image") continue;
         const matchedByImage = (job.result?.images || []).map((image) => imageOwners.get(image.id)).find((index) => index !== undefined);
-        const matchedIndex = matchedByImage ?? records.findIndex((record) => record.prompt === job.prompt && record.model === job.model && Math.abs(record.createdAt - job.createdAt) <= 120_000);
+        const matchedIndex = matchedByImage ?? records.findIndex((record) => record.prompt === job.prompt && record.model === serverJobModelValue(job) && Math.abs(record.createdAt - job.createdAt) <= 120_000);
         if (matchedIndex >= 0) {
             const record = records[matchedIndex];
             if (!record.serverJobIds.includes(job.id)) record.serverJobIds.push(job.id);
@@ -30,4 +30,8 @@ export function mergeServerJobsIntoImageHistory<T extends ImageHistoryRecord>(hi
     }
 
     return records.sort((left, right) => right.createdAt - left.createdAt);
+}
+
+export function serverJobModelValue(job: Pick<ServerJob, "channelId" | "model">) {
+    return job.channelId ? `${job.channelId}::${job.model}` : job.model;
 }

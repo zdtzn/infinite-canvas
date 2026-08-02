@@ -1329,6 +1329,7 @@ function publicJob(job: StoredImageJob) {
         imageQuality: job.input.imageQuality,
         imageOutputFormat: job.input.imageOutputFormat,
         size: job.input.size,
+        background: job.input.background,
         source: job.input.source,
         result: job.result,
     };

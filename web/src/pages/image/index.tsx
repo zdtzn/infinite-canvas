@@ -5,14 +5,14 @@ import { App, Button, Checkbox, Drawer, Image, Input, Modal, Tag, Tooltip, Typog
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
-import { ImageSettingsPanel, imageGenerationQualityLabel, imageOutputFormatLabel, imageResolutionLabel } from "@/components/image-settings-panel";
+import { ImageSettingsPanel, imageGenerationQualityLabel, imageOutputFormatLabel, imageResolutionLabel, imageSizeLabel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { DeferredImage } from "@/components/ui/deferred-image";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { resolveModelChannel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { normalizeImageSizeSelection, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -22,14 +22,15 @@ import { IMAGE_WORKBENCH_ASSET_SOURCE } from "@/stores/asset-source";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
-import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
+import { resolveImageModelSettings } from "@/stores/image-model-settings";
+import { limitImageReferenceAdditions } from "@/lib/image-references";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialGenerationCue, useImperialMode } from "@/features/cultivation/imperial-mode";
 import { GenerationFailureToast, generationFailureFeedback, generationFailureText } from "@/features/cultivation/generation-messages";
 import { cultivationGenerationBlockReason, cultivationRefundNotice, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, persistGenerationHistoryRecords, synchronizeGenerationHistory } from "@/services/generation-history";
-import { mergeServerJobsIntoImageHistory } from "@/services/image-generation-history";
+import { mergeServerJobsIntoImageHistory, serverJobModelValue } from "@/services/image-generation-history";
 import { fetchServerJobs, type ServerJob } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -56,7 +57,7 @@ type GenerationLog = {
     thumbnails: string[];
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "imageQuality" | "imageOutputFormat" | "size" | "count">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "imageQuality" | "imageOutputFormat" | "size" | "count" | "background">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -72,7 +73,6 @@ export default function ImagePage() {
     const authenticatedUserId = useUserStore((state) => state.user?.id || "");
     const historyUserId = PUBLIC_MODE ? authenticatedUserId : "local";
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
@@ -99,21 +99,25 @@ export default function ImagePage() {
     const generationJob = useSyncExternalStore(subscribeImageGeneration, getImageGenerationSnapshot, getImageGenerationSnapshot);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
-    const activeChannel = resolveModelChannel(effectiveConfig, model);
-    const activeImageCapabilities = deriveImageModelCapabilities(model, activeChannel.apiFormat, activeChannel.baseUrl);
-    const appliedImageQuality = activeImageCapabilities.generationQualities.includes(effectiveConfig.imageQuality) ? effectiveConfig.imageQuality : "auto";
-    const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
-    const requiredCapabilities = requiredCultivationCapabilities({ model, quality: effectiveConfig.quality, referenceCount: references.length, hasMask: false });
-    const generationBlockReason = cultivationProfile
-        ? cultivationGenerationBlockReason({
+    const resolvedImageSettings = resolveImageModelSettings(effectiveConfig, model, 10);
+    const requestImageConfig = resolvedImageSettings.config;
+    const activeImageCapabilities = resolvedImageSettings.capabilities;
+    const appliedImageQuality = requestImageConfig.imageQuality;
+    const generationCount = Number(requestImageConfig.count);
+    const requiredCapabilities = requiredCultivationCapabilities({ model, quality: requestImageConfig.quality, referenceCount: references.length, hasMask: false });
+    const referenceLimitReason = references.length > activeImageCapabilities.maxReferences ? `当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图，请先移除多余图片` : null;
+    const generationBlockReason =
+        referenceLimitReason ||
+        (cultivationProfile
+            ? cultivationGenerationBlockReason({
               remainingToday: cultivationProfile.remainingToday,
               unlimited: cultivationProfile.unlimited,
               maxConcurrency: cultivationProfile.maxConcurrency,
               capabilities: cultivationProfile.capabilities,
               requestedCount: generationCount,
               requiredCapabilities,
-          })
-        : null;
+              })
+            : null);
     const canGenerate = Boolean(prompt.trim()) && !generationBlockReason;
     const running = generationJob?.status === "running";
     const generateButtonLabel = isDouEmperor ? (running || imperialGenerationCue.active ? "天地法则演化中……" : "执笔天地") : running ? "生成中……" : "开始生成";
@@ -132,19 +136,17 @@ export default function ImagePage() {
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
-        const maxReferences = activeImageCapabilities.maxReferences;
-        if (references.length + imageFiles.length > maxReferences) {
-            message.error(`当前模型最多支持 ${maxReferences} 张参考图`);
-            return;
-        }
+        const limited = limitImageReferenceAdditions(references, imageFiles, activeImageCapabilities.maxReferences);
+        if (limited.rejected) message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图，已忽略 ${limited.rejected} 张`);
+        if (!limited.accepted.length) return;
         try {
             const nextReferences = await Promise.all(
-                imageFiles.map(async (file) => {
+                limited.accepted.map(async (file) => {
                     const image = await uploadImage(file);
                     return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences]);
+            setReferences((value) => limitImageReferenceAdditions(value, nextReferences, activeImageCapabilities.maxReferences).items as ReferenceImage[]);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "参考图上传失败");
         }
@@ -158,13 +160,16 @@ export default function ImagePage() {
                 message.error("剪切板里没有可读取的图片");
                 return;
             }
+            const limited = limitImageReferenceAdditions(references, blobs, activeImageCapabilities.maxReferences);
+            if (limited.rejected) message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图，已忽略 ${limited.rejected} 张`);
+            if (!limited.accepted.length) return;
             const nextReferences = await Promise.all(
-                blobs.map(async (blob, index) => {
+                limited.accepted.map(async (blob, index) => {
                     const image = await uploadImage(blob);
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences]);
+            setReferences((value) => limitImageReferenceAdditions(value, nextReferences, activeImageCapabilities.maxReferences).items as ReferenceImage[]);
             message.success(`已读取 ${nextReferences.length} 张参考图`);
         } catch {
             message.error("剪切板里没有可读取的图片");
@@ -223,7 +228,7 @@ export default function ImagePage() {
                 saveLog(
                     buildLog({
                         prompt: text,
-                        model,
+                        model: requestImageConfig.imageModel,
                         config: { ...snapshot.config, count: String(generationCount) },
                         references: snapshot.references,
                         durationMs,
@@ -282,9 +287,15 @@ export default function ImagePage() {
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
+        const limited = limitImageReferenceAdditions(references, [image], activeImageCapabilities.maxReferences);
+        if (!limited.added) {
+            message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图`);
+            return;
+        }
         const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
         const stored = image.storageKey ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" } : await uploadImage(image.dataUrl, { outputFormat });
-        setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.${imageFileExtension(stored.mimeType)}`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+        const reference = { id: nanoid(), name: `result-${index + 1}.${imageFileExtension(stored.mimeType)}`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey };
+        setReferences((value) => limitImageReferenceAdditions(value, [reference], activeImageCapabilities.maxReferences).items as ReferenceImage[]);
         message.success("已加入参考图");
     };
 
@@ -321,8 +332,14 @@ export default function ImagePage() {
         if (payload.kind === "text") {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
+            const limited = limitImageReferenceAdditions(references, [payload], activeImageCapabilities.maxReferences);
+            if (!limited.added) {
+                message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图`);
+                return;
+            }
             const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+            const reference = { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey };
+            setReferences((value) => limitImageReferenceAdditions(value, [reference], activeImageCapabilities.maxReferences).items as ReferenceImage[]);
         } else {
             message.warning("生图工作台只能使用文本或图片资产");
         }
@@ -387,12 +404,15 @@ export default function ImagePage() {
         setLogsOpen(false);
         setPrompt(log.prompt);
         setReferences(log.references || []);
-        if (log.config.imageModel || log.model) updateConfig("imageModel", log.config.imageModel || log.model);
-        if (log.config.quality) updateConfig("quality", log.config.quality);
-        updateConfig("imageQuality", log.config.imageQuality || "auto");
-        updateConfig("imageOutputFormat", log.config.imageOutputFormat || "auto");
-        if (log.config.size) updateConfig("size", log.config.size);
-        if (log.config.count) updateConfig("count", log.config.count);
+        const selectedModel = log.config.imageModel || log.model;
+        const restored = resolveImageModelSettings({ ...effectiveConfig, ...log.config, model: selectedModel, imageModel: selectedModel }, selectedModel, 10).config;
+        updateConfig("imageModel", restored.imageModel);
+        updateConfig("quality", restored.quality);
+        updateConfig("imageQuality", restored.imageQuality);
+        updateConfig("imageOutputFormat", restored.imageOutputFormat);
+        updateConfig("size", restored.size);
+        updateConfig("count", restored.count);
+        updateConfig("background", restored.background);
     };
 
     const buildRequestSnapshot = () => {
@@ -406,7 +426,11 @@ export default function ImagePage() {
             openConfigDialog(true);
             return null;
         }
-        return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
+        if (references.length > activeImageCapabilities.maxReferences) {
+            message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图，请先移除多余图片`);
+            return null;
+        }
+        return { text, config: { ...requestImageConfig, model: requestImageConfig.imageModel, count: "1" }, references: [...references] };
     };
 
     const retryResult = async (index: number) => {
@@ -556,13 +580,13 @@ export default function ImagePage() {
                                             </span>
                                             <span className="flex min-w-0 items-center gap-1.5 text-stone-500 dark:text-stone-400">
                                                 <span className="truncate text-xs font-normal">
-                                                    {effectiveConfig.size} · {imageResolutionLabel(effectiveConfig.quality)} · {imageGenerationQualityLabel(appliedImageQuality)} · {imageOutputFormatLabel(effectiveConfig.imageOutputFormat)}
+                                                    {imageSizeLabel(requestImageConfig.size)} · {imageResolutionLabel(requestImageConfig.quality)} · {imageGenerationQualityLabel(appliedImageQuality)} · {imageOutputFormatLabel(requestImageConfig.imageOutputFormat)}
                                                 </span>
                                                 <ChevronDown className="size-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
                                             </span>
                                         </summary>
                                         <div className="border-t border-stone-200 p-3 dark:border-stone-800">
-                                            <GenerationSettings config={effectiveConfig} updateConfig={updateConfig} />
+                                            <GenerationSettings config={requestImageConfig} updateConfig={updateConfig} />
                                         </div>
                                     </details>
                                 </div>
@@ -1018,14 +1042,16 @@ function buildLogFromServerJob(job: ServerJob): GenerationLog {
         mimeType: image.mimeType,
         serverJobId: job.id,
     }));
+    const model = serverJobModelValue(job);
     const config: GenerationLogConfig = {
-        model: job.model,
-        imageModel: job.model,
+        model,
+        imageModel: model,
         quality: job.quality || "",
         imageQuality: job.imageQuality || "auto",
         imageOutputFormat: job.imageOutputFormat || "auto",
-        size: job.size || "",
+        size: normalizeImageSizeSelection(job.size),
         count: String(job.count || images.length || 1),
+        background: job.background || "",
     };
     return {
         id: `server-job:${job.id}`,
@@ -1035,7 +1061,7 @@ function buildLogFromServerJob(job: ServerJob): GenerationLog {
         title: job.prompt.slice(0, 12) || "未命名",
         prompt: job.prompt,
         time: new Date(job.createdAt).toLocaleString("zh-CN", { hour12: false }),
-        model: job.model,
+        model,
         config,
         references: [],
         durationMs: job.result?.durationMs || Math.max(0, Number(job.finishedAt || job.createdAt) - Number(job.startedAt || job.createdAt)),
@@ -1067,8 +1093,9 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         quality: log.config?.quality || log.quality || "",
         imageQuality: log.config?.imageQuality || "auto",
         imageOutputFormat: log.config?.imageOutputFormat || "auto",
-        size: log.config?.size || log.size || "",
+        size: normalizeImageSizeSelection(log.config?.size || log.size),
         count: log.config?.count || String(log.imageCount || log.successCount || 1),
+        background: log.config?.background || "",
     };
 }
 
@@ -1123,6 +1150,7 @@ function buildLog({
         imageOutputFormat: config.imageOutputFormat,
         size: config.size,
         count: config.count,
+        background: config.background,
     };
     return {
         id: nanoid(),

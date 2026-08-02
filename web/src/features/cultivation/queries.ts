@@ -13,7 +13,7 @@ export function useCultivationProfile() {
     return useQuery({
         queryKey: cultivationProfileQueryKeyFor(queryUserId),
         queryFn: () => fetchCultivationProfile().then((response) => response.profile),
-        enabled: Boolean(queryUserId),
+        enabled: PUBLIC_MODE && Boolean(userId),
         staleTime: 15_000,
         refetchInterval: 30_000,
         refetchIntervalInBackground: false,

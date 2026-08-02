@@ -3,11 +3,11 @@ import { createPortal } from "react-dom";
 import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
-import { ImageSettingsPanel, imageOutputFormatLabel, imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
+import { ImageSettingsPanel, imageGenerationQualityLabel, imageOutputFormatLabel, imageResolutionLabel, imageSizeLabel } from "@/components/image-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { modelOptionName, normalizeImageSizeSelection, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
-import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
+import { type AiConfig } from "@/stores/use-config-store";
+import { resolveImageModelSettings } from "@/stores/image-model-settings";
 
 type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
@@ -27,13 +27,11 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
     const selectedModel = config.model || config.imageModel;
-    const channel = resolveModelChannel(config, selectedModel);
-    const capabilities = deriveImageModelCapabilities(modelOptionName(selectedModel), channel.apiFormat, channel.baseUrl);
-    const configuredImageQuality = config.imageQuality || "auto";
-    const imageQuality = capabilities.generationQualities.includes(configuredImageQuality) ? configuredImageQuality : "auto";
-    const imageOutputFormat = config.imageOutputFormat || "auto";
-    const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = normalizeImageSizeSelection(config.size);
+    const resolvedConfig = resolveImageModelSettings(config, selectedModel).config;
+    const imageQuality = resolvedConfig.imageQuality;
+    const imageOutputFormat = resolvedConfig.imageOutputFormat;
+    const count = Number(resolvedConfig.count);
+    const activeSize = resolvedConfig.size;
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);
@@ -62,14 +60,14 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
         };
     }, [onOpenChange, open]);
 
-    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} selectedModel={selectedModel} onConfigChange={onConfigChange} /> : null;
+    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={resolvedConfig} selectedModel={selectedModel} onConfigChange={onConfigChange} /> : null;
 
     return (
         <>
             <span ref={buttonRef} className="inline-flex min-w-0">
                 <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[180px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={<Settings2 className="size-3.5" />} onClick={() => updateOpen(!open)}>
                     <span className="truncate">
-                        {imageQualityLabel(imageQuality)} · {imageSizeLabel(activeSize)}{imageOutputFormat !== "auto" ? ` · ${imageOutputFormatLabel(imageOutputFormat)}` : ""} · {count} 张
+                        {imageResolutionLabel(resolvedConfig.quality)} · {imageSizeLabel(activeSize)}{imageQuality !== "auto" ? ` · ${imageGenerationQualityLabel(imageQuality)}` : ""}{imageOutputFormat !== "auto" ? ` · ${imageOutputFormatLabel(imageOutputFormat)}` : ""} · {count} 张
                     </span>
                 </Button>
             </span>

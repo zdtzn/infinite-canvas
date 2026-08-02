@@ -28,8 +28,22 @@ describe("image model capabilities", () => {
 
     test("UU async GPT Image keeps quality automatic but allows a locally encoded output format", () => {
         const capabilities = deriveImageModelCapabilities("uuapi::gpt-image-2", "openai", "https://uuapi.net/v1");
+        assert.deepEqual(capabilities.resolutions, ["low", "medium"]);
+        assert.equal(capabilities.customSize, false);
         assert.deepEqual(capabilities.generationQualities, ["auto"]);
         assert.deepEqual(capabilities.outputFormats, ["auto"]);
         assert.doesNotThrow(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "", referenceCount: 0 }));
+    });
+
+    test("SADAI exposes ratios and quality without claiming exact pixels or transparency", () => {
+        const capabilities = deriveImageModelCapabilities("gpt-image-2", "openai", "https://api.sadai.top/v1");
+        assert.equal(capabilities.customSize, false);
+        assert.equal(capabilities.transparentBackground, false);
+        assert.deepEqual(capabilities.outputFormats, ["auto"]);
+    });
+
+    test("Gemini models without imageSize support keep resolution automatic", () => {
+        assert.deepEqual(deriveImageModelCapabilities("gemini-2.5-flash-image", "gemini").resolutions, ["auto"]);
+        assert.deepEqual(deriveImageModelCapabilities("gemini-3-pro-image-preview", "gemini").resolutions, ["low", "medium", "high"]);
     });
 });

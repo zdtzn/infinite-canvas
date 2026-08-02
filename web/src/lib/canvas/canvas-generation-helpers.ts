@@ -1,4 +1,5 @@
 import { defaultConfig, normalizeImageSizeSelection, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
+import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
@@ -91,7 +92,7 @@ export function getInputSummary(inputs: NodeGenerationInput[]) {
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
     const size = node?.metadata?.size || config.size || defaultConfig.size;
-    return {
+    const generationConfig = {
         ...config,
         model: resolveModelForCapability(config, node?.metadata?.model, mode),
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
@@ -110,6 +111,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         audioInstructions: node?.metadata?.audioInstructions || config.audioInstructions || defaultConfig.audioInstructions,
         count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
     };
+    return mode === "image" ? resolveImageModelSettings(generationConfig, generationConfig.model).config : generationConfig;
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {

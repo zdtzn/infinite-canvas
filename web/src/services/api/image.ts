@@ -8,7 +8,8 @@ import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import { cancelServerJob, saveServerChannel, submitImageJob, waitForServerJob } from "@/services/server-api";
-import { deriveImageModelCapabilities, validateImageRequest } from "@/stores/model-capabilities";
+import { deriveImageModelCapabilities, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
+import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useUserStore } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { geminiApiBase, geminiProviderHeaders, isServerManagedConfig, openAiApiUrl, providerHeaders, type ManagedAiConfig } from "./gateway";
@@ -276,11 +277,6 @@ function resolveGeminiImageSize(resolution: string, dimensions: { width: number;
     if (edge <= 1536) return "1K";
     if (edge <= 3072) return "2K";
     return "4K";
-}
-
-function supportsGeminiImageSize(model: string) {
-    const value = model.toLowerCase();
-    return value.includes("gemini-3") || value.includes("3.1") || value.includes("3-pro");
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>, mimeType: string) {
@@ -745,17 +741,36 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
+function resolveImageRequestContext(config: AiConfig, referenceCount: number) {
+    const selectedModel = config.imageModel || config.model;
+    const resolved = resolveImageModelSettings(config, selectedModel);
+    const requestConfig = resolveModelRequestConfig(resolved.config, selectedModel);
+    const count = Number(resolved.config.count);
+    validateImageRequest(resolved.capabilities, {
+        resolution: resolved.config.quality,
+        imageQuality: resolved.config.imageQuality,
+        imageOutputFormat: resolved.config.imageOutputFormat,
+        size: resolved.config.size,
+        background: resolved.config.background,
+        referenceCount,
+        count,
+    });
+    return { selectedModel, config: resolved.config, requestConfig, count };
+}
+
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<RequestedImage[]> {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
-    const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const resolved = resolveImageRequestContext(config, 0);
+    const requestConfig = resolved.requestConfig;
+    const effectiveConfig = resolved.config;
+    const n = resolved.count;
     if (isServerManagedConfig(requestConfig)) return requestServerImageJob(requestConfig, prompt, [], undefined, n, options);
-    const script = resolveModelScript(config, config.model || config.imageModel);
+    const script = resolveModelScript(effectiveConfig, resolved.selectedModel);
     if (script) {
-        const resolution = normalizeResolution(config.quality);
-        const imageQuality = normalizeImageQuality(config.imageQuality);
-        const imageOutputFormat = normalizeImageOutputFormat(config.imageOutputFormat);
-        const requestSize = resolveImageRequestSize(resolution, config.size);
-        const background = normalizeBackground(config.background);
+        const resolution = effectiveConfig.quality === "auto" ? undefined : normalizeResolution(effectiveConfig.quality);
+        const imageQuality = resolveSupportedImageQuality(requestConfig);
+        const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
+        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size);
+        const background = normalizeBackground(effectiveConfig.background);
         try {
             const result = await runModelPlugin({
                 capability: "image",
@@ -778,11 +793,11 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
-    const resolution = normalizeResolution(config.quality);
+    const resolution = normalizeResolution(effectiveConfig.quality);
     const imageQuality = resolveSupportedImageQuality(requestConfig);
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-    const requestSize = resolveImageRequestSize(resolution, config.size);
-    const background = normalizeBackground(config.background);
+    const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size);
+    const background = normalizeBackground(effectiveConfig.background);
     try {
         const response = await axios.post<ImageApiResponse>(
             aiApiUrl(requestConfig, "/images/generations"),
@@ -820,17 +835,19 @@ function usesJsonReferenceGeneration(config: ManagedAiConfig, referenceCount: nu
 }
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions): Promise<RequestedImage[]> {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
-    const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const resolved = resolveImageRequestContext(config, references.length);
+    const requestConfig = resolved.requestConfig;
+    const effectiveConfig = resolved.config;
+    const n = resolved.count;
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     if (isServerManagedConfig(requestConfig)) return requestServerImageJob(requestConfig, requestPrompt, references, mask, n, options);
-    const script = resolveModelScript(config, config.model || config.imageModel);
+    const script = resolveModelScript(effectiveConfig, resolved.selectedModel);
     if (script) {
-        const resolution = normalizeResolution(config.quality);
-        const imageQuality = normalizeImageQuality(config.imageQuality);
-        const imageOutputFormat = normalizeImageOutputFormat(config.imageOutputFormat);
-        const requestSize = resolveImageRequestSize(resolution, config.size);
-        const background = normalizeBackground(config.background);
+        const resolution = effectiveConfig.quality === "auto" ? undefined : normalizeResolution(effectiveConfig.quality);
+        const imageQuality = resolveSupportedImageQuality(requestConfig);
+        const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
+        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size);
+        const background = normalizeBackground(effectiveConfig.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
             const result = await runModelPlugin({
@@ -856,11 +873,11 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         }
     }
     if (usesJsonReferenceGeneration(requestConfig, references.length, Boolean(mask))) {
-        const resolution = normalizeResolution(config.quality);
+        const resolution = normalizeResolution(effectiveConfig.quality);
         const imageQuality = resolveSupportedImageQuality(requestConfig);
         const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-        const requestSize = resolveImageRequestSize(resolution, config.size);
-        const background = normalizeBackground(config.background);
+        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size);
+        const background = normalizeBackground(effectiveConfig.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
             const response = await axios.post<ImageApiResponse>(
@@ -883,11 +900,11 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
-    const resolution = normalizeResolution(config.quality);
+    const resolution = normalizeResolution(effectiveConfig.quality);
     const imageQuality = resolveSupportedImageQuality(requestConfig);
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-    const requestSize = resolveImageRequestSize(resolution, config.size);
-    const background = normalizeBackground(config.background);
+    const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size);
+    const background = normalizeBackground(effectiveConfig.background);
     const formData = new FormData();
     formData.set("model", requestConfig.model);
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
@@ -1005,7 +1022,7 @@ async function requestServerImageJob(
 ): Promise<RequestedImage[]> {
     const expectedUserId = options?.expectedUserId ?? useUserStore.getState().user?.id ?? "";
     const capabilities = deriveImageModelCapabilities(requestConfig.model, requestConfig.apiFormat, requestConfig.baseUrl);
-    const resolution = normalizeResolution(requestConfig.quality) || "low";
+    const resolution = requestConfig.quality || "low";
     const imageQuality = resolveSupportedImageQuality(requestConfig);
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
     const size = normalizeImageSizeSelection(requestConfig.size);

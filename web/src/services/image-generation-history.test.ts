@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { mergeServerJobsIntoImageHistory } from "./image-generation-history";
+import { mergeServerJobsIntoImageHistory, serverJobModelValue } from "./image-generation-history";
 import type { ServerJob } from "./server-api";
 
 type History = {
@@ -50,6 +50,23 @@ describe("server job history recovery", () => {
                 serverJobIds: ["job-a"],
             },
         ]);
+    });
+
+    test("preserves the original channel for duplicate model names", () => {
+        const job = { ...createJob("job-channel", "image-channel"), channelId: "sadai", model: "gpt-image-2" };
+        expect(serverJobModelValue(job)).toBe("sadai::gpt-image-2");
+
+        const logs: History[] = [{ id: "local", createdAt: 10, prompt: "A", model: "sadai::gpt-image-2", images: [] }];
+        const merged = mergeServerJobsIntoImageHistory(logs, [{ ...job, status: "failed", result: undefined }], (item) => ({
+            id: `server:${item.id}`,
+            createdAt: item.createdAt,
+            prompt: item.prompt,
+            model: serverJobModelValue(item),
+            images: [],
+        }));
+
+        expect(merged).toHaveLength(1);
+        expect(merged[0].serverJobIds).toEqual(["job-channel"]);
     });
 });
 

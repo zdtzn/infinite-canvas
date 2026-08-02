@@ -18,11 +18,23 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
     const name = model.toLowerCase().split("::").at(-1)?.trim() || "";
     if (isUuAsyncGptImageModel(baseUrl, name)) {
         return {
-            resolutions: OUTPUT_RESOLUTIONS,
+            resolutions: ["low", "medium"],
             generationQualities: ["auto"],
             outputFormats: ["auto"],
             sizes: COMMON_SIZES,
-            customSize: true,
+            customSize: false,
+            transparentBackground: false,
+            maxReferences: 16,
+            maxOutputs: 10,
+        };
+    }
+    if (isSadaiImage2Model(baseUrl, name)) {
+        return {
+            resolutions: OUTPUT_RESOLUTIONS,
+            generationQualities: ["auto", "low", "medium", "high"],
+            outputFormats: ["auto"],
+            sizes: COMMON_SIZES,
+            customSize: false,
             transparentBackground: false,
             maxReferences: 16,
             maxOutputs: 10,
@@ -30,7 +42,7 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
     }
     if (apiFormat === "gemini") {
         return {
-            resolutions: OUTPUT_RESOLUTIONS,
+            resolutions: supportsGeminiImageSize(name) ? OUTPUT_RESOLUTIONS : ["auto"],
             generationQualities: ["auto"],
             outputFormats: ["auto"],
             sizes: [...COMMON_SIZES, "1:4", "4:1", "1:8", "8:1", "4:5", "5:4", "21:9"],
@@ -54,14 +66,14 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
     }
     if (name.includes("dall-e") || name.includes("dalle")) {
         return {
-            resolutions: OUTPUT_RESOLUTIONS,
+            resolutions: ["low"],
             generationQualities: ["auto", "standard", "hd"],
             outputFormats: ["auto"],
-            sizes: COMMON_SIZES,
-            customSize: true,
-            transparentBackground: true,
-            maxReferences: 16,
-            maxOutputs: 10,
+            sizes: ["1:1"],
+            customSize: false,
+            transparentBackground: false,
+            maxReferences: 1,
+            maxOutputs: 1,
         };
     }
     return {
@@ -74,6 +86,11 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
         maxReferences: 4,
         maxOutputs: 4,
     };
+}
+
+export function supportsGeminiImageSize(model: string) {
+    const value = model.toLowerCase().split("::").at(-1)?.trim() || "";
+    return value.includes("gemini-3") || value.includes("3.1") || value.includes("3-pro");
 }
 
 export function validateImageRequest(
@@ -97,6 +114,14 @@ function isUuAsyncGptImageModel(baseUrl: string, model: string) {
         const hostname = new URL(baseUrl).hostname.toLowerCase();
         const isUuHost = ["uuapi.cc", "uuapi.net"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
         return isUuHost && model.trim().toLowerCase() === "gpt-image-2";
+    } catch {
+        return false;
+    }
+}
+
+function isSadaiImage2Model(baseUrl: string, model: string) {
+    try {
+        return new URL(baseUrl).hostname.toLowerCase() === "api.sadai.top" && model.trim().toLowerCase() === "gpt-image-2";
     } catch {
         return false;
     }

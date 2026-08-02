@@ -3,11 +3,13 @@ import type { NavigateFunction } from "react-router-dom";
 import { fetchPrompts } from "@/services/api/prompts";
 import { uploadImage } from "@/services/image-storage";
 import { imageAspectOptions, imageGenerationQualityOptions, imageOutputFormatOptions, imageResolutionOptions } from "@/components/image-settings-panel";
-import { videoResolutionOptions, videoSecondOptions, videoSizeOptions } from "@/components/video-settings-panel";
+import { normalizeVideoResolutionValue, normalizeVideoSizeValue, videoResolutionOptions, videoSecondOptions, videoSizeOptions } from "@/components/video-settings-panel";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
+import { isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, modelOptionName, normalizeImageSizeSelection, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
+import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
 // 在网页端执行 Agent 的「站点级」工具（画布列表、工作台生成、提示词搜索、资产增删查等）。
@@ -143,47 +145,54 @@ function listCanvasProjects(input: SiteToolInput) {
 function getImageConfig() {
     const { config } = useConfigStore.getState();
     const model = config.imageModel || config.model;
+    const resolved = resolveImageModelSettings(config, model);
+    const current = resolved.config;
     return {
-        current: { model, modelName: modelOptionName(model), resolution: config.quality || "low", quality: config.imageQuality || "auto", outputFormat: config.imageOutputFormat || "auto", size: normalizeImageSizeSelection(config.size), count: config.count || "1" },
+        current: { model: current.imageModel, modelName: modelOptionName(current.imageModel), resolution: current.quality, quality: current.imageQuality, outputFormat: current.imageOutputFormat, size: current.size, count: current.count, background: current.background || "opaque" },
         models: selectableModelsByCapability(config, "image").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        resolutionOptions: imageResolutionOptions,
-        qualityOptions: imageGenerationQualityOptions,
+        resolutionOptions: resolved.capabilities.resolutions.map((value) => imageResolutionOptions.find((item) => item.value === value) || { value, label: value === "auto" ? "自动" : value }),
+        qualityOptions: imageGenerationQualityOptions.filter((item) => resolved.capabilities.generationQualities.includes(item.value)),
         outputFormatOptions: imageOutputFormatOptions,
-        sizeOptions: imageAspectOptions,
-        countRange: { min: 1, max: 15 },
+        sizeOptions: imageAspectOptions.filter((item) => resolved.capabilities.sizes.includes(item.value)),
+        customSize: resolved.capabilities.customSize,
+        transparentBackground: resolved.capabilities.transparentBackground,
+        referenceLimit: resolved.capabilities.maxReferences,
+        countRange: { min: 1, max: resolved.capabilities.maxOutputs },
     };
 }
 
 function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const configStore = useConfigStore.getState();
-    const applied: Record<string, unknown> = {};
+    const candidate = { ...configStore.config };
     if (typeof input.model === "string" && input.model.trim()) {
         const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
-        configStore.updateConfig("imageModel", value);
-        applied.model = value;
+        candidate.imageModel = value;
     }
     if (typeof input.resolution === "string" && input.resolution.trim()) {
-        configStore.updateConfig("quality", input.resolution);
-        applied.resolution = input.resolution;
+        candidate.quality = input.resolution;
     }
     if (typeof input.quality === "string" && input.quality.trim()) {
-        configStore.updateConfig("imageQuality", input.quality);
-        applied.quality = input.quality;
+        candidate.imageQuality = input.quality;
     }
     if (typeof input.outputFormat === "string" && input.outputFormat.trim()) {
-        configStore.updateConfig("imageOutputFormat", input.outputFormat);
-        applied.outputFormat = input.outputFormat;
+        candidate.imageOutputFormat = input.outputFormat;
     }
     if (typeof input.size === "string" && input.size.trim()) {
-        const size = normalizeImageSizeSelection(input.size);
-        configStore.updateConfig("size", size);
-        applied.size = size;
+        candidate.size = normalizeImageSizeSelection(input.size);
     }
     if (input.count != null) {
-        const count = String(Math.max(1, Math.min(15, Math.floor(Number(input.count)) || 1)));
-        configStore.updateConfig("count", count);
-        applied.count = count;
+        candidate.count = String(Math.max(1, Math.floor(Number(input.count)) || 1));
     }
+    const selectedModel = candidate.imageModel || candidate.model;
+    const resolved = resolveImageModelSettings(candidate, selectedModel).config;
+    configStore.updateConfig("imageModel", resolved.imageModel);
+    configStore.updateConfig("quality", resolved.quality);
+    configStore.updateConfig("imageQuality", resolved.imageQuality);
+    configStore.updateConfig("imageOutputFormat", resolved.imageOutputFormat);
+    configStore.updateConfig("size", resolved.size);
+    configStore.updateConfig("count", resolved.count);
+    configStore.updateConfig("background", resolved.background);
+    const applied = { model: resolved.imageModel, resolution: resolved.quality, quality: resolved.imageQuality, outputFormat: resolved.imageOutputFormat, size: resolved.size, count: resolved.count, background: resolved.background || "opaque" };
     const prompt = typeof input.prompt === "string" ? input.prompt : undefined;
     const run = input.run !== false;
     navigate("/image");
@@ -194,51 +203,70 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
 function getVideoConfig() {
     const { config } = useConfigStore.getState();
     const model = config.videoModel || config.model;
+    const selectedConfig = { ...config, model, videoModel: model };
+    const seedance = isSeedanceVideoConfig(selectedConfig);
     return {
         current: {
             model,
             modelName: modelOptionName(model),
-            size: config.size || "1280x720",
-            seconds: config.videoSeconds || "6",
-            resolution: config.vquality || "720",
-            generateAudio: config.videoGenerateAudio !== "false",
-            watermark: config.videoWatermark === "true",
+            size: seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSizeValue(config.size),
+            seconds: seedance ? String(normalizeSeedanceDuration(config.videoSeconds)) : config.videoSeconds || "6",
+            resolution: seedance ? normalizeSeedanceResolution(config.vquality, modelOptionName(model)) : normalizeVideoResolutionValue(config.vquality),
+            generateAudio: seedance ? config.videoGenerateAudio !== "false" : undefined,
+            watermark: seedance ? config.videoWatermark === "true" : undefined,
         },
         models: selectableModelsByCapability(config, "video").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        sizeOptions: videoSizeOptions,
-        secondsOptions: videoSecondOptions,
-        resolutionOptions: videoResolutionOptions,
+        providerMode: seedance ? "seedance" : "standard",
+        sizeOptions: seedance ? seedanceRatioOptions : videoSizeOptions,
+        secondsOptions: seedance ? seedanceDurationOptions.map(String) : videoSecondOptions,
+        resolutionOptions: seedance ? seedanceResolutionOptions : videoResolutionOptions,
+        supportsGenerateAudio: seedance,
+        supportsWatermark: seedance,
     };
 }
 
 function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const configStore = useConfigStore.getState();
-    const applied: Record<string, unknown> = {};
+    const candidate = { ...configStore.config };
     if (typeof input.model === "string" && input.model.trim()) {
         const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
-        configStore.updateConfig("videoModel", value);
-        applied.model = value;
+        candidate.videoModel = value;
     }
+    const model = candidate.videoModel || candidate.model;
+    const seedance = isSeedanceVideoConfig({ ...candidate, model, videoModel: model });
     if (typeof input.size === "string" && input.size.trim()) {
-        configStore.updateConfig("size", input.size);
-        applied.size = input.size;
+        candidate.size = seedance ? normalizeSeedanceRatio(input.size) : normalizeVideoSizeValue(input.size);
     }
     if (typeof input.seconds === "string" && input.seconds.trim()) {
-        configStore.updateConfig("videoSeconds", input.seconds);
-        applied.seconds = input.seconds;
+        candidate.videoSeconds = seedance ? String(normalizeSeedanceDuration(input.seconds)) : String(Math.max(1, Math.min(20, Math.floor(Number(input.seconds)) || 6)));
     }
     if (typeof input.resolution === "string" && input.resolution.trim()) {
-        configStore.updateConfig("vquality", input.resolution);
-        applied.resolution = input.resolution;
+        candidate.vquality = seedance ? normalizeSeedanceResolution(input.resolution, modelOptionName(model)) : normalizeVideoResolutionValue(input.resolution);
     }
-    if (typeof input.generateAudio === "boolean") {
-        configStore.updateConfig("videoGenerateAudio", String(input.generateAudio));
-        applied.generateAudio = input.generateAudio;
+    if (seedance && typeof input.generateAudio === "boolean") {
+        candidate.videoGenerateAudio = String(input.generateAudio);
     }
-    if (typeof input.watermark === "boolean") {
-        configStore.updateConfig("videoWatermark", String(input.watermark));
-        applied.watermark = input.watermark;
+    if (seedance && typeof input.watermark === "boolean") {
+        candidate.videoWatermark = String(input.watermark);
     }
+    candidate.size = seedance ? normalizeSeedanceRatio(candidate.size) : normalizeVideoSizeValue(candidate.size);
+    candidate.videoSeconds = seedance ? String(normalizeSeedanceDuration(candidate.videoSeconds)) : String(Math.max(1, Math.min(20, Math.floor(Number(candidate.videoSeconds)) || 6)));
+    candidate.vquality = seedance ? normalizeSeedanceResolution(candidate.vquality, modelOptionName(model)) : normalizeVideoResolutionValue(candidate.vquality);
+    configStore.updateConfig("videoModel", model);
+    configStore.updateConfig("size", candidate.size);
+    configStore.updateConfig("videoSeconds", candidate.videoSeconds);
+    configStore.updateConfig("vquality", candidate.vquality);
+    if (seedance) {
+        configStore.updateConfig("videoGenerateAudio", candidate.videoGenerateAudio);
+        configStore.updateConfig("videoWatermark", candidate.videoWatermark);
+    }
+    const applied = {
+        model,
+        size: candidate.size,
+        seconds: candidate.videoSeconds,
+        resolution: candidate.vquality,
+        ...(seedance ? { generateAudio: candidate.videoGenerateAudio !== "false", watermark: candidate.videoWatermark === "true" } : {}),
+    };
     const prompt = typeof input.prompt === "string" ? input.prompt : undefined;
     const run = input.run !== false;
     navigate("/video");

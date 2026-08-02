@@ -2,8 +2,8 @@ import { type ReactNode, useState } from "react";
 import { ConfigProvider, Select, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { modelOptionName, normalizeImageSizeSelection, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
-import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
+import { modelOptionName, normalizeImageSizeSelection, type AiConfig } from "@/stores/use-config-store";
+import { resolveImageModelSettings } from "@/stores/image-model-settings";
 
 const resolutionOptions = [
     { value: "low", label: "1K" },
@@ -54,9 +54,12 @@ type ImageSettingsPanelProps = {
 
 export function ImageSettingsPanel({ config, selectedModel, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
-    const channel = resolveModelChannel(config, selectedModel);
-    const capabilities = deriveImageModelCapabilities(modelOptionName(selectedModel), channel.apiFormat, channel.baseUrl);
+    const resolved = resolveImageModelSettings(config, selectedModel, maxCount);
+    const channel = resolved.channel;
+    const capabilities = resolved.capabilities;
+    const effectiveConfig = resolved.config;
     const visibleResolutions = resolutionOptions.filter((item) => capabilities.resolutions.includes(item.value));
+    const automaticResolution = capabilities.resolutions.length === 1 && capabilities.resolutions[0] === "auto";
     const selectedModelName = modelOptionName(selectedModel);
     const isUuAsyncModel = isUuAsyncImageModel(channel.baseUrl, selectedModelName);
     const visibleGenerationQualities = generationQualityOptions.filter((item) => capabilities.generationQualities.includes(item.value));
@@ -70,12 +73,12 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
     });
     const ratioAspects = visibleAspects;
     const effectiveMaxCount = Math.min(maxCount, capabilities.maxOutputs);
-    const resolution = resolutionOptions.some((item) => item.value === config.quality) ? config.quality : "low";
-    const imageQuality = generationQualityOptions.some((item) => item.value === config.imageQuality) ? config.imageQuality : "auto";
-    const imageOutputFormat = outputFormatOptions.some((item) => item.value === config.imageOutputFormat) ? config.imageOutputFormat : "auto";
-    const count = Math.max(1, Math.min(effectiveMaxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = normalizeImageSizeSelection(config.size);
-    const transparentBackground = config.background === "transparent";
+    const resolution = effectiveConfig.quality;
+    const imageQuality = effectiveConfig.imageQuality;
+    const imageOutputFormat = effectiveConfig.imageOutputFormat;
+    const count = Number(effectiveConfig.count);
+    const activeSize = normalizeImageSizeSelection(effectiveConfig.size);
+    const transparentBackground = effectiveConfig.background === "transparent";
     const selectedAspect = aspectOptions.find((item) => item.value === activeSize);
     const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0], resolution);
     const customSizeActive = /^\d+x\d+$/i.test(activeSize);
@@ -133,13 +136,20 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                 </div>
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>输出分辨率</SettingTitle>
-                    <div className="grid grid-cols-3 gap-2">
-                        {visibleResolutions.map((item) => (
-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
-                                {item.label}
-                            </OptionPill>
-                        ))}
-                    </div>
+                    {automaticResolution ? (
+                        <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                            <span>自动</span>
+                            <span className="min-w-0 truncate">当前模型由上游自动决定输出分辨率</span>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-3 gap-2">
+                            {visibleResolutions.map((item) => (
+                                <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
+                                    {item.label}
+                                </OptionPill>
+                            ))}
+                        </div>
+                    )}
                 </div>
                 <div className="space-y-2.5">
                     <div className="space-y-0.5">
@@ -186,7 +196,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                         <div className="space-y-0.5">
                             <SettingTitle color={theme.node.muted}>实际请求尺寸</SettingTitle>
                             <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                                {customSizeActive ? "自定义尺寸会覆盖比例和分辨率" : "按比例和分辨率精确换算"}
+                                {automaticResolution ? "构图比例仍会生效，像素尺寸由模型决定" : customSizeActive ? "自定义尺寸会覆盖比例和分辨率" : "按比例和分辨率精确换算"}
                             </div>
                         </div>
                         {capabilities.customSize ? (
@@ -200,11 +210,17 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                             </div>
                         ) : null}
                     </div>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={!capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
-                        <span className="text-lg opacity-45">×</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={!capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
-                    </div>
+                    {automaticResolution ? (
+                        <div className="flex h-9 items-center rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                            像素尺寸将在生成时由当前模型自动确定
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+                            <DimensionInput prefix="W" value={dimensions.width} disabled={!capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
+                            <span className="text-lg opacity-45">×</span>
+                            <DimensionInput prefix="H" value={dimensions.height} disabled={!capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
+                        </div>
+                    )}
                 </div>
                 <div className="flex items-center justify-between gap-3">
                     <div className="space-y-0.5">
@@ -247,7 +263,7 @@ export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; ch
 }
 
 export function imageResolutionLabel(value: string) {
-    return ({ auto: "1K", high: "4K", medium: "2K", low: "1K" } as Record<string, string>)[value] || value;
+    return ({ auto: "自动", high: "4K", medium: "2K", low: "1K" } as Record<string, string>)[value] || value;
 }
 
 /** Kept for existing canvas summary callers; it represents output resolution. */
