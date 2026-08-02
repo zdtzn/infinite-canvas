@@ -689,7 +689,7 @@ export default function ImagePage() {
 function GenerationSettings({ config, updateConfig }: { config: AiConfig; updateConfig: UpdateAiConfig }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
-    return <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />;
+    return <ImageSettingsPanel config={config} selectedModel={config.imageModel || config.model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />;
 }
 
 function ResultImageCard({

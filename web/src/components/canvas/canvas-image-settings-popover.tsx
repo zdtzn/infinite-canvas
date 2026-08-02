@@ -62,7 +62,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
         };
     }, [onOpenChange, open]);
 
-    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} /> : null;
+    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} selectedModel={selectedModel} onConfigChange={onConfigChange} /> : null;
 
     return (
         <>
@@ -84,6 +84,7 @@ function ImageSettingsPortal({
     placement,
     theme,
     config,
+    selectedModel,
     onConfigChange,
 }: {
     buttonRect: DOMRect;
@@ -91,6 +92,7 @@ function ImageSettingsPortal({
     placement: CanvasImageSettingsPopoverProps["placement"];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     config: AiConfig;
+    selectedModel: string;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
 }) {
     const width = 356;
@@ -123,7 +125,7 @@ function ImageSettingsPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <ImageSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
+            <ImageSettingsPanel config={config} selectedModel={selectedModel} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
         </div>,
         document.body,
     );

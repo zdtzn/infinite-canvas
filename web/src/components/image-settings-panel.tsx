@@ -44,6 +44,7 @@ export const imageAspectOptions = aspectOptions.map((item) => ({ value: item.val
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
+    selectedModel: string;
     onConfigChange: (key: "quality" | "imageQuality" | "imageOutputFormat" | "size" | "count" | "background", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
@@ -52,9 +53,8 @@ type ImageSettingsPanelProps = {
     quickCount?: number;
 };
 
-export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, selectedModel, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
-    const selectedModel = config.model || config.imageModel;
     const channel = resolveModelChannel(config, selectedModel);
     const capabilities = deriveImageModelCapabilities(modelOptionName(selectedModel), channel.apiFormat, channel.baseUrl);
     const visibleResolutions = resolutionOptions.filter((item) => capabilities.resolutions.includes(item.value));
