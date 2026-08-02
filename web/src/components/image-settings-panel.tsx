@@ -28,29 +28,29 @@ const outputFormatOptions = [
 const DIMENSION_STEP = 16;
 
 const aspectOptions = [
-    { value: "1:1", label: "1:1", width: 1024, height: 1024, icon: "square" },
-    { value: "5:4", label: "5:4", width: 1280, height: 1024, icon: "landscape" },
-    { value: "4:5", label: "4:5", width: 1024, height: 1280, icon: "portrait" },
-    { value: "4:3", label: "4:3", width: 1360, height: 1024, icon: "landscape" },
-    { value: "3:4", label: "3:4", width: 1024, height: 1360, icon: "portrait" },
-    { value: "3:2", label: "3:2", width: 1536, height: 1024, icon: "landscape" },
-    { value: "2:3", label: "2:3", width: 1024, height: 1536, icon: "portrait" },
-    { value: "16:9", label: "16:9", width: 1824, height: 1024, icon: "landscape" },
-    { value: "9:16", label: "9:16", width: 1024, height: 1824, icon: "portrait" },
-    { value: "21:9", label: "21:9", width: 2384, height: 1024, icon: "landscape" },
-    { value: "9:21", label: "9:21", width: 1024, height: 2384, icon: "portrait" },
-    { value: "3:1", label: "3:1", width: 3072, height: 1024, icon: "landscape" },
-    { value: "1:3", label: "1:3", width: 1024, height: 3072, icon: "portrait" },
-    { value: "4:1", label: "4:1", width: 4096, height: 1024, icon: "landscape" },
-    { value: "1:4", label: "1:4", width: 1024, height: 4096, icon: "portrait" },
-    { value: "8:1", label: "8:1", width: 4096, height: 512, icon: "landscape" },
-    { value: "1:8", label: "1:8", width: 512, height: 4096, icon: "portrait" },
+    { value: "1:1", label: "1:1", name: "方图", width: 1024, height: 1024 },
+    { value: "5:4", label: "5:4", name: "经典方幅", width: 1280, height: 1024 },
+    { value: "4:5", label: "4:5", name: "社媒竖图", width: 1024, height: 1280 },
+    { value: "4:3", label: "4:3", name: "标准横图", width: 1360, height: 1024 },
+    { value: "3:4", label: "3:4", name: "标准竖图", width: 1024, height: 1360 },
+    { value: "3:2", label: "3:2", name: "横图", width: 1536, height: 1024 },
+    { value: "2:3", label: "2:3", name: "海报", width: 1024, height: 1536 },
+    { value: "16:9", label: "16:9", name: "宽屏", width: 1824, height: 1024 },
+    { value: "9:16", label: "9:16", name: "手机竖图", width: 1024, height: 1824 },
+    { value: "21:9", label: "21:9", name: "电影宽屏", width: 2384, height: 1024 },
+    { value: "9:21", label: "9:21", name: "超长竖屏", width: 1024, height: 2384 },
+    { value: "3:1", label: "3:1", name: "超宽横幅", width: 3072, height: 1024 },
+    { value: "1:3", label: "1:3", name: "长竖幅", width: 1024, height: 3072 },
+    { value: "4:1", label: "4:1", name: "全景横幅", width: 4096, height: 1024 },
+    { value: "1:4", label: "1:4", name: "长卷竖幅", width: 1024, height: 4096 },
+    { value: "8:1", label: "8:1", name: "极宽全景", width: 4096, height: 512 },
+    { value: "1:8", label: "1:8", name: "极长竖卷", width: 512, height: 4096 },
 ];
 
 export const imageResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
 export const imageGenerationQualityOptions = generationQualityOptions.map((item) => ({ value: item.value, label: item.label }));
 export const imageOutputFormatOptions = outputFormatOptions.map((item) => ({ value: item.value, label: item.label }));
-export const imageAspectOptions = aspectOptions.map((item) => ({ value: item.value, label: item.label }));
+export const imageAspectOptions = aspectOptions.map((item) => ({ value: item.value, label: `${item.name} (${item.label})` }));
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
@@ -129,18 +129,20 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                         <SettingTitle color={theme.node.muted}>构图比例</SettingTitle>
                         {customSizeActive ? <span className="text-xs" style={{ color: theme.node.muted }}>当前为自定义尺寸</span> : null}
                     </div>
-                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    <div className="grid grid-cols-2 gap-2">
                         {ratioAspects.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
-                                className="flex h-12 cursor-pointer items-center justify-center gap-2 rounded-md border bg-transparent text-sm transition hover:opacity-80"
-                                style={{ borderColor: selectedAspect?.value === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
+                                className="flex h-14 min-w-0 cursor-pointer flex-col items-start justify-center rounded-md border px-3 text-left transition hover:opacity-80"
+                                style={{ borderColor: selectedAspect?.value === item.value ? theme.node.activeStroke : theme.node.stroke, background: selectedAspect?.value === item.value ? theme.node.fill : "transparent", color: theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onClick={() => selectAspect(item.value)}
                             >
-                                <AspectIcon type={item.icon} width={item.width} height={item.height} color={theme.node.text} />
-                                <span>{item.label}</span>
+                                <span className="max-w-full truncate text-sm font-semibold">{item.name}</span>
+                                <span className="mt-0.5 text-xs" style={{ color: theme.node.muted }}>
+                                    {item.label}
+                                </span>
                             </button>
                         ))}
                     </div>
@@ -292,7 +294,8 @@ export function imageOutputFormatLabel(value: string) {
 
 export function imageSizeLabel(size: string) {
     const normalizedSize = normalizeImageSizeSelection(size);
-    return aspectOptions.find((item) => item.value === normalizedSize)?.label || normalizedSize;
+    const option = aspectOptions.find((item) => item.value === normalizedSize);
+    return option ? `${option.name} ${option.label}` : normalizedSize;
 }
 
 function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
@@ -352,17 +355,6 @@ function CountInput({ value, max, theme, onChange }: { value: number; max: numbe
                 onMouseDown={(event) => event.stopPropagation()}
             />
         </label>
-    );
-}
-
-function AspectIcon({ type, width, height, color }: { type: string; width: number; height: number; color: string }) {
-    const ratio = width / Math.max(1, height);
-    const boxWidth = ratio >= 1 ? 24 : Math.max(10, 24 * ratio);
-    const boxHeight = ratio >= 1 ? Math.max(10, 24 / ratio) : 24;
-    return (
-        <span className="grid h-7 w-9 place-items-center">
-            <span className="border-2" style={{ width: boxWidth, height: boxHeight, borderColor: color }} />
-        </span>
     );
 }
 

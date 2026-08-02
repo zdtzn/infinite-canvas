@@ -5,10 +5,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { createModelChannel, defaultConfig, encodeChannelModel, modelOptionsFromChannels } from "@/stores/use-config-store";
-import { ImageSettingsPanel, imageAspectOptions } from "./image-settings-panel";
+import { ImageSettingsPanel, imageAspectOptions, imageSizeLabel } from "./image-settings-panel";
 
 test("image aspect presets no longer expose an automatic ratio", () => {
     assert.equal(imageAspectOptions.some((option) => option.value === "auto"), false);
+    assert.equal(imageAspectOptions.find((option) => option.value === "1:1")?.label, "方图 (1:1)");
+    assert.equal(imageSizeLabel("21:9"), "电影宽屏 21:9");
 });
 
 test("image settings use the workbench-selected channel instead of a stale global model", () => {
@@ -117,6 +119,8 @@ test("GPT Image 2 settings show flexible ratios and their constrained request di
 
     assert.match(html, />5:4<\/span>/);
     assert.match(html, />3:1<\/span>/);
+    assert.match(html, />经典方幅<\/span>/);
+    assert.match(html, />超宽横幅<\/span>/);
     assert.match(html, /value="1280"/);
     assert.match(html, /value="720"/);
     assert.doesNotMatch(html, />1:4<\/span>/);
