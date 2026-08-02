@@ -11,7 +11,7 @@ export type ImageModelCapabilities = {
     maxOutputs: number;
 };
 
-const COMMON_SIZES = ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"];
+const COMMON_SIZES = ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"];
 const OUTPUT_RESOLUTIONS = ["low", "medium", "high"];
 
 export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFormat, baseUrl = ""): ImageModelCapabilities {

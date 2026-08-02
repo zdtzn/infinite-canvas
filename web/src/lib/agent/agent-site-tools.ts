@@ -7,7 +7,7 @@ import { videoResolutionOptions, videoSecondOptions, videoSizeOptions } from "@/
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
+import { modelOptionLabel, modelOptionName, normalizeImageSizeSelection, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
 // 在网页端执行 Agent 的「站点级」工具（画布列表、工作台生成、提示词搜索、资产增删查等）。
@@ -144,7 +144,7 @@ function getImageConfig() {
     const { config } = useConfigStore.getState();
     const model = config.imageModel || config.model;
     return {
-        current: { model, modelName: modelOptionName(model), resolution: config.quality || "low", quality: config.imageQuality || "auto", outputFormat: config.imageOutputFormat || "auto", size: config.size || "1:1", count: config.count || "1" },
+        current: { model, modelName: modelOptionName(model), resolution: config.quality || "low", quality: config.imageQuality || "auto", outputFormat: config.imageOutputFormat || "auto", size: normalizeImageSizeSelection(config.size), count: config.count || "1" },
         models: selectableModelsByCapability(config, "image").map((value) => ({ value, label: modelOptionLabel(config, value) })),
         resolutionOptions: imageResolutionOptions,
         qualityOptions: imageGenerationQualityOptions,
@@ -175,8 +175,9 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
         applied.outputFormat = input.outputFormat;
     }
     if (typeof input.size === "string" && input.size.trim()) {
-        configStore.updateConfig("size", input.size);
-        applied.size = input.size;
+        const size = normalizeImageSizeSelection(input.size);
+        configStore.updateConfig("size", size);
+        applied.size = size;
     }
     if (input.count != null) {
         const count = String(Math.max(1, Math.min(15, Math.floor(Number(input.count)) || 1)));

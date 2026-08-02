@@ -49,8 +49,9 @@ export function buildSadaiImageRequestOptions({ count, size, outputResolution, g
 }
 
 function resolveSadaiAspectRatio(size?: string) {
-    const value = String(size || "").trim().toLowerCase();
-    if (!value || value === "auto") return undefined;
+    const requestedValue = String(size || "").trim().toLowerCase();
+    if (!requestedValue) return undefined;
+    const value = requestedValue === "auto" ? "1:1" : requestedValue;
     const match = value.match(/^(\d+)\s*[:x]\s*(\d+)$/i);
     if (!match) return undefined;
     const width = Number(match[1]);

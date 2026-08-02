@@ -2,7 +2,7 @@ import { type ReactNode, useState } from "react";
 import { ConfigProvider, Select, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, normalizeImageSizeSelection, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
 
 const resolutionOptions = [
@@ -34,7 +34,6 @@ const aspectOptions = [
     { value: "3:4", label: "3:4", width: 1024, height: 1360, icon: "portrait" },
     { value: "16:9", label: "16:9", width: 1824, height: 1024, icon: "landscape" },
     { value: "9:16", label: "9:16", width: 1024, height: 1824, icon: "portrait" },
-    { value: "auto", label: "auto", width: 0, height: 0, icon: "auto" },
 ];
 
 export const imageResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
@@ -69,21 +68,20 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
         const value = item.value;
         return /^\d+x\d+$/i.test(value) ? capabilities.customSize : capabilities.sizes.includes(value);
     });
-    const ratioAspects = visibleAspects.filter((item) => item.value !== "auto");
-    const autoAspect = visibleAspects.find((item) => item.value === "auto");
+    const ratioAspects = visibleAspects;
     const effectiveMaxCount = Math.min(maxCount, capabilities.maxOutputs);
     const resolution = resolutionOptions.some((item) => item.value === config.quality) ? config.quality : "low";
     const imageQuality = generationQualityOptions.some((item) => item.value === config.imageQuality) ? config.imageQuality : "auto";
     const imageOutputFormat = outputFormatOptions.some((item) => item.value === config.imageOutputFormat) ? config.imageOutputFormat : "auto";
     const count = Math.max(1, Math.min(effectiveMaxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = config.size || "auto";
+    const activeSize = normalizeImageSizeSelection(config.size);
     const transparentBackground = config.background === "transparent";
     const selectedAspect = aspectOptions.find((item) => item.value === activeSize);
     const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0], resolution);
     const customSizeActive = /^\d+x\d+$/i.test(activeSize);
     const selectAspect = (value: string) => {
         const option = aspectOptions.find((item) => item.value === value);
-        onConfigChange("size", option?.value || "auto");
+        onConfigChange("size", option?.value || "1:1");
     };
     const updateDimension = (key: "width" | "height", value: number | null) => {
         const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
@@ -131,11 +129,6 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                                 <span>{item.label}</span>
                             </button>
                         ))}
-                        {autoAspect ? (
-                            <OptionPill selected={activeSize === "auto"} theme={theme} onClick={() => selectAspect(autoAspect.value)}>
-                                自动
-                            </OptionPill>
-                        ) : null}
                     </div>
                 </div>
                 <div className="space-y-2.5">
@@ -193,7 +186,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                         <div className="space-y-0.5">
                             <SettingTitle color={theme.node.muted}>实际请求尺寸</SettingTitle>
                             <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                                {activeSize === "auto" ? "由模型自动决定" : customSizeActive ? "自定义尺寸会覆盖比例和分辨率" : "按比例和分辨率精确换算"}
+                                {customSizeActive ? "自定义尺寸会覆盖比例和分辨率" : "按比例和分辨率精确换算"}
                             </div>
                         </div>
                         {capabilities.customSize ? (
@@ -208,9 +201,9 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                         ) : null}
                     </div>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={activeSize === "auto" || !capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
+                        <DimensionInput prefix="W" value={dimensions.width} disabled={!capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
                         <span className="text-lg opacity-45">×</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={activeSize === "auto" || !capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
+                        <DimensionInput prefix="H" value={dimensions.height} disabled={!capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
                     </div>
                 </div>
                 <div className="flex items-center justify-between gap-3">
@@ -271,7 +264,8 @@ export function imageOutputFormatLabel(value: string) {
 }
 
 export function imageSizeLabel(size: string) {
-    return aspectOptions.find((item) => item.value === size)?.label || size;
+    const normalizedSize = normalizeImageSizeSelection(size);
+    return aspectOptions.find((item) => item.value === normalizedSize)?.label || normalizedSize;
 }
 
 function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
@@ -335,7 +329,6 @@ function CountInput({ value, max, theme, onChange }: { value: number; max: numbe
 }
 
 function AspectIcon({ type, width, height, color }: { type: string; width: number; height: number; color: string }) {
-    if (type === "auto") return null;
     const ratio = width / Math.max(1, height);
     const boxWidth = ratio >= 1 ? 24 : Math.max(10, 24 * ratio);
     const boxHeight = ratio >= 1 ? Math.max(10, 24 / ratio) : 24;

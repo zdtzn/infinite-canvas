@@ -35,7 +35,7 @@ test("maps workbench ratio and resolution to SADAI Image2 fields", () => {
     });
 });
 
-test("omits automatic optional fields and reduces explicit dimensions", () => {
+test("migrates legacy automatic ratios to square and reduces explicit dimensions", () => {
     expect(
         buildSadaiImageRequestOptions({
             count: 1,
@@ -44,7 +44,7 @@ test("omits automatic optional fields and reduces explicit dimensions", () => {
             generationQuality: "auto",
             references: [],
         }),
-    ).toEqual({ n: 1 });
+    ).toEqual({ n: 1, aspect_ratio: "1:1" });
 
     expect(
         buildSadaiImageRequestOptions({

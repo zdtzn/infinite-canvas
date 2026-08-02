@@ -54,8 +54,9 @@ export function buildOpenAiImageRequestOptions({ count, quality, outputFormat, s
 
 /** Convert the workbench's ratio presets to OpenAI-compatible pixel dimensions. */
 export function resolveOpenAiImageSize(size?: string, quality?: string) {
-    const value = String(size || "").trim();
-    if (!value || value.toLowerCase() === "auto") return undefined;
+    const requestedValue = String(size || "").trim();
+    if (!requestedValue) return undefined;
+    const value = requestedValue.toLowerCase() === "auto" ? "1:1" : requestedValue;
     if (/^\d+x\d+$/i.test(value)) return value.toLowerCase();
 
     const match = value.match(/^(\d+)\s*:\s*(\d+)$/);

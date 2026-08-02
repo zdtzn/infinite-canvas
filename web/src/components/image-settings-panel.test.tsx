@@ -5,7 +5,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { createModelChannel, defaultConfig, encodeChannelModel, modelOptionsFromChannels } from "@/stores/use-config-store";
-import { ImageSettingsPanel } from "./image-settings-panel";
+import { ImageSettingsPanel, imageAspectOptions } from "./image-settings-panel";
+
+test("image aspect presets no longer expose an automatic ratio", () => {
+    assert.equal(imageAspectOptions.some((option) => option.value === "auto"), false);
+});
 
 test("image settings use the workbench-selected channel instead of a stale global model", () => {
     const uuChannel = createModelChannel({

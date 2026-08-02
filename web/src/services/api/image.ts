@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { defaultConfig, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { defaultConfig, normalizeImageSizeSelection, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -237,8 +237,7 @@ export function resolveImageRequestSize(resolution: string | undefined, size: st
 }
 
 function resolveRequestSize(resolution: string | undefined, size: string) {
-    const value = size.trim();
-    if (!value || value.toLowerCase() === "auto") return undefined;
+    const value = normalizeImageSizeSelection(size);
     const dimensions = parseImageDimensions(value);
     if (dimensions) {
         validateImageSize(dimensions.width, dimensions.height);
@@ -249,10 +248,10 @@ function resolveRequestSize(resolution: string | undefined, size: string) {
 }
 
 function resolveGeminiImageConfig(config: AiConfig) {
-    const value = config.size.trim();
+    const value = normalizeImageSizeSelection(config.size);
     const dimensions = parseImageDimensions(value);
     const ratio = dimensions ? `${dimensions.width}:${dimensions.height}` : value;
-    const aspectRatio = value && value.toLowerCase() !== "auto" ? closestGeminiAspectRatio(ratio) : undefined;
+    const aspectRatio = closestGeminiAspectRatio(ratio);
     const imageSize = supportsGeminiImageSize(config.model) ? resolveGeminiImageSize(config.quality, dimensions) : undefined;
     const image = { ...(aspectRatio ? { aspectRatio } : {}), ...(imageSize ? { imageSize } : {}) };
     return Object.keys(image).length ? { responseFormat: { image } } : {};
@@ -1009,7 +1008,8 @@ async function requestServerImageJob(
     const resolution = normalizeResolution(requestConfig.quality) || "low";
     const imageQuality = resolveSupportedImageQuality(requestConfig);
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-    validateImageRequest(capabilities, { resolution, imageQuality: imageQuality || "auto", imageOutputFormat: imageOutputFormat || "auto", size: requestConfig.size || "auto", background: requestConfig.background || "", referenceCount: references.length, count });
+    const size = normalizeImageSizeSelection(requestConfig.size);
+    validateImageRequest(capabilities, { resolution, imageQuality: imageQuality || "auto", imageOutputFormat: imageOutputFormat || "auto", size, background: requestConfig.background || "", referenceCount: references.length, count });
     const referenceData = await Promise.all(references.map((reference) => imageToDataUrl(reference, expectedUserId)));
     const maskData = mask ? await imageToDataUrl(mask, expectedUserId) : undefined;
     const { job } = await submitImageJob({
@@ -1021,7 +1021,7 @@ async function requestServerImageJob(
         quality: resolution,
         imageQuality,
         imageOutputFormat,
-        size: requestConfig.size || undefined,
+        size,
         background: normalizeBackground(requestConfig.background),
         references: referenceData,
         mask: maskData,

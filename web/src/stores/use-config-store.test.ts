@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyPlatformChannels, createModelChannel, defaultConfig, encodeChannelModel, resolveModelForCapability, useConfigStore } from "./use-config-store";
+import { applyPlatformChannels, createModelChannel, defaultConfig, encodeChannelModel, normalizeImageSizeSelection, resolveModelForCapability, useConfigStore } from "./use-config-store";
+
+test("legacy automatic image ratios migrate to an explicit square ratio", () => {
+    expect(normalizeImageSizeSelection("auto")).toBe("1:1");
+    expect(normalizeImageSizeSelection("")).toBe("1:1");
+    expect(normalizeImageSizeSelection("16:9")).toBe("16:9");
+});
 
 describe("platform channel hydration", () => {
     test("preserves a valid selected model and never keeps a browser API key", () => {

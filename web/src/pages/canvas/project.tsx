@@ -2024,7 +2024,9 @@ function InfiniteCanvasPage() {
     const maskEditImageNode = useCallback(
         async (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => {
             if (!node.metadata?.content) return;
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1", size: "auto" };
+            const sourceWidth = Math.max(1, Math.round(node.metadata.naturalWidth || node.width));
+            const sourceHeight = Math.max(1, Math.round(node.metadata.naturalHeight || node.height));
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1", size: `${sourceWidth}:${sourceHeight}` };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;

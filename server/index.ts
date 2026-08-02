@@ -1599,7 +1599,7 @@ async function generateGeminiImages(channel: ChannelRecord, apiKey: string, inpu
                     });
                 });
                 const image: Record<string, string> = {};
-                if (input.size && input.size !== "auto") image.aspectRatio = normalizeAspectRatio(input.size);
+                if (input.size) image.aspectRatio = normalizeAspectRatio(input.size);
                 if (input.quality && input.quality !== "auto") image.imageSize = ({ low: "1K", medium: "2K", high: "4K" } as Record<string, string>)[input.quality] || input.quality;
                 const response = await upstreamFetch(
                     buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(input.model.replace(/^models\//, ""))}:generateContent`),
@@ -2875,6 +2875,7 @@ function dataUrlBlob(value: string) {
 }
 
 function normalizeAspectRatio(value: string) {
+    if (value.trim().toLowerCase() === "auto") return "1:1";
     const dimensions = value.match(/^(\d+)x(\d+)$/);
     if (!dimensions) return value;
     return `${dimensions[1]}:${dimensions[2]}`;

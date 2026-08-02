@@ -3,6 +3,8 @@ import { expect, test } from "bun:test";
 import { resolveImageRequestSize } from "./image";
 
 test("maps ratio and selected output resolution to predictable pixels", () => {
+    expect(resolveImageRequestSize("low", "auto")).toBe("1024x1024");
+    expect(resolveImageRequestSize("medium", "auto")).toBe("2048x2048");
     expect(resolveImageRequestSize("low", "1:1")).toBe("1024x1024");
     expect(resolveImageRequestSize("medium", "1:1")).toBe("2048x2048");
     expect(resolveImageRequestSize("high", "1:1")).toBe("3840x3840");

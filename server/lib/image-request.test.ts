@@ -13,9 +13,10 @@ test("converts workbench ratio presets to OpenAI pixel dimensions", () => {
     expect(resolveOpenAiImageSize("16:9", "high")).toBe("3840x2160");
 });
 
-test("preserves explicit pixel dimensions and omits auto sizing", () => {
+test("preserves explicit pixel dimensions and migrates legacy auto sizing to square", () => {
     expect(resolveOpenAiImageSize("2048x1152")).toBe("2048x1152");
-    expect(resolveOpenAiImageSize("auto")).toBeUndefined();
+    expect(resolveOpenAiImageSize("auto")).toBe("1024x1024");
+    expect(resolveOpenAiImageSize("auto", "medium")).toBe("2048x2048");
 });
 
 test("uses the documented minimal request body for a single image", () => {

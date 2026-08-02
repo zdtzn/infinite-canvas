@@ -6,7 +6,7 @@ import { Button } from "antd";
 import { ImageSettingsPanel, imageOutputFormatLabel, imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, normalizeImageSizeSelection, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import { deriveImageModelCapabilities } from "@/stores/model-capabilities";
 
 type CanvasImageSettingsPopoverProps = {
@@ -33,7 +33,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const imageQuality = capabilities.generationQualities.includes(configuredImageQuality) ? configuredImageQuality : "auto";
     const imageOutputFormat = config.imageOutputFormat || "auto";
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = config.size || "auto";
+    const activeSize = normalizeImageSizeSelection(config.size);
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);

@@ -287,6 +287,7 @@ export const useConfigStore = create<ConfigStore>()(
                         canvasImageCount: config.canvasImageCount || "3",
                         imageQuality: normalizeImageQuality(config.imageQuality),
                         imageOutputFormat: normalizeImageOutputFormat(config.imageOutputFormat),
+                        size: normalizeImageSizeSelection(config.size),
                     },
                 };
             },
@@ -473,6 +474,11 @@ function normalizeImageOutputFormat(value: unknown) {
         .trim()
         .toLowerCase();
     return ["auto", "png", "jpeg", "webp"].includes(format) ? format : "auto";
+}
+
+export function normalizeImageSizeSelection(value: unknown) {
+    const size = String(value || "").trim();
+    return !size || size.toLowerCase() === "auto" ? "1:1" : size;
 }
 
 function normalizeReasoningEffort(value: unknown): ReasoningEffort {
