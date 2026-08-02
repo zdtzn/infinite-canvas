@@ -2737,4 +2737,240 @@ html[data-imperial-mode="true"] {
         gap: 1rem;
         padding-top: 0.125rem;
     }
+
+    /* 登录 · 踏入修炼之地 */
+    .login-realm-background-image {
+        object-position: center;
+        transform: scale(1.015);
+        animation: login-realm-breathe 24s ease-in-out infinite alternate;
+        will-change: transform;
+    }
+
+    .login-realm-background-shade {
+        background:
+            linear-gradient(90deg, rgb(7 9 14 / 88%) 0%, rgb(7 9 14 / 58%) 48%, rgb(7 9 14 / 80%) 100%),
+            linear-gradient(180deg, rgb(7 9 14 / 30%) 0%, rgb(7 9 14 / 72%) 100%);
+    }
+
+    .login-realm-rule-lines {
+        opacity: 0.07;
+        background-image:
+            linear-gradient(rgb(201 168 106 / 26%) 1px, transparent 1px),
+            linear-gradient(90deg, rgb(201 168 106 / 26%) 1px, transparent 1px);
+        background-size: 160px 160px;
+        mask-image: linear-gradient(90deg, transparent, #000 20%, #000 80%, transparent);
+        pointer-events: none;
+    }
+
+    .login-realm-welcome-copy {
+        animation: login-realm-copy-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+
+    .login-realm-card::before {
+        position: absolute;
+        top: 0;
+        right: 18%;
+        left: 18%;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgb(201 168 106 / 70%), transparent);
+        content: "";
+    }
+
+    .login-realm-form .ant-form-item {
+        margin-bottom: 18px;
+    }
+
+    .login-realm-form .ant-form-item-label {
+        padding-bottom: 7px;
+    }
+
+    .login-realm-form .ant-form-item-label > label {
+        height: auto;
+        color: #c9c4b9;
+        font-size: 0.8125rem;
+        font-weight: 500;
+    }
+
+    .login-realm-input.ant-input,
+    .login-realm-input.ant-input-affix-wrapper {
+        min-height: 46px;
+        border-color: rgb(237 237 230 / 14%);
+        border-radius: 6px;
+        color: #edede6;
+        background: rgb(9 11 16 / 64%);
+        box-shadow: none;
+        transition:
+            border-color 180ms ease,
+            background-color 180ms ease,
+            box-shadow 180ms ease;
+    }
+
+    .login-realm-input.ant-input-affix-wrapper .ant-input {
+        color: #edede6;
+        background: transparent;
+    }
+
+    .login-realm-input.ant-input::placeholder,
+    .login-realm-input.ant-input-affix-wrapper .ant-input::placeholder {
+        color: #676975;
+    }
+
+    .login-realm-input.ant-input:hover,
+    .login-realm-input.ant-input-affix-wrapper:hover {
+        border-color: rgb(201 168 106 / 42%);
+        background: rgb(12 14 20 / 78%);
+    }
+
+    .login-realm-input.ant-input:focus,
+    .login-realm-input.ant-input-focused,
+    .login-realm-input.ant-input-affix-wrapper-focused {
+        border-color: rgb(201 168 106 / 70%);
+        background: rgb(12 14 20 / 88%);
+        box-shadow: 0 0 0 3px rgb(201 168 106 / 10%);
+    }
+
+    .login-realm-input .ant-input-password-icon {
+        color: #777984;
+    }
+
+    .login-realm-input .ant-input-password-icon:hover {
+        color: #c9a86a;
+    }
+
+    .login-realm-form .ant-form-item-explain-error {
+        padding-top: 3px;
+        color: #ef8c80;
+        font-size: 0.75rem;
+    }
+
+    .login-realm-submit.ant-btn {
+        height: 48px;
+        border-radius: 6px;
+        border-color: #d8402a;
+        color: #fff7ee;
+        background: #d8402a;
+        font-weight: 600;
+        box-shadow: 0 10px 30px rgb(216 64 42 / 20%);
+        transition:
+            border-color 180ms ease,
+            background-color 180ms ease,
+            box-shadow 180ms ease,
+            transform 180ms ease;
+    }
+
+    .login-realm-submit.ant-btn:hover,
+    .login-realm-submit.ant-btn:focus-visible {
+        border-color: #ee5038 !important;
+        color: #fff7ee !important;
+        background: #ee5038 !important;
+        box-shadow: 0 14px 34px rgb(216 64 42 / 30%);
+        transform: translateY(-1px);
+    }
+
+    .login-realm-submit.ant-btn:active {
+        transform: translateY(0);
+    }
+
+    .login-realm-alert.ant-alert-error {
+        border-color: rgb(226 75 74 / 28%);
+        border-radius: 6px;
+        color: #f2b2ab;
+        background: rgb(226 75 74 / 9%);
+    }
+
+    .login-realm-alert.ant-alert-error .ant-alert-message,
+    .login-realm-alert.ant-alert-error .ant-alert-icon {
+        color: #f2b2ab;
+    }
+
+    .login-realm-transition {
+        animation: login-realm-transition 720ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+
+    .login-realm-transition-content {
+        animation: login-realm-transition-content 720ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+
+    @keyframes login-realm-breathe {
+        from {
+            transform: scale(1.015) translate3d(-0.3%, 0, 0);
+        }
+
+        to {
+            transform: scale(1.04) translate3d(0.3%, -0.4%, 0);
+        }
+    }
+
+    @keyframes login-realm-copy-in {
+        from {
+            opacity: 0;
+            transform: translate3d(0, 8px, 0);
+        }
+
+        to {
+            opacity: 1;
+            transform: translate3d(0, 0, 0);
+        }
+    }
+
+    @keyframes login-realm-transition {
+        0% {
+            opacity: 0;
+        }
+
+        22%,
+        72% {
+            opacity: 1;
+        }
+
+        100% {
+            opacity: 0;
+        }
+    }
+
+    @keyframes login-realm-transition-content {
+        from {
+            opacity: 0;
+            transform: scale(0.98);
+        }
+
+        35%,
+        80% {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        to {
+            opacity: 0;
+            transform: scale(1.01);
+        }
+    }
+
+    @media (max-width: 1023px) {
+        .login-realm-background-image {
+            object-position: 58% center;
+        }
+
+        .login-realm-background-shade {
+            background: linear-gradient(180deg, rgb(7 9 14 / 68%) 0%, rgb(7 9 14 / 82%) 58%, rgb(7 9 14 / 94%) 100%);
+        }
+
+        .login-realm-rule-lines {
+            opacity: 0.045;
+            background-size: 120px 120px;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .login-realm-background-image,
+        .login-realm-welcome-copy,
+        .login-realm-transition,
+        .login-realm-transition-content {
+            animation: none;
+        }
+
+        .login-realm-submit.ant-btn {
+            transition-duration: 0.01ms;
+        }
+    }
 }
