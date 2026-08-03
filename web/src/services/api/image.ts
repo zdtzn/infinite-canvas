@@ -124,6 +124,7 @@ export type RequestOptions = {
     onJobCreated?: (jobId: string) => void;
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
     expectedUserId?: string;
+    idempotencyKey?: string;
 };
 
 const RESOLUTION_BASE: Record<string, number> = {
@@ -1002,7 +1003,7 @@ async function requestServerImageJob(
         references: referenceData,
         mask: maskData,
         source: options?.source,
-    }, expectedUserId);
+    }, expectedUserId, options?.idempotencyKey);
     options?.onJobCreated?.(job.id);
     const abort = () => void cancelServerJob(job.id, expectedUserId).catch(() => undefined);
     options?.signal?.addEventListener("abort", abort, { once: true });

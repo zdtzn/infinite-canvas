@@ -521,6 +521,7 @@ function ErrorContent({ node, theme, onRetry, isDouEmperor }: Pick<NodeContentRe
                 <div className="flex flex-col gap-1 text-xs leading-5 text-red-300">
                     <strong className="font-medium">{feedback.title}</strong>
                     <span>{feedback.description}</span>
+                    {feedback.reference ? <span className="opacity-70">{feedback.reference}</span> : null}
                 </div>
             ) : (
                 <div className="text-xs leading-5 text-red-300">{node.metadata?.errorDetails || "未能完成此项创作"}</div>

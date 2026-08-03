@@ -24,3 +24,11 @@ test("keeps ordinary prompt and parameter failures in the common vocabulary", ()
     expect(first).toEqual(second);
     expect(generationFailureText(first)).not.toContain("生成失败");
 });
+
+test("keeps a short support reference without replacing the world-building message", () => {
+    const feedback = generationFailureFeedback("上游暂时不可用（请求编号 1234567890abcdef）", { seed: "support" });
+
+    expect(feedback.kind).toBe("system");
+    expect(feedback.reference).toBe("请求编号 1234567890ab");
+    expect(generationFailureText(feedback)).toContain("请求编号 1234567890ab");
+});

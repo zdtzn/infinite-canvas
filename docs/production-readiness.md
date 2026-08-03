@@ -42,6 +42,14 @@ For the current single-server workflow, deploy only after the GitHub Actions che
 sh ops/deploy-latest.sh
 ```
 
+Before the domain is ready, the helper preserves the current container bind address and warns when port `3000` remains publicly bound. Once HTTPS is enabled, make the production checks mandatory on every deployment:
+
+```bash
+REQUIRE_HTTPS=1 sh ops/deploy-latest.sh
+```
+
+That preflight rejects a missing or non-HTTPS `PUBLIC_BASE_URL`, disabled proxy trust, insecure cookies, and a missing or placeholder `APP_ENCRYPTION_KEY` before the running container is stopped. The recreated container also uses `no-new-privileges`, drops Linux capabilities, limits process count, and rotates JSON logs. Optional `MEMORY_LIMIT` and `MEMORY_SWAP_LIMIT` values can be supplied to `deploy-pinned.sh` after observing normal production memory usage.
+
 From a Windows development machine with the dedicated deployment key installed, use the remote helper. It waits until GHCR publishes the requested commit, deploys its immutable digest, and verifies the public health endpoint:
 
 ```powershell
@@ -73,6 +81,16 @@ sh ops/deploy-fast.sh
 Fast mode skips the full-volume archive and accepts the new container after `/health` reports the expected source revision. It still deploys an immutable digest and restores the previous container when startup fails. Use it only for frontend UI, copy, styles, and other changes that cannot alter persisted data. Continue using `deploy-latest.sh` for server code, authentication, permissions, provider configuration, storage, SQLite, migrations, environment changes, and every production release.
 
 All deployment modes now refuse to stop the container while generation jobs are queued or running. Wait for those jobs to finish before deploying. `ALLOW_ACTIVE_JOBS=1` is an emergency override and may cause a paid synchronous upstream request to finish without its result being recoverable, so it should not be used during normal updates.
+
+## Asset and Reference Limits
+
+Image references and an optional mask share a default 64 MiB request budget (`MAX_IMAGE_REFERENCE_TOTAL_BYTES`). The server materializes references sequentially to avoid multiplying temporary Base64 buffers on the small production host.
+
+Unreferenced server assets are reclaimed after a 24-hour grace period. References are recomputed from canvas projects, the asset library, image/video history, and avatars immediately before deletion. The collector starts after boot and then runs daily; tune it with `ASSET_GC_ENABLED`, `ASSET_GC_GRACE_MS`, and `ASSET_GC_INTERVAL_HOURS`. Its most recent result is exposed in the administrator metrics response.
+
+## Dependency Audit Note
+
+The build-time PostCSS and Babel advisories and all Canvas Agent advisories are patched in the lockfiles. `bun audit` still reports React Router advisory `GHSA-qwww-vcr4-c8h2`; that advisory applies to React Server Components actions. This application is a client-only Vite SPA and exposes no React Router RSC or Server Action endpoint, so the vulnerable path is not reachable. Keep this exception under review and move to the compatible Router 8 stack when `react-router-dom` and the supported runtime can be upgraded together.
 
 ## Required Secrets
 

@@ -5,11 +5,17 @@ CONTAINER_NAME="${CONTAINER_NAME:-infinite-canvas}"
 VOLUME_NAME="${VOLUME_NAME:-${DATA_VOLUME_NAME:-infinite-canvas-data}}"
 BACKUP_ROOT="${BACKUP_ROOT:-/root/infinite-canvas-backups}"
 ENV_FILE="${ENV_FILE:-/root/infinite-canvas.env}"
-BIND_ADDRESS="${BIND_ADDRESS:-0.0.0.0}"
+BIND_ADDRESS="${BIND_ADDRESS:-}"
 HOST_PORT="${HOST_PORT:-3000}"
 CONTAINER_PORT="${CONTAINER_PORT:-3000}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
 BACKUP_RETENTION_COUNT="${BACKUP_RETENTION_COUNT:-7}"
+PIDS_LIMIT="${PIDS_LIMIT:-256}"
+LOG_MAX_SIZE="${LOG_MAX_SIZE:-10m}"
+LOG_MAX_FILE="${LOG_MAX_FILE:-5}"
+MEMORY_LIMIT="${MEMORY_LIMIT:-}"
+MEMORY_SWAP_LIMIT="${MEMORY_SWAP_LIMIT:-}"
+REQUIRE_HTTPS="${REQUIRE_HTTPS:-0}"
 FORCE_RECREATE="${FORCE_RECREATE:-0}"
 ALLOW_ACTIVE_JOBS="${ALLOW_ACTIVE_JOBS:-0}"
 DEPLOY_MODE="${DEPLOY_MODE:-safe}"
@@ -44,11 +50,13 @@ case "$ENV_FILE" in
   /*) ;;
   *) echo "ENV_FILE must be an absolute host path" >&2; exit 1 ;;
 esac
-case "$HEALTH_TIMEOUT_SECONDS:$BACKUP_RETENTION_COUNT" in
-  *[!0-9:]*|:*|*:) echo "Timeout and retention values must be positive integers" >&2; exit 1 ;;
-esac
-if [ "$HEALTH_TIMEOUT_SECONDS" -lt 1 ] || [ "$BACKUP_RETENTION_COUNT" -lt 1 ]; then
-  echo "Timeout and retention values must be positive integers" >&2
+for numeric_value in "$HEALTH_TIMEOUT_SECONDS" "$BACKUP_RETENTION_COUNT" "$PIDS_LIMIT" "$LOG_MAX_FILE"; do
+  case "$numeric_value" in
+    ''|*[!0-9]*) echo "Timeout, retention, PID and log limits must be positive integers" >&2; exit 1 ;;
+  esac
+done
+if [ "$HEALTH_TIMEOUT_SECONDS" -lt 1 ] || [ "$BACKUP_RETENTION_COUNT" -lt 1 ] || [ "$PIDS_LIMIT" -lt 32 ] || [ "$LOG_MAX_FILE" -lt 1 ]; then
+  echo "Timeout, retention, PID and log limits are outside the allowed range" >&2
   exit 1
 fi
 case "$FORCE_RECREATE" in
@@ -63,6 +71,10 @@ case "$DEPLOY_MODE" in
   safe|fast) ;;
   *) echo "DEPLOY_MODE must be safe or fast" >&2; exit 1 ;;
 esac
+case "$REQUIRE_HTTPS" in
+  0|1) ;;
+  *) echo "REQUIRE_HTTPS must be 0 or 1" >&2; exit 1 ;;
+esac
 if [ -n "$EXPECTED_COMMIT" ] && ! printf '%s' "$EXPECTED_COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then
   echo "EXPECTED_COMMIT must be a full lowercase Git commit SHA" >&2
   exit 1
@@ -71,6 +83,23 @@ fi
 docker volume inspect "$VOLUME_NAME" >/dev/null
 docker inspect "$CONTAINER_NAME" >/dev/null
 docker run --rm -v "${VOLUME_NAME}:/source:ro" alpine test -f /source/app.sqlite
+
+if [ -z "$BIND_ADDRESS" ]; then
+  BIND_ADDRESS="$(docker inspect -f "{{with index .HostConfig.PortBindings \"${CONTAINER_PORT}/tcp\"}}{{with index . 0}}{{.HostIp}}{{end}}{{end}}" "$CONTAINER_NAME" 2>/dev/null || true)"
+  BIND_ADDRESS="${BIND_ADDRESS:-127.0.0.1}"
+fi
+if ! printf '%s' "$BIND_ADDRESS" | grep -Eq '^[0-9A-Fa-f:.]+$'; then
+  echo "BIND_ADDRESS must be a literal IP address" >&2
+  exit 1
+fi
+PUBLISH_ADDRESS="$BIND_ADDRESS"
+case "$PUBLISH_ADDRESS" in
+  *:*) PUBLISH_ADDRESS="[${PUBLISH_ADDRESS}]" ;;
+esac
+if [ -n "$MEMORY_SWAP_LIMIT" ] && [ -z "$MEMORY_LIMIT" ]; then
+  echo "MEMORY_SWAP_LIMIT requires MEMORY_LIMIT" >&2
+  exit 1
+fi
 
 assert_no_active_jobs() {
   if [ "$ALLOW_ACTIVE_JOBS" = "1" ]; then
@@ -97,6 +126,40 @@ assert_no_active_jobs() {
 
 assert_no_active_jobs
 pull_image "$IMAGE_REF"
+
+if [ -f "$ENV_FILE" ]; then
+  docker run --rm \
+    --env-file "$ENV_FILE" \
+    -e "DEPLOY_REQUIRE_HTTPS=${REQUIRE_HTTPS}" \
+    "$IMAGE_REF" \
+    bun -e '
+      const required = process.env.DEPLOY_REQUIRE_HTTPS === "1";
+      const rawBase = String(process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
+      const secureCookies = process.env.FORCE_SECURE_COOKIES === "1";
+      const trustProxy = process.env.TRUST_PROXY === "1";
+      const productionConfigured = required || Boolean(rawBase) || secureCookies || trustProxy;
+      if (!productionConfigured) process.exit(0);
+      let base;
+      try { base = new URL(rawBase); } catch { throw new Error("PUBLIC_BASE_URL must be a valid HTTPS origin"); }
+      if (base.protocol !== "https:" || base.origin !== rawBase) throw new Error("PUBLIC_BASE_URL must be the canonical HTTPS origin without a path");
+      if (!secureCookies) throw new Error("FORCE_SECURE_COOKIES must be 1 for HTTPS deployment");
+      if (!trustProxy) throw new Error("TRUST_PROXY must be 1 behind Caddy");
+      const key = String(process.env.APP_ENCRYPTION_KEY || "").trim();
+      if (key.length < 32 || /^(?:replace-with|change-me|example|password|secret)/i.test(key)) throw new Error("APP_ENCRYPTION_KEY must be a stable random secret of at least 32 characters");
+    '
+elif [ "$REQUIRE_HTTPS" = "1" ]; then
+  echo "ENV_FILE is required when REQUIRE_HTTPS=1" >&2
+  exit 1
+fi
+
+case "$BIND_ADDRESS" in
+  127.0.0.1|::1) ;;
+  *)
+    if [ "$REQUIRE_HTTPS" != "1" ]; then
+      echo "WARNING: application port ${HOST_PORT} remains bound to ${BIND_ADDRESS}. Keep the cloud firewall closed except for intentional direct-IP testing." >&2
+    fi
+    ;;
+esac
 
 image_revision="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE_REF")"
 if [ -n "$EXPECTED_COMMIT" ] && [ "$image_revision" != "$EXPECTED_COMMIT" ]; then
@@ -213,9 +276,21 @@ set -- docker run -d \
   --name "$CONTAINER_NAME" \
   --restart unless-stopped \
   --stop-timeout 30 \
-  -p "${BIND_ADDRESS}:${HOST_PORT}:${CONTAINER_PORT}" \
+  --security-opt no-new-privileges:true \
+  --cap-drop ALL \
+  --pids-limit "$PIDS_LIMIT" \
+  --log-driver json-file \
+  --log-opt "max-size=${LOG_MAX_SIZE}" \
+  --log-opt "max-file=${LOG_MAX_FILE}" \
+  -p "${PUBLISH_ADDRESS}:${HOST_PORT}:${CONTAINER_PORT}" \
   -v "${VOLUME_NAME}:/data" \
   --label com.centurylinklabs.watchtower.enable=false
+if [ -n "$MEMORY_LIMIT" ]; then
+  set -- "$@" --memory "$MEMORY_LIMIT"
+fi
+if [ -n "$MEMORY_SWAP_LIMIT" ]; then
+  set -- "$@" --memory-swap "$MEMORY_SWAP_LIMIT"
+fi
 if [ -f "$ENV_FILE" ]; then
   set -- "$@" --env-file "$ENV_FILE"
 fi

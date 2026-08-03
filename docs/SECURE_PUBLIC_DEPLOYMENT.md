@@ -43,7 +43,15 @@ docker compose \
 6. 受邀成员共用站点口令，但每个人使用自己的昵称和个人密码。所有成员完成首次登录后，在 `.env` 设置 `ALLOW_NEW_USERS=0`，再执行一次上述 `up -d`。这只关闭新账号创建，不影响已有账号登录。
 7. 在“配置 -> 渠道”中填写接口地址与 API Key。Key 会加密写入 Docker 数据卷，不再保存在浏览器。
 
-公网模式下项目、生成任务、图片、缩略图、视频和音频都会按用户写入 `infinite-canvas-data` 数据卷。默认每个用户最多保存 2 GiB 服务端素材和 2 GiB 任务结果，可分别通过 `MAX_USER_ASSET_BYTES`、`MAX_USER_JOB_FILE_BYTES` 调整。单张图片或音频最大 16 MB，单个视频最大 32 MB。
+域名正式启用后，通过部署脚本更新时请增加 `REQUIRE_HTTPS=1`。脚本会在停止旧容器前校验 HTTPS 地址、代理设置、安全 Cookie 和加密密钥，任一项不完整都会中止部署：
+
+```bash
+REQUIRE_HTTPS=1 sh ops/deploy-latest.sh
+```
+
+公网模式下项目、生成任务、图片、缩略图、视频和音频都会按用户写入 `infinite-canvas-data` 数据卷。默认每个用户最多保存 2 GiB 服务端素材和 2 GiB 任务结果，可分别通过 `MAX_USER_ASSET_BYTES`、`MAX_USER_JOB_FILE_BYTES` 调整。单张图片或音频最大 16 MB，单个视频最大 32 MB；单次生图的参考图与蒙版总计默认不超过 64 MB。
+
+未被画布、藏卷阁、生成历史或头像引用的素材会在 24 小时宽限期后自动回收。回收前会重新计算引用，刚上传但尚未写入业务记录的文件不会立即删除。可通过 `ASSET_GC_ENABLED`、`ASSET_GC_GRACE_MS` 和 `ASSET_GC_INTERVAL_HOURS` 调整。
 
 ## 自动更新与回滚
 

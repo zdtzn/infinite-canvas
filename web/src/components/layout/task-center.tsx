@@ -1,6 +1,7 @@
 import { App, Badge, Button, Drawer, Empty, Progress, Tag, Tooltip } from "antd";
 import { Ban, ListTodo, RotateCcw, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { nanoid } from "nanoid";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { cancelServerJob, fetchServerJobs, removeServerJob, retryServerJob, type ServerJob } from "@/services/server-api";
@@ -18,6 +19,7 @@ export function TaskCenter() {
     const [open, setOpen] = useState(false);
     const [jobs, setJobs] = useState<ServerJob[]>([]);
     const [loadingId, setLoadingId] = useState("");
+    const retryKeys = useRef(new Map<string, string>());
     const userId = useUserStore((state) => state.user?.id || "");
     const activeCount = useMemo(() => jobs.filter((job) => job.status === "queued" || job.status === "running").length, [jobs]);
 
@@ -34,10 +36,35 @@ export function TaskCenter() {
 
     useEffect(() => {
         if (!PUBLIC_MODE) return;
-        void refresh();
-        const timer = window.setInterval(() => void refresh(), 3000);
-        return () => window.clearInterval(timer);
-    }, [userId]);
+        if (!userId) {
+            setJobs([]);
+            return;
+        }
+        let disposed = false;
+        let timer: number | undefined;
+        const delay = activeCount ? 3000 : open ? 15000 : 30000;
+        const schedule = () => {
+            if (disposed || document.hidden) return;
+            timer = window.setTimeout(() => void poll(), delay);
+        };
+        const poll = async () => {
+            if (disposed || document.hidden) return;
+            await refresh();
+            schedule();
+        };
+        const handleVisibilityChange = () => {
+            if (timer) window.clearTimeout(timer);
+            timer = undefined;
+            if (!document.hidden) void poll();
+        };
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        if (!document.hidden) void poll();
+        return () => {
+            disposed = true;
+            if (timer) window.clearTimeout(timer);
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
+        };
+    }, [userId, activeCount, open]);
 
     if (!PUBLIC_MODE) return null;
 
@@ -47,8 +74,16 @@ export function TaskCenter() {
         setLoadingId(job.id);
         try {
             if (action === "cancel") await cancelServerJob(job.id, expectedUserId);
-            if (action === "retry") await retryServerJob(job.id, expectedUserId);
-            if (action === "remove") await removeServerJob(job.id, expectedUserId);
+            if (action === "retry") {
+                const retryKey = retryKeys.current.get(job.id) || nanoid();
+                retryKeys.current.set(job.id, retryKey);
+                await retryServerJob(job.id, expectedUserId, retryKey);
+                retryKeys.current.delete(job.id);
+            }
+            if (action === "remove") {
+                retryKeys.current.delete(job.id);
+                await removeServerJob(job.id, expectedUserId);
+            }
             await refresh(false);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "操作失败");
@@ -106,7 +141,7 @@ export function TaskCenter() {
                                     )
                                 ) : null}
                                 <div className="mt-2 flex items-center justify-between gap-3 text-xs text-stone-500">
-                                    <span>{job.count} 张 · {formatDuration(Math.max(0, duration))}</span>
+                                    <span>{job.count} 张 · {formatDuration(Math.max(0, duration))} · 任务 {job.id.slice(0, 8)}</span>
                                     <div className="flex items-center gap-1">
                                         {active ? <Button type="text" danger size="small" icon={<Ban className="size-3.5" />} loading={loadingId === job.id} onClick={() => void act(job, "cancel")} /> : null}
                                         {job.status === "failed" || job.status === "canceled" ? <Button type="text" size="small" icon={<RotateCcw className="size-3.5" />} loading={loadingId === job.id} onClick={() => void act(job, "retry")} /> : null}

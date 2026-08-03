@@ -40,6 +40,19 @@ export type ServerJob = {
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
     result?: { images: ServerJobImage[]; successCount: number; failCount: number; durationMs: number };
 };
+
+export class ServerRequestError extends Error {
+    readonly status: number;
+    readonly requestId?: string;
+
+    constructor(message: string, status: number, requestId?: string) {
+        const shortRequestId = requestId?.trim().slice(0, 12);
+        super(shortRequestId ? `${message}（请求编号 ${shortRequestId}）` : message);
+        this.name = "ServerRequestError";
+        this.status = status;
+        this.requestId = requestId;
+    }
+}
 export type CultivationBreakthrough = { id: string; fromStageName: string; toStageName: string; status: string };
 export type CultivationProfile = {
     userId: string;
@@ -126,6 +139,18 @@ export type AdminMetrics = {
         lastError?: string;
         nextRunAt?: number;
     } | null;
+    assetGc: {
+        enabled: boolean;
+        graceMs: number;
+        intervalHours: number;
+        running: boolean;
+        lastAttemptAt?: number;
+        lastCompletedAt?: number;
+        lastRemovedAssets: number;
+        lastRemovedFiles: number;
+        lastFreedBytes: number;
+        lastError?: string;
+    };
 };
 
 export async function fetchAuthStatus() {
@@ -271,8 +296,8 @@ export async function submitImageJob(input: {
     references: ServerImageReferenceInput[];
     mask?: ServerImageReferenceInput;
     source?: ServerJob["source"];
-}, expectedUserId?: string) {
-    return serverRequest<{ job: ServerJob }>("/api/jobs/images", { method: "POST", body: input, headers: { "Idempotency-Key": nanoid() }, timeoutMs: 60_000, expectedUserId });
+}, expectedUserId?: string, idempotencyKey = nanoid()) {
+    return serverRequest<{ job: ServerJob }>("/api/jobs/images", { method: "POST", body: input, headers: { "Idempotency-Key": idempotencyKey }, timeoutMs: 60_000, expectedUserId });
 }
 
 export async function fetchServerJobs(expectedUserId?: string) {
@@ -291,8 +316,8 @@ export async function removeServerJob(id: string, expectedUserId?: string) {
     await serverRequest(`/api/jobs/${encodeURIComponent(id)}?remove=1`, { method: "DELETE", expectedUserId });
 }
 
-export async function retryServerJob(id: string, expectedUserId?: string) {
-    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}/retry`, { method: "POST", headers: { "Idempotency-Key": nanoid() }, expectedUserId });
+export async function retryServerJob(id: string, expectedUserId?: string, idempotencyKey = nanoid()) {
+    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}/retry`, { method: "POST", headers: { "Idempotency-Key": idempotencyKey }, expectedUserId });
 }
 
 export async function fetchCultivationProfile() {
@@ -342,7 +367,7 @@ export async function waitForServerJob(id: string, options?: { signal?: AbortSig
         const { job } = await fetchServerJob(id, options?.expectedUserId);
         options?.onUpdate?.(job);
         if (job.status === "succeeded") return job;
-        if (job.status === "failed") throw new Error(friendlyErrorMessage(job.error || "生成失败"));
+        if (job.status === "failed") throw new Error(`${friendlyErrorMessage(job.error || "生成失败")}（任务编号 ${job.id.slice(0, 12)}）`);
         if (job.status === "canceled") throw new DOMException("Aborted", "AbortError");
         await abortableSleep(job.status === "queued" ? 1200 : 1800, options?.signal);
     }
@@ -387,6 +412,7 @@ export async function serverRequest<T = unknown>(url: string, options: ServerReq
         if (response.status === 204) return undefined as T;
         return readJsonResponse<T>(response);
     } catch (error) {
+        if (error instanceof ServerRequestError) throw error;
         if (error instanceof DOMException && error.name === "TimeoutError") throw new Error("请求超时，请检查网络或上游接口状态");
         if (error instanceof DOMException && error.name === "AbortError" && options.signal?.aborted) throw error;
         throw new Error(friendlyErrorMessage(error));
@@ -415,20 +441,20 @@ export function fetchServerResource(input: RequestInfo | URL, init: RequestInit 
 async function readJsonResponse<T>(response: Response) {
     const text = await response.text();
     const payload = text ? safeJson(text) : {};
-    if (!response.ok) throwResponsePayload(response.status, payload);
+    if (!response.ok) throwResponsePayload(response.status, payload, response.headers.get("x-request-id") || undefined);
     return payload as T;
 }
 
 async function throwResponseError(response: Response): Promise<never> {
     const text = await response.text();
-    throwResponsePayload(response.status, text ? safeJson(text) : {});
+    throwResponsePayload(response.status, text ? safeJson(text) : {}, response.headers.get("x-request-id") || undefined);
 }
 
-function throwResponsePayload(status: number, payload: unknown): never {
+function throwResponsePayload(status: number, payload: unknown, headerRequestId?: string): never {
     const originalMessage = readServerError(payload);
     const message = friendlyErrorMessage(originalMessage, status);
     if (status === 401 || (status === 403 && message.includes("账号已停用"))) window.dispatchEvent(new Event("canvas:auth-invalid"));
-    throw new Error(message);
+    throw new ServerRequestError(message, status, readServerRequestId(payload) || headerRequestId);
 }
 
 export async function fetchAdminChannelMetrics(days = 7) {
@@ -455,6 +481,11 @@ function readServerError(value: unknown) {
     if (!value || typeof value !== "object") return typeof value === "string" ? value.slice(0, 300) : "";
     const record = value as { error?: { message?: string }; message?: string };
     return record.error?.message || record.message || "";
+}
+
+function readServerRequestId(value: unknown) {
+    if (!value || typeof value !== "object") return "";
+    return String((value as { requestId?: unknown }).requestId || "").trim();
 }
 
 function abortableSleep(ms: number, signal?: AbortSignal) {

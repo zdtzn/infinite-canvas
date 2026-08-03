@@ -94,3 +94,20 @@ test("limits parallel image slots without dropping failures or later work", asyn
     assert.deepEqual(getImageGenerationSnapshot()?.results.map((item) => item.status), ["success", "failed", "success", "success"]);
     assert.equal(clearImageGenerationJob(), true);
 });
+
+test("assigns a stable idempotency key before a generation slot starts", async () => {
+    clearImageGenerationJob();
+    const snapshot = { text: "idempotent generation", config: {} as ImageGenerationSnapshot["config"], references: [] };
+    let receivedKey = "";
+    const completed = new Promise<ImageGenerationCompletion>((resolve) => {
+        startImageGeneration(snapshot, 1, resolve, async (_snapshot, _index, _onJobCreated, _expectedUserId, idempotencyKey) => {
+            receivedKey = idempotencyKey || "";
+            return { id: "stable-key", dataUrl: "data:image/png;base64,AA==", durationMs: 10, width: 1, height: 1, bytes: 1 };
+        });
+    });
+
+    await completed;
+    assert.match(receivedKey, /^[A-Za-z0-9_-]{8,128}$/);
+    assert.equal(getImageGenerationSnapshot()?.results[0]?.idempotencyKey, receivedKey);
+    assert.equal(clearImageGenerationJob(), true);
+});

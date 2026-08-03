@@ -856,6 +856,7 @@ function FailedImageCard({ id, error, isDouEmperor, onRetry }: { id: string; err
                 <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
                     {feedback.description}
                 </Typography.Paragraph>
+                {feedback.reference ? <div className="text-[11px] text-red-400 dark:text-red-400">{feedback.reference}</div> : null}
             </div>
             <div className="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
                 <Button size="small" danger onClick={onRetry}>

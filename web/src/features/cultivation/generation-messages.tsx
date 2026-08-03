@@ -4,6 +4,7 @@ export type GenerationFailureFeedback = {
     kind: GenerationFailureKind;
     title: string;
     description: string;
+    reference?: string;
 };
 
 export type GenerationFailureOptions = {
@@ -11,7 +12,7 @@ export type GenerationFailureOptions = {
     seed?: string;
 };
 
-type GenerationFailureMessage = Omit<GenerationFailureFeedback, "kind">;
+type GenerationFailureMessage = Pick<GenerationFailureFeedback, "title" | "description">;
 
 export const generationFailedMessages = {
     common: [
@@ -75,11 +76,11 @@ export function generationFailureFeedback(error: unknown, options: GenerationFai
     const kind = generationFailureKind(error, options);
     const messages = generationFailedMessages[kind];
     const message = messages[messageIndex(messages.length, options.seed)] || messages[0];
-    return { kind, ...message };
+    return { kind, ...message, reference: failureSupportReference(error) };
 }
 
 export function generationFailureText(feedback: GenerationFailureFeedback) {
-    return `${feedback.title} ${feedback.description}`;
+    return `${feedback.title} ${feedback.description}${feedback.reference ? ` ${feedback.reference}` : ""}`;
 }
 
 export function GenerationFailureToast({ feedback, supplementary }: { feedback: GenerationFailureFeedback; supplementary?: string }) {
@@ -87,9 +88,23 @@ export function GenerationFailureToast({ feedback, supplementary }: { feedback: 
         <span className="flex max-w-[300px] flex-col text-left leading-5">
             <strong className="font-medium">{feedback.title}</strong>
             <span className="text-xs opacity-80">{feedback.description}</span>
+            {feedback.reference ? <span className="text-xs opacity-60">{feedback.reference}</span> : null}
             {supplementary ? <span className="text-xs opacity-70">{supplementary}</span> : null}
         </span>
     );
+}
+
+function failureSupportReference(error: unknown) {
+    if (error && typeof error === "object") {
+        const record = error as { requestId?: unknown; jobId?: unknown };
+        const requestId = String(record.requestId || "").trim();
+        if (requestId) return `请求编号 ${requestId.slice(0, 12)}`;
+        const jobId = String(record.jobId || "").trim();
+        if (jobId) return `任务编号 ${jobId.slice(0, 12)}`;
+    }
+    const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    const match = detail.match(/(请求|任务)编号\s*([A-Za-z0-9_-]{6,128})/);
+    return match ? `${match[1]}编号 ${match[2].slice(0, 12)}` : undefined;
 }
 
 function messageIndex(length: number, seed?: string) {

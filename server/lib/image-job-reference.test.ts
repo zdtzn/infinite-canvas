@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   ImageJobReferenceInputError,
+  imageJobReferenceTotalBytes,
   parseClientImageJobReference,
 } from "./image-job-reference";
 
@@ -29,5 +30,17 @@ describe("image job reference input", () => {
     expect(() => parseClientImageJobReference(null)).toThrow(
       ImageJobReferenceInputError,
     );
+  });
+
+  test("counts references and masks in one total byte budget", () => {
+    expect(
+      imageJobReferenceTotalBytes(
+        [{ bytes: 12 }, { bytes: 30 }],
+        { bytes: 8 },
+      ),
+    ).toBe(50);
+    expect(() =>
+      imageJobReferenceTotalBytes([{ bytes: -1 }]),
+    ).toThrow(ImageJobReferenceInputError);
   });
 });

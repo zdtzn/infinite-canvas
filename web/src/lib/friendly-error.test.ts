@@ -17,6 +17,11 @@ test("preserves useful application errors and handles empty server failures", ()
     assert.equal(friendlyErrorMessage("上游服务返回 524：<!DOCTYPE html><html><body>timeout</body></html>"), "上游渠道等待生成超时（524），请求可能仍在处理并产生费用，请先到渠道后台确认后再重试");
 });
 
+test("preserves request and task references when mapping upstream errors", () => {
+    expect(friendlyErrorMessage(Object.assign(new Error("bad gateway"), { requestId: "1234567890abcdef" }))).toContain("请求编号 1234567890ab");
+    expect(friendlyErrorMessage("timeout（任务编号 abcdef1234567890）")).toContain("任务编号 abcdef123456");
+});
+
 test("extracts nested and serialized upstream messages", () => {
     expect(extractApiErrorMessage({ error: { message: "provider rejected request" } })).toBe("provider rejected request");
     expect(extractApiErrorMessage({ detail: JSON.stringify({ msg: "nested gateway error" }) })).toBe("nested gateway error");

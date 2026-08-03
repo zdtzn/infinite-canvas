@@ -5,12 +5,13 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem } from "./lib/asset-library";
+import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
 import { AsyncSemaphore } from "./lib/async-semaphore";
 import { canAccessUserAvatar } from "./lib/avatar-access";
 import { decryptSecret, encryptSecret, normalizeEncryptionSecret } from "./lib/crypto-store";
 import { generationHistoryJobIdsForDeletion, GenerationHistoryInputError, normalizeGenerationHistory, normalizeGenerationHistoryDeletion, normalizeGenerationHistoryItem } from "./lib/generation-history";
 import { parseSingleByteRange } from "./lib/http-range";
-import { ImageJobReferenceInputError, parseClientImageJobReference } from "./lib/image-job-reference";
+import { ImageJobReferenceInputError, imageJobReferenceTotalBytes, parseClientImageJobReference } from "./lib/image-job-reference";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
@@ -60,6 +61,7 @@ const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const MAX_IMAGE_JOB_JSON_BYTES = 32 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 36 * 1024 * 1024;
 const MAX_IMAGE_ASSET_BYTES = 16 * 1024 * 1024;
+const MAX_IMAGE_REFERENCE_TOTAL_BYTES = Math.max(MAX_IMAGE_ASSET_BYTES, Math.min(256 * 1024 * 1024, positiveInt(process.env.MAX_IMAGE_REFERENCE_TOTAL_BYTES, 64 * 1024 * 1024)));
 const MAX_VIDEO_ASSET_BYTES = 32 * 1024 * 1024;
 const MAX_AUDIO_ASSET_BYTES = 16 * 1024 * 1024;
 const MAX_ASSET_BYTES = MAX_VIDEO_ASSET_BYTES;
@@ -112,6 +114,10 @@ const BACKUP_ENABLED = process.env.BACKUP_ENABLED !== "0";
 const BACKUP_DIR = resolve(process.env.BACKUP_DIR || join(DATA_DIR, "backups"));
 const BACKUP_INTERVAL_HOURS = Math.max(1, positiveInt(process.env.BACKUP_INTERVAL_HOURS, 24));
 const BACKUP_RETENTION_COUNT = Math.max(2, positiveInt(process.env.BACKUP_RETENTION_COUNT, 14));
+const ASSET_GC_ENABLED = process.env.ASSET_GC_ENABLED !== "0";
+const ASSET_GC_GRACE_MS = Math.max(60 * 60_000, positiveInt(process.env.ASSET_GC_GRACE_MS, 24 * 60 * 60_000));
+const ASSET_GC_INTERVAL_HOURS = Math.max(1, positiveInt(process.env.ASSET_GC_INTERVAL_HOURS, 24));
+const ASSET_GC_START_DELAY_MS = 60_000;
 const SHUTDOWN_GRACE_MS = Math.max(5_000, Math.min(60_000, positiveInt(process.env.SHUTDOWN_GRACE_MS, 20_000)));
 const HEAVY_REQUEST_CONCURRENCY = Math.max(1, Math.min(8, positiveInt(process.env.HEAVY_REQUEST_CONCURRENCY, 4)));
 const APP_VERSION = readAppVersion();
@@ -151,7 +157,7 @@ const backupManager = appDatabase.raw
       })
     : null;
 for (const user of Object.values(state.users)) cultivation?.ensureUser(user.userId, Boolean(user.admin));
-const configuredEncryptionSecret = normalizeEncryptionSecret(process.env.APP_ENCRYPTION_KEY, PUBLIC_BASE_URL.startsWith("https://"));
+const configuredEncryptionSecret = normalizeEncryptionSecret(process.env.APP_ENCRYPTION_KEY, secureCookies);
 const encryptionSecret = configuredEncryptionSecret || state.auth.sessionSecret;
 const previousEncryptionSecrets = [
     ...(process.env.APP_ENCRYPTION_KEY_PREVIOUS || "")
@@ -169,6 +175,19 @@ let stateWriteQueued = false;
 let nextRateBucketSweepAt = 0;
 let authMutation = Promise.resolve();
 let assetMutation = Promise.resolve();
+let assetGcTimer: ReturnType<typeof setTimeout> | undefined;
+const assetGcStatus = {
+    enabled: ASSET_GC_ENABLED,
+    graceMs: ASSET_GC_GRACE_MS,
+    intervalHours: ASSET_GC_INTERVAL_HOURS,
+    running: false,
+    lastAttemptAt: undefined as number | undefined,
+    lastCompletedAt: undefined as number | undefined,
+    lastRemovedAssets: 0,
+    lastRemovedFiles: 0,
+    lastFreedBytes: 0,
+    lastError: undefined as string | undefined,
+};
 let shuttingDown = false;
 let shutdownPromise: Promise<void> | null = null;
 const geminiImageSemaphore = new AsyncSemaphore(GEMINI_IMAGE_CONCURRENCY);
@@ -213,6 +232,7 @@ cultivation?.reconcileReservations(
 pruneTerminalJobs();
 writeState();
 backupManager?.start();
+startAssetGarbageCollector();
 
 let server: ReturnType<typeof Bun.serve>;
 server = Bun.serve({
@@ -576,6 +596,7 @@ function adminMetrics(session: SessionPayload) {
         uptimeSeconds: Math.round(process.uptime()),
         memory: process.memoryUsage(),
         backup: backupManager?.status() || null,
+        assetGc: { ...assetGcStatus },
     });
 }
 
@@ -1188,7 +1209,7 @@ async function uploadProfileAvatar(request: Request, session: SessionPayload) {
 }
 
 async function deleteProfileAvatar(session: SessionPayload) {
-    await removeAsset(session, AVATAR_ASSET_KEY);
+    await removeAsset(session, AVATAR_ASSET_KEY, true);
     return json({ avatarUrl: "" });
 }
 
@@ -1312,27 +1333,150 @@ async function deleteAsset(session: SessionPayload, key: string) {
     return new Response(null, { status: 204 });
 }
 
-async function removeAsset(session: SessionPayload, key: string) {
-    const asset = ownedAsset(session.userId, key);
-    const paths = [assetPath(session.userId, asset.key)];
-    const legacyPath = legacyAssetPath(session.userId, asset.key);
-    if (!legacyAssetPathShared(session.userId, asset.key)) paths.push(legacyPath);
+async function removeAsset(session: SessionPayload, key: string, allowReferenced = false) {
     return withAssetMutation(async () => {
-        delete state.assets[assetKey(session.userId, key)];
-        appDatabase.deleteAsset(session.userId, key);
-        assetBytesByUser.set(session.userId, Math.max(0, (assetBytesByUser.get(session.userId) || 0) - asset.bytes));
+        const asset = ownedAsset(session.userId, key);
+        if (!allowReferenced && collectLiveAssetReferences().has(assetReferenceId(asset.userId, asset.key))) throw new HttpError(409, "素材仍被画布、藏卷阁或生成历史使用，请先移除相关引用");
+        removeStoredAssetRecord(asset);
+    });
+}
+
+function removeStoredAssetRecord(asset: StoredAsset) {
+    const paths = [assetPath(asset.userId, asset.key)];
+    const legacyPath = legacyAssetPath(asset.userId, asset.key);
+    if (!legacyAssetPathShared(asset.userId, asset.key)) paths.push(legacyPath);
+    appDatabase.deleteAsset(asset.userId, asset.key);
+    delete state.assets[assetKey(asset.userId, asset.key)];
+    assetBytesByUser.set(asset.userId, Math.max(0, (assetBytesByUser.get(asset.userId) || 0) - asset.bytes));
+    let removedFiles = 0;
+    let freedBytes = 0;
+    for (const path of new Set(paths)) {
+        if (!existsSync(path)) continue;
         try {
-            for (const path of new Set(paths)) if (existsSync(path)) unlinkSync(path);
+            const bytes = statSync(path).size;
+            unlinkSync(path);
+            removedFiles += 1;
+            freedBytes += bytes;
         } catch (error) {
             console.warn(
                 JSON.stringify({
                     event: "asset_file_cleanup_failed",
+                    userId: asset.userId,
                     key: asset.key,
                     message: error instanceof Error ? error.message : "unknown error",
                 }),
             );
         }
-    });
+    }
+    return { removedFiles, freedBytes };
+}
+
+function startAssetGarbageCollector() {
+    if (!ASSET_GC_ENABLED) return;
+    scheduleAssetGarbageCollection(ASSET_GC_START_DELAY_MS);
+}
+
+function scheduleAssetGarbageCollection(delayMs: number) {
+    if (!ASSET_GC_ENABLED || shuttingDown) return;
+    if (assetGcTimer) clearTimeout(assetGcTimer);
+    assetGcTimer = setTimeout(() => {
+        assetGcTimer = undefined;
+        void runAssetGarbageCollection();
+    }, delayMs);
+}
+
+async function runAssetGarbageCollection() {
+    if (assetGcStatus.running || shuttingDown) return;
+    assetGcStatus.running = true;
+    assetGcStatus.lastAttemptAt = Date.now();
+    assetGcStatus.lastError = undefined;
+    try {
+        const result = await withAssetMutation(async () => {
+            const now = Date.now();
+            const referenced = collectLiveAssetReferences();
+            const candidates = garbageCollectableAssets(Object.values(state.assets), referenced, now, ASSET_GC_GRACE_MS);
+            let removedFiles = 0;
+            let freedBytes = 0;
+            for (const asset of candidates) {
+                const removed = removeStoredAssetRecord(asset);
+                removedFiles += removed.removedFiles;
+                freedBytes += removed.freedBytes;
+            }
+            const untracked = pruneUntrackedAssetFiles(now);
+            return {
+                removedAssets: candidates.length,
+                removedFiles: removedFiles + untracked.removedFiles,
+                freedBytes: freedBytes + untracked.freedBytes,
+            };
+        });
+        assetGcStatus.lastCompletedAt = Date.now();
+        assetGcStatus.lastRemovedAssets = result.removedAssets;
+        assetGcStatus.lastRemovedFiles = result.removedFiles;
+        assetGcStatus.lastFreedBytes = result.freedBytes;
+        console.info(JSON.stringify({ event: "asset_gc_completed", ...result }));
+    } catch (error) {
+        assetGcStatus.lastError = error instanceof Error ? error.message : "unknown error";
+        console.error(JSON.stringify({ event: "asset_gc_failed", message: assetGcStatus.lastError }));
+    } finally {
+        assetGcStatus.running = false;
+        scheduleAssetGarbageCollection(ASSET_GC_INTERVAL_HOURS * 60 * 60_000);
+    }
+}
+
+function collectLiveAssetReferences() {
+    const referenced = new Set<string>();
+    const userIds = new Set([
+        ...Object.keys(state.users),
+        ...Object.keys(state.projects),
+        ...Object.values(state.assets).map((asset) => asset.userId),
+    ]);
+    for (const userId of userIds) {
+        const roots: unknown[] = [
+            ...Object.values(state.projects[userId] || {}).map((project) => project.project),
+            ...appDatabase.loadAssetLibrary(userId).items.map((item) => item.payload),
+            ...appDatabase.loadGenerationHistory(userId, "image").map((item) => item.payload),
+            ...appDatabase.loadGenerationHistory(userId, "video").map((item) => item.payload),
+        ];
+        const avatarKey = state.assets[assetKey(userId, AVATAR_ASSET_KEY)] ? AVATAR_ASSET_KEY : undefined;
+        for (const id of collectReferencedAssetIds(userId, roots, avatarKey)) referenced.add(id);
+    }
+    return referenced;
+}
+
+function pruneUntrackedAssetFiles(now: number) {
+    const expectedPaths = new Set<string>();
+    for (const asset of Object.values(state.assets)) {
+        expectedPaths.add(resolve(assetPath(asset.userId, asset.key)));
+        expectedPaths.add(resolve(legacyAssetPath(asset.userId, asset.key)));
+    }
+    const cutoff = now - ASSET_GC_GRACE_MS;
+    let removedFiles = 0;
+    let freedBytes = 0;
+    for (const directory of readdirSync(ASSET_ROOT, { withFileTypes: true })) {
+        if (!directory.isDirectory()) continue;
+        const directoryPath = join(ASSET_ROOT, directory.name);
+        for (const entry of readdirSync(directoryPath, { withFileTypes: true })) {
+            if (!entry.isFile()) continue;
+            const path = resolve(directoryPath, entry.name);
+            if (expectedPaths.has(path)) continue;
+            try {
+                const stats = statSync(path);
+                if (stats.mtimeMs > cutoff) continue;
+                unlinkSync(path);
+                removedFiles += 1;
+                freedBytes += stats.size;
+            } catch (error) {
+                console.warn(
+                    JSON.stringify({
+                        event: "untracked_asset_file_cleanup_failed",
+                        path,
+                        message: error instanceof Error ? error.message : "unknown error",
+                    }),
+                );
+            }
+        }
+    }
+    return { removedFiles, freedBytes };
 }
 
 function publicAsset(asset: StoredAsset) {
@@ -1375,12 +1519,13 @@ async function createImageJob(request: Request, session: SessionPayload) {
     const references = Array.isArray(body.references) ? body.references.map((reference) => prepareImageJobReference(session.userId, reference)) : [];
     if (references.length > 16) throw new HttpError(400, "参考图最多 16 张");
     const mask = body.mask ? prepareImageJobReference(session.userId, body.mask) : undefined;
-    const referenceBytes = references.reduce((total, reference) => total + reference.bytes, 0);
-    const maskBytes = mask?.bytes || 0;
+    const referenceBytes = imageJobReferenceTotalBytes(references, mask);
+    if (referenceBytes > MAX_IMAGE_REFERENCE_TOTAL_BYTES)
+        throw new HttpError(413, `参考图与蒙版总大小不能超过 ${Math.floor(MAX_IMAGE_REFERENCE_TOTAL_BYTES / 1024 / 1024)} MB`);
     const prompt = String(body.prompt || "").trim();
     if (!prompt) throw new HttpError(400, "提示词不能为空");
     if (prompt.length > MAX_PROMPT_CHARS) throw new HttpError(400, `提示词不能超过 ${MAX_PROMPT_CHARS.toLocaleString()} 个字符`);
-    assertDiskCapacity(referenceBytes + maskBytes);
+    assertDiskCapacity(referenceBytes);
     const existing = state.jobs[jobId];
     if (existing) return json({ job: publicJob(existing) }, 200);
     const model = String(body.model || "").trim();
@@ -1483,6 +1628,13 @@ async function retryJob(request: Request, session: SessionPayload, id: string) {
     if (existing) return json({ job: publicJob(existing) }, 200);
     const activeRetry = imageQueue.list().find((job) => job.input.userId === session.userId && job.input.retryOf === id && ["queued", "running"].includes(job.status));
     if (activeRetry) return json({ job: publicJob(activeRetry) }, 200);
+    const referenceBytes = imageJobReferenceTotalBytes(
+        source.input.references.map((reference) => ({ bytes: storedImageReferenceBytes(reference) })),
+        source.input.mask ? { bytes: storedImageReferenceBytes(source.input.mask) } : undefined,
+    );
+    if (referenceBytes > MAX_IMAGE_REFERENCE_TOTAL_BYTES)
+        throw new HttpError(413, `参考图与蒙版总大小不能超过 ${Math.floor(MAX_IMAGE_REFERENCE_TOTAL_BYTES / 1024 / 1024)} MB`);
+    assertDiskCapacity(referenceBytes);
     cultivation?.reserveGeneration({
         jobId,
         userId: session.userId,
@@ -1505,11 +1657,28 @@ async function retryJob(request: Request, session: SessionPayload, id: string) {
     }
 }
 
+function storedImageReferenceBytes(reference: string | StoredImageReference) {
+    return typeof reference === "string" ? assertSafeDataImage(reference) : reference.bytes;
+}
+
 async function copyImageJobInputForRetry(input: ImageJobInput, jobId: string, retryOf: string): Promise<ImageJobInput> {
-    const references = await Promise.all(input.references.map(async (reference, index) => persistReference(DATA_DIR, input.userId, jobId, index, await materializeStoredImage(reference))));
-    const mask = input.mask ? persistReference(DATA_DIR, input.userId, jobId, 10_000, await materializeStoredImage(input.mask)) : undefined;
+    const references: StoredImageReference[] = [];
+    for (const [index, reference] of input.references.entries()) references.push(copyStoredImageReferenceForRetry(input.userId, jobId, index, reference));
+    const mask = input.mask ? copyStoredImageReferenceForRetry(input.userId, jobId, 10_000, input.mask) : undefined;
     const upstream = input.upstream && !["failed", "canceled", "unknown"].includes(input.upstream.status || "pending") ? { ...input.upstream } : undefined;
     return { ...input, references, mask, retryOf: input.retryOf || retryOf, upstream };
+}
+
+function copyStoredImageReferenceForRetry(userId: string, jobId: string, index: number, reference: string | StoredImageReference) {
+    if (typeof reference === "string") return persistReference(DATA_DIR, userId, jobId, index, reference);
+    const sourcePath = resolve(DATA_DIR, reference.path);
+    if (!(sourcePath === DATA_DIR || sourcePath.startsWith(`${DATA_DIR}${sep}`)) || !existsSync(sourcePath)) throw new HttpError(404, "参考图文件不存在");
+    return persistPreparedImageJobReference(userId, jobId, index, {
+        kind: "asset",
+        sourcePath,
+        mimeType: reference.mimeType,
+        bytes: reference.bytes,
+    });
 }
 
 async function deleteJob(url: URL, session: SessionPayload, id: string) {
@@ -1607,9 +1776,11 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
 }
 
 async function materializeImageInput(input: ImageJobInput): Promise<RuntimeImageJobInput> {
+    const references: string[] = [];
+    for (const reference of input.references) references.push(await materializeStoredImage(reference));
     return {
         ...input,
-        references: await Promise.all(input.references.map(materializeStoredImage)),
+        references,
         mask: input.mask ? await materializeStoredImage(input.mask) : undefined,
     };
 }
@@ -2935,6 +3106,8 @@ function healthResponse() {
 function shutdown(signal: string) {
     if (shutdownPromise) return shutdownPromise;
     shuttingDown = true;
+    if (assetGcTimer) clearTimeout(assetGcTimer);
+    assetGcTimer = undefined;
     imageQueue.pause();
     backupManager?.stop();
     const gracefulServerStop = Promise.resolve(server.stop(false)).catch(() => undefined);

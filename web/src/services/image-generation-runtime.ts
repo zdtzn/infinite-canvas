@@ -5,7 +5,7 @@ import { requestEdit, requestGeneration } from "@/services/api/image";
 import { settleWithConcurrency } from "@/lib/async-pool";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { fetchServerJob, waitForServerJob } from "@/services/server-api";
+import { fetchServerJob, retryServerJob, waitForServerJob } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -29,6 +29,7 @@ export type GenerationResult = {
     image?: GeneratedImage;
     error?: string;
     serverJobId?: string;
+    idempotencyKey?: string;
 };
 
 export type ImageGenerationSnapshot = {
@@ -61,7 +62,7 @@ export type ImageGenerationCompletion = {
 };
 
 type CompletionHandler = (completion: ImageGenerationCompletion) => void | Promise<void>;
-type SlotRunner = (snapshot: ImageGenerationSnapshot, index: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string) => Promise<GeneratedImage>;
+type SlotRunner = (snapshot: ImageGenerationSnapshot, index: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string, idempotencyKey?: string) => Promise<GeneratedImage>;
 
 let currentJob: ImageGenerationJob | null = null;
 let elapsedTimer: ReturnType<typeof setInterval> | undefined;
@@ -72,6 +73,7 @@ const RUNTIME_JOB_KEY_PREFIX = "active-image-job:v2:";
 let runtimeOwnerUserId = PUBLIC_MODE ? useUserStore.getState().user?.id || "" : "local";
 let hydrationStarted = false;
 let hydrationVersion = 0;
+let runtimePersistence = Promise.resolve();
 
 export function prepareImageGenerationRuntimeForUser(userId: string) {
     const nextOwnerUserId = PUBLIC_MODE ? userId.trim() : "local";
@@ -106,7 +108,7 @@ export function startImageGeneration(snapshot: ImageGenerationSnapshot, count: n
         prompt: snapshot.text,
         references: [...snapshot.references],
         status: "running",
-        results: Array.from({ length: count }, () => ({ id: nanoid(), status: "pending" })),
+        results: Array.from({ length: count }, () => ({ id: nanoid(), status: "pending", idempotencyKey: nanoid() })),
         startedAt,
         elapsedMs: 0,
         successCount: 0,
@@ -131,7 +133,7 @@ export async function retryImageGeneration(index: number, snapshot: ImageGenerat
 
     updateResult(job.id, index, { status: "pending", error: undefined, image: undefined });
     try {
-        const image = await runGenerationSlot(job.id, index, snapshot, requestImageSlot, ownerUserId);
+        const image = await runGenerationSlot(job.id, index, snapshot, requestImageSlot, ownerUserId, true);
         return runtimeOwnerUserId === ownerUserId && hydrationVersion === ownerVersion ? image : null;
     } catch {
         return null;
@@ -140,9 +142,13 @@ export async function retryImageGeneration(index: number, snapshot: ImageGenerat
 
 export function clearImageGenerationJob() {
     if (currentJob?.status === "running") return false;
+    const key = runtimeJobKey();
     currentJob = null;
     emit();
-    if (typeof window !== "undefined") void runtimeStore.removeItem(runtimeJobKey());
+    if (typeof window !== "undefined") {
+        const operation = runtimePersistence.then(() => runtimeStore.removeItem(key));
+        runtimePersistence = operation.catch(() => undefined);
+    }
     return true;
 }
 
@@ -206,16 +212,32 @@ async function runGeneration(
     }
 }
 
-async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGenerationSnapshot, slotRunner: SlotRunner = requestImageSlot, expectedUserId = runtimeOwnerUserId) {
+async function runGenerationSlot(
+    jobId: string,
+    index: number,
+    snapshot: ImageGenerationSnapshot,
+    slotRunner: SlotRunner = requestImageSlot,
+    expectedUserId = runtimeOwnerUserId,
+    retryExistingServerJob = false,
+) {
     try {
-        const existingServerJobId = currentJob?.id === jobId ? currentJob.results[index]?.serverJobId : undefined;
+        const currentResult = currentJob?.id === jobId ? currentJob.results[index] : undefined;
+        const existingServerJobId = currentResult?.serverJobId;
+        const idempotencyKey = currentResult?.idempotencyKey || nanoid();
+        if (!currentResult?.idempotencyKey) updateResult(jobId, index, { idempotencyKey });
+        await persistCurrentJob();
         let serverJobId = existingServerJobId;
         const nextImage = existingServerJobId
-            ? await restoreServerImage(existingServerJobId, expectedUserId)
+            ? retryExistingServerJob && PUBLIC_MODE
+                ? await retryServerImage(existingServerJobId, idempotencyKey, expectedUserId, (createdJobId) => {
+                      serverJobId = createdJobId;
+                      updateResult(jobId, index, { serverJobId: createdJobId });
+                  })
+                : await restoreServerImage(existingServerJobId, expectedUserId)
             : await slotRunner(snapshot, index, (createdJobId) => {
                   serverJobId = createdJobId;
                   updateResult(jobId, index, { serverJobId: createdJobId });
-              }, expectedUserId);
+              }, expectedUserId, idempotencyKey);
         const persistedImage = serverJobId ? { ...nextImage, serverJobId } : nextImage;
         updateResult(jobId, index, { status: "success", image: persistedImage });
         return persistedImage;
@@ -225,11 +247,11 @@ async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGe
     }
 }
 
-async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string) {
+async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string, idempotencyKey?: string) {
     const itemStartedAt = Date.now();
     const result = snapshot.references.length
-        ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, { onJobCreated: onServerJobCreated, source: { route: "/image", label: "生图工作台" }, expectedUserId })
-        : await requestGeneration(snapshot.config, snapshot.text, { onJobCreated: onServerJobCreated, source: { route: "/image", label: "生图工作台" }, expectedUserId });
+        ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, { onJobCreated: onServerJobCreated, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey })
+        : await requestGeneration(snapshot.config, snapshot.text, { onJobCreated: onServerJobCreated, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey });
     const image = result[0];
     if (!image) throw new Error("接口没有返回图片");
     const meta = await resolveGeneratedImageMeta(image);
@@ -279,6 +301,12 @@ async function restoreServerImage(serverJobId: string, expectedUserId: string) {
     return { id: image.id, dataUrl: image.dataUrl, durationMs: image.durationMs || job.result?.durationMs || 0, width: meta.width, height: meta.height, bytes: image.bytes || getDataUrlByteSize(image.dataUrl), mimeType: image.mimeType };
 }
 
+async function retryServerImage(serverJobId: string, idempotencyKey: string, expectedUserId: string, onServerJobCreated: (jobId: string) => void) {
+    const { job } = await retryServerJob(serverJobId, expectedUserId, idempotencyKey);
+    onServerJobCreated(job.id);
+    return restoreServerImage(job.id, expectedUserId);
+}
+
 async function resolveGeneratedImageMeta(image: { dataUrl: string; width?: number; height?: number; mimeType?: string }) {
     if (Number.isSafeInteger(image.width) && Number.isSafeInteger(image.height) && (image.width || 0) > 0 && (image.height || 0) > 0) {
         return { width: image.width!, height: image.height!, mimeType: image.mimeType || "image/png" };
@@ -303,7 +331,8 @@ function hydrateRuntime() {
 }
 
 function persistCurrentJob() {
-    if (typeof window === "undefined" || !currentJob || !runtimeOwnerUserId) return;
+    if (typeof window === "undefined" || !currentJob || !runtimeOwnerUserId) return Promise.resolve();
+    const key = runtimeJobKey();
     const persisted: ImageGenerationJob = {
         ...currentJob,
         references: currentJob.references.map(stripReferenceData),
@@ -319,7 +348,9 @@ function persistCurrentJob() {
               }
             : undefined,
     };
-    void runtimeStore.setItem(runtimeJobKey(), persisted);
+    const operation = runtimePersistence.then(() => runtimeStore.setItem(key, persisted).then(() => undefined));
+    runtimePersistence = operation.catch(() => undefined);
+    return operation;
 }
 
 function runtimeJobKey(ownerUserId = runtimeOwnerUserId) {
