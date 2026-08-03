@@ -58,7 +58,7 @@ describe("resolved image model settings", () => {
         expect(unsupportedSadaiRatio.config.size).toBe("3:4");
 
         const uuSettings = resolveImageModelSettings({ ...defaultConfig, channels: [uu], model: uuModel, imageModel: uuModel, quality: "high" }, uuModel);
-        expect(uuSettings.capabilities.resolutions).toEqual(["low", "medium"]);
-        expect(uuSettings.config.quality).toBe("medium");
+        expect(uuSettings.capabilities.resolutions).toEqual(["low", "medium", "high"]);
+        expect(uuSettings.config.quality).toBe("high");
     });
 });

@@ -1,4 +1,5 @@
 import { resolveOpenAiImageSize } from "./image-request";
+import { AsyncSemaphore } from "./async-semaphore";
 
 export type UuImageAsyncTaskStatus = "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
 
@@ -9,6 +10,22 @@ export type UuImageAsyncTask = {
     imageUrls: string[];
     message?: string;
 };
+
+export class UuImageChannelScheduler {
+    private readonly channels = new Map<string, AsyncSemaphore>();
+
+    constructor(private readonly concurrency = 1) {}
+
+    run<T>(channelId: string, signal: AbortSignal, operation: () => Promise<T> | T) {
+        const key = channelId.trim() || "default";
+        let semaphore = this.channels.get(key);
+        if (!semaphore) {
+            semaphore = new AsyncSemaphore(this.concurrency);
+            this.channels.set(key, semaphore);
+        }
+        return semaphore.run(signal, operation);
+    }
+}
 
 export function isUuAsyncGptImage2Channel(baseUrl: string, model: string) {
     try {

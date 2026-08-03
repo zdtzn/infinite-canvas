@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
+import { UuImageChannelScheduler, buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
 
 test("uses the UU async API only for compatible gpt-image-2 jobs", () => {
     expect(isUuImageAsyncChannel("https://uuapi.cc/v1", "gpt-image-2", 0, false)).toBe(true);
@@ -30,6 +30,36 @@ test("converts workbench sizing into UU async width and height", () => {
 test("builds UU async form fields for text and image modes", () => {
     expect(buildUuAsyncImageRequest({ size: "16:9", referenceCount: 0 })).toEqual({ mode: "text", width: 1280, height: 720 });
     expect(buildUuAsyncImageRequest({ size: "1:1", quality: "medium", referenceCount: 1 })).toEqual({ mode: "image", width: 2048, height: 2048 });
+});
+
+test("serializes UU generation per channel without blocking another channel", async () => {
+    const scheduler = new UuImageChannelScheduler(1);
+    const signal = new AbortController().signal;
+    let releaseFirst = () => undefined;
+    let secondStarted = false;
+    let otherChannelStarted = false;
+
+    const first = scheduler.run(
+        "uu-a",
+        signal,
+        () =>
+            new Promise<void>((resolve) => {
+                releaseFirst = resolve;
+            }),
+    );
+    await Bun.sleep(0);
+    const second = scheduler.run("uu-a", signal, async () => {
+        secondStarted = true;
+    });
+    await scheduler.run("uu-b", signal, async () => {
+        otherChannelStarted = true;
+    });
+
+    expect(secondStarted).toBe(false);
+    expect(otherChannelStarted).toBe(true);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(secondStarted).toBe(true);
 });
 
 test("normalizes a pending UU task response", () => {

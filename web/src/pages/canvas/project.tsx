@@ -42,6 +42,7 @@ import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
+import { resolveImageSlotConcurrency } from "@/stores/model-capabilities";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
@@ -2416,7 +2417,8 @@ function InfiniteCanvasPage() {
                             ? [{ id: sourceNode.id, name: `${sourceNode.title || sourceNode.id}.png`, type: sourceNode.metadata.mimeType || "image/png", dataUrl: sourceNode.metadata.content, storageKey: sourceNode.metadata.storageKey }]
                             : [];
                     const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
-                    const maxReferences = resolveImageModelSettings(generationConfig, generationConfig.model).capabilities.maxReferences;
+                    const resolvedGenerationSettings = resolveImageModelSettings(generationConfig, generationConfig.model);
+                    const maxReferences = resolvedGenerationSettings.capabilities.maxReferences;
                     if (referenceImages.length > maxReferences) throw new Error(`当前模型最多支持 ${maxReferences} 张参考图，请移除多余连线后重试`);
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
@@ -2509,7 +2511,8 @@ function InfiniteCanvasPage() {
                     let hasSuccess = false;
                     let hasFailure = false;
                     let failureReason: unknown;
-                    await runWithConcurrency(targetIds, cultivationProfile?.maxConcurrency || 1, async (targetId) => {
+                    const slotConcurrency = resolveImageSlotConcurrency(resolvedGenerationSettings.channel.baseUrl, generationConfig.model, cultivationProfile?.maxConcurrency || 1);
+                    await runWithConcurrency(targetIds, slotConcurrency, async (targetId) => {
                         try {
                             const image = referenceImages.length
                                 ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, imageRequestOptions(nodeId, controller)).then((items) => items[0])

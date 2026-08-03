@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { deriveImageModelCapabilities, validateImageRequest } from "./model-capabilities";
+import { deriveImageModelCapabilities, resolveImageSlotConcurrency, validateImageRequest } from "./model-capabilities";
 
 describe("image model capabilities", () => {
     test("Gemini disables transparent output and limits references", () => {
@@ -26,13 +26,15 @@ describe("image model capabilities", () => {
         assert.throws(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "transparent", referenceCount: 0 }), /透明背景/);
     });
 
-    test("UU async GPT Image keeps quality automatic but allows a locally encoded output format", () => {
+    test("UU async GPT Image exposes 4K but serializes multi-image submissions", () => {
         const capabilities = deriveImageModelCapabilities("uuapi::gpt-image-2", "openai", "https://uuapi.net/v1");
-        assert.deepEqual(capabilities.resolutions, ["low", "medium"]);
+        assert.deepEqual(capabilities.resolutions, ["low", "medium", "high"]);
         assert.equal(capabilities.customSize, false);
         assert.deepEqual(capabilities.generationQualities, ["auto"]);
         assert.deepEqual(capabilities.outputFormats, ["auto"]);
         assert.doesNotThrow(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "", referenceCount: 0 }));
+        assert.equal(resolveImageSlotConcurrency("https://uuapi.net/v1", "uuapi::gpt-image-2", 4), 1);
+        assert.equal(resolveImageSlotConcurrency("https://api.example.com/v1", "gpt-image-2", 4), 4);
     });
 
     test("SADAI exposes ratios and quality without claiming exact pixels or transparency", () => {

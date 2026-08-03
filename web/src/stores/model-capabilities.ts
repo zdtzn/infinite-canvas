@@ -21,7 +21,7 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
     const name = model.toLowerCase().split("::").at(-1)?.trim() || "";
     if (isUuAsyncGptImageModel(baseUrl, name)) {
         return {
-            resolutions: ["low", "medium"],
+            resolutions: OUTPUT_RESOLUTIONS,
             generationQualities: ["auto"],
             outputFormats: ["auto"],
             sizes: GPT_IMAGE_2_SIZES,
@@ -136,14 +136,20 @@ export function validateImageRequest(
     if ((request.count || 1) > capabilities.maxOutputs) throw new Error(`当前模型单次最多生成 ${capabilities.maxOutputs} 张图片`);
 }
 
-function isUuAsyncGptImageModel(baseUrl: string, model: string) {
+export function isUuAsyncGptImageModel(baseUrl: string, model: string) {
     try {
         const hostname = new URL(baseUrl).hostname.toLowerCase();
         const isUuHost = ["uuapi.cc", "uuapi.net"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
-        return isUuHost && model.trim().toLowerCase() === "gpt-image-2";
+        const name = model.toLowerCase().split("::").at(-1)?.trim() || "";
+        return isUuHost && name === "gpt-image-2";
     } catch {
         return false;
     }
+}
+
+export function resolveImageSlotConcurrency(baseUrl: string, model: string, requestedConcurrency: number) {
+    const concurrency = Math.max(1, Math.floor(requestedConcurrency) || 1);
+    return isUuAsyncGptImageModel(baseUrl, model) ? 1 : concurrency;
 }
 
 function isSadaiImage2Model(baseUrl: string, model: string) {

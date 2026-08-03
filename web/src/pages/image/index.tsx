@@ -24,6 +24,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
+import { resolveImageSlotConcurrency } from "@/stores/model-capabilities";
 import { limitImageReferenceAdditions } from "@/lib/image-references";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialGenerationCue, useImperialMode } from "@/features/cultivation/imperial-mode";
@@ -250,7 +251,7 @@ export default function ImagePage() {
                 }
             },
             undefined,
-            cultivationProfile?.maxConcurrency || generationCount,
+            resolveImageSlotConcurrency(resolvedImageSettings.channel.baseUrl, model, cultivationProfile?.maxConcurrency || generationCount),
         );
         if (!jobId && agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生图工作台已有任务正在运行" });
     };

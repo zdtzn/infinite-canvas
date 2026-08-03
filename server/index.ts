@@ -41,7 +41,7 @@ import {
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
-import { buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
+import { UuImageChannelScheduler, buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -191,6 +191,7 @@ const assetGcStatus = {
 let shuttingDown = false;
 let shutdownPromise: Promise<void> | null = null;
 const geminiImageSemaphore = new AsyncSemaphore(GEMINI_IMAGE_CONCURRENCY);
+const uuImageChannelScheduler = new UuImageChannelScheduler();
 const promptProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
 const promptOptimizeSemaphore = new AsyncSemaphore(PROMPT_OPTIMIZE_CONCURRENCY);
 const heavyRequestSemaphore = new AsyncSemaphore(HEAVY_REQUEST_CONCURRENCY);
@@ -1747,7 +1748,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
             input.apiFormat === "gemini"
                 ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
                 : useUuAsync
-                  ? await generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId)
+                  ? await uuImageChannelScheduler.run(input.channelId, signal, () => generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId))
                   : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
         const images: ImageJobImage[] = [];
         for (const raw of rawImages) {

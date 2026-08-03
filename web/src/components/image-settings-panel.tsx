@@ -5,6 +5,7 @@ import { type CanvasTheme } from "@/lib/canvas-theme";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { modelOptionName, normalizeImageSizeSelection, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
+import { isUuAsyncGptImageModel } from "@/stores/model-capabilities";
 
 const resolutionOptions = [
     { value: "low", label: "1K" },
@@ -72,7 +73,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
     const visibleResolutions = resolutionOptions.filter((item) => capabilities.resolutions.includes(item.value));
     const automaticResolution = capabilities.resolutions.length === 1 && capabilities.resolutions[0] === "auto";
     const selectedModelName = modelOptionName(selectedModel);
-    const isUuAsyncModel = isUuAsyncImageModel(channel.baseUrl, selectedModelName);
+    const isUuAsyncModel = isUuAsyncGptImageModel(channel.baseUrl, selectedModelName);
     const visibleGenerationQualities = generationQualityOptions.filter((item) => capabilities.generationQualities.includes(item.value));
     const canChooseGenerationQuality = !isUuAsyncModel && visibleGenerationQualities.some((item) => item.value !== "auto");
     // A selected output type is enforced while saving/downloading, even when a gateway ignores output_format.
@@ -381,14 +382,4 @@ function readSizeDimensions(size: string, fallback: { value?: string; width: num
 
 function alignDimension(value: number, enabled: boolean) {
     return enabled ? Math.ceil(value / DIMENSION_STEP) * DIMENSION_STEP : value;
-}
-
-function isUuAsyncImageModel(baseUrl: string, model: string) {
-    try {
-        const hostname = new URL(baseUrl).hostname.toLowerCase();
-        const isUuHost = ["uuapi.cc", "uuapi.net"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
-        return isUuHost && model.trim().toLowerCase() === "gpt-image-2";
-    } catch {
-        return false;
-    }
 }
