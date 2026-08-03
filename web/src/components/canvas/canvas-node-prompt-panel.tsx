@@ -3,6 +3,7 @@ import { ArrowUp, LoaderCircle, Square } from "lucide-react";
 import { Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
+import { ImagePromptOptimizer } from "@/components/prompts/image-prompt-optimizer";
 import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -84,6 +85,22 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <CanvasPromptLibrary onSelect={updatePrompt} />
                     {mode === "image" ? (
                         <>
+                            <ImagePromptOptimizer
+                                compact
+                                prompt={prompt}
+                                context={{
+                                    imageModel: config.model,
+                                    aspectRatio: config.size,
+                                    resolution: config.quality,
+                                    referenceCount: mentionReferences.length + (hasImageContent ? 1 : 0),
+                                    editMode: hasImageContent || mentionReferences.length > 0,
+                                    source: "canvas",
+                                }}
+                                disabled={isRunning}
+                                className="!size-10 !rounded-full !p-0"
+                                style={{ color: theme.node.text }}
+                                onAdopt={updatePrompt}
+                            />
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
                             <CanvasImageSettingsPopover
                                 config={config}

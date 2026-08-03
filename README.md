@@ -128,5 +128,6 @@ npx -y @basketikun/canvas-agent
 - 上游项目：[basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas)
 - 当前维护仓库：[zdtzn/infinite-canvas](https://github.com/zdtzn/infinite-canvas)
 - 开源许可：[GNU Affero General Public License v3.0](LICENSE)
+- 第三方许可与署名：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 本仓库保留上游版权、许可和提交历史。提交代码或文档前请阅读 [CLA.md](CLA.md)；安全问题请按 [SECURITY.md](SECURITY.md) 中的私密报告流程处理。

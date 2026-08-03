@@ -7,6 +7,7 @@ import { saveAs } from "file-saver";
 
 import { ImageSettingsPanel, imageGenerationQualityLabel, imageOutputFormatLabel, imageResolutionLabel, imageSizeLabel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
+import { ImagePromptOptimizer } from "@/components/prompts/image-prompt-optimizer";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { DeferredImage } from "@/components/ui/deferred-image";
@@ -490,7 +491,19 @@ export default function ImagePage() {
                                 <div>
                                     <div className="mb-2 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
                                         <span className="text-base font-semibold">提示词</span>
-                                        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+                                        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+                                            <ImagePromptOptimizer
+                                                prompt={prompt}
+                                                context={{
+                                                    imageModel: model,
+                                                    aspectRatio: requestImageConfig.size,
+                                                    resolution: requestImageConfig.quality,
+                                                    referenceCount: references.length,
+                                                    editMode: references.length > 0,
+                                                    source: "workbench",
+                                                }}
+                                                onAdopt={setPrompt}
+                                            />
                                             <Button className="min-w-0" size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
                                                 提示词库
                                             </Button>

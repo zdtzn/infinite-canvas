@@ -38,6 +38,15 @@ openssl rand -base64 32
 
 `APP_ENCRYPTION_KEY` 用于加密渠道密钥。首次正式使用后必须保持不变；需要轮换时，将旧密钥临时放入 `APP_ENCRYPTION_KEY_PREVIOUS`。
 
+提示词优化由服务端统一选择文本模型，普通用户不需要也不能在浏览器中指定。管理员先在渠道配置中保存带 `text` 能力的模型，再按需在 `.env` 固定专用目标：
+
+```dotenv
+PROMPT_OPTIMIZE_CHANNEL_ID=your-channel-id
+PROMPT_OPTIMIZE_MODEL=your-text-model
+```
+
+两项留空时，服务端会按管理员设置的渠道顺序使用第一个文本模型。提示词优化调用不进入修炼额度结算，只有正式生图任务消耗额度。修改环境变量后需要重建应用容器使其生效。
+
 首次管理员账号应在只启动 `app`、尚未开放 Caddy 时通过服务器回环地址初始化，避免未配置站点被公网用户抢先注册。完整命令见 `docs/SECURE_PUBLIC_DEPLOYMENT.md`。受邀成员完成首次登录后，将 `ALLOW_NEW_USERS` 改为 `0` 并重建应用容器；已有成员仍可正常登录。
 
 ## 更新与回滚

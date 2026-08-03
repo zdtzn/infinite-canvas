@@ -16,6 +16,17 @@ import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { isAllowedMediaMimeType, resolveMediaMimeType } from "./lib/media-mime";
 import { createMediaTaskStore, type MediaTaskKind } from "./lib/media-task-store";
 import { listPlatformChannels, normalizeChannelModels, platformChannelKey, platformChannelModels, resolvePlatformChannel } from "./lib/platform-channels";
+import {
+    PromptOptimizationInputError,
+    buildGeminiPromptOptimizationBody,
+    buildImagePromptOptimizationMessages,
+    buildOpenAiPromptOptimizationBody,
+    buildOpenAiResponsesPromptOptimizationBody,
+    cleanOptimizedPrompt,
+    extractPromptOptimizationText,
+    normalizePromptOptimizationInput,
+    resolvePromptOptimizationTarget,
+} from "./lib/prompt-optimizer";
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
@@ -72,6 +83,13 @@ const UU_ASYNC_POLL_INTERVAL_MS = 2_500;
 const UU_ASYNC_MAX_WAIT_MS = Math.max(UU_ASYNC_POLL_INTERVAL_MS, positiveInt(process.env.UU_ASYNC_MAX_WAIT_MS, 15 * 60_000));
 const PROMPT_PROXY_CONCURRENCY = Math.max(1, Math.min(8, positiveInt(process.env.PROMPT_PROXY_CONCURRENCY, 3)));
 const PROMPT_PROXY_TIMEOUT_MS = Math.max(3_000, Math.min(30_000, positiveInt(process.env.PROMPT_PROXY_TIMEOUT_MS, 8_000)));
+const PROMPT_OPTIMIZE_CONCURRENCY = Math.max(1, Math.min(4, positiveInt(process.env.PROMPT_OPTIMIZE_CONCURRENCY, 2)));
+const PROMPT_OPTIMIZE_TIMEOUT_MS = Math.max(10_000, Math.min(90_000, positiveInt(process.env.PROMPT_OPTIMIZE_TIMEOUT_MS, 60_000)));
+const PROMPT_OPTIMIZE_RATE_LIMIT = Math.max(1, Math.min(60, positiveInt(process.env.PROMPT_OPTIMIZE_RATE_LIMIT, 8)));
+const PROMPT_OPTIMIZE_CHANNEL_ID = String(process.env.PROMPT_OPTIMIZE_CHANNEL_ID || "").trim();
+const PROMPT_OPTIMIZE_MODEL = String(process.env.PROMPT_OPTIMIZE_MODEL || "").trim();
+const MAX_PROMPT_OPTIMIZE_JSON_BYTES = 64 * 1024;
+const MAX_PROMPT_OPTIMIZE_RESPONSE_BYTES = 512 * 1024;
 const PROMPT_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif", "image/svg+xml", "image/bmp", "image/tiff"]);
 const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL);
 const secureCookies = PUBLIC_BASE_URL.startsWith("https://") || process.env.FORCE_SECURE_COOKIES === "1";
@@ -144,6 +162,7 @@ let shuttingDown = false;
 let shutdownPromise: Promise<void> | null = null;
 const geminiImageSemaphore = new AsyncSemaphore(GEMINI_IMAGE_CONCURRENCY);
 const promptProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
+const promptOptimizeSemaphore = new AsyncSemaphore(PROMPT_OPTIMIZE_CONCURRENCY);
 const heavyRequestSemaphore = new AsyncSemaphore(HEAVY_REQUEST_CONCURRENCY);
 
 const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
@@ -281,6 +300,10 @@ async function route(request: Request, requestId: string) {
         const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)$/);
         if (channelMatch && request.method === "PUT") return saveChannel(request, session, decodeRouteSegment(channelMatch[1], "渠道 ID"));
         if (channelMatch && request.method === "DELETE") return deleteChannel(session, decodeRouteSegment(channelMatch[1], "渠道 ID"));
+        if (url.pathname === "/api/prompt/optimize" && request.method === "POST") {
+            enforceRateLimit(`${session.userId}:${clientIp(request)}:prompt-optimize`, PROMPT_OPTIMIZE_RATE_LIMIT);
+            return promptOptimizeSemaphore.run(request.signal, () => optimizeImagePrompt(request, session, requestId));
+        }
         if (url.pathname === "/api/library-assets" && request.method === "GET") return listLibraryAssets(session);
         if (url.pathname === "/api/library-assets" && request.method === "PUT") return heavyRequestSemaphore.run(request.signal, () => replaceLibraryAssets(request, session));
         const libraryAssetMatch = url.pathname.match(/^\/api\/library-assets\/([^/]+)$/);
@@ -818,6 +841,123 @@ function deleteChannel(session: SessionPayload, id: string) {
     if (adminUserId) delete state.channels[platformChannelKey(adminUserId, id)];
     writeState();
     return new Response(null, { status: 204 });
+}
+
+async function optimizeImagePrompt(request: Request, session: SessionPayload, requestId: string) {
+    let input;
+    try {
+        input = normalizePromptOptimizationInput(await readJson<unknown>(request, MAX_PROMPT_OPTIMIZE_JSON_BYTES));
+    } catch (error) {
+        if (error instanceof PromptOptimizationInputError) throw new HttpError(400, error.message);
+        throw error;
+    }
+
+    const target = resolvePromptOptimizationTarget(listPlatformChannels(state), {
+        channelId: PROMPT_OPTIMIZE_CHANNEL_ID,
+        model: PROMPT_OPTIMIZE_MODEL,
+    });
+    if (!target) throw new HttpError(503, "管理员尚未配置可用的提示词优化模型");
+
+    const channel = platformChannel(target.channelId);
+    assertPlatformModelAllowed(target.channelId, target.model, "text");
+    const apiKey = decryptChannelApiKey(channel);
+    const messages = buildImagePromptOptimizationMessages(input);
+    const startedAt = Date.now();
+    let response: Response | undefined;
+    let payload: unknown;
+
+    try {
+        if (channel.apiFormat === "gemini") {
+            const model = target.model.replace(/^models\//, "");
+            response = await upstreamFetch(
+                buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(model)}:generateContent`),
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": apiKey,
+                        "Idempotency-Key": upstreamIdempotencyKey(requestId),
+                    },
+                    body: JSON.stringify(buildGeminiPromptOptimizationBody(messages)),
+                    signal: request.signal,
+                },
+                false,
+                PROMPT_OPTIMIZE_TIMEOUT_MS,
+            );
+        } else {
+            response = await upstreamFetch(
+                buildUpstreamUrl(channel.baseUrl, "openai", "/responses"),
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${apiKey}`,
+                        "Idempotency-Key": upstreamIdempotencyKey(requestId),
+                    },
+                    body: JSON.stringify(buildOpenAiResponsesPromptOptimizationBody(target.model, messages)),
+                    signal: request.signal,
+                },
+                false,
+                PROMPT_OPTIMIZE_TIMEOUT_MS,
+            );
+            if ([404, 405, 501].includes(response.status)) {
+                await response.body?.cancel();
+                response = await upstreamFetch(
+                    buildUpstreamUrl(channel.baseUrl, "openai", "/chat/completions"),
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${apiKey}`,
+                            "Idempotency-Key": upstreamIdempotencyKey(requestId, 1),
+                        },
+                        body: JSON.stringify(buildOpenAiPromptOptimizationBody(target.model, messages)),
+                        signal: request.signal,
+                    },
+                    false,
+                    PROMPT_OPTIMIZE_TIMEOUT_MS,
+                );
+            }
+        }
+        payload = await parseUpstreamJson(response, {
+            maxBytes: MAX_PROMPT_OPTIMIZE_RESPONSE_BYTES,
+            tooLargeMessage: "提示词优化响应过大",
+        });
+    } catch (error) {
+        if (request.signal.aborted) throw error;
+        if (error instanceof HttpError && error.status === 504) throw new HttpError(504, "提示词优化响应超时，原提示词未受影响");
+        throw new HttpError(502, promptOptimizationFailureMessage(response?.status, error));
+    }
+
+    let optimized: string;
+    try {
+        optimized = cleanOptimizedPrompt(extractPromptOptimizationText(payload));
+    } catch (error) {
+        throw new HttpError(502, error instanceof Error ? error.message : "文本模型未返回可用的优化结果");
+    }
+
+    console.info(
+        JSON.stringify({
+            event: "prompt_optimized",
+            requestId,
+            userId: session.userId,
+            channelId: target.channelId,
+            model: target.model,
+            inputCharacters: input.prompt.length,
+            outputCharacters: optimized.length,
+            durationMs: Date.now() - startedAt,
+        }),
+    );
+    return json({ optimized }, 200, { "Cache-Control": "no-store" });
+}
+
+function promptOptimizationFailureMessage(status: number | undefined, error: unknown) {
+    if (status === 401 || status === 403) return "提示词优化渠道鉴权失败，请联系管理员检查文本模型配置";
+    if (status === 404 || status === 405 || status === 501) return "当前文本渠道不支持提示词优化接口，请联系管理员更换文本模型";
+    if (status === 429) return "提示词优化渠道繁忙或额度不足，请稍后重试";
+    if (status && status >= 500) return `提示词优化上游服务暂不可用（${status}），请稍后重试`;
+    const detail = error instanceof Error ? error.message.replace(/\s+/g, " ").trim().slice(0, 180) : "";
+    return detail ? `提示词优化暂不可用：${detail}` : "提示词优化暂不可用，请稍后重试";
 }
 
 function listLibraryAssets(session: SessionPayload) {
