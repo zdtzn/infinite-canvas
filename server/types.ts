@@ -24,6 +24,7 @@ export type ChannelRecord = {
   userId: string;
   name: string;
   sortOrder?: number;
+  promptOptimizationModel?: string;
   baseUrl: string;
   apiFormat: ProviderProtocol;
   apiKey: EncryptedSecret;

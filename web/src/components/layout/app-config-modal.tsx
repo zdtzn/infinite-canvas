@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ModelPicker } from "@/components/model-picker";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
+import { PromptOptimizerAdminSetting } from "@/components/layout/prompt-optimizer-admin-setting";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { deleteServerChannel, reorderServerChannels, saveServerChannel } from "@/services/server-api";
@@ -215,6 +216,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         label: "渠道",
                         children: (
                             <div>
+                                {PUBLIC_MODE && user?.admin ? <PromptOptimizerAdminSetting config={config} /> : null}
                                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                                     <div className="text-xs text-stone-500">每个渠道选择一个协议并拉取模型，为每个模型指定能力（生图/视频/文本/音频）。公网模式下 API Key 仅加密保存在服务端。</div>
                                     <Button type="primary" icon={<Plus className="size-4" />} onClick={addChannel}>

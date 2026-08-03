@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
-import { listPlatformChannels, normalizeChannelModels, platformChannelKey, platformChannelModels, resolvePlatformChannel } from "./platform-channels";
+import {
+  listPlatformChannels,
+  normalizeChannelModels,
+  platformChannelKey,
+  platformChannelModels,
+  platformChannelPublicRecord,
+  platformPromptOptimizationTarget,
+  resolvePlatformChannel,
+  setPlatformPromptOptimizationTarget,
+} from "./platform-channels";
 import type { ServerState } from "../types";
 
 describe("platform channels", () => {
@@ -11,6 +20,10 @@ describe("platform channels", () => {
     expect(resolvePlatformChannel(state, "shared")?.userId).toBe("admin");
     expect(resolvePlatformChannel(state, "private")).toBeUndefined();
     expect(platformChannelKey("admin", "shared")).toBe("admin:shared");
+    const publicSource = listPlatformChannels(state)[0];
+    publicSource.promptOptimizationModel = "hidden-text-model";
+    expect(platformChannelPublicRecord(publicSource)).not.toHaveProperty("promptOptimizationModel");
+    expect(platformChannelPublicRecord(publicSource)).not.toHaveProperty("apiKey");
   });
 
   test("recovers missing model metadata from recent platform jobs", () => {
@@ -65,6 +78,32 @@ describe("platform channels", () => {
       { name: "gpt-image-2", capability: "image" },
       { name: "voice-pro", capability: "audio" },
     ]);
+  });
+
+  test("stores one administrator prompt optimizer target without changing the database schema", () => {
+    const state = createState();
+    state.channels["admin:shared"].models = [
+      { name: "gpt-image-2", capability: "image" },
+      { name: "text-primary", capability: "text" },
+    ];
+    state.channels["admin:secondary"] = {
+      ...state.channels["admin:shared"],
+      id: "secondary",
+      name: "Secondary",
+      models: [{ name: "text-secondary", capability: "text" }],
+    };
+
+    expect(setPlatformPromptOptimizationTarget(state, { channelId: "shared", model: "text-primary" }, 10)).toBeTrue();
+    expect(platformPromptOptimizationTarget(state)).toEqual({ channelId: "shared", model: "text-primary" });
+    expect(state.channels["admin:shared"].updatedAt).toBe(10);
+
+    expect(setPlatformPromptOptimizationTarget(state, { channelId: "secondary", model: "text-secondary" }, 20)).toBeTrue();
+    expect(platformPromptOptimizationTarget(state)).toEqual({ channelId: "secondary", model: "text-secondary" });
+    expect(state.channels["admin:shared"].promptOptimizationModel).toBeUndefined();
+    expect(setPlatformPromptOptimizationTarget(state, { channelId: "shared", model: "gpt-image-2" })).toBeFalse();
+
+    expect(setPlatformPromptOptimizationTarget(state, null, 30)).toBeTrue();
+    expect(platformPromptOptimizationTarget(state)).toBeNull();
   });
 });
 

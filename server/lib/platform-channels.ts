@@ -38,6 +38,42 @@ export function platformChannelModels(state: ServerState, channelId: string) {
   return channel ? channelModels(state, channel) : [];
 }
 
+export function platformChannelPublicRecord(channel: ChannelRecord & { models: ChannelModelRecord[] }) {
+  const { apiKey: _apiKey, userId: _userId, promptOptimizationModel: _promptOptimizationModel, ...publicChannel } = channel;
+  return { ...publicChannel, hasApiKey: true };
+}
+
+export type PlatformPromptOptimizationTarget = { channelId: string; model: string };
+
+export function platformPromptOptimizationTarget(state: ServerState): PlatformPromptOptimizationTarget | null {
+  const adminUserId = state.auth.adminUserId;
+  if (!adminUserId) return null;
+  for (const channel of listPlatformChannels(state)) {
+    const model = String(channel.promptOptimizationModel || "").trim();
+    if (model && channel.models.some((item) => item.name === model && item.capability === "text")) return { channelId: channel.id, model };
+  }
+  return null;
+}
+
+export function setPlatformPromptOptimizationTarget(state: ServerState, target: PlatformPromptOptimizationTarget | null, updatedAt = Date.now()) {
+  const adminUserId = state.auth.adminUserId;
+  if (!adminUserId) return false;
+  if (target) {
+    const allowed = platformChannelModels(state, target.channelId).some((model) => model.name === target.model && model.capability === "text");
+    if (!allowed) return false;
+  }
+
+  for (const channel of Object.values(state.channels)) {
+    if (channel.userId !== adminUserId) continue;
+    const nextModel = target?.channelId === channel.id ? target.model : undefined;
+    if (channel.promptOptimizationModel === nextModel) continue;
+    if (nextModel) channel.promptOptimizationModel = nextModel;
+    else delete channel.promptOptimizationModel;
+    channel.updatedAt = updatedAt;
+  }
+  return true;
+}
+
 export function normalizeChannelModels(input: unknown): ChannelModelRecord[] {
   if (!Array.isArray(input)) return [];
   const seen = new Set<string>();

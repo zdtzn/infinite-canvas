@@ -15,7 +15,16 @@ import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageS
 import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { isAllowedMediaMimeType, resolveMediaMimeType } from "./lib/media-mime";
 import { createMediaTaskStore, type MediaTaskKind } from "./lib/media-task-store";
-import { listPlatformChannels, normalizeChannelModels, platformChannelKey, platformChannelModels, resolvePlatformChannel } from "./lib/platform-channels";
+import {
+    listPlatformChannels,
+    normalizeChannelModels,
+    platformChannelKey,
+    platformChannelModels,
+    platformChannelPublicRecord,
+    platformPromptOptimizationTarget,
+    resolvePlatformChannel,
+    setPlatformPromptOptimizationTarget,
+} from "./lib/platform-channels";
 import {
     PromptOptimizationInputError,
     buildGeminiPromptOptimizationBody,
@@ -88,6 +97,7 @@ const PROMPT_OPTIMIZE_TIMEOUT_MS = Math.max(10_000, Math.min(90_000, positiveInt
 const PROMPT_OPTIMIZE_RATE_LIMIT = Math.max(1, Math.min(60, positiveInt(process.env.PROMPT_OPTIMIZE_RATE_LIMIT, 8)));
 const PROMPT_OPTIMIZE_CHANNEL_ID = String(process.env.PROMPT_OPTIMIZE_CHANNEL_ID || "").trim();
 const PROMPT_OPTIMIZE_MODEL = String(process.env.PROMPT_OPTIMIZE_MODEL || "").trim();
+const PROMPT_OPTIMIZE_ENV_LOCKED = Boolean(PROMPT_OPTIMIZE_CHANNEL_ID || PROMPT_OPTIMIZE_MODEL);
 const MAX_PROMPT_OPTIMIZE_JSON_BYTES = 64 * 1024;
 const MAX_PROMPT_OPTIMIZE_RESPONSE_BYTES = 512 * 1024;
 const PROMPT_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif", "image/svg+xml", "image/bmp", "image/tiff"]);
@@ -269,6 +279,8 @@ async function route(request: Request, requestId: string) {
         enforceRateLimit(`${session.userId}:${clientIp(request)}`, request.method === "GET" ? 240 : 90);
         if (url.pathname === "/api/admin/metrics" && request.method === "GET") return adminMetrics(session);
         if (url.pathname === "/api/admin/channels/metrics" && request.method === "GET") return adminChannelMetrics(url, session);
+        if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "GET") return adminPromptOptimizationConfiguration(session);
+        if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "PUT") return adminUpdatePromptOptimizationConfiguration(request, session);
         if (url.pathname === "/api/admin/users" && request.method === "GET") return listUsers(session);
         const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
         if (userMatch && request.method === "PUT") return updateUserAccess(request, session, decodeRouteSegment(userMatch[1], "用户 ID"));
@@ -760,10 +772,7 @@ function readPagination(url: URL) {
 function listChannels(session: SessionPayload) {
     void session;
     return json({
-        items: listPlatformChannels(state).map(({ apiKey: _apiKey, userId: _userId, ...channel }) => ({
-            ...channel,
-            hasApiKey: true,
-        })),
+        items: listPlatformChannels(state).map(platformChannelPublicRecord),
     });
 }
 
@@ -794,20 +803,22 @@ async function saveChannel(request: Request, session: SessionPayload, id: string
     const fallbackSortOrder = existing?.sortOrder ?? (existing ? Math.max(0, currentChannels.findIndex((channel) => channel.id === id)) : currentChannels.length);
     const plaintext = String(body.apiKey || "").trim();
     if (!plaintext && !existing) throw new HttpError(400, "首次保存渠道时必须填写 API Key");
+    const models = body.models === undefined ? existing?.models || [] : normalizeChannelModels(body.models);
+    const promptOptimizationModel = models.some((model) => model.name === existing?.promptOptimizationModel && model.capability === "text") ? existing?.promptOptimizationModel : undefined;
     state.channels[key] = {
         id,
         userId: adminUserId,
         name: normalizeShortText(body.name || existing?.name || "未命名渠道", 80, "渠道名称"),
         sortOrder: normalizeChannelSortOrder(body.sortOrder, fallbackSortOrder),
+        promptOptimizationModel,
         baseUrl,
         apiFormat,
         apiKey: plaintext ? encryptSecret(plaintext, encryptionSecret) : existing.apiKey,
-        models: body.models === undefined ? existing?.models || [] : normalizeChannelModels(body.models),
+        models,
         updatedAt: Date.now(),
     };
     writeState();
-    const { apiKey: _apiKey, userId: _userId, ...channel } = state.channels[key];
-    return json({ ok: true, channel: { ...channel, hasApiKey: true } });
+    return json({ ok: true, channel: platformChannelPublicRecord({ ...state.channels[key], models: platformChannelModels(state, id) }) });
 }
 
 async function reorderChannels(request: Request, session: SessionPayload) {
@@ -843,6 +854,50 @@ function deleteChannel(session: SessionPayload, id: string) {
     return new Response(null, { status: 204 });
 }
 
+function adminPromptOptimizationConfiguration(session: SessionPayload) {
+    requireAdmin(session);
+    return json(promptOptimizationConfigurationPayload());
+}
+
+async function adminUpdatePromptOptimizationConfiguration(request: Request, session: SessionPayload) {
+    requireAdmin(session);
+    if (PROMPT_OPTIMIZE_ENV_LOCKED) throw new HttpError(409, "提示词优化模型已由服务器环境变量锁定");
+    const body = await readJson<{ channelId?: unknown; model?: unknown }>(request);
+    const channelId = String(body.channelId || "").trim();
+    const model = String(body.model || "").trim();
+    if (Boolean(channelId) !== Boolean(model)) throw new HttpError(400, "提示词优化渠道和模型必须同时选择");
+    if (channelId && !/^[A-Za-z0-9._-]{1,128}$/.test(channelId)) throw new HttpError(400, "提示词优化渠道无效");
+    if (model && (model.length > 256 || /\p{C}/u.test(model))) throw new HttpError(400, "提示词优化模型无效");
+
+    const target = channelId && model ? { channelId, model } : null;
+    if (!setPlatformPromptOptimizationTarget(state, target)) throw new HttpError(400, "请选择后台已开放的文本模型");
+    writeState();
+    console.info(
+        JSON.stringify({
+            event: "prompt_optimizer_configuration_updated",
+            adminUserId: session.userId,
+            channelId: target?.channelId || "",
+            model: target?.model || "",
+        }),
+    );
+    return json(promptOptimizationConfigurationPayload());
+}
+
+function promptOptimizationConfigurationPayload() {
+    return {
+        configured: platformPromptOptimizationTarget(state),
+        effective: resolvePromptOptimizationTarget(listPlatformChannels(state), promptOptimizationPreferredTarget()),
+        lockedByEnvironment: PROMPT_OPTIMIZE_ENV_LOCKED,
+    };
+}
+
+function promptOptimizationPreferredTarget() {
+    if (PROMPT_OPTIMIZE_ENV_LOCKED) {
+        return { channelId: PROMPT_OPTIMIZE_CHANNEL_ID, model: PROMPT_OPTIMIZE_MODEL };
+    }
+    return platformPromptOptimizationTarget(state) || {};
+}
+
 async function optimizeImagePrompt(request: Request, session: SessionPayload, requestId: string) {
     let input;
     try {
@@ -852,10 +907,7 @@ async function optimizeImagePrompt(request: Request, session: SessionPayload, re
         throw error;
     }
 
-    const target = resolvePromptOptimizationTarget(listPlatformChannels(state), {
-        channelId: PROMPT_OPTIMIZE_CHANNEL_ID,
-        model: PROMPT_OPTIMIZE_MODEL,
-    });
+    const target = resolvePromptOptimizationTarget(listPlatformChannels(state), promptOptimizationPreferredTarget());
     if (!target) throw new HttpError(503, "管理员尚未配置可用的提示词优化模型");
 
     const channel = platformChannel(target.channelId);

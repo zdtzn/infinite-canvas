@@ -10,6 +10,12 @@ export type AuthStatus = { configured: boolean; authenticated: boolean; user: Au
 export type ServerMember = AuthUser & { createdAt: number; disabled: boolean };
 export type ServerAsset = { key: string; url: string; mimeType: string; bytes: number; createdAt: number };
 export type ServerChannel = Omit<ModelChannel, "apiKey" | "credentialState"> & { hasApiKey: boolean };
+export type PromptOptimizerTarget = { channelId: string; model: string };
+export type PromptOptimizerAdminConfiguration = {
+    configured: PromptOptimizerTarget | null;
+    effective: PromptOptimizerTarget | null;
+    lockedByEnvironment: boolean;
+};
 export type ServerAssetLibrary = { initialized: boolean; items: Asset[] };
 export type ServerJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string; width?: number; height?: number };
@@ -161,6 +167,17 @@ export async function reorderServerChannels(channelIds: string[]) {
 
 export async function deleteServerChannel(channelId: string) {
     await serverRequest(`/api/channels/${encodeURIComponent(channelId)}`, { method: "DELETE" });
+}
+
+export async function fetchPromptOptimizerAdminConfiguration() {
+    return serverRequest<PromptOptimizerAdminConfiguration>("/api/admin/prompt-optimizer", { timeoutMs: 12_000 });
+}
+
+export async function updatePromptOptimizerAdminConfiguration(target: PromptOptimizerTarget | null) {
+    return serverRequest<PromptOptimizerAdminConfiguration>("/api/admin/prompt-optimizer", {
+        method: "PUT",
+        body: target || { channelId: "", model: "" },
+    });
 }
 
 export async function uploadServerAsset(blob: Blob, prefix: string, storageKey?: string, expectedUserId?: string) {
