@@ -8,7 +8,7 @@ import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { imageToDataUrl } from "@/services/image-storage";
-import { cancelServerJob, saveServerChannel, submitImageJob, waitForServerJob } from "@/services/server-api";
+import { cancelServerJob, saveServerChannel, submitImageJob, waitForServerJob, type ServerImageReferenceInput } from "@/services/server-api";
 import { deriveImageModelCapabilities, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useUserStore } from "@/stores/use-user-store";
@@ -28,6 +28,11 @@ export type RequestedImage = {
     durationMs?: number;
     mimeType?: string;
 };
+
+export function serverImageReferenceInput(reference: { storageKey?: string }): ServerImageReferenceInput | null {
+    const assetKey = String(reference.storageKey || "").trim();
+    return /^image:[A-Za-z0-9._:-]{1,180}$/.test(assetKey) ? { assetKey } : null;
+}
 
 export type AiTextMessage = {
     role: "system" | "user" | "assistant";
@@ -981,8 +986,8 @@ async function requestServerImageJob(
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
     const size = normalizeImageSizeSelection(requestConfig.size);
     validateImageRequest(capabilities, { resolution, imageQuality: imageQuality || "auto", imageOutputFormat: imageOutputFormat || "auto", size, background: requestConfig.background || "", referenceCount: references.length, count });
-    const referenceData = await Promise.all(references.map((reference) => imageToDataUrl(reference, expectedUserId)));
-    const maskData = mask ? await imageToDataUrl(mask, expectedUserId) : undefined;
+    const referenceData = await Promise.all(references.map((reference) => serverImageReferenceInput(reference) || imageToDataUrl(reference, expectedUserId)));
+    const maskData = mask ? serverImageReferenceInput(mask) || (await imageToDataUrl(mask, expectedUserId)) : undefined;
     const { job } = await submitImageJob({
         channelId: requestConfig.channelId,
         apiFormat: requestConfig.apiFormat,

@@ -10,6 +10,7 @@ export type AuthStatus = { configured: boolean; authenticated: boolean; user: Au
 export type ServerMember = AuthUser & { createdAt: number; disabled: boolean };
 export type ServerAsset = { key: string; url: string; mimeType: string; bytes: number; createdAt: number };
 export type ServerChannel = Omit<ModelChannel, "apiKey" | "credentialState"> & { hasApiKey: boolean };
+export type ServerImageReferenceInput = string | { assetKey: string };
 export type PromptOptimizerTarget = { channelId: string; model: string };
 export type PromptOptimizerAdminConfiguration = {
     configured: PromptOptimizerTarget | null;
@@ -267,8 +268,8 @@ export async function submitImageJob(input: {
     imageOutputFormat?: string;
     size?: string;
     background?: string;
-    references: string[];
-    mask?: string;
+    references: ServerImageReferenceInput[];
+    mask?: ServerImageReferenceInput;
     source?: ServerJob["source"];
 }, expectedUserId?: string) {
     return serverRequest<{ job: ServerJob }>("/api/jobs/images", { method: "POST", body: input, headers: { "Idempotency-Key": nanoid() }, timeoutMs: 60_000, expectedUserId });

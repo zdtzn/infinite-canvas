@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, statSync, unlinkSync, utimesSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, statSync, unlinkSync, utimesSync } from "node:fs";
 import { isIP } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
@@ -10,6 +10,7 @@ import { canAccessUserAvatar } from "./lib/avatar-access";
 import { decryptSecret, encryptSecret, normalizeEncryptionSecret } from "./lib/crypto-store";
 import { generationHistoryJobIdsForDeletion, GenerationHistoryInputError, normalizeGenerationHistory, normalizeGenerationHistoryDeletion, normalizeGenerationHistoryItem } from "./lib/generation-history";
 import { parseSingleByteRange } from "./lib/http-range";
+import { ImageJobReferenceInputError, parseClientImageJobReference } from "./lib/image-job-reference";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
@@ -1353,19 +1354,29 @@ function assetUrl(key: string, version?: number) {
     return `/api/assets/${encodeURIComponent(key)}${version ? `?v=${version}` : ""}`;
 }
 
+type ImageJobRequestBody = Omit<Partial<ImageJobInput>, "references" | "mask"> & {
+    references?: unknown;
+    mask?: unknown;
+};
+
+type PreparedImageJobReference =
+    | { kind: "data"; dataUrl: string; bytes: number }
+    | { kind: "asset"; sourcePath: string; mimeType: string; bytes: number };
+
 async function createImageJob(request: Request, session: SessionPayload) {
     const idempotencyKey = requiredIdempotencyKey(request);
     const jobId = createHash("sha256").update(`${session.userId}:${idempotencyKey}`).digest("hex");
     const existingBeforeRead = state.jobs[jobId];
     if (existingBeforeRead) return json({ job: publicJob(existingBeforeRead) }, 200);
-    const body = await readJson<Partial<ImageJobInput>>(request, MAX_IMAGE_JOB_JSON_BYTES);
+    const body = await readJson<ImageJobRequestBody>(request, MAX_IMAGE_JOB_JSON_BYTES);
     const channelId = String(body.channelId || "");
     const channel = platformChannel(channelId);
     const count = Math.max(1, Math.min(10, Math.floor(Number(body.count) || 1)));
-    const references = Array.isArray(body.references) ? body.references.map(String) : [];
+    const references = Array.isArray(body.references) ? body.references.map((reference) => prepareImageJobReference(session.userId, reference)) : [];
     if (references.length > 16) throw new HttpError(400, "参考图最多 16 张");
-    const referenceBytes = references.reduce((total, reference) => total + assertSafeDataImage(reference), 0);
-    const maskBytes = body.mask ? assertSafeDataImage(String(body.mask)) : 0;
+    const mask = body.mask ? prepareImageJobReference(session.userId, body.mask) : undefined;
+    const referenceBytes = references.reduce((total, reference) => total + reference.bytes, 0);
+    const maskBytes = mask?.bytes || 0;
     const prompt = String(body.prompt || "").trim();
     if (!prompt) throw new HttpError(400, "提示词不能为空");
     if (prompt.length > MAX_PROMPT_CHARS) throw new HttpError(400, `提示词不能超过 ${MAX_PROMPT_CHARS.toLocaleString()} 个字符`);
@@ -1403,8 +1414,8 @@ async function createImageJob(request: Request, session: SessionPayload) {
             imageOutputFormat,
             size: optionalString(body.size),
             background: optionalString(body.background),
-            references: references.map((reference, index) => persistReference(DATA_DIR, session.userId, jobId, index, reference)),
-            mask: body.mask ? persistReference(DATA_DIR, session.userId, jobId, 10_000, String(body.mask)) : undefined,
+            references: references.map((reference, index) => persistPreparedImageJobReference(session.userId, jobId, index, reference)),
+            mask: mask ? persistPreparedImageJobReference(session.userId, jobId, 10_000, mask) : undefined,
             source: normalizeJobSource(body.source),
         };
         const job = imageQueue.add(input, jobId);
@@ -1414,6 +1425,35 @@ async function createImageJob(request: Request, session: SessionPayload) {
         cultivation?.refundGeneration(jobId, "job creation failed");
         throw error;
     }
+}
+
+function prepareImageJobReference(userId: string, value: unknown): PreparedImageJobReference {
+    let parsed: ReturnType<typeof parseClientImageJobReference>;
+    try {
+        parsed = parseClientImageJobReference(value);
+    } catch (error) {
+        if (error instanceof ImageJobReferenceInputError) throw new HttpError(400, error.message);
+        throw error;
+    }
+    if (parsed.kind === "data") return { kind: "data", dataUrl: parsed.dataUrl, bytes: assertSafeDataImage(parsed.dataUrl) };
+
+    const asset = ownedAsset(userId, parsed.assetKey);
+    if (!isAllowedImageMimeType(asset.mimeType)) throw new HttpError(400, "参考图素材格式无效");
+    const sourcePath = existingAssetPath(userId, asset.key);
+    if (!sourcePath) throw new HttpError(404, "参考图素材文件不存在");
+    const bytes = statSync(sourcePath).size;
+    if (!bytes) throw new HttpError(400, "参考图素材文件为空");
+    if (bytes > MAX_IMAGE_ASSET_BYTES) throw new HttpError(413, "单张参考图不能超过 16 MB");
+    return { kind: "asset", sourcePath, mimeType: asset.mimeType, bytes };
+}
+
+function persistPreparedImageJobReference(userId: string, jobId: string, index: number, reference: PreparedImageJobReference): StoredImageReference {
+    if (reference.kind === "data") return persistReference(DATA_DIR, userId, jobId, index, reference.dataUrl);
+    const relativePath = join("job-references", safeSegment(userId), safeSegment(jobId), `${index}.bin`);
+    const absolutePath = join(DATA_DIR, relativePath);
+    mkdirSync(join(DATA_DIR, "job-references", safeSegment(userId), safeSegment(jobId)), { recursive: true });
+    copyFileSync(reference.sourcePath, absolutePath);
+    return { path: relativePath.replaceAll("\\", "/"), mimeType: reference.mimeType, bytes: reference.bytes };
 }
 
 function listJobs(session: SessionPayload) {
