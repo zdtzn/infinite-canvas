@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   DEFAULT_CAPABILITIES,
   DEFAULT_REALMS,
+  PRODUCT_CAPABILITIES,
   requiredXp,
   stageLabel,
 } from "./defaults";
@@ -1065,7 +1066,11 @@ function seedDefaults(database: Database) {
     const insertStage = database.query(
       "INSERT OR IGNORE INTO realm_stages(id, realm_id, name, stage_order, required_xp) VALUES (?, ?, ?, ?, ?)",
     );
-    const createdStages: Array<{ id: string; stageOrder: number }> = [];
+    const createdStages: Array<{
+      id: string;
+      stageOrder: number;
+      realmSortOrder: number;
+    }> = [];
     let stageOrder = 1;
     for (const [realmIndex, realm] of DEFAULT_REALMS.entries()) {
       const realmId = `realm-${realm.code}`;
@@ -1093,7 +1098,12 @@ function seedDefaults(database: Database) {
           stageOrder,
           requiredXp(realmIndex, stageIndex),
         );
-        if (result.changes > 0) createdStages.push({ id: stageId, stageOrder });
+        if (result.changes > 0)
+          createdStages.push({
+            id: stageId,
+            stageOrder,
+            realmSortOrder: realmIndex + 1,
+          });
         stageOrder += 1;
       }
     }
@@ -1119,6 +1129,9 @@ function seedDefaults(database: Database) {
           insertGrant.run(stage.id, key);
       if (stage.stageOrder >= 37)
         for (const key of ["feature.lora", "feature.controlnet"])
+          insertGrant.run(stage.id, key);
+      for (const [key, _label, _category, minimumRealmSortOrder] of PRODUCT_CAPABILITIES)
+        if (stage.realmSortOrder >= minimumRealmSortOrder)
           insertGrant.run(stage.id, key);
     }
     const insertSetting = database.query(

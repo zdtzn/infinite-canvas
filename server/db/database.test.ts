@@ -117,6 +117,34 @@ describe("SQLite application database", () => {
     store.close();
   });
 
+  test("creates the product lab tables in the latest migration", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+
+    try {
+      const tables = (
+        store.raw!
+          .query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'product_%' ORDER BY name",
+          )
+          .all() as Array<{ name: string }>
+      ).map((item) => item.name);
+      const migration = store.raw!
+        .query("SELECT MAX(version) AS version FROM schema_migrations")
+        .get() as { version: number };
+
+      expect(tables).toEqual([
+        "product_generations",
+        "product_projects",
+        "product_templates",
+      ]);
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(9);
+    } finally {
+      store.close();
+    }
+  });
+
   test("persists hot-path assets, jobs and projects without replacing the full state", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);

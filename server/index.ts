@@ -38,6 +38,15 @@ import {
     normalizePromptOptimizationInput,
     resolvePromptOptimizationTarget,
 } from "./lib/prompt-optimizer";
+import {
+    ProductAnalysisInputError,
+    buildGeminiProductAnalysisBody,
+    buildOpenAiProductAnalysisBody,
+    buildOpenAiResponsesProductAnalysisBody,
+    buildProductAnalysisMessages,
+    normalizeProductAnalysisInput,
+    normalizeProductAnalysisResult,
+} from "./lib/product-analysis";
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
@@ -49,6 +58,7 @@ import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstrea
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
+import { createProductLabService, productOutputCapability, ProductLabError } from "./modules/product-lab/service";
 import type { ChannelRecord, GenerationHistoryKind, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
 
 const PORT = positiveInt(process.env.PORT, 3000);
@@ -103,6 +113,9 @@ const PROMPT_OPTIMIZE_MODEL = String(process.env.PROMPT_OPTIMIZE_MODEL || "").tr
 const PROMPT_OPTIMIZE_ENV_LOCKED = Boolean(PROMPT_OPTIMIZE_CHANNEL_ID || PROMPT_OPTIMIZE_MODEL);
 const MAX_PROMPT_OPTIMIZE_JSON_BYTES = 64 * 1024;
 const MAX_PROMPT_OPTIMIZE_RESPONSE_BYTES = 512 * 1024;
+const MAX_PRODUCT_ANALYSIS_JSON_BYTES = 16 * 1024;
+const MAX_PRODUCT_ANALYSIS_RESPONSE_BYTES = 512 * 1024;
+const PRODUCT_ANALYSIS_RATE_LIMIT = Math.max(1, Math.min(30, positiveInt(process.env.PRODUCT_ANALYSIS_RATE_LIMIT, 6)));
 const PROMPT_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif", "image/svg+xml", "image/bmp", "image/tiff"]);
 const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL);
 const secureCookies = PUBLIC_BASE_URL.startsWith("https://") || process.env.FORCE_SECURE_COOKIES === "1";
@@ -145,6 +158,7 @@ for (const job of Object.values(state.jobs)) {
     }
 }
 const cultivation = appDatabase.raw ? createCultivationService(appDatabase.raw) : null;
+const productLab = appDatabase.raw ? createProductLabService(appDatabase.raw) : null;
 const mediaTasks = appDatabase.raw ? createMediaTaskStore(appDatabase.raw, MEDIA_TASK_RETENTION_MS, MEDIA_TASK_ACTIVE_TTL_MS) : null;
 mediaTasks?.prune();
 const backupManager = appDatabase.raw
@@ -338,6 +352,24 @@ async function route(request: Request, requestId: string) {
             enforceRateLimit(`${session.userId}:${clientIp(request)}:prompt-optimize`, PROMPT_OPTIMIZE_RATE_LIMIT);
             return promptOptimizeSemaphore.run(request.signal, () => optimizeImagePrompt(request, session, requestId));
         }
+        if (url.pathname === "/api/product-lab/context" && request.method === "GET") return productLabContext(session);
+        if (url.pathname === "/api/product-lab/projects" && request.method === "GET") return listProductProjects(session);
+        if (url.pathname === "/api/product-lab/projects" && request.method === "POST") return createProductProject(request, session);
+        if (url.pathname === "/api/product-lab/generations" && request.method === "POST") return saveProductGeneration(request, session);
+        if (url.pathname === "/api/product-lab/analyze" && request.method === "POST") {
+            enforceRateLimit(`${session.userId}:${clientIp(request)}:product-analysis`, PRODUCT_ANALYSIS_RATE_LIMIT);
+            return promptOptimizeSemaphore.run(request.signal, () => analyzeProductImage(request, session, requestId));
+        }
+        const productGenerationsMatch = url.pathname.match(/^\/api\/product-lab\/projects\/([^/]+)\/generations$/);
+        if (productGenerationsMatch && request.method === "GET")
+            return listProductGenerations(session, decodeRouteSegment(productGenerationsMatch[1], "商品项目 ID"));
+        const productProjectMatch = url.pathname.match(/^\/api\/product-lab\/projects\/([^/]+)$/);
+        if (productProjectMatch && request.method === "GET")
+            return getProductProject(session, decodeRouteSegment(productProjectMatch[1], "商品项目 ID"));
+        if (productProjectMatch && request.method === "PATCH")
+            return updateProductProject(request, session, decodeRouteSegment(productProjectMatch[1], "商品项目 ID"));
+        if (productProjectMatch && request.method === "DELETE")
+            return deleteProductProject(session, decodeRouteSegment(productProjectMatch[1], "商品项目 ID"));
         if (url.pathname === "/api/library-assets" && request.method === "GET") return listLibraryAssets(session);
         if (url.pathname === "/api/library-assets" && request.method === "PUT") return heavyRequestSemaphore.run(request.signal, () => replaceLibraryAssets(request, session));
         const libraryAssetMatch = url.pathname.match(/^\/api\/library-assets\/([^/]+)$/);
@@ -1035,6 +1067,218 @@ function promptOptimizationFailureMessage(status: number | undefined, error: unk
     return detail ? `提示词优化暂不可用：${detail}` : "提示词优化暂不可用，请稍后重试";
 }
 
+function requireProductLab() {
+    if (!productLab) throw new HttpError(503, "SQLite 迁移尚未完成，商品幻境暂不可用");
+    return productLab;
+}
+
+function productLabContext(session: SessionPayload) {
+    const service = requireProductLab();
+    requireCultivation().ensureUser(session.userId, Boolean(state.users[session.userId]?.admin));
+    return json({
+        analysisAvailable: Boolean(resolvePromptOptimizationTarget(listPlatformChannels(state), promptOptimizationPreferredTarget())),
+        templates: service.listTemplates("pinduoduo"),
+    });
+}
+
+function listProductProjects(session: SessionPayload) {
+    return json({
+        items: requireProductLab().listProjects(session.userId).map((project) => publicProductProject(session.userId, project)),
+    });
+}
+
+function getProductProject(session: SessionPayload, projectId: string) {
+    const project = requireProductLab().getProject(session.userId, projectId);
+    if (!project) throw new HttpError(404, "商品项目不存在");
+    return json({ project: publicProductProject(session.userId, project) });
+}
+
+async function createProductProject(request: Request, session: SessionPayload) {
+    const service = requireProductLab();
+    requireProductCapability(session.userId, "product.basic");
+    const body = await readJson<unknown>(request, 32 * 1024);
+    const project = service.createProject(session.userId, body as Parameters<typeof service.createProject>[1]);
+    return json({ project: publicProductProject(session.userId, project) }, 201);
+}
+
+async function updateProductProject(request: Request, session: SessionPayload, projectId: string) {
+    const service = requireProductLab();
+    const body = await readJson<unknown>(request, 384 * 1024);
+    const project = service.updateProject(session.userId, projectId, body as Parameters<typeof service.updateProject>[2]);
+    return json({ project: publicProductProject(session.userId, project) });
+}
+
+function deleteProductProject(session: SessionPayload, projectId: string) {
+    requireProductLab().deleteProject(session.userId, projectId);
+    return new Response(null, { status: 204 });
+}
+
+function listProductGenerations(session: SessionPayload, projectId: string) {
+    const service = requireProductLab();
+    if (!service.getProject(session.userId, projectId)) throw new HttpError(404, "商品项目不存在");
+    return json({
+        items: service.listGenerations(session.userId, projectId).map((generation) => publicProductGeneration(session.userId, generation)),
+    });
+}
+
+async function saveProductGeneration(request: Request, session: SessionPayload) {
+    const service = requireProductLab();
+    const body = await readJson<Record<string, unknown>>(request, 64 * 1024);
+    const capabilityKey = productOutputCapability(body.outputKind);
+    if (!capabilityKey) throw new HttpError(400, "商品输出类型无效");
+    requireProductCapability(session.userId, capabilityKey);
+    const generation = service.saveGeneration(session.userId, body as Parameters<typeof service.saveGeneration>[1]);
+    return json({ generation: publicProductGeneration(session.userId, generation) }, 201);
+}
+
+async function analyzeProductImage(request: Request, session: SessionPayload, requestId: string) {
+    const service = requireProductLab();
+    requireProductCapability(session.userId, "product.analysis");
+    let input;
+    try {
+        input = normalizeProductAnalysisInput(await readJson<unknown>(request, MAX_PRODUCT_ANALYSIS_JSON_BYTES));
+    } catch (error) {
+        if (error instanceof ProductAnalysisInputError) throw new HttpError(400, error.message);
+        throw error;
+    }
+
+    const asset = ownedAsset(session.userId, input.assetKey);
+    if (!isAllowedImageMimeType(asset.mimeType)) throw new HttpError(400, "商品图片格式无效");
+    const path = existingAssetPath(session.userId, asset.key);
+    if (!path) throw new HttpError(404, "商品图片文件不存在");
+    const bytes = readFileSync(path);
+    if (!bytes.byteLength || bytes.byteLength > MAX_IMAGE_ASSET_BYTES) throw new HttpError(413, "商品图片不能超过 16 MB");
+
+    const target = resolvePromptOptimizationTarget(listPlatformChannels(state), promptOptimizationPreferredTarget());
+    if (!target) throw new HttpError(503, "管理员尚未配置可用的商品分析模型");
+    const channel = platformChannel(target.channelId);
+    assertPlatformModelAllowed(target.channelId, target.model, "text");
+    const apiKey = decryptChannelApiKey(channel);
+    const messages = buildProductAnalysisMessages(input);
+    const image = {
+        mimeType: asset.mimeType,
+        base64: bytes.toString("base64"),
+        dataUrl: `data:${asset.mimeType};base64,${bytes.toString("base64")}`,
+    };
+    const startedAt = Date.now();
+    let response: Response | undefined;
+    let payload: unknown;
+
+    try {
+        if (channel.apiFormat === "gemini") {
+            const model = target.model.replace(/^models\//, "");
+            response = await upstreamFetch(
+                buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(model)}:generateContent`),
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": apiKey,
+                        "Idempotency-Key": upstreamIdempotencyKey(requestId),
+                    },
+                    body: JSON.stringify(buildGeminiProductAnalysisBody(messages, image)),
+                    signal: request.signal,
+                },
+                false,
+                PROMPT_OPTIMIZE_TIMEOUT_MS,
+            );
+        } else {
+            response = await upstreamFetch(
+                buildUpstreamUrl(channel.baseUrl, "openai", "/responses"),
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${apiKey}`,
+                        "Idempotency-Key": upstreamIdempotencyKey(requestId),
+                    },
+                    body: JSON.stringify(buildOpenAiResponsesProductAnalysisBody(target.model, messages, image)),
+                    signal: request.signal,
+                },
+                false,
+                PROMPT_OPTIMIZE_TIMEOUT_MS,
+            );
+            if ([404, 405, 501].includes(response.status)) {
+                await response.body?.cancel();
+                response = await upstreamFetch(
+                    buildUpstreamUrl(channel.baseUrl, "openai", "/chat/completions"),
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${apiKey}`,
+                            "Idempotency-Key": upstreamIdempotencyKey(requestId, 1),
+                        },
+                        body: JSON.stringify(buildOpenAiProductAnalysisBody(target.model, messages, image)),
+                        signal: request.signal,
+                    },
+                    false,
+                    PROMPT_OPTIMIZE_TIMEOUT_MS,
+                );
+            }
+        }
+        payload = await parseUpstreamJson(response, {
+            maxBytes: MAX_PRODUCT_ANALYSIS_RESPONSE_BYTES,
+            tooLargeMessage: "商品分析响应过大",
+        });
+    } catch (error) {
+        if (request.signal.aborted) throw error;
+        if (error instanceof HttpError && error.status === 504) throw new HttpError(504, "商品分析响应超时，请稍后重试");
+        throw new HttpError(502, productAnalysisFailureMessage(response?.status, error));
+    }
+
+    let analysis;
+    try {
+        analysis = normalizeProductAnalysisResult(extractPromptOptimizationText(payload));
+    } catch (error) {
+        throw new HttpError(502, error instanceof Error ? error.message : "文本模型未返回可用的商品分析结果");
+    }
+
+    console.info(
+        JSON.stringify({
+            event: "product_analyzed",
+            requestId,
+            userId: session.userId,
+            channelId: target.channelId,
+            model: target.model,
+            assetKey: input.assetKey,
+            durationMs: Date.now() - startedAt,
+        }),
+    );
+    return json({ analysis }, 200, { "Cache-Control": "no-store" });
+}
+
+function productAnalysisFailureMessage(status: number | undefined, error: unknown) {
+    if (status === 400 || status === 422) return "当前文本模型无法识别这张商品图片，请更换清晰原图后重试";
+    if (status === 401 || status === 403) return "商品分析渠道鉴权失败，请联系管理员检查文本模型配置";
+    if (status === 404 || status === 405 || status === 501) return "当前文本渠道不支持商品图片分析，请联系管理员更换多模态文本模型";
+    if (status === 429) return "商品分析渠道繁忙或额度不足，请稍后重试";
+    if (status && status >= 500) return `商品分析上游服务暂不可用（${status}），请稍后重试`;
+    const detail = error instanceof Error ? error.message.replace(/\s+/g, " ").trim().slice(0, 180) : "";
+    return detail ? `商品分析暂不可用：${detail}` : "商品分析暂不可用，请稍后重试";
+}
+
+function requireProductCapability(userId: string, capabilityKey: string) {
+    if (!capabilityKey || !requireProductLab().hasCapability(userId, capabilityKey))
+        throw new HttpError(403, "当前境界尚不足以开启此项商品法则。继续修炼即可掌握。");
+}
+
+function publicProductProject(userId: string, project: ReturnType<ReturnType<typeof createProductLabService>["createProject"]>) {
+    const asset = state.assets[assetKey(userId, project.sourceAssetKey)];
+    return {
+        ...project,
+        sourceUrl: asset ? assetUrl(asset.key, asset.createdAt) : "",
+    };
+}
+
+function publicProductGeneration(userId: string, generation: ReturnType<ReturnType<typeof createProductLabService>["saveGeneration"]>) {
+    const asset = generation.assetKey ? state.assets[assetKey(userId, generation.assetKey)] : undefined;
+    return {
+        ...generation,
+        assetUrl: asset ? assetUrl(asset.key, asset.createdAt) : "",
+    };
+}
+
 function listLibraryAssets(session: SessionPayload) {
     const library = appDatabase.loadAssetLibrary(session.userId);
     return json({
@@ -1337,7 +1581,7 @@ async function deleteAsset(session: SessionPayload, key: string) {
 async function removeAsset(session: SessionPayload, key: string, allowReferenced = false) {
     return withAssetMutation(async () => {
         const asset = ownedAsset(session.userId, key);
-        if (!allowReferenced && collectLiveAssetReferences().has(assetReferenceId(asset.userId, asset.key))) throw new HttpError(409, "素材仍被画布、藏卷阁或生成历史使用，请先移除相关引用");
+        if (!allowReferenced && collectLiveAssetReferences().has(assetReferenceId(asset.userId, asset.key))) throw new HttpError(409, "素材仍被画布、商品项目、藏卷阁或生成历史使用，请先移除相关引用");
         removeStoredAssetRecord(asset);
     });
 }
@@ -1437,6 +1681,7 @@ function collectLiveAssetReferences() {
             ...appDatabase.loadAssetLibrary(userId).items.map((item) => item.payload),
             ...appDatabase.loadGenerationHistory(userId, "image").map((item) => item.payload),
             ...appDatabase.loadGenerationHistory(userId, "video").map((item) => item.payload),
+            ...(productLab?.assetReferenceRoots(userId) || []),
         ];
         const avatarKey = state.assets[assetKey(userId, AVATAR_ASSET_KEY)] ? AVATAR_ASSET_KEY : undefined;
         for (const id of collectReferencedAssetIds(userId, roots, avatarKey)) referenced.add(id);
@@ -2663,9 +2908,9 @@ function withSecurityHeaders(response: Response, requestId: string, request: Req
 
 function errorResponse(error: unknown, requestId: string) {
     const status =
-        error instanceof HttpError || error instanceof CultivationError
+        error instanceof HttpError || error instanceof CultivationError || error instanceof ProductLabError
             ? error.status
-            : error instanceof AssetLibraryInputError || error instanceof GenerationHistoryInputError
+            : error instanceof AssetLibraryInputError || error instanceof GenerationHistoryInputError || error instanceof ProductAnalysisInputError
               ? 400
               : error instanceof DOMException && error.name === "TimeoutError"
                 ? 504
@@ -2673,8 +2918,10 @@ function errorResponse(error: unknown, requestId: string) {
     const publicError =
         error instanceof HttpError ||
         error instanceof CultivationError ||
+        error instanceof ProductLabError ||
         error instanceof AssetLibraryInputError ||
         error instanceof GenerationHistoryInputError ||
+        error instanceof ProductAnalysisInputError ||
         (error instanceof DOMException && error.name === "TimeoutError");
     const message = publicError && error instanceof Error ? error.message : status === 500 ? "服务器内部错误" : "请求处理失败";
     console.error(

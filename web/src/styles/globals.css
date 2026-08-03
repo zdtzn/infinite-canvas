@@ -2961,6 +2961,77 @@ html[data-imperial-mode="true"] {
         }
     }
 
+    .product-realm-header {
+        background: rgb(255 255 255 / 58%);
+    }
+
+    .dark .product-realm-header {
+        background: rgb(255 255 255 / 1.8%);
+    }
+
+    .product-realm-header.is-imperial::before {
+        position: absolute;
+        inset: 0;
+        content: "";
+        pointer-events: none;
+        opacity: 0.16;
+        background-image:
+            linear-gradient(90deg, transparent 0 12%, rgb(201 168 106 / 16%) 12.1%, transparent 12.25% 37%, rgb(83 132 139 / 12%) 37.1%, transparent 37.25%),
+            linear-gradient(0deg, transparent 0 74%, rgb(201 168 106 / 11%) 74.1%, transparent 74.25%);
+        background-size: 440px 180px, 100% 120px;
+        animation: product-rule-drift 16s linear infinite;
+    }
+
+    .product-realm-header.is-imperial {
+        border-color: rgb(201 168 106 / 24%);
+        background-color: #121816;
+    }
+
+    .product-imperial-kicker {
+        box-shadow: inset 0 0 0 1px rgb(201 168 106 / 5%);
+    }
+
+    .product-lab-page.is-imperial {
+        background-color: #0f1413;
+        background-image:
+            linear-gradient(90deg, transparent 0 49.94%, rgb(201 168 106 / 2.4%) 50%, transparent 50.06%),
+            linear-gradient(0deg, transparent 0 49.94%, rgb(75 121 128 / 2.2%) 50%, transparent 50.06%);
+        background-size: 180px 180px;
+        background-attachment: fixed;
+    }
+
+    .product-imperial-entry {
+        animation: product-imperial-entry 2.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+
+    @keyframes product-rule-drift {
+        from {
+            background-position: 0 0, 0 0;
+        }
+
+        to {
+            background-position: 440px 0, 0 120px;
+        }
+    }
+
+    @keyframes product-imperial-entry {
+        0% {
+            opacity: 0;
+            transform: translate3d(0, -8px, 0) scale(0.985);
+        }
+
+        16%,
+        72% {
+            opacity: 1;
+            transform: translate3d(0, 0, 0) scale(1);
+        }
+
+        100% {
+            opacity: 0;
+            transform: translate3d(0, -3px, 0) scale(1.005);
+        }
+    }
+
     @media (prefers-reduced-motion: reduce) {
         .login-realm-background-image,
         .login-realm-welcome-copy,
@@ -2971,6 +3042,11 @@ html[data-imperial-mode="true"] {
 
         .login-realm-submit.ant-btn {
             transition-duration: 0.01ms;
+        }
+
+        .product-realm-header.is-imperial::before,
+        .product-imperial-entry {
+            animation: none;
         }
     }
 }

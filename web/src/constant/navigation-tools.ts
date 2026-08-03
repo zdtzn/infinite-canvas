@@ -1,4 +1,4 @@
-import { FileText, ImagePlus, Images, Maximize2, Settings2, TrendingUp, Video } from "lucide-react";
+import { FileText, ImagePlus, Images, Maximize2, PackageSearch, Settings2, TrendingUp, Video } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -10,6 +10,11 @@ export const navigationTools = [
         slug: "image",
         label: "生图工作台",
         icon: ImagePlus,
+    },
+    {
+        slug: "product-lab",
+        label: "商品炼制",
+        icon: PackageSearch,
     },
     {
         slug: "video",
@@ -44,6 +49,7 @@ export type NavigationToolSlug = (typeof navigationTools)[number]["slug"];
 export const navigationSceneNames: Record<NavigationToolSlug, string> = {
     canvas: "洞天",
     image: "丹青台",
+    "product-lab": "商品幻境",
     video: "流光阁",
     prompts: "功法楼",
     assets: "藏卷阁",
@@ -51,7 +57,7 @@ export const navigationSceneNames: Record<NavigationToolSlug, string> = {
     config: "洞府",
 };
 
-const primaryNavigationSlugs: NavigationToolSlug[] = ["canvas", "image", "assets"];
+const primaryNavigationSlugs: NavigationToolSlug[] = ["canvas", "image", "product-lab", "assets"];
 
 export const primaryNavigationTools = navigationTools.filter((tool) => primaryNavigationSlugs.includes(tool.slug));
 export const secondaryNavigationTools = navigationTools.filter((tool) => !primaryNavigationSlugs.includes(tool.slug));

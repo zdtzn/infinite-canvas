@@ -14,6 +14,7 @@ const CultivationPage = lazyRoute(() => import("@/pages/cultivation"));
 const AdminCultivationPage = lazyRoute(() => import("@/pages/admin/cultivation"));
 const HomePage = lazyRoute(() => import("@/pages/home"));
 const ImagePage = lazyRoute(() => import("@/pages/image"));
+const ProductLabPage = lazyRoute(() => import("@/pages/product-lab"));
 const NotFound = lazyRoute(() => import("@/pages/not-found"));
 const PromptsPage = lazyRoute(() => import("@/pages/prompts"));
 const VideoPage = lazyRoute(() => import("@/pages/video"));
@@ -50,6 +51,14 @@ export const router = createBrowserRouter([
                 element: (
                     <RoutePage>
                         <ImagePage />
+                    </RoutePage>
+                ),
+            },
+            {
+                path: "/product-lab",
+                element: (
+                    <RoutePage>
+                        <ProductLabPage />
                     </RoutePage>
                 ),
             },

@@ -1,5 +1,15 @@
 import type { PromotionPolicy } from "./policy";
 
+export const PRODUCT_CAPABILITIES = [
+  ["product.basic", "基础商品视觉", "product", 1],
+  ["product.main_image", "商品主图", "product", 2],
+  ["product.analysis", "商品分析", "product", 3],
+  ["product.detail_page", "商品详情页", "product", 4],
+  ["product.multi_style", "多视觉方案", "product", 6],
+  ["product.batch_generate", "批量商品创作", "product", 8],
+  ["product.brand_design", "品牌视觉体系", "product", 9],
+] as const;
+
 export const DEFAULT_CAPABILITIES = [
   ["generation.hd", "高清生成", "generation"],
   ["generation.inpaint", "局部重绘", "generation"],
@@ -10,6 +20,9 @@ export const DEFAULT_CAPABILITIES = [
   ["model.gpt-image", "GPT Image", "model"],
   ["model.gemini", "Gemini", "model"],
   ["model.flux", "Flux", "model"],
+  ...PRODUCT_CAPABILITIES.map(
+    ([key, label, category]) => [key, label, category] as const,
+  ),
 ] as const;
 
 type RealmSeed = {

@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { extname, join } from "node:path";
 
 import { decodeImageDataUrl } from "../lib/image-mime";
+import { PRODUCT_CAPABILITIES } from "../modules/cultivation/defaults";
 import type {
   GenerationHistoryKind,
   ImageJobInput,
@@ -398,6 +399,99 @@ function runMigrations(database: Database) {
           "INSERT INTO schema_migrations(version, applied_at) VALUES (8, ?)",
         )
         .run(Date.now());
+    })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 9").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS product_projects (
+          user_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          style_key TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('draft', 'analyzed', 'planned', 'completed')),
+          source_asset_key TEXT NOT NULL,
+          brand_name TEXT NOT NULL DEFAULT '',
+          analysis_json TEXT NOT NULL DEFAULT '{}',
+          plan_json TEXT NOT NULL DEFAULT '[]',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, project_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+          FOREIGN KEY (user_id, source_asset_key) REFERENCES assets(user_id, asset_key) ON DELETE RESTRICT
+        );
+        CREATE TABLE IF NOT EXISTS product_generations (
+          user_id TEXT NOT NULL,
+          generation_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          output_kind TEXT NOT NULL CHECK (output_kind IN ('basic_image', 'main_image', 'detail_page', 'selling_poster', 'scene_image')),
+          page_index INTEGER NOT NULL DEFAULT 0,
+          prompt TEXT NOT NULL,
+          job_id TEXT,
+          asset_key TEXT,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'canceled')),
+          error TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, generation_id),
+          FOREIGN KEY (user_id, project_id) REFERENCES product_projects(user_id, project_id) ON DELETE CASCADE,
+          FOREIGN KEY (user_id, asset_key) REFERENCES assets(user_id, asset_key) ON DELETE RESTRICT
+        );
+        CREATE TABLE IF NOT EXISTS product_templates (
+          template_id TEXT PRIMARY KEY,
+          platform TEXT NOT NULL,
+          name TEXT NOT NULL,
+          output_kind TEXT NOT NULL,
+          style_key TEXT NOT NULL,
+          aspect_ratio TEXT NOT NULL,
+          prompt_template TEXT NOT NULL,
+          active INTEGER NOT NULL DEFAULT 1,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_product_projects_user_updated
+          ON product_projects(user_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_product_generations_user_project_created
+          ON product_generations(user_id, project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_product_generations_user_job
+          ON product_generations(user_id, job_id);
+        CREATE INDEX IF NOT EXISTS idx_product_templates_platform_active
+          ON product_templates(platform, active, sort_order);
+      `);
+
+      const insertCapability = database.query(
+        "INSERT OR IGNORE INTO capability_definitions(capability_key, label, category) VALUES (?, ?, ?)",
+      );
+      const insertGrant = database.query(
+        "INSERT OR IGNORE INTO stage_capabilities(stage_id, capability_key, enabled) SELECT s.id, ?, 1 FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE r.sort_order >= ?",
+      );
+      for (const [key, label, category, minimumRealmSortOrder] of PRODUCT_CAPABILITIES) {
+        insertCapability.run(key, label, category);
+        insertGrant.run(key, minimumRealmSortOrder);
+      }
+
+      const timestamp = Date.now();
+      const insertTemplate = database.query(
+        "INSERT OR IGNORE INTO product_templates(template_id, platform, name, output_kind, style_key, aspect_ratio, prompt_template, active, sort_order, created_at, updated_at) VALUES (?, 'pinduoduo', ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+      );
+      const templates = [
+        ["pdd-main-clean", "清晰主图", "main_image", "clean", "1:1", "突出商品主体、背景干净、留白明确，适合拼多多商品主图", 10],
+        ["pdd-selling-poster", "卖点海报", "selling_poster", "value", "3:4", "围绕单一核心卖点建立清晰信息层级，保留商品真实结构", 20],
+        ["pdd-scene-lifestyle", "生活场景", "scene_image", "lifestyle", "4:3", "将商品自然置入真实使用场景，保持商品外观与包装信息一致", 30],
+        ["pdd-detail-clean", "详情页", "detail_page", "clean", "3:4", "纵向详情页构图，逐页说明材质、功能、细节与使用场景", 40],
+      ] as const;
+      for (const template of templates)
+        insertTemplate.run(...template, timestamp, timestamp);
+
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (9, ?)",
+        )
+        .run(timestamp);
     })();
 }
 
