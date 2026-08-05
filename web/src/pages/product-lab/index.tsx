@@ -1,5 +1,5 @@
 import { Archive, Box, Check, ChevronRight, FlaskConical, FolderPlus, ImagePlus, Layers3, LoaderCircle, PackageSearch, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
-import { App, Button, Empty, Input, Popconfirm, Progress, Select, Skeleton, Tag, Tooltip } from "antd";
+import { App, Button, Checkbox, Empty, Input, Popconfirm, Progress, Select, Skeleton, Tag, Tooltip } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -11,14 +11,22 @@ import { cultivationGenerationBlockReason, requiredCultivationCapabilities } fro
 import {
     availableProductOutputs,
     buildMultiStyleProductPlan,
+    buildProductVisualStyleGuide,
     emptyProductAnalysis,
     productDetailPageLimit,
     productOutputDefinitions,
     productRealmExperience,
+    productSectionTypeLabel,
     productStyleOptions,
+    reconcileProductPlanSelection,
+    resolveProductTemplatePrompt,
+    selectedProductOutputKinds,
+    toggleProductPlanItemSelection,
+    toggleProductPlanKindSelection,
     type ProductAnalysis,
     type ProductOutputKind,
     type ProductPlanItem,
+    type ProductSectionType,
 } from "@/features/product-lab/product-lab";
 import { ProductOutputGrid, ProductRealmHeader } from "@/features/product-lab/product-lab-view";
 import { readImageMeta } from "@/lib/image-utils";
@@ -79,8 +87,9 @@ export default function ProductLabPage() {
     const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
     const [imperialEntryVisible, setImperialEntryVisible] = useState(false);
     const [draftAnalysis, setDraftAnalysis] = useState<ProductAnalysisDraft>(emptyProductAnalysis());
-    const [selectedKinds, setSelectedKinds] = useState<ProductOutputKind[]>([]);
+    const [selectedPlanIds, setSelectedPlanIds] = useState<string[]>([]);
     const [selectedStyles, setSelectedStyles] = useState<string[]>(["clean"]);
+    const [pendingTemplateSelection, setPendingTemplateSelection] = useState<{ kind: ProductOutputKind; styleKey: string } | null>(null);
     const [brandName, setBrandName] = useState("");
     const savingArchiveIdsRef = useRef(new Set<string>());
 
@@ -117,7 +126,14 @@ export default function ProductLabPage() {
             }),
         [activeProject?.platform, brandName, canUseBrand, detailPageLimit, draftAnalysis, selectedStyles],
     );
-    const selectedPlanItems = visualPlan.filter((item) => selectedKinds.includes(item.kind));
+    const selectablePlanItems = useMemo(
+        () => visualPlan.filter((item) => outputs.some((output) => output.kind === item.kind && output.available)),
+        [outputs, visualPlan],
+    );
+    const selectablePlanSignature = selectablePlanItems.map((item) => item.id).join("|");
+    const selectedPlanItems = selectablePlanItems.filter((item) => selectedPlanIds.includes(item.id));
+    const selectedKinds = selectedProductOutputKinds(selectedPlanIds, selectablePlanItems);
+    const activeVisualStyleGuide = buildProductVisualStyleGuide(draftAnalysis, selectedStyles[0] || "clean", canUseBrand ? brandName : "");
     const archivedAssetKeys = useMemo(
         () => new Set(assets.flatMap((asset) => (asset.kind === "image" && asset.data.storageKey ? [asset.data.storageKey] : []))),
         [assets],
@@ -173,6 +189,8 @@ export default function ProductLabPage() {
     }, [activeProject?.id, message, userId]);
 
     useEffect(() => {
+        setSelectedPlanIds([]);
+        setPendingTemplateSelection(null);
         if (!activeProject) {
             setDraftAnalysis(emptyProductAnalysis());
             setSelectedStyles(["clean"]);
@@ -185,15 +203,16 @@ export default function ProductLabPage() {
     }, [activeProject?.id, activeProject?.updatedAt]);
 
     useEffect(() => {
-        const availableKinds = outputs.filter((output) => output.available).map((output) => output.kind);
-        setSelectedKinds((current) => {
-            const valid = current.filter((kind) => availableKinds.includes(kind));
-            if (valid.length) return valid;
-            if (realmExperience.imperial) return availableKinds;
-            if (availableKinds.includes("main_image")) return ["main_image"];
-            return availableKinds.slice(0, 1);
-        });
-    }, [activeProject?.id, outputSignature, realmExperience.imperial]);
+        setSelectedPlanIds((current) => reconcileProductPlanSelection(current, selectablePlanItems));
+    }, [activeProject?.id, outputSignature, selectablePlanSignature]);
+
+    useEffect(() => {
+        if (!pendingTemplateSelection) return;
+        const matching = selectablePlanItems.filter((item) => item.kind === pendingTemplateSelection.kind && item.styleKey === pendingTemplateSelection.styleKey);
+        if (!matching.length) return;
+        setSelectedPlanIds(matching.map((item) => item.id));
+        setPendingTemplateSelection(null);
+    }, [pendingTemplateSelection, selectablePlanSignature]);
 
     useEffect(() => {
         if (!realmExperience.imperial) {
@@ -537,7 +556,11 @@ export default function ProductLabPage() {
     };
 
     const toggleOutput = (kind: ProductOutputKind) => {
-        setSelectedKinds((current) => (current.includes(kind) ? current.filter((item) => item !== kind) : [...current, kind]));
+        setSelectedPlanIds((current) => toggleProductPlanKindSelection(current, selectablePlanItems, kind));
+    };
+
+    const togglePlanItem = (itemId: string) => {
+        setSelectedPlanIds((current) => toggleProductPlanItemSelection(current, itemId));
     };
 
     const toggleStyle = (styleKey: string) => {
@@ -561,8 +584,13 @@ export default function ProductLabPage() {
             message.warning(output?.reason || "当前尚无法使用此模板");
             return;
         }
-        setSelectedKinds((current) => (current.includes(template.outputKind) ? current : [...current, template.outputKind]));
-        toggleStyle(template.styleKey);
+        setSelectedStyles([template.styleKey]);
+        setDraftAnalysis((current) => {
+            const baseDirection = current.visualDirection.split("；模板要求：", 1)[0].trim();
+            const templatePrompt = resolveProductTemplatePrompt(template.promptTemplate, current.productName);
+            return { ...current, visualDirection: [baseDirection, `模板要求：${templatePrompt}`].filter(Boolean).join("；") };
+        });
+        setPendingTemplateSelection({ kind: template.outputKind, styleKey: template.styleKey });
     };
 
     return (
@@ -676,6 +704,9 @@ export default function ProductLabPage() {
                                         <Field label="商品类目">
                                             <Input value={draftAnalysis.category} maxLength={120} placeholder="例如：茶具 / 家居 / 食品" onChange={(event) => setDraftAnalysis((current) => ({ ...current, category: event.target.value }))} />
                                         </Field>
+                                        <Field label="细分类">
+                                            <Input value={draftAnalysis.subcategory} maxLength={120} placeholder="例如：马克杯 / 便携榨汁杯" onChange={(event) => setDraftAnalysis((current) => ({ ...current, subcategory: event.target.value }))} />
+                                        </Field>
                                         <Field label="目标人群">
                                             <Input value={draftAnalysis.targetAudience} maxLength={500} placeholder="这件商品适合谁" onChange={(event) => setDraftAnalysis((current) => ({ ...current, targetAudience: event.target.value }))} />
                                         </Field>
@@ -699,6 +730,50 @@ export default function ProductLabPage() {
                                                 }
                                             />
                                         </Field>
+                                        <details className="sm:col-span-2 border-y border-stone-200 py-3 dark:border-white/10">
+                                            <summary className="cursor-pointer text-sm font-medium text-stone-700 marker:text-stone-400 dark:text-stone-300">商品事实与详情页依据</summary>
+                                            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                                                <Field label="材质">
+                                                    <Input value={draftAnalysis.material} maxLength={240} placeholder="只填写可确认材质" onChange={(event) => setDraftAnalysis((current) => ({ ...current, material: event.target.value }))} />
+                                                </Field>
+                                                <Field label="固有颜色">
+                                                    <Input value={draftAnalysis.color} maxLength={240} placeholder="商品本身的颜色，不是背景色" onChange={(event) => setDraftAnalysis((current) => ({ ...current, color: event.target.value }))} />
+                                                </Field>
+                                                <Field label="真实使用场景">
+                                                    <Input.TextArea
+                                                        value={draftAnalysis.usageScenarios.join("\n")}
+                                                        autoSize={{ minRows: 3, maxRows: 6 }}
+                                                        placeholder="每行一个真实使用场景"
+                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, usageScenarios: lines(event.target.value, 8) }))}
+                                                    />
+                                                </Field>
+                                                <Field label="可确认差异点">
+                                                    <Input.TextArea
+                                                        value={draftAnalysis.differentiationPoints.join("\n")}
+                                                        autoSize={{ minRows: 3, maxRows: 6 }}
+                                                        placeholder="每行一个真实差异点"
+                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, differentiationPoints: lines(event.target.value, 8) }))}
+                                                    />
+                                                </Field>
+                                                <Field label="用户顾虑">
+                                                    <Input.TextArea
+                                                        value={draftAnalysis.userConcerns.join("\n")}
+                                                        autoSize={{ minRows: 3, maxRows: 6 }}
+                                                        placeholder="例如：是否易清洁、尺寸是否合适"
+                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, userConcerns: lines(event.target.value, 8) }))}
+                                                    />
+                                                </Field>
+                                                <Field label="结构与使用事实">
+                                                    <Input.TextArea
+                                                        value={draftAnalysis.additionalInformation}
+                                                        autoSize={{ minRows: 3, maxRows: 6 }}
+                                                        maxLength={2_000}
+                                                        placeholder="部件关系、使用方式、已确认规格和未知信息"
+                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, additionalInformation: event.target.value }))}
+                                                    />
+                                                </Field>
+                                            </div>
+                                        </details>
                                         <Field label="视觉方向">
                                             <Input.TextArea
                                                 value={draftAnalysis.visualDirection}
@@ -785,6 +860,22 @@ export default function ProductLabPage() {
                                     </div>
                                 </div>
 
+                                <div className="mt-7 border-t border-stone-200 pt-6 dark:border-white/10">
+                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                        <div>
+                                            <div className="text-xs font-medium text-stone-500">统一视觉规范</div>
+                                            <div className="mt-1 text-sm font-semibold">{activeVisualStyleGuide.styleName}</div>
+                                        </div>
+                                        <Tag bordered={false}>{styleLabel(selectedStyles[0] || "clean")}</Tag>
+                                    </div>
+                                    <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+                                        <VisualRule label="色彩" value={activeVisualStyleGuide.colorPalette} />
+                                        <VisualRule label="背景体系" value={activeVisualStyleGuide.backgroundSystem} />
+                                        <VisualRule label="光线与镜头" value={`${activeVisualStyleGuide.lighting}；${activeVisualStyleGuide.cameraLanguage}`} />
+                                        <VisualRule label="禁止项" value={activeVisualStyleGuide.negativeStyleConstraints} />
+                                    </div>
+                                </div>
+
                                 <div className="mt-6 flex justify-end">
                                     <Button type="primary" loading={savingPlan} icon={<Check className="size-4" />} onClick={savePlanning}>
                                         保存视觉规划
@@ -797,7 +888,9 @@ export default function ProductLabPage() {
                                     outputs={outputs}
                                     selectedKinds={selectedKinds}
                                     onToggle={toggleOutput}
-                                    plan={selectedPlanItems}
+                                    plan={selectablePlanItems}
+                                    selectedPlanIds={selectedPlanIds}
+                                    onTogglePlan={togglePlanItem}
                                     model={model}
                                     config={effectiveConfig}
                                     onModelChange={(value) => updateConfig("imageModel", value)}
@@ -839,7 +932,9 @@ export default function ProductLabPage() {
                             outputs={outputs}
                             selectedKinds={selectedKinds}
                             onToggle={toggleOutput}
-                            plan={selectedPlanItems}
+                            plan={selectablePlanItems}
+                            selectedPlanIds={selectedPlanIds}
+                            onTogglePlan={togglePlanItem}
                             model={model}
                             config={effectiveConfig}
                             onModelChange={(value) => updateConfig("imageModel", value)}
@@ -866,6 +961,8 @@ function GenerationWorkbench({
     selectedKinds,
     onToggle,
     plan,
+    selectedPlanIds,
+    onTogglePlan,
     model,
     config,
     onModelChange,
@@ -884,6 +981,8 @@ function GenerationWorkbench({
     selectedKinds: ProductOutputKind[];
     onToggle: (kind: ProductOutputKind) => void;
     plan: ProductPlanItem[];
+    selectedPlanIds: readonly string[];
+    onTogglePlan: (itemId: string) => void;
     model: string;
     config: ReturnType<typeof useEffectiveConfig>;
     onModelChange: (value: string) => void;
@@ -898,6 +997,13 @@ function GenerationWorkbench({
     onGenerate: () => void;
     onArchive: (generation: ProductGeneration) => Promise<void>;
 }) {
+    const succeededGenerations = generations
+        .filter((generation) => generation.status === "succeeded" && generation.assetUrl)
+        .slice()
+        .reverse()
+        .slice(0, 24);
+    const generationColumns = productGenerationColumns(succeededGenerations);
+
     return (
         <div className="space-y-7">
             <section>
@@ -917,16 +1023,21 @@ function GenerationWorkbench({
             <section className="border-t border-stone-200 pt-6 dark:border-white/10">
                 <div className="flex items-center justify-between gap-3">
                     <div className="text-xs font-medium text-stone-500">画卷规划</div>
-                    <Tag bordered={false}>{plan.length} 幅</Tag>
+                    <Tag bordered={false}>
+                        已选 {selectedPlanIds.length}/{plan.length}
+                    </Tag>
                 </div>
                 <div className="mt-3 max-h-72 space-y-1 overflow-y-auto pr-1">
                     {plan.length ? (
-                        plan.map((item, index) => (
-                            <div key={item.id} className="flex min-h-14 items-center gap-3 border-b border-stone-200/80 py-2 last:border-0 dark:border-white/8">
-                                <span className="grid size-7 shrink-0 place-items-center border border-stone-200 text-xs text-stone-500 dark:border-white/10">{index + 1}</span>
+                        plan.map((item) => (
+                            <div key={item.id} className="flex min-h-16 items-center gap-3 border-b border-stone-200/80 py-2 last:border-0 dark:border-white/8">
+                                <Checkbox checked={selectedPlanIds.includes(item.id)} onChange={() => onTogglePlan(item.id)} aria-label={`选择${item.title}`} />
                                 <span className="min-w-0 flex-1">
-                                    <span className="block truncate text-sm font-medium" title={item.title}>
-                                        {item.title}
+                                    <span className="flex min-w-0 items-center gap-2">
+                                        <span className="min-w-0 truncate text-sm font-medium" title={item.title}>
+                                            {item.title}
+                                        </span>
+                                        <span className="shrink-0 text-[10px] text-stone-400">{productSectionTypeLabel(item.sectionType)}</span>
                                     </span>
                                     <span className="mt-0.5 block truncate text-xs text-stone-500" title={item.description}>
                                         {item.description}
@@ -936,7 +1047,7 @@ function GenerationWorkbench({
                             </div>
                         ))
                     ) : (
-                        <div className="py-8 text-center text-xs text-stone-500">选择需要生成的商品视觉后，分页规划会显示在这里。</div>
+                        <div className="py-8 text-center text-xs text-stone-500">当前境界或模型下暂无可生成的商品页面。</div>
                     )}
                 </div>
             </section>
@@ -955,47 +1066,46 @@ function GenerationWorkbench({
 
             <section className="border-t border-stone-200 pt-6 dark:border-white/10">
                 {generationBlockReason ? <div className="mb-3 text-xs leading-5 text-amber-700 dark:text-amber-300">{generationBlockReason}</div> : null}
-                <Button type="primary" size="large" block loading={generating} disabled={!plan.length || Boolean(generationBlockReason)} icon={generating ? undefined : <Sparkles className="size-4" />} onClick={onGenerate}>
-                    {generating ? "天地法则正在演化..." : actionLabel}
+                <Button type="primary" size="large" block loading={generating} disabled={!selectedPlanIds.length || Boolean(generationBlockReason)} icon={generating ? undefined : <Sparkles className="size-4" />} onClick={onGenerate}>
+                    {generating ? "天地法则正在演化..." : `${actionLabel} · ${selectedPlanIds.length} 幅`}
                 </Button>
             </section>
 
             <section className="border-t border-stone-200 pt-6 dark:border-white/10">
                 <SectionHeading icon={<Archive className="size-4" />} title="已成画卷" />
-                {generations.filter((generation) => generation.status === "succeeded" && generation.assetUrl).length ? (
-                    <div className="mt-4 grid grid-cols-2 gap-2">
-                        {generations
-                            .filter((generation) => generation.status === "succeeded" && generation.assetUrl)
-                            .slice()
-                            .reverse()
-                            .slice(0, 8)
-                            .map((generation) => {
-                                const archived = Boolean(generation.assetKey && archivedAssetKeys.has(generation.assetKey));
-                                const saving = savingArchiveIds.includes(generation.id);
-                                return (
-                                    <div key={generation.id} className="overflow-hidden border border-stone-200 bg-stone-100 dark:border-white/10 dark:bg-white/5">
-                                        <div className="aspect-square overflow-hidden">
-                                            <img src={generation.assetUrl} alt={outputLabel(generation.outputKind)} className="size-full object-cover" loading="lazy" />
+                {succeededGenerations.length ? (
+                    <div className="mt-4 grid grid-cols-2 items-start gap-2">
+                        {generationColumns.map((column, columnIndex) => (
+                            <div key={columnIndex} className="space-y-2">
+                                {column.map((generation) => {
+                                    const archived = Boolean(generation.assetKey && archivedAssetKeys.has(generation.assetKey));
+                                    const saving = savingArchiveIds.includes(generation.id);
+                                    return (
+                                        <div key={generation.id} className="overflow-hidden border border-stone-200 bg-stone-100 dark:border-white/10 dark:bg-white/5">
+                                            <div className="overflow-hidden bg-[linear-gradient(45deg,#ececea_25%,transparent_25%,transparent_75%,#ececea_75%),linear-gradient(45deg,#ececea_25%,transparent_25%,transparent_75%,#ececea_75%)] bg-[length:16px_16px] bg-[position:0_0,8px_8px] dark:bg-none" style={{ aspectRatio: productGenerationAspectRatio(generation.outputKind) }}>
+                                                <img src={generation.assetUrl} alt={outputLabel(generation.outputKind)} className="size-full object-contain" loading="lazy" />
+                                            </div>
+                                            <div className="flex min-h-10 items-center justify-between gap-2 border-t border-stone-200 bg-white px-2 py-1.5 dark:border-white/10 dark:bg-stone-950/70">
+                                                <span className="min-w-0 truncate text-[11px] text-stone-500">{productGenerationTitle("", generation)}</span>
+                                                <Tooltip title={archived ? "已在藏卷阁" : "入藏卷阁"}>
+                                                    <Button
+                                                        type="text"
+                                                        size="small"
+                                                        className="h-7 shrink-0 px-1.5 text-xs"
+                                                        icon={archived ? <Check className="size-3.5" /> : <FolderPlus className="size-3.5" />}
+                                                        loading={saving}
+                                                        disabled={archived || saving || !generation.assetKey}
+                                                        onClick={() => void onArchive(generation)}
+                                                    >
+                                                        {archived ? "已入藏" : "入藏"}
+                                                    </Button>
+                                                </Tooltip>
+                                            </div>
                                         </div>
-                                        <div className="flex min-h-10 items-center justify-between gap-2 border-t border-stone-200 bg-white px-2 py-1.5 dark:border-white/10 dark:bg-stone-950/70">
-                                            <span className="min-w-0 truncate text-[11px] text-stone-500">{productGenerationTitle("", generation)}</span>
-                                            <Tooltip title={archived ? "已在藏卷阁" : "入藏卷阁"}>
-                                                <Button
-                                                    type="text"
-                                                    size="small"
-                                                    className="h-7 shrink-0 px-1.5 text-xs"
-                                                    icon={archived ? <Check className="size-3.5" /> : <FolderPlus className="size-3.5" />}
-                                                    loading={saving}
-                                                    disabled={archived || saving || !generation.assetKey}
-                                                    onClick={() => void onArchive(generation)}
-                                                >
-                                                    {archived ? "已入藏" : "入藏"}
-                                                </Button>
-                                            </Tooltip>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })}
+                            </div>
+                        ))}
                     </div>
                 ) : (
                     <div className="mt-4 py-7 text-center text-xs leading-5 text-stone-500">生成后的商品视觉会先保留在当前项目，你可以手动选择入藏卷阁。</div>
@@ -1026,22 +1136,46 @@ function Field({ label, className, children }: { label: string; className?: stri
     );
 }
 
+function VisualRule({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="min-w-0 border-l-2 border-stone-300 pl-3 dark:border-white/15">
+            <div className="text-[11px] font-medium text-stone-400">{label}</div>
+            <div className="mt-1 line-clamp-4 text-xs leading-5 text-stone-600 dark:text-stone-300" title={value}>
+                {value}
+            </div>
+        </div>
+    );
+}
+
 function normalizeProjectAnalysis(project: ProductProject): ProductAnalysisDraft {
     const value = project.analysis && typeof project.analysis === "object" ? (project.analysis as Partial<ProductAnalysisDraft>) : {};
     return normalizeDraftAnalysis(
         {
             productName: textValue(value.productName) || project.title,
             category: textValue(value.category),
+            subcategory: textValue(value.subcategory),
+            material: textValue(value.material),
+            color: textValue(value.color),
+            styleTags: stringArray(value.styleTags, 8),
             targetAudience: textValue(value.targetAudience),
+            usageScenarios: stringArray(value.usageScenarios, 8),
             titleSuggestion: textValue(value.titleSuggestion),
             sellingPoints: stringArray(value.sellingPoints, 8),
+            differentiationPoints: stringArray(value.differentiationPoints, 8),
+            userConcerns: stringArray(value.userConcerns, 8),
+            recommendedFocusPoints: stringArray(value.recommendedFocusPoints, 8),
+            additionalInformation: textValue(value.additionalInformation),
             visualDirection: textValue(value.visualDirection),
+            visualStyleGuide: normalizeVisualStyleGuide(value.visualStyleGuide),
             complianceNotes: stringArray(value.complianceNotes, 8),
             detailSections: Array.isArray(value.detailSections)
                 ? value.detailSections.slice(0, 8).map((item) => ({
+                      type: productSectionTypeValue(item?.type),
                       title: textValue(item?.title),
                       objective: textValue(item?.objective),
+                      copy: textValue(item?.copy),
                       prompt: textValue(item?.prompt),
+                      negativeConstraints: stringArray(item?.negativeConstraints, 8),
                   }))
                 : [],
             sourceNotes: textValue(value.sourceNotes),
@@ -1054,14 +1188,54 @@ function normalizeDraftAnalysis(value: ProductAnalysisDraft, fallbackTitle: stri
     return {
         productName: textValue(value.productName) || fallbackTitle || "未命名商品",
         category: textValue(value.category),
+        subcategory: textValue(value.subcategory),
+        material: textValue(value.material),
+        color: textValue(value.color),
+        styleTags: stringArray(value.styleTags, 8),
         targetAudience: textValue(value.targetAudience),
+        usageScenarios: stringArray(value.usageScenarios, 8),
         titleSuggestion: textValue(value.titleSuggestion),
         sellingPoints: stringArray(value.sellingPoints, 8),
+        differentiationPoints: stringArray(value.differentiationPoints, 8),
+        userConcerns: stringArray(value.userConcerns, 8),
+        recommendedFocusPoints: stringArray(value.recommendedFocusPoints, 8),
+        additionalInformation: textValue(value.additionalInformation),
         visualDirection: textValue(value.visualDirection),
+        visualStyleGuide: normalizeVisualStyleGuide(value.visualStyleGuide),
         complianceNotes: stringArray(value.complianceNotes, 8),
-        detailSections: Array.isArray(value.detailSections) ? value.detailSections.slice(0, 8) : [],
+        detailSections: Array.isArray(value.detailSections)
+            ? value.detailSections.slice(0, 8).map((item) => ({
+                  type: productSectionTypeValue(item.type),
+                  title: textValue(item.title),
+                  objective: textValue(item.objective),
+                  copy: textValue(item.copy),
+                  prompt: textValue(item.prompt),
+                  negativeConstraints: stringArray(item.negativeConstraints, 8),
+              }))
+            : [],
         sourceNotes: textValue(value.sourceNotes),
     };
+}
+
+function normalizeVisualStyleGuide(value: unknown) {
+    const row = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+    return {
+        styleName: textValue(row.styleName),
+        colorPalette: textValue(row.colorPalette),
+        backgroundSystem: textValue(row.backgroundSystem),
+        lighting: textValue(row.lighting),
+        cameraLanguage: textValue(row.cameraLanguage),
+        typography: textValue(row.typography),
+        layoutRules: textValue(row.layoutRules),
+        propRules: textValue(row.propRules),
+        productRenderingRules: textValue(row.productRenderingRules),
+        negativeStyleConstraints: textValue(row.negativeStyleConstraints),
+    };
+}
+
+function productSectionTypeValue(value: unknown): ProductSectionType {
+    const type = textValue(value) as ProductSectionType;
+    return ["basic", "hero", "selling_points", "scenario", "detail_closeup", "specs", "material", "comparison", "brand_trust", "summary", "custom"].includes(type) ? type : "custom";
 }
 
 function inferProjectStyles(project: ProductProject) {
@@ -1080,6 +1254,14 @@ function textValue(value: unknown) {
 
 function stringArray(value: unknown, max: number) {
     return Array.isArray(value) ? value.map(textValue).filter(Boolean).slice(0, max) : [];
+}
+
+function lines(value: string, max: number) {
+    return value
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, max);
 }
 
 function productTitleFromFile(filename: string) {
@@ -1106,4 +1288,27 @@ function productGenerationTitle(projectTitle: string, generation: ProductGenerat
     const output = outputLabel(generation.outputKind);
     const page = generation.outputKind === "detail_page" ? ` ${generation.pageIndex + 1}` : "";
     return projectTitle ? `${projectTitle} · ${output}${page}` : `${output}${page}`;
+}
+
+function productGenerationAspectRatio(kind: ProductOutputKind) {
+    if (kind === "selling_poster" || kind === "detail_page") return "3 / 4";
+    if (kind === "scene_image") return "4 / 3";
+    return "1 / 1";
+}
+
+function productGenerationColumns(generations: ProductGeneration[]) {
+    const columns: ProductGeneration[][] = [[], []];
+    const heights = [0, 0];
+    for (const generation of generations) {
+        const columnIndex = heights[0] <= heights[1] ? 0 : 1;
+        columns[columnIndex].push(generation);
+        heights[columnIndex] += productGenerationHeightWeight(generation.outputKind);
+    }
+    return columns;
+}
+
+function productGenerationHeightWeight(kind: ProductOutputKind) {
+    if (kind === "selling_poster" || kind === "detail_page") return 1.58;
+    if (kind === "scene_image") return 1;
+    return 1.25;
 }

@@ -493,6 +493,29 @@ function runMigrations(database: Database) {
         )
         .run(timestamp);
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 10").get()
+  )
+    database.transaction(() => {
+      const timestamp = Date.now();
+      database
+        .query(
+          "INSERT OR IGNORE INTO product_templates(template_id, platform, name, output_kind, style_key, aspect_ratio, prompt_template, active, sort_order, created_at, updated_at) VALUES (?, 'pinduoduo', ?, 'main_image', 'value', '1:1', ?, 1, 15, ?, ?)",
+        )
+        .run(
+          "pdd-main-contrast-banner",
+          "爆款撞色主图",
+          "请为【{{productName}}】设计一张拼多多电商主图。版式参考零食集合店爆款主图的强转化信息结构，但必须依据实际商品品类选择场景与道具，不得生成零食或与商品无关的元素。画面包含完整清晰的商品展示图与 2-3 条已确认卖点文案；底部加入米白色与橙红撞色横幅；使用醒目大字号；左侧使用圆角卖点标签。文字必须清晰锐利、简体中文、无变形、无糊字，不使用复杂字体或过小字号。不得添加价格、折扣、限时、促销角标或未经确认的宣传承诺。视觉冲击力强，同时保持商品真实结构、颜色、包装文字与 Logo 一致。",
+          timestamp,
+          timestamp,
+        );
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (10, ?)",
+        )
+        .run(timestamp);
+    })();
 }
 
 function migrateLegacyState(

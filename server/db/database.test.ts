@@ -139,7 +139,27 @@ describe("SQLite application database", () => {
         "product_projects",
         "product_templates",
       ]);
-      expect(Number(migration.version)).toBeGreaterThanOrEqual(9);
+      const universalTemplate = store.raw!
+        .query(
+          "SELECT name, output_kind, style_key, aspect_ratio, prompt_template FROM product_templates WHERE template_id = ?",
+        )
+        .get("pdd-main-contrast-banner") as {
+        name: string;
+        output_kind: string;
+        style_key: string;
+        aspect_ratio: string;
+        prompt_template: string;
+      };
+
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(10);
+      expect(universalTemplate).toMatchObject({
+        name: "爆款撞色主图",
+        output_kind: "main_image",
+        style_key: "value",
+        aspect_ratio: "1:1",
+      });
+      expect(universalTemplate.prompt_template).toContain("【{{productName}}】");
+      expect(universalTemplate.prompt_template).toContain("不得添加价格");
     } finally {
       store.close();
     }
