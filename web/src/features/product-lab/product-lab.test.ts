@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
     availableProductOutputs,
     buildMultiStyleProductPlan,
+    buildProductSuitePlan,
     buildProductVisualPlan,
     emptyProductAnalysis,
     productDetailPageLimit,
@@ -185,5 +186,45 @@ describe("product lab experience and planning", () => {
     test("resolves the current product name inside reusable commerce templates", () => {
         expect(resolveProductTemplatePrompt("请为【{{productName}}】设计主图", "坚果礼盒")).toBe("请为【坚果礼盒】设计主图");
         expect(resolveProductTemplatePrompt("商品：{{productName}}", "  ")).toBe("商品：当前商品");
+    });
+});
+
+describe("product one-click detail suite", () => {
+    test("builds one main image plus six ordered detail pages", () => {
+        const plan = buildProductSuitePlan({
+            analysis: analysisFixture(),
+            platform: "pinduoduo",
+            styleKey: "value",
+            detailPageLimit: 8,
+        });
+
+        expect(plan).toHaveLength(7);
+        expect(plan[0]).toMatchObject({ kind: "main_image", aspectRatio: "1:1", pageIndex: 0 });
+        const details = plan.filter((item) => item.kind === "detail_page");
+        expect(details.map((item) => item.sectionType)).toEqual(["selling_points", "scenario", "detail_closeup", "specs", "material", "summary"]);
+        expect(details.every((item) => item.aspectRatio === "3:4")).toBe(true);
+        expect(details.map((item) => item.pageIndex)).toEqual([0, 1, 2, 3, 4, 5]);
+    });
+
+    test("prefers analyzed section content for matching suite slots", () => {
+        const plan = buildProductSuitePlan({
+            analysis: analysisFixture(),
+            platform: "pinduoduo",
+            detailPageLimit: 8,
+        });
+
+        const material = plan.find((item) => item.sectionType === "material")!;
+        expect(material.title).toBe("材质细节");
+        expect(material.prompt).toContain("近景展示瓷面和杯口金边");
+    });
+
+    test("respects the current realm detail-page limit", () => {
+        const limited = buildProductSuitePlan({ analysis: analysisFixture(), platform: "pinduoduo", detailPageLimit: 3 });
+        expect(limited).toHaveLength(4);
+        expect(limited.filter((item) => item.kind === "detail_page")).toHaveLength(3);
+
+        const none = buildProductSuitePlan({ analysis: analysisFixture(), platform: "pinduoduo", detailPageLimit: 0 });
+        expect(none).toHaveLength(1);
+        expect(none[0].kind).toBe("main_image");
     });
 });

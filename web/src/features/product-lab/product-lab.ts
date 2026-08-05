@@ -1,5 +1,5 @@
 export type ProductOutputKind = "basic_image" | "main_image" | "detail_page" | "selling_poster" | "scene_image";
-export type ProductPlanPreset = "single" | "essential" | "full";
+export type ProductPlanPreset = "single" | "essential" | "detail_suite" | "full";
 
 export type ProductSectionType = "basic" | "hero" | "selling_points" | "scenario" | "detail_closeup" | "specs" | "material" | "comparison" | "brand_trust" | "summary" | "custom";
 
@@ -311,6 +311,70 @@ export function buildMultiStyleProductPlan(input: { analysis: ProductAnalysis; p
     });
 }
 
+export const PRODUCT_SUITE_SECTION_ORDER = ["selling_points", "scenario", "detail_closeup", "specs", "material", "summary"] as const satisfies readonly ProductSectionType[];
+
+export function buildProductSuitePlan(input: { analysis: ProductAnalysis; platform: string; styleKey?: string; brandName?: string; detailPageLimit: number }) {
+    const analysis = planningAnalysis(input.analysis);
+    const productName = analysis.productName.trim() || "商品";
+    const sellingPoints = analysis.sellingPoints.filter(Boolean);
+    const primarySellingPoint = sellingPoints[0] || "清晰呈现商品真实特点";
+    const style = productStyleOptions.find((item) => item.value === input.styleKey) || productStyleOptions[0];
+    const brandName = input.brandName || "";
+    const guide = buildProductVisualStyleGuide(analysis, style.value, brandName);
+    const items: ProductPlanItem[] = [
+        createPlanItem({
+            id: "suite-main",
+            kind: "main_image",
+            sectionType: "hero",
+            styleKey: style.value,
+            title: "商品主图",
+            description: analysis.titleSuggestion || "第一眼识别商品与核心购买理由",
+            copy: `${analysis.titleSuggestion || productName}；${primarySellingPoint}`,
+            aspectRatio: "1:1",
+            pageIndex: 0,
+            analysis,
+            guide,
+            platform: input.platform,
+            brandName,
+            localDirection: `商品以三分之四角度或最能说明结构的角度成为绝对主体，占画面约 55%-68%；用品牌色层次、材质承托面或轻场景建立完整主视觉，突出“${primarySellingPoint}”。标题与 1-2 个已确认卖点形成清晰层级。`,
+            negativeConstraints: ["不得保留参考图原始白底", "不得输出空白商品抠图", "不得使用未经确认的价格、优惠或功效"],
+        }),
+    ];
+
+    const fallbackSections = fallbackDetailSections(analysis);
+    const sectionsByType = new Map<ProductSectionType, ProductDetailSection>();
+    for (const section of [...analysis.detailSections, ...fallbackSections]) {
+        const type = section.type || "custom";
+        if (!sectionsByType.has(type)) sectionsByType.set(type, section);
+    }
+
+    const limit = Math.max(0, Math.min(PRODUCT_SUITE_SECTION_ORDER.length, input.detailPageLimit));
+    PRODUCT_SUITE_SECTION_ORDER.slice(0, limit).forEach((type, index) => {
+        const section = sectionsByType.get(type) || fallbackSections.find((item) => item.type === type);
+        if (!section) return;
+        items.push(
+            createPlanItem({
+                id: `suite-detail-${index + 1}`,
+                kind: "detail_page",
+                sectionType: type,
+                styleKey: style.value,
+                title: section.title || `详情页 ${index + 1}`,
+                description: section.objective || "逐页展开商品信息",
+                copy: section.copy || section.objective || section.title,
+                aspectRatio: "3:4",
+                pageIndex: index,
+                analysis,
+                guide,
+                platform: input.platform,
+                brandName,
+                localDirection: `${section.prompt}。本页只承担“${section.objective || section.title}”这一项沟通任务。${sectionBackgroundInstruction(type, analysis)}`,
+                negativeConstraints: section.negativeConstraints,
+            }),
+        );
+    });
+    return items;
+}
+
 export function reconcileProductPlanSelection(current: readonly string[], plan: readonly ProductPlanItem[]) {
     const availableIds = new Set(plan.map((item) => item.id));
     const valid = current.filter((id) => availableIds.has(id));
@@ -324,6 +388,11 @@ export function productPlanPresetSelection(preset: ProductPlanPreset, plan: read
     const preferred = plan.find((item) => item.kind === "main_image") || plan.find((item) => item.kind === "basic_image") || plan[0];
     const primaryStylePlan = plan.filter((item) => item.styleKey === preferred.styleKey);
     if (preset === "single") return [preferred.id];
+    if (preset === "detail_suite")
+        return primaryStylePlan
+            .filter((item) => item.kind === "main_image" || item.kind === "detail_page")
+            .slice(0, 7)
+            .map((item) => item.id);
     if (preset === "full") return primaryStylePlan.slice(0, 12).map((item) => item.id);
 
     const selected = (["main_image", "selling_poster", "scene_image"] as const).map((kind) => primaryStylePlan.find((item) => item.kind === kind)?.id).filter((id): id is string => Boolean(id));

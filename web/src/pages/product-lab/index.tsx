@@ -11,6 +11,7 @@ import { cultivationGenerationBlockReason, requiredCultivationCapabilities } fro
 import {
     availableProductOutputs,
     buildMultiStyleProductPlan,
+    buildProductSuitePlan,
     buildProductVisualStyleGuide,
     emptyProductAnalysis,
     productDetailPageLimit,
@@ -57,13 +58,14 @@ import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
 
 type ProductAnalysisDraft = ProductAnalysis & { sourceNotes?: string };
-type GenerationProgress = { completed: number; total: number; title: string; failed: number };
+type GenerationProgress = { completed: number; total: number; title: string; failed: number; itemId?: string };
 
 const PLATFORM_OPTIONS = [{ value: "pinduoduo", label: "拼多多" }];
 const MAX_BATCH_UPLOADS = 8;
 const PRODUCT_PLAN_PRESETS: Array<{ key: ProductPlanPreset; label: string; description: string; badge: string }> = [
     { key: "single", label: "先做一张主图", description: "用一张图快速确认商品主体、版式和卖点表达。", badge: "推荐" },
     { key: "essential", label: "核心三图", description: "主图、卖点海报和真实场景，适合先测试转化方向。", badge: "常用" },
+    { key: "detail_suite", label: "一键详情套装", description: "主图 1 张，加最多 6 张核心详情页。", badge: "一键" },
     { key: "full", label: "完整商品套图", description: "生成当前境界可用的一整套商品视觉。", badge: "完整" },
 ];
 
@@ -127,7 +129,7 @@ export default function ProductLabPage() {
         [activeProject, analysisAvailable, productCapabilities, selectedModelSupportsProductReference],
     );
     const outputSignature = outputs.map((output) => `${output.kind}:${output.available}`).join("|");
-    const visualPlan = useMemo(
+    const standardVisualPlan = useMemo(
         () =>
             buildMultiStyleProductPlan({
                 analysis: draftAnalysis,
@@ -138,7 +140,21 @@ export default function ProductLabPage() {
             }),
         [activeProject?.platform, brandName, canUseBrand, detailPageLimit, draftAnalysis, selectedStyles],
     );
-    const selectablePlanItems = useMemo(() => visualPlan.filter((item) => outputs.some((output) => output.kind === item.kind && output.available)), [outputs, visualPlan]);
+    const suitePlan = useMemo(
+        () =>
+            buildProductSuitePlan({
+                analysis: draftAnalysis,
+                platform: activeProject?.platform || "pinduoduo",
+                styleKey: selectedStyles[0] || "value",
+                brandName: canUseBrand ? brandName : "",
+                detailPageLimit,
+            }),
+        [activeProject?.platform, brandName, canUseBrand, detailPageLimit, draftAnalysis, selectedStyles],
+    );
+    const standardSelectablePlanItems = useMemo(() => standardVisualPlan.filter((item) => outputs.some((output) => output.kind === item.kind && output.available)), [outputs, standardVisualPlan]);
+    const suiteSelectablePlanItems = useMemo(() => suitePlan.filter((item) => outputs.some((output) => output.kind === item.kind && output.available)), [outputs, suitePlan]);
+    const visualPlan = selectedPreset === "detail_suite" ? suitePlan : standardVisualPlan;
+    const selectablePlanItems = selectedPreset === "detail_suite" ? suiteSelectablePlanItems : standardSelectablePlanItems;
     const selectablePlanSignature = selectablePlanItems.map((item) => item.id).join("|");
     const selectedPlanItems = selectablePlanItems.filter((item) => selectedPlanIds.includes(item.id));
     const selectedKinds = selectedProductOutputKinds(selectedPlanIds, selectablePlanItems);
@@ -200,7 +216,7 @@ export default function ProductLabPage() {
     useEffect(() => {
         setSelectedPlanIds([]);
         setPendingTemplateSelection(null);
-        setSelectedPreset("single");
+        setSelectedPreset(activeProject?.plan.some((item) => item.id.startsWith("suite-")) ? "detail_suite" : "single");
         setSelectedTemplateId("");
         if (!activeProject) {
             setDraftAnalysis(emptyProductAnalysis());
@@ -381,13 +397,22 @@ export default function ProductLabPage() {
     const savePlanning = async () => {
         if (!activeProject || savingPlan) return false;
         const analysis = normalizeDraftAnalysis(draftAnalysis, activeProject.title);
-        const plan = buildMultiStyleProductPlan({
-            analysis,
-            platform: activeProject.platform,
-            styleKeys: selectedStyles,
-            brandName: canUseBrand ? brandName : "",
-            detailPageLimit,
-        });
+        const plan =
+            selectedPreset === "detail_suite"
+                ? buildProductSuitePlan({
+                      analysis,
+                      platform: activeProject.platform,
+                      styleKey: selectedStyles[0] || "value",
+                      brandName: canUseBrand ? brandName : "",
+                      detailPageLimit,
+                  })
+                : buildMultiStyleProductPlan({
+                      analysis,
+                      platform: activeProject.platform,
+                      styleKeys: selectedStyles,
+                      brandName: canUseBrand ? brandName : "",
+                      detailPageLimit,
+                  });
         setSavingPlan(true);
         try {
             const updated = await updateProductProject(
@@ -422,9 +447,9 @@ export default function ProductLabPage() {
         if (await savePlanning()) setWorkflowStep("generate");
     };
 
-    const generateSelectedPlan = async () => {
+    const generatePlanItems = async (items: ProductPlanItem[]) => {
         if (!activeProject || generating) return;
-        if (!selectedPlanItems.length) {
+        if (!items.length) {
             message.warning("请先选择需要炼制的商品画卷");
             return;
         }
@@ -437,8 +462,18 @@ export default function ProductLabPage() {
             openConfigDialog(true, "channels");
             return;
         }
-        if (generationBlockReason) {
-            message.warning(generationBlockReason);
+        const localGenerationBlockReason = profile
+            ? cultivationGenerationBlockReason({
+                  remainingToday: profile.remainingToday,
+                  unlimited: profile.unlimited,
+                  maxConcurrency: profile.maxConcurrency,
+                  capabilities: profile.capabilities,
+                  requestedCount: items.length,
+                  requiredCapabilities: genericGenerationRequirements,
+              })
+            : null;
+        if (localGenerationBlockReason) {
+            message.warning(localGenerationBlockReason);
             return;
         }
 
@@ -450,12 +485,12 @@ export default function ProductLabPage() {
             storageKey: activeProject.sourceAssetKey,
         };
         setGenerating(true);
-        setGenerationProgress({ completed: 0, total: selectedPlanItems.length, title: "正在解析商品灵韵...", failed: 0 });
+        setGenerationProgress({ completed: 0, total: items.length, title: "正在解析商品灵韵...", failed: 0, itemId: items[0]?.id });
         const completedGenerations: ProductGeneration[] = [];
         let failed = 0;
         try {
-            for (const [index, item] of selectedPlanItems.entries()) {
-                setGenerationProgress({ completed: index, total: selectedPlanItems.length, title: item.title, failed });
+            for (const [index, item] of items.entries()) {
+                setGenerationProgress({ completed: index, total: items.length, title: item.title, failed, itemId: item.id });
                 let serverJobId = "";
                 try {
                     const configured = resolveImageModelSettings(
@@ -492,10 +527,11 @@ export default function ProductLabPage() {
                         userId,
                     );
                     completedGenerations.push(saved.generation);
+                    setGenerations((current) => [...current.filter((generation) => generation.id !== saved.generation.id), saved.generation]);
                 } catch (error) {
                     failed += 1;
                     const failure = generationFailureFeedback(error, { isDouEmperor: realmExperience.imperial });
-                    await saveProductGeneration(
+                    const savedFailure = await saveProductGeneration(
                         {
                             projectId: activeProject.id,
                             outputKind: item.kind,
@@ -506,12 +542,13 @@ export default function ProductLabPage() {
                             error: generationFailureText(failure),
                         },
                         userId,
-                    ).catch(() => undefined);
+                    ).catch(() => null);
+                    if (savedFailure) setGenerations((current) => [...current.filter((generation) => generation.id !== savedFailure.generation.id), savedFailure.generation]);
                 }
-                setGenerationProgress({ completed: index + 1, total: selectedPlanItems.length, title: item.title, failed });
+                setGenerationProgress({ completed: index + 1, total: items.length, title: item.title, failed });
             }
 
-            const nextStatus = completedGenerations.length ? "completed" : "planned";
+            const nextStatus = completedGenerations.length || generations.some((generation) => generation.status === "succeeded" && generation.assetUrl) ? "completed" : "planned";
             const updated = await updateProductProject(
                 activeProject.id,
                 {
@@ -524,7 +561,6 @@ export default function ProductLabPage() {
                 userId,
             ).then((result) => result.project);
             replaceProject(updated);
-            setGenerations((current) => [...current, ...completedGenerations]);
             if (completedGenerations.length) {
                 message.success(realmExperience.imperial ? "一念落笔，万象成卷。可择卷入藏。" : "商品画卷炼制完成，可手动选择入藏。");
                 setWorkflowStep("generate");
@@ -536,16 +572,19 @@ export default function ProductLabPage() {
         }
     };
 
-    const archiveGeneration = async (generation: ProductGeneration) => {
+    const generateSelectedPlan = () => generatePlanItems(selectedPlanItems);
+    const retryPlanItem = (item: ProductPlanItem) => generatePlanItems([item]);
+
+    const archiveGeneration = async (generation: ProductGeneration, silent = false) => {
         if (!activeProject || !generation.assetKey || !generation.assetUrl) {
-            message.error("当前画卷文件不可用，暂时无法入藏");
-            return;
+            if (!silent) message.error("当前画卷文件不可用，暂时无法入藏");
+            return false;
         }
         if (archivedAssetKeys.has(generation.assetKey)) {
-            message.info("此卷已在藏卷阁中");
-            return;
+            if (!silent) message.info("此卷已在藏卷阁中");
+            return false;
         }
-        if (savingArchiveIdsRef.current.has(generation.id)) return;
+        if (savingArchiveIdsRef.current.has(generation.id)) return false;
 
         const project = activeProject;
         savingArchiveIdsRef.current.add(generation.id);
@@ -583,13 +622,29 @@ export default function ProductLabPage() {
                     prompt: generation.prompt,
                 },
             });
-            message.success("已入藏卷阁");
+            if (!silent) message.success("已入藏卷阁");
+            return true;
         } catch (error) {
-            message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
+            if (!silent) message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
+            return false;
         } finally {
             savingArchiveIdsRef.current.delete(generation.id);
             setSavingArchiveIds((current) => current.filter((id) => id !== generation.id));
         }
+    };
+
+    const archiveAllGenerations = async (items: ProductGeneration[]) => {
+        const pending = items.filter((generation) => generation.assetKey && generation.assetUrl && !archivedAssetKeys.has(generation.assetKey));
+        if (!pending.length) {
+            message.info("当前套图均已入藏");
+            return;
+        }
+        let archived = 0;
+        for (const generation of pending) {
+            if (await archiveGeneration(generation, true)) archived += 1;
+        }
+        if (archived === pending.length) message.success(`已将 ${archived} 幅商品画卷入藏`);
+        else message.warning(`已入藏 ${archived} 幅，另有 ${pending.length - archived} 幅未能入藏`);
     };
 
     const removeProject = async (project: ProductProject) => {
@@ -618,8 +673,9 @@ export default function ProductLabPage() {
 
     const selectPlanPreset = (preset: ProductPlanPreset) => {
         if (preset !== "single") clearAppliedTemplate();
+        const presetPlan = preset === "detail_suite" ? suiteSelectablePlanItems : standardSelectablePlanItems;
         setSelectedPreset(preset);
-        setSelectedPlanIds(productPlanPresetSelection(preset, selectablePlanItems));
+        setSelectedPlanIds(productPlanPresetSelection(preset, presetPlan));
     };
 
     const selectPrimaryStyle = (styleKey: string) => {
@@ -968,9 +1024,10 @@ export default function ProductLabPage() {
 
                                     <section className="border-t border-stone-200 pt-7 dark:border-white/10">
                                         <SectionHeading icon={<FlaskConical className="size-4" />} title="本次创作目标" />
-                                        <div className="mt-4 flex w-full min-w-0 max-w-full snap-x gap-3 overflow-x-auto pb-2 md:grid md:grid-cols-3 md:overflow-visible md:pb-0">
+                                        <div className="mt-4 flex w-full min-w-0 max-w-full snap-x gap-3 overflow-x-auto pb-2 md:grid md:grid-cols-2 md:overflow-visible md:pb-0 xl:grid-cols-4">
                                             {PRODUCT_PLAN_PRESETS.map((preset) => {
-                                                const ids = productPlanPresetSelection(preset.key, selectablePlanItems);
+                                                const presetPlan = preset.key === "detail_suite" ? suiteSelectablePlanItems : standardSelectablePlanItems;
+                                                const ids = productPlanPresetSelection(preset.key, presetPlan);
                                                 const selected = selectedPreset === preset.key;
                                                 return (
                                                     <button
@@ -1100,7 +1157,7 @@ export default function ProductLabPage() {
                                                             <Input value={brandName} maxLength={120} placeholder="可选，用于统一整套视觉表达" onChange={(event) => setBrandName(event.target.value)} />
                                                         </Field>
                                                     ) : null}
-                                                    {canUseMultipleStyles ? (
+                                                    {canUseMultipleStyles && selectedPreset !== "detail_suite" ? (
                                                         <div>
                                                             <div className="text-xs font-medium text-stone-500">附加风格探索</div>
                                                             <div className="mt-2 flex flex-wrap gap-2">
@@ -1125,33 +1182,59 @@ export default function ProductLabPage() {
                                                     ) : null}
                                                 </div>
 
-                                                <div>
-                                                    <div className="text-xs font-medium text-stone-500">当前可用内容</div>
-                                                    <div className="mt-3">
-                                                        <ProductOutputGrid outputs={outputs} selectedKinds={selectedKinds} onToggle={toggleOutput} />
+                                                {selectedPreset === "detail_suite" ? (
+                                                    <div>
+                                                        <div className="flex items-center justify-between gap-3">
+                                                            <div className="text-xs font-medium text-stone-500">套图结构</div>
+                                                            <Tag bordered={false}>固定结构 · {selectedPlanIds.length} 幅</Tag>
+                                                        </div>
+                                                        <div className="mt-3 max-h-80 overflow-y-auto border-y border-stone-200 dark:border-white/10">
+                                                            {selectablePlanItems.map((item) => (
+                                                                <div key={item.id} className="flex min-h-14 items-center gap-3 border-b border-stone-200/80 px-1 py-2 last:border-0 dark:border-white/8">
+                                                                    <span className="grid size-5 shrink-0 place-items-center border border-emerald-500/45 text-emerald-600 dark:text-emerald-400">
+                                                                        <Check className="size-3.5" />
+                                                                    </span>
+                                                                    <span className="min-w-0 flex-1">
+                                                                        <span className="block truncate text-sm font-medium">{item.title}</span>
+                                                                        <span className="mt-0.5 block truncate text-xs text-stone-500">{item.description}</span>
+                                                                    </span>
+                                                                    <span className="shrink-0 text-[11px] text-stone-400">{item.aspectRatio}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                        <div className="mt-2 text-xs leading-5 text-stone-400">主图固定为 1:1，详情页固定为 3:4；页数按当前境界能力开放。</div>
                                                     </div>
-                                                </div>
-
-                                                <div>
-                                                    <div className="flex items-center justify-between gap-3">
-                                                        <div className="text-xs font-medium text-stone-500">逐张调整</div>
-                                                        <Tag bordered={false}>
-                                                            已选 {selectedPlanIds.length}/{selectablePlanItems.length}
-                                                        </Tag>
-                                                    </div>
-                                                    <div className="mt-3 max-h-80 overflow-y-auto border-y border-stone-200 dark:border-white/10">
-                                                        {selectablePlanItems.map((item) => (
-                                                            <div key={item.id} className="flex min-h-14 items-center gap-3 border-b border-stone-200/80 px-1 py-2 last:border-0 dark:border-white/8">
-                                                                <Checkbox checked={selectedPlanIds.includes(item.id)} onChange={() => togglePlanItem(item.id)} aria-label={`选择${item.title}`} />
-                                                                <span className="min-w-0 flex-1">
-                                                                    <span className="block truncate text-sm font-medium">{item.title}</span>
-                                                                    <span className="mt-0.5 block truncate text-xs text-stone-500">{item.description}</span>
-                                                                </span>
-                                                                <span className="shrink-0 text-[11px] text-stone-400">{item.aspectRatio}</span>
+                                                ) : (
+                                                    <>
+                                                        <div>
+                                                            <div className="text-xs font-medium text-stone-500">当前可用内容</div>
+                                                            <div className="mt-3">
+                                                                <ProductOutputGrid outputs={outputs} selectedKinds={selectedKinds} onToggle={toggleOutput} />
                                                             </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
+                                                        </div>
+
+                                                        <div>
+                                                            <div className="flex items-center justify-between gap-3">
+                                                                <div className="text-xs font-medium text-stone-500">逐张调整</div>
+                                                                <Tag bordered={false}>
+                                                                    已选 {selectedPlanIds.length}/{selectablePlanItems.length}
+                                                                </Tag>
+                                                            </div>
+                                                            <div className="mt-3 max-h-80 overflow-y-auto border-y border-stone-200 dark:border-white/10">
+                                                                {selectablePlanItems.map((item) => (
+                                                                    <div key={item.id} className="flex min-h-14 items-center gap-3 border-b border-stone-200/80 px-1 py-2 last:border-0 dark:border-white/8">
+                                                                        <Checkbox checked={selectedPlanIds.includes(item.id)} onChange={() => togglePlanItem(item.id)} aria-label={`选择${item.title}`} />
+                                                                        <span className="min-w-0 flex-1">
+                                                                            <span className="block truncate text-sm font-medium">{item.title}</span>
+                                                                            <span className="mt-0.5 block truncate text-xs text-stone-500">{item.description}</span>
+                                                                        </span>
+                                                                        <span className="shrink-0 text-[11px] text-stone-400">{item.aspectRatio}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    </>
+                                                )}
 
                                                 <div className="border-t border-stone-200 pt-6 dark:border-white/10">
                                                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1187,8 +1270,11 @@ export default function ProductLabPage() {
                                     progress={generationProgress}
                                     actionLabel={realmExperience.actionLabel}
                                     generationBlockReason={generationBlockReason}
+                                    suiteMode={selectedPreset === "detail_suite"}
                                     onGenerate={generateSelectedPlan}
                                     onArchive={archiveGeneration}
+                                    onArchiveAll={archiveAllGenerations}
+                                    onRetryPlanItem={retryPlanItem}
                                     onBack={() => setWorkflowStep("plan")}
                                 />
                             )}
@@ -1230,8 +1316,11 @@ function GenerationWorkbench({
     progress,
     actionLabel,
     generationBlockReason,
+    suiteMode,
     onGenerate,
     onArchive,
+    onArchiveAll,
+    onRetryPlanItem,
     onBack,
 }: {
     plan: ProductPlanItem[];
@@ -1247,8 +1336,11 @@ function GenerationWorkbench({
     progress: GenerationProgress | null;
     actionLabel: string;
     generationBlockReason: string | null;
+    suiteMode: boolean;
     onGenerate: () => void;
-    onArchive: (generation: ProductGeneration) => Promise<void>;
+    onArchive: (generation: ProductGeneration) => Promise<unknown>;
+    onArchiveAll: (generations: ProductGeneration[]) => Promise<void>;
+    onRetryPlanItem: (item: ProductPlanItem) => Promise<void>;
     onBack: () => void;
 }) {
     const succeededGenerations = generations
@@ -1263,14 +1355,28 @@ function GenerationWorkbench({
             <div className="flex items-start justify-between gap-4">
                 <div>
                     <div className="text-xs font-medium text-stone-500">第三步 · 生成与挑选</div>
-                    <h2 className="mt-1 text-xl font-semibold">生成商品画卷</h2>
-                    <p className="mt-2 text-sm text-stone-500">确认生成内容，完成后挑选满意作品手动入藏。</p>
+                    <h2 className="mt-1 text-xl font-semibold">{suiteMode ? "生成商品详情套装" : "生成商品画卷"}</h2>
+                    <p className="mt-2 text-sm text-stone-500">{suiteMode ? "主图与详情页将按顺序生成，失败页面可以单独重试。" : "确认生成内容，完成后挑选满意作品手动入藏。"}</p>
                 </div>
                 <Button type="text" icon={<ArrowLeft className="size-4" />} onClick={onBack}>
                     调整方案
                 </Button>
             </div>
-            {succeededGenerations.length ? <GenerationResults generations={succeededGenerations} archivedAssetKeys={archivedAssetKeys} savingArchiveIds={savingArchiveIds} onArchive={onArchive} /> : null}
+            {suiteMode ? (
+                <ProductSuiteResults
+                    items={selectedItems}
+                    generations={generations}
+                    archivedAssetKeys={archivedAssetKeys}
+                    savingArchiveIds={savingArchiveIds}
+                    generating={generating}
+                    progress={progress}
+                    onArchive={onArchive}
+                    onArchiveAll={onArchiveAll}
+                    onRetryPlanItem={onRetryPlanItem}
+                />
+            ) : succeededGenerations.length ? (
+                <GenerationResults generations={succeededGenerations} archivedAssetKeys={archivedAssetKeys} savingArchiveIds={savingArchiveIds} onArchive={onArchive} />
+            ) : null}
 
             <section className="border-t border-stone-200 pt-6 dark:border-white/10">
                 <div className="flex items-center justify-between gap-3">
@@ -1319,7 +1425,7 @@ function GenerationWorkbench({
                 </section>
             ) : null}
 
-            {!succeededGenerations.length ? <GenerationResults generations={[]} archivedAssetKeys={archivedAssetKeys} savingArchiveIds={savingArchiveIds} onArchive={onArchive} /> : null}
+            {!suiteMode && !succeededGenerations.length ? <GenerationResults generations={[]} archivedAssetKeys={archivedAssetKeys} savingArchiveIds={savingArchiveIds} onArchive={onArchive} /> : null}
 
             <section className="sticky bottom-0 z-20 border-t border-stone-200 bg-[#f7f7f5]/95 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-[#101110]/95">
                 {generationBlockReason ? <div className="mb-3 text-xs leading-5 text-amber-700 dark:text-amber-300">{generationBlockReason}</div> : null}
@@ -1328,6 +1434,118 @@ function GenerationWorkbench({
                 </Button>
             </section>
         </div>
+    );
+}
+
+function ProductSuiteResults({
+    items,
+    generations,
+    archivedAssetKeys,
+    savingArchiveIds,
+    generating,
+    progress,
+    onArchive,
+    onArchiveAll,
+    onRetryPlanItem,
+}: {
+    items: ProductPlanItem[];
+    generations: ProductGeneration[];
+    archivedAssetKeys: ReadonlySet<string>;
+    savingArchiveIds: readonly string[];
+    generating: boolean;
+    progress: GenerationProgress | null;
+    onArchive: (generation: ProductGeneration) => Promise<unknown>;
+    onArchiveAll: (generations: ProductGeneration[]) => Promise<void>;
+    onRetryPlanItem: (item: ProductPlanItem) => Promise<void>;
+}) {
+    const latestBySlot = new Map<string, ProductGeneration>();
+    for (const generation of generations.slice().sort((left, right) => right.createdAt - left.createdAt)) {
+        const key = `${generation.outputKind}:${generation.pageIndex}`;
+        if (!latestBySlot.has(key)) latestBySlot.set(key, generation);
+    }
+    const resultGenerations = items.map((item) => latestBySlot.get(`${item.kind}:${item.pageIndex}`) || null);
+    const succeededGenerations = resultGenerations.filter((generation): generation is ProductGeneration => Boolean(generation?.status === "succeeded" && generation.assetUrl));
+    const unarchivedCount = succeededGenerations.filter((generation) => generation.assetKey && !archivedAssetKeys.has(generation.assetKey)).length;
+
+    return (
+        <section className="border-y border-stone-200 py-6 dark:border-white/10">
+            <SectionHeading
+                icon={<Archive className="size-4" />}
+                title={`套图生成结果 · ${succeededGenerations.length}/${items.length}`}
+                action={
+                    succeededGenerations.length ? (
+                        <Button size="small" icon={<FolderPlus className="size-3.5" />} disabled={!unarchivedCount || savingArchiveIds.length > 0} onClick={() => void onArchiveAll(succeededGenerations)}>
+                            {unarchivedCount ? `全部入藏 (${unarchivedCount})` : "已全部入藏"}
+                        </Button>
+                    ) : null
+                }
+            />
+            <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {items.map((item, index) => {
+                    const generation = resultGenerations[index];
+                    const succeeded = generation?.status === "succeeded" && Boolean(generation.assetUrl);
+                    const failed = generation?.status === "failed";
+                    const running = (generating && progress?.itemId === item.id) || generation?.status === "running";
+                    const queued = generation?.status === "pending" || (generating && !running && !generation);
+                    const archived = Boolean(generation?.assetKey && archivedAssetKeys.has(generation.assetKey));
+                    const saving = Boolean(generation && savingArchiveIds.includes(generation.id));
+                    return (
+                        <article
+                            key={item.id}
+                            className={cn(
+                                "min-w-0 overflow-hidden border bg-white dark:bg-white/[0.02]",
+                                index === 0 && "sm:col-span-2 xl:col-span-2 xl:row-span-2",
+                                failed ? "border-red-300 dark:border-red-500/40" : "border-stone-200 dark:border-white/10",
+                            )}
+                        >
+                            <div
+                                className="overflow-hidden bg-[linear-gradient(45deg,#ececea_25%,transparent_25%,transparent_75%,#ececea_75%),linear-gradient(45deg,#ececea_25%,transparent_25%,transparent_75%,#ececea_75%)] bg-[length:16px_16px] bg-[position:0_0,8px_8px] dark:bg-none dark:bg-white/5"
+                                style={{ aspectRatio: item.aspectRatio.replace(":", " / ") }}
+                            >
+                                {succeeded && generation?.assetUrl ? (
+                                    <img src={generation.assetUrl} alt={item.title} className="size-full object-contain" loading={index === 0 ? "eager" : "lazy"} />
+                                ) : (
+                                    <div className="flex size-full flex-col items-center justify-center gap-2 px-4 text-center text-stone-400">
+                                        {running ? <LoaderCircle className="size-6 animate-spin" /> : failed ? <RefreshCw className="size-5" /> : <ImagePlus className="size-5" />}
+                                        <span className="text-xs leading-5" title={failed ? generation?.error : undefined}>
+                                            {running ? "正在炼制..." : failed ? "此页未能凝聚" : queued ? "等待生成" : "待生成"}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex min-h-14 items-center justify-between gap-2 border-t border-stone-200 px-3 py-2 dark:border-white/10">
+                                <div className="min-w-0">
+                                    <div className="truncate text-xs font-medium" title={item.title}>
+                                        {index === 0 ? "主图" : `详情页 ${index}`} · {item.title}
+                                    </div>
+                                    <div className="mt-0.5 text-[11px] text-stone-400">{item.aspectRatio}</div>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1">
+                                    {failed ? (
+                                        <Tooltip title="单独重试此页">
+                                            <Button type="text" size="small" icon={<RefreshCw className="size-3.5" />} disabled={generating} onClick={() => void onRetryPlanItem(item)} aria-label={`重试${item.title}`} />
+                                        </Tooltip>
+                                    ) : null}
+                                    {succeeded && generation ? (
+                                        <Tooltip title={archived ? "已在藏卷阁" : "入藏卷阁"}>
+                                            <Button
+                                                type="text"
+                                                size="small"
+                                                icon={archived ? <Check className="size-3.5 text-emerald-500" /> : <FolderPlus className="size-3.5" />}
+                                                loading={saving}
+                                                disabled={archived || saving || !generation.assetKey}
+                                                onClick={() => void onArchive(generation)}
+                                                aria-label={`入藏${item.title}`}
+                                            />
+                                        </Tooltip>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </article>
+                    );
+                })}
+            </div>
+        </section>
     );
 }
 
@@ -1340,7 +1558,7 @@ function GenerationResults({
     generations: ProductGeneration[];
     archivedAssetKeys: ReadonlySet<string>;
     savingArchiveIds: readonly string[];
-    onArchive: (generation: ProductGeneration) => Promise<void>;
+    onArchive: (generation: ProductGeneration) => Promise<unknown>;
 }) {
     return (
         <section className="border-y border-stone-200 py-6 dark:border-white/10">
