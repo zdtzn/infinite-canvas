@@ -14,6 +14,7 @@ import { parseSingleByteRange } from "./lib/http-range";
 import { ImageJobReferenceInputError, imageJobReferenceTotalBytes, parseClientImageJobReference } from "./lib/image-job-reference";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
+import { buildDragonChatImageRequest, dragonChatImageUrls, dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel } from "./lib/dragon-image";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { isAllowedMediaMimeType, resolveMediaMimeType } from "./lib/media-mime";
 import { createMediaTaskStore, type MediaTaskKind } from "./lib/media-task-store";
@@ -2051,24 +2052,52 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
     };
     // Compatible gateways do not consistently honor idempotency keys. Never replay a paid synchronous generation automatically.
     const retryPaidRequest = false;
-    const size = resolveOpenAiImageSize(input.size, input.quality, input.model);
+    const imageBaseUrl = dragonImageBaseUrl(channel.baseUrl, input.model);
+    const size = resolveOpenAiImageSize(input.size, input.quality, input.model, channel.baseUrl);
+    const prompt = dragonPromptWithSize(input.prompt, input.size, size, input.model, channel.baseUrl);
     const requestOptions = buildOpenAiImageRequestOptions({
         count: input.count,
         quality: input.imageQuality,
         outputFormat: input.imageOutputFormat,
         size,
         background: input.background,
+        responseFormat: isDragonGptImageModel(channel.baseUrl, input.model) ? null : undefined,
     });
+    if (isDragonChatImageModel(channel.baseUrl, input.model)) {
+        const outputs = await Promise.all(
+            Array.from({ length: input.count }, async (_, index) => {
+                return geminiImageSemaphore.run(signal, async () => {
+                    const response = await upstreamFetch(
+                        buildUpstreamUrl(imageBaseUrl, "openai", "/chat/completions"),
+                        {
+                            method: "POST",
+                            headers: { ...headers, "Content-Type": "application/json", "Idempotency-Key": upstreamIdempotencyKey(upstreamRequestId, index) },
+                            body: JSON.stringify(buildDragonChatImageRequest({ model: input.model, prompt: input.prompt, size: input.size, references: input.references })),
+                            signal,
+                        },
+                        retryPaidRequest,
+                    );
+                    return dragonChatImageUrls(
+                        await parseUpstreamJson(response, {
+                            maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES,
+                            tooLargeMessage: "上游图片响应过大，请降低单次生成数量后重试",
+                        }),
+                    );
+                });
+            }),
+        );
+        return outputs.flat();
+    }
     let response: Response;
     if (isSadaiImage2Channel(channel.baseUrl, input.model) && !input.mask) {
         response = await upstreamFetch(
-            buildUpstreamUrl(channel.baseUrl, "openai", input.references.length ? "/images/edits" : "/images/generations"),
+            buildUpstreamUrl(imageBaseUrl, "openai", input.references.length ? "/images/edits" : "/images/generations"),
             {
                 method: "POST",
                 headers: { ...headers, "Content-Type": "application/json" },
                 body: JSON.stringify({
                     model: input.model,
-                    prompt: input.prompt,
+                    prompt,
                     ...buildSadaiImageRequestOptions({
                         count: input.count,
                         size: input.size,
@@ -2083,13 +2112,13 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         );
     } else if (usesJsonReferenceGeneration(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))) {
         response = await upstreamFetch(
-            buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations"),
+            buildUpstreamUrl(imageBaseUrl, "openai", "/images/generations"),
             {
                 method: "POST",
                 headers: { ...headers, "Content-Type": "application/json" },
                 body: JSON.stringify({
                     model: input.model,
-                    prompt: input.prompt,
+                    prompt,
                     image: input.references,
                     ...requestOptions,
                 }),
@@ -2100,20 +2129,20 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
     } else if (input.references.length) {
         const form = new FormData();
         form.set("model", input.model);
-        form.set("prompt", input.prompt);
+        form.set("prompt", prompt);
         Object.entries(requestOptions).forEach(([key, value]) => form.set(key, String(value)));
         input.references.forEach((dataUrl, index) => form.append("image", dataUrlBlob(dataUrl), `reference-${index + 1}.png`));
         if (input.mask) form.set("mask", dataUrlBlob(input.mask), "mask.png");
-        response = await upstreamFetch(buildUpstreamUrl(channel.baseUrl, "openai", "/images/edits"), { method: "POST", headers, body: form, signal }, retryPaidRequest);
+        response = await upstreamFetch(buildUpstreamUrl(imageBaseUrl, "openai", "/images/edits"), { method: "POST", headers, body: form, signal }, retryPaidRequest);
     } else {
         response = await upstreamFetch(
-            buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations"),
+            buildUpstreamUrl(imageBaseUrl, "openai", "/images/generations"),
             {
                 method: "POST",
                 headers: { ...headers, "Content-Type": "application/json" },
                 body: JSON.stringify({
                     model: input.model,
-                    prompt: input.prompt,
+                    prompt,
                     ...requestOptions,
                 }),
                 signal,

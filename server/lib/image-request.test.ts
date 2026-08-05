@@ -26,6 +26,13 @@ test("fits GPT Image 2 ratios into the official pixel constraints", () => {
     expect(resolveOpenAiImageSize("21:9", "medium", "gpt-image-2")).toBe("2016x864");
 });
 
+test("maps Dragon GPT image models to the provider's documented dimensions", () => {
+    expect(resolveOpenAiImageSize("9:16", "low", "gpt-image-2-4k超分", "https://dragtokens.com/")).toBe("720x1280");
+    expect(resolveOpenAiImageSize("9:16", "high", "gpt-image-2-原生4k", "https://draw.dragtokens.com")).toBe("2160x3840");
+    expect(resolveOpenAiImageSize("3:2", "low", "gpt-image-2", "https://dragtokens.com")).toBe("1536x1024");
+    expect(() => resolveOpenAiImageSize("9:16", "low", "gpt-image-2", "https://dragtokens.com")).toThrow("Dragon gpt-image-2 only supports 1:1, 3:2, or 2:3");
+});
+
 test("rejects invalid explicit GPT Image 2 dimensions before calling upstream", () => {
     expect(() => resolveOpenAiImageSize("3840x3840", "high", "gpt-image-2")).toThrow("GPT Image 2 size must contain between 655360 and 8294400 pixels");
     expect(() => resolveOpenAiImageSize("512x512", "low", "gpt-image-2")).toThrow("GPT Image 2 size must contain between 655360 and 8294400 pixels");
@@ -42,6 +49,7 @@ test("maps older GPT Image models to their fixed documented dimensions", () => {
 test("uses the documented minimal request body for a single image", () => {
     expect(buildOpenAiImageRequestOptions({ count: 1, size: "1024x1024" })).toEqual({ size: "1024x1024", response_format: "b64_json" });
     expect(buildOpenAiImageRequestOptions({ count: 2, quality: "high", size: "2048x2048" })).toEqual({ n: 2, quality: "high", size: "2048x2048", response_format: "b64_json" });
+    expect(buildOpenAiImageRequestOptions({ count: 1, size: "720x1280", responseFormat: null })).toEqual({ size: "720x1280" });
 });
 
 test("keeps output resolution independent from provider generation quality", () => {

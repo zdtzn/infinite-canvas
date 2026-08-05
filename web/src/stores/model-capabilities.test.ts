@@ -58,6 +58,23 @@ describe("image model capabilities", () => {
         assert.deepEqual(uu.sizes, ["1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "9:21", "3:1", "1:3"]);
     });
 
+    test("Dragon channels expose only the ratios and resolutions documented by the provider", () => {
+        const standard = deriveImageModelCapabilities("gpt-image-2", "openai", "https://dragtokens.com");
+        assert.deepEqual(standard.resolutions, ["low"]);
+        assert.deepEqual(standard.sizes, ["1:1", "3:2", "2:3"]);
+        assert.equal(standard.customSize, false);
+
+        const fourK = deriveImageModelCapabilities("gpt-image-2-4k超分", "openai", "https://dragtokens.com/");
+        assert.deepEqual(fourK.resolutions, ["low", "high"]);
+        assert.deepEqual(fourK.sizes, ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"]);
+        assert.equal(fourK.customSize, false);
+
+        const chatImage = deriveImageModelCapabilities("gemini-3.1-flash-image", "openai", "https://dragtokens.com");
+        assert.deepEqual(chatImage.resolutions, ["medium"]);
+        assert.deepEqual(chatImage.sizes, ["1:1"]);
+        assert.equal(chatImage.maxOutputs, 1);
+    });
+
     test("older GPT Image models keep their documented fixed size choices", () => {
         const capabilities = deriveImageModelCapabilities("gpt-image-1.5", "openai");
         assert.deepEqual(capabilities.resolutions, ["low"]);

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ProductOutputGrid, ProductRealmHeader } from "./product-lab-view";
+import { ProductOutputGrid, ProductRealmHeader, ProductWorkflowSteps } from "./product-lab-view";
 
 test("renders a restrained realm identity header for normal users", () => {
     const html = renderToStaticMarkup(
@@ -13,7 +13,6 @@ test("renders a restrained realm identity header for normal users", () => {
             title: "商品灵韵已可解析。",
             description: "可以识别商品并凝练基础卖点。",
             imperial: false,
-            capabilities: ["product.basic", "product.analysis"],
         }),
     );
 
@@ -30,7 +29,6 @@ test("adds a quiet Dou Emperor identity treatment without game-style copy", () =
             title: "恭迎斗帝归来。",
             description: "商品万象，皆可化为画卷。",
             imperial: true,
-            capabilities: ["product.basic", "product.brand_design"],
         }),
     );
 
@@ -62,4 +60,20 @@ test("keeps unavailable outputs visible with a clear cultivation reason", () => 
     assert.match(html, /商品主图/);
     assert.match(html, /详情页/);
     assert.match(html, /继续修炼即可掌握/);
+});
+
+test("shows a clear three-step workflow and marks the current action", () => {
+    const html = renderToStaticMarkup(
+        createElement(ProductWorkflowSteps, {
+            currentStep: "plan",
+            availableSteps: ["source", "plan"],
+            onSelect: () => undefined,
+        }),
+    );
+
+    assert.match(html, /上传商品/);
+    assert.match(html, /确认方案/);
+    assert.match(html, /生成与挑选/);
+    assert.match(html, /aria-current="step"[^>]*>.*确认方案/s);
+    assert.match(html, /disabled=""[^>]*>.*生成与挑选/s);
 });

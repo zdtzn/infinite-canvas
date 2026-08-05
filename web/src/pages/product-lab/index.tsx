@@ -1,4 +1,4 @@
-import { Archive, Box, Check, ChevronRight, FlaskConical, FolderPlus, ImagePlus, Layers3, LoaderCircle, PackageSearch, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, Box, Check, ChevronRight, FlaskConical, FolderPlus, ImagePlus, Layers3, LoaderCircle, PackageSearch, RefreshCw, Settings2, Sparkles, Trash2, Upload } from "lucide-react";
 import { App, Button, Checkbox, Empty, Input, Popconfirm, Progress, Select, Skeleton, Tag, Tooltip } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -15,6 +15,8 @@ import {
     emptyProductAnalysis,
     productDetailPageLimit,
     productOutputDefinitions,
+    productPlanPresetSelection,
+    productPlanVisualControls,
     productRealmExperience,
     productSectionTypeLabel,
     productStyleOptions,
@@ -26,9 +28,10 @@ import {
     type ProductAnalysis,
     type ProductOutputKind,
     type ProductPlanItem,
+    type ProductPlanPreset,
     type ProductSectionType,
 } from "@/features/product-lab/product-lab";
-import { ProductOutputGrid, ProductRealmHeader } from "@/features/product-lab/product-lab-view";
+import { ProductOutputGrid, ProductRealmHeader, ProductWorkflowSteps, type ProductWorkflowStep } from "@/features/product-lab/product-lab-view";
 import { readImageMeta } from "@/lib/image-utils";
 import { cn } from "@/lib/utils";
 import { requestEdit } from "@/services/api/image";
@@ -58,6 +61,11 @@ type GenerationProgress = { completed: number; total: number; title: string; fai
 
 const PLATFORM_OPTIONS = [{ value: "pinduoduo", label: "拼多多" }];
 const MAX_BATCH_UPLOADS = 8;
+const PRODUCT_PLAN_PRESETS: Array<{ key: ProductPlanPreset; label: string; description: string; badge: string }> = [
+    { key: "single", label: "先做一张主图", description: "用一张图快速确认商品主体、版式和卖点表达。", badge: "推荐" },
+    { key: "essential", label: "核心三图", description: "主图、卖点海报和真实场景，适合先测试转化方向。", badge: "常用" },
+    { key: "full", label: "完整商品套图", description: "生成当前境界可用的一整套商品视觉。", badge: "完整" },
+];
 
 export default function ProductLabPage() {
     const { message } = App.useApp();
@@ -88,12 +96,16 @@ export default function ProductLabPage() {
     const [imperialEntryVisible, setImperialEntryVisible] = useState(false);
     const [draftAnalysis, setDraftAnalysis] = useState<ProductAnalysisDraft>(emptyProductAnalysis());
     const [selectedPlanIds, setSelectedPlanIds] = useState<string[]>([]);
-    const [selectedStyles, setSelectedStyles] = useState<string[]>(["clean"]);
+    const [selectedStyles, setSelectedStyles] = useState<string[]>(["value"]);
+    const [selectedPreset, setSelectedPreset] = useState<ProductPlanPreset | "custom">("single");
+    const [selectedTemplateId, setSelectedTemplateId] = useState("");
+    const [workflowStep, setWorkflowStep] = useState<ProductWorkflowStep>("source");
     const [pendingTemplateSelection, setPendingTemplateSelection] = useState<{ kind: ProductOutputKind; styleKey: string } | null>(null);
     const [brandName, setBrandName] = useState("");
     const savingArchiveIdsRef = useRef(new Set<string>());
 
     const activeProject = projects.find((project) => project.id === activeProjectId) || null;
+    const hasSuccessfulGenerations = generations.some((generation) => generation.status === "succeeded" && generation.assetUrl);
     const realmExperience = productRealmExperience(profile?.realmName || "斗之气");
     const detailPageLimit = productDetailPageLimit(profile?.realmName || "斗之气");
     const productCapabilities = profile?.capabilities || [];
@@ -126,18 +138,13 @@ export default function ProductLabPage() {
             }),
         [activeProject?.platform, brandName, canUseBrand, detailPageLimit, draftAnalysis, selectedStyles],
     );
-    const selectablePlanItems = useMemo(
-        () => visualPlan.filter((item) => outputs.some((output) => output.kind === item.kind && output.available)),
-        [outputs, visualPlan],
-    );
+    const selectablePlanItems = useMemo(() => visualPlan.filter((item) => outputs.some((output) => output.kind === item.kind && output.available)), [outputs, visualPlan]);
     const selectablePlanSignature = selectablePlanItems.map((item) => item.id).join("|");
     const selectedPlanItems = selectablePlanItems.filter((item) => selectedPlanIds.includes(item.id));
     const selectedKinds = selectedProductOutputKinds(selectedPlanIds, selectablePlanItems);
+    const visualControls = productPlanVisualControls(selectedPreset, selectedKinds);
     const activeVisualStyleGuide = buildProductVisualStyleGuide(draftAnalysis, selectedStyles[0] || "clean", canUseBrand ? brandName : "");
-    const archivedAssetKeys = useMemo(
-        () => new Set(assets.flatMap((asset) => (asset.kind === "image" && asset.data.storageKey ? [asset.data.storageKey] : []))),
-        [assets],
-    );
+    const archivedAssetKeys = useMemo(() => new Set(assets.flatMap((asset) => (asset.kind === "image" && asset.data.storageKey ? [asset.data.storageKey] : []))), [assets]);
     const genericGenerationRequirements = requiredCultivationCapabilities({
         model,
         quality: resolvedImageSettings.config.quality,
@@ -154,6 +161,7 @@ export default function ProductLabPage() {
               requiredCapabilities: genericGenerationRequirements,
           })
         : null;
+    const availableWorkflowSteps: ProductWorkflowStep[] = activeProject ? ["source", "plan", ...(selectablePlanItems.length || hasSuccessfulGenerations ? (["generate"] as const) : [])] : ["source"];
 
     useEffect(() => {
         if (!userId && PUBLIC_MODE) return;
@@ -180,6 +188,7 @@ export default function ProductLabPage() {
             return;
         }
         let canceled = false;
+        setGenerations([]);
         void fetchProductGenerations(activeProject.id, userId)
             .then((response) => !canceled && setGenerations(response.items))
             .catch((error) => !canceled && message.error(error instanceof Error ? error.message : "商品生成记录加载失败"));
@@ -191,26 +200,42 @@ export default function ProductLabPage() {
     useEffect(() => {
         setSelectedPlanIds([]);
         setPendingTemplateSelection(null);
+        setSelectedPreset("single");
+        setSelectedTemplateId("");
         if (!activeProject) {
             setDraftAnalysis(emptyProductAnalysis());
-            setSelectedStyles(["clean"]);
+            setSelectedStyles(["value"]);
             setBrandName("");
             return;
         }
         setDraftAnalysis(normalizeProjectAnalysis(activeProject));
         setSelectedStyles(inferProjectStyles(activeProject));
         setBrandName(activeProject.brandName || "");
-    }, [activeProject?.id, activeProject?.updatedAt]);
+    }, [activeProject?.id]);
 
     useEffect(() => {
-        setSelectedPlanIds((current) => reconcileProductPlanSelection(current, selectablePlanItems));
-    }, [activeProject?.id, outputSignature, selectablePlanSignature]);
+        if (!activeProject) {
+            setWorkflowStep("source");
+            return;
+        }
+        setWorkflowStep(activeProject.status === "completed" ? "generate" : hasProductAnalysis(activeProject) ? "plan" : "source");
+    }, [activeProject?.id]);
+
+    useEffect(() => {
+        if (!hasSuccessfulGenerations) return;
+        setWorkflowStep((current) => (current === "source" ? current : "generate"));
+    }, [activeProject?.id, hasSuccessfulGenerations]);
+
+    useEffect(() => {
+        setSelectedPlanIds((current) => (selectedPreset === "custom" ? reconcileProductPlanSelection(current, selectablePlanItems) : productPlanPresetSelection(selectedPreset, selectablePlanItems)));
+    }, [activeProject?.id, outputSignature, selectablePlanSignature, selectedPreset]);
 
     useEffect(() => {
         if (!pendingTemplateSelection) return;
         const matching = selectablePlanItems.filter((item) => item.kind === pendingTemplateSelection.kind && item.styleKey === pendingTemplateSelection.styleKey);
         if (!matching.length) return;
         setSelectedPlanIds(matching.map((item) => item.id));
+        setSelectedPreset("custom");
         setPendingTemplateSelection(null);
     }, [pendingTemplateSelection, selectablePlanSignature]);
 
@@ -256,7 +281,11 @@ export default function ProductLabPage() {
                 created.push(response.project);
             }
             setProjects((current) => [...created, ...current]);
-            if (created[0]) setActiveProjectId(created[0].id);
+            if (created[0]) {
+                setActiveProjectId(created[0].id);
+                setWorkflowStep("source");
+                setSelectedPreset("single");
+            }
             message.success(created.length > 1 ? `已导入 ${created.length} 个商品项目` : "商品已进入炼制台");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "商品导入失败");
@@ -291,25 +320,36 @@ export default function ProductLabPage() {
     };
 
     const analyzeCurrentProject = async () => {
-        if (!activeProject || analyzing) return;
+        if (!activeProject || analyzing) return false;
         if (!canAnalyze) {
             message.warning("当前境界尚不足以开启此项商品法则。继续修炼即可掌握。");
-            return;
+            return false;
         }
         if (!analysisAvailable) {
             message.warning("管理员尚未配置可识别商品图片的文本模型");
-            return;
+            return false;
         }
         setAnalyzing(true);
         try {
             const updated = await analyzeOneProject(activeProject, draftAnalysis.sourceNotes || "");
             setDraftAnalysis(normalizeProjectAnalysis(updated));
             message.success("商品本源解析完成");
+            return true;
         } catch (error) {
             message.error(error instanceof Error ? error.message : "商品分析暂未完成");
+            return false;
         } finally {
             setAnalyzing(false);
         }
+    };
+
+    const analyzeAndContinue = async () => {
+        if (!activeProject) return;
+        if (hasProductAnalysis(activeProject) || !canAnalyze || !analysisAvailable) {
+            setWorkflowStep("plan");
+            return;
+        }
+        if (await analyzeCurrentProject()) setWorkflowStep("plan");
     };
 
     const analyzePendingProjects = async () => {
@@ -339,7 +379,7 @@ export default function ProductLabPage() {
     };
 
     const savePlanning = async () => {
-        if (!activeProject || savingPlan) return;
+        if (!activeProject || savingPlan) return false;
         const analysis = normalizeDraftAnalysis(draftAnalysis, activeProject.title);
         const plan = buildMultiStyleProductPlan({
             analysis,
@@ -365,11 +405,21 @@ export default function ProductLabPage() {
             replaceProject(updated);
             setDraftAnalysis(normalizeProjectAnalysis(updated));
             message.success("商品视觉规划已保存");
+            return true;
         } catch (error) {
             message.error(error instanceof Error ? error.message : "规划保存失败");
+            return false;
         } finally {
             setSavingPlan(false);
         }
+    };
+
+    const savePlanningAndContinue = async () => {
+        if (!selectedPlanIds.length) {
+            message.warning("请先选择本次需要生成的商品画卷");
+            return;
+        }
+        if (await savePlanning()) setWorkflowStep("generate");
     };
 
     const generateSelectedPlan = async () => {
@@ -477,6 +527,7 @@ export default function ProductLabPage() {
             setGenerations((current) => [...current, ...completedGenerations]);
             if (completedGenerations.length) {
                 message.success(realmExperience.imperial ? "一念落笔，万象成卷。可择卷入藏。" : "商品画卷炼制完成，可手动选择入藏。");
+                setWorkflowStep("generate");
             }
             if (failed) message.warning(`${failed} 幅画卷未能凝聚，失败额度已按现有规则处理`);
         } finally {
@@ -556,14 +607,36 @@ export default function ProductLabPage() {
     };
 
     const toggleOutput = (kind: ProductOutputKind) => {
+        setSelectedPreset("custom");
         setSelectedPlanIds((current) => toggleProductPlanKindSelection(current, selectablePlanItems, kind));
     };
 
     const togglePlanItem = (itemId: string) => {
+        setSelectedPreset("custom");
         setSelectedPlanIds((current) => toggleProductPlanItemSelection(current, itemId));
     };
 
+    const selectPlanPreset = (preset: ProductPlanPreset) => {
+        if (preset !== "single") clearAppliedTemplate();
+        setSelectedPreset(preset);
+        setSelectedPlanIds(productPlanPresetSelection(preset, selectablePlanItems));
+    };
+
+    const selectPrimaryStyle = (styleKey: string) => {
+        clearAppliedTemplate();
+        setSelectedStyles([styleKey]);
+    };
+
+    const clearAppliedTemplate = () => {
+        setSelectedTemplateId("");
+        setDraftAnalysis((current) => {
+            const visualDirection = current.visualDirection.split("；模板要求：", 1)[0].trim();
+            return visualDirection === current.visualDirection ? current : { ...current, visualDirection };
+        });
+    };
+
     const toggleStyle = (styleKey: string) => {
+        setSelectedPreset("custom");
         if (!canUseMultipleStyles) {
             setSelectedStyles([styleKey]);
             return;
@@ -584,6 +657,8 @@ export default function ProductLabPage() {
             message.warning(output?.reason || "当前尚无法使用此模板");
             return;
         }
+        setSelectedPreset("custom");
+        setSelectedTemplateId(template.id);
         setSelectedStyles([template.styleKey]);
         setDraftAnalysis((current) => {
             const baseDirection = current.visualDirection.split("；模板要求：", 1)[0].trim();
@@ -595,14 +670,7 @@ export default function ProductLabPage() {
 
     return (
         <div className={cn("product-lab-page h-full overflow-y-auto bg-[#f7f7f5] text-stone-900 dark:bg-[#101110] dark:text-stone-100", realmExperience.imperial && "is-imperial")}>
-            <ProductRealmHeader
-                realmName={profile?.realmName || "斗之气"}
-                stageName={profile?.stageName || "一段"}
-                title={realmExperience.title}
-                description={realmExperience.description}
-                imperial={realmExperience.imperial}
-                capabilities={productCapabilities}
-            />
+            <ProductRealmHeader realmName={profile?.realmName || "斗之气"} stageName={profile?.stageName || "一段"} title={realmExperience.title} description={realmExperience.description} imperial={realmExperience.imperial} />
             {imperialEntryVisible ? (
                 <div className="product-imperial-entry pointer-events-none fixed inset-x-0 top-16 z-30 mx-auto w-fit border border-[#c9a86a]/35 bg-[#111714]/94 px-5 py-3 text-center shadow-2xl backdrop-blur-xl">
                     <div className="text-sm font-medium text-[#e4d2aa]">正在开启帝境商品领域...</div>
@@ -610,8 +678,12 @@ export default function ProductLabPage() {
                 </div>
             ) : null}
 
-            <div className="mx-auto grid min-h-[calc(100%-132px)] max-w-[1560px] grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] 2xl:grid-cols-[280px_minmax(0,1fr)_400px]">
-                <aside className="border-b border-stone-200 bg-white/55 p-4 dark:border-white/10 dark:bg-white/[0.018] lg:border-r lg:border-b-0">
+            <div className="mx-auto max-w-[1440px] px-0 lg:px-6 lg:pt-5">
+                <ProductWorkflowSteps currentStep={workflowStep} availableSteps={availableWorkflowSteps} onSelect={setWorkflowStep} />
+            </div>
+
+            <div className="mx-auto grid min-h-[calc(100%-132px)] max-w-[1440px] grid-cols-1 lg:grid-cols-[248px_minmax(0,1fr)] lg:px-6 lg:pb-8">
+                <aside className="border-b border-stone-200 bg-white/55 p-3 dark:border-white/10 dark:bg-white/[0.018] lg:border-r lg:border-b-0 lg:p-4">
                     <SectionHeading
                         icon={<PackageSearch className="size-4" />}
                         title="商品项目"
@@ -626,7 +698,7 @@ export default function ProductLabPage() {
                     <input ref={fileInputRef} type="file" accept="image/*" multiple={canBatch} className="hidden" onChange={(event) => void uploadProducts(Array.from(event.target.files || []))} />
                     <button
                         type="button"
-                        className="mt-4 flex min-h-36 w-full flex-col items-center justify-center border border-dashed border-stone-300 bg-white/50 px-4 text-center transition hover:border-stone-500 hover:bg-white dark:border-white/15 dark:bg-white/[0.025] dark:hover:border-white/30"
+                        className="mt-3 flex min-h-24 w-full flex-col items-center justify-center border border-dashed border-stone-300 bg-white/50 px-4 text-center transition hover:border-stone-500 hover:bg-white dark:border-white/15 dark:bg-white/[0.025] dark:hover:border-white/30 lg:min-h-28"
                         onClick={() => fileInputRef.current?.click()}
                         onDragOver={(event) => event.preventDefault()}
                         onDrop={(event) => {
@@ -634,12 +706,12 @@ export default function ProductLabPage() {
                             void uploadProducts(Array.from(event.dataTransfer.files || []));
                         }}
                     >
-                        {uploading ? <LoaderCircle className="size-6 animate-spin text-stone-500" /> : <Upload className="size-6 text-stone-500" />}
-                        <span className="mt-3 text-sm font-medium">上传商品图片</span>
+                        {uploading ? <LoaderCircle className="size-5 animate-spin text-stone-500" /> : <Upload className="size-5 text-stone-500" />}
+                        <span className="mt-2 text-sm font-medium">新建商品</span>
                         <span className="mt-1 text-xs leading-5 text-stone-500">{canBatch ? `支持一次导入 ${MAX_BATCH_UPLOADS} 个商品` : "拖入图片或点击选择"}</span>
                     </button>
 
-                    <div className="mt-5 space-y-2">
+                    <div className="mt-4 flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
                         {loading ? (
                             <Skeleton active paragraph={{ rows: 4 }} title={false} />
                         ) : projects.length ? (
@@ -648,7 +720,7 @@ export default function ProductLabPage() {
                                     key={project.id}
                                     type="button"
                                     className={cn(
-                                        "group flex w-full items-center gap-3 border p-2.5 text-left transition",
+                                        "group flex w-full min-w-60 items-center gap-3 border p-2.5 text-left transition lg:min-w-0",
                                         project.id === activeProjectId
                                             ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/65 dark:bg-[#c9a86a]/10 dark:text-[#f2ead8]"
                                             : "border-stone-200 bg-transparent hover:border-stone-400 dark:border-white/10 dark:hover:border-white/25",
@@ -673,224 +745,437 @@ export default function ProductLabPage() {
                     {profileLoading || loading ? (
                         <Skeleton active paragraph={{ rows: 10 }} />
                     ) : activeProject ? (
-                        <div className="space-y-8">
-                            <section>
-                                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-                                    <div>
-                                        <div className="text-xs font-medium text-stone-500">商品本源</div>
-                                        <h2 className="mt-1 text-xl font-semibold">识别商品，整理真实卖点</h2>
-                                        <p className="mt-2 text-sm text-stone-500">分析由后台文本模型完成，不消耗生图额度。识别结果可继续编辑。</p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <Button loading={analyzing} icon={<Sparkles className="size-4" />} onClick={analyzeCurrentProject} disabled={!canAnalyze || !analysisAvailable}>
-                                            解析商品
-                                        </Button>
+                        <div className="mx-auto w-full max-w-5xl">
+                            {workflowStep === "source" ? (
+                                <section className="space-y-6">
+                                    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                                        <div>
+                                            <div className="text-xs font-medium text-stone-500">第一步 · 商品原图</div>
+                                            <h2 className="mt-1 text-xl font-semibold">从一张真实商品图开始</h2>
+                                            <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-500">图片只负责确认商品身份。AI 会继续整理名称、卖点和适合的视觉方向。</p>
+                                        </div>
                                         <Popconfirm title="移除这个商品项目？" description="已入藏卷阁的作品不会删除。" okText="移除" cancelText="取消" onConfirm={() => removeProject(activeProject)}>
                                             <Tooltip title="移除项目">
                                                 <Button danger type="text" icon={<Trash2 className="size-4" />} aria-label="移除商品项目" />
                                             </Tooltip>
                                         </Popconfirm>
                                     </div>
-                                </div>
 
-                                <div className="mt-6 grid gap-5 xl:grid-cols-[220px_minmax(0,1fr)]">
-                                    <div className="aspect-square overflow-hidden border border-stone-200 bg-white dark:border-white/10 dark:bg-white/[0.025]">
-                                        <img src={activeProject.sourceUrl} alt={activeProject.title} className="size-full object-contain" />
-                                    </div>
-                                    <div className="grid gap-4 sm:grid-cols-2">
-                                        <Field label="商品名称">
-                                            <Input value={draftAnalysis.productName} maxLength={120} onChange={(event) => setDraftAnalysis((current) => ({ ...current, productName: event.target.value }))} />
-                                        </Field>
-                                        <Field label="商品类目">
-                                            <Input value={draftAnalysis.category} maxLength={120} placeholder="例如：茶具 / 家居 / 食品" onChange={(event) => setDraftAnalysis((current) => ({ ...current, category: event.target.value }))} />
-                                        </Field>
-                                        <Field label="细分类">
-                                            <Input value={draftAnalysis.subcategory} maxLength={120} placeholder="例如：马克杯 / 便携榨汁杯" onChange={(event) => setDraftAnalysis((current) => ({ ...current, subcategory: event.target.value }))} />
-                                        </Field>
-                                        <Field label="目标人群">
-                                            <Input value={draftAnalysis.targetAudience} maxLength={500} placeholder="这件商品适合谁" onChange={(event) => setDraftAnalysis((current) => ({ ...current, targetAudience: event.target.value }))} />
-                                        </Field>
-                                        <Field label="标题建议">
-                                            <Input value={draftAnalysis.titleSuggestion} maxLength={200} placeholder="保持真实，不堆砌夸张词" onChange={(event) => setDraftAnalysis((current) => ({ ...current, titleSuggestion: event.target.value }))} />
-                                        </Field>
-                                        <Field label="商品卖点" className="sm:col-span-2">
-                                            <Input.TextArea
-                                                value={draftAnalysis.sellingPoints.join("\n")}
-                                                autoSize={{ minRows: 3, maxRows: 6 }}
-                                                placeholder="每行一个可确认的卖点"
-                                                onChange={(event) =>
-                                                    setDraftAnalysis((current) => ({
-                                                        ...current,
-                                                        sellingPoints: event.target.value
-                                                            .split(/\r?\n/)
-                                                            .map((item) => item.trim())
-                                                            .filter(Boolean)
-                                                            .slice(0, 8),
-                                                    }))
-                                                }
-                                            />
-                                        </Field>
-                                        <details className="sm:col-span-2 border-y border-stone-200 py-3 dark:border-white/10">
-                                            <summary className="cursor-pointer text-sm font-medium text-stone-700 marker:text-stone-400 dark:text-stone-300">商品事实与详情页依据</summary>
-                                            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                                                <Field label="材质">
-                                                    <Input value={draftAnalysis.material} maxLength={240} placeholder="只填写可确认材质" onChange={(event) => setDraftAnalysis((current) => ({ ...current, material: event.target.value }))} />
-                                                </Field>
-                                                <Field label="固有颜色">
-                                                    <Input value={draftAnalysis.color} maxLength={240} placeholder="商品本身的颜色，不是背景色" onChange={(event) => setDraftAnalysis((current) => ({ ...current, color: event.target.value }))} />
-                                                </Field>
-                                                <Field label="真实使用场景">
+                                    <div className="grid grid-cols-[104px_minmax(0,1fr)] overflow-hidden border border-stone-200 bg-white dark:border-white/10 dark:bg-white/[0.018] sm:grid-cols-[160px_minmax(0,1fr)] md:grid-cols-[minmax(220px,300px)_minmax(0,1fr)]">
+                                        <div className="aspect-square self-start bg-stone-100 p-3 dark:bg-black/15 md:p-4">
+                                            <img src={activeProject.sourceUrl} alt={activeProject.title} className="size-full object-contain" />
+                                        </div>
+                                        <div className="flex min-w-0 flex-col justify-between gap-4 border-l border-stone-200 p-4 dark:border-white/10 md:p-7">
+                                            <div>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <Tag bordered={false}>{hasProductAnalysis(activeProject) ? "已完成商品解析" : "等待商品解析"}</Tag>
+                                                    <span className="text-xs text-stone-400">{projectStatusLabel(activeProject.status)}</span>
+                                                </div>
+                                                <h3 className="mt-4 text-lg font-semibold">{draftAnalysis.productName || activeProject.title}</h3>
+                                                <p className="mt-2 text-sm leading-6 text-stone-500">
+                                                    {hasProductAnalysis(activeProject)
+                                                        ? "商品信息已经整理好，可以直接进入方案确认。"
+                                                        : canAnalyze && analysisAvailable
+                                                          ? "先让 AI 识别商品，再确认要生成哪些图片。"
+                                                          : "当前可先手动确认方案，后续仍可补充商品信息。"}
+                                                </p>
+                                                <details className="mt-4 border-y border-stone-200 py-3 dark:border-white/10">
+                                                    <summary className="cursor-pointer text-xs font-medium text-stone-600 marker:text-stone-400 dark:text-stone-300">补充约束（可选）</summary>
                                                     <Input.TextArea
-                                                        value={draftAnalysis.usageScenarios.join("\n")}
-                                                        autoSize={{ minRows: 3, maxRows: 6 }}
-                                                        placeholder="每行一个真实使用场景"
-                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, usageScenarios: lines(event.target.value, 8) }))}
-                                                    />
-                                                </Field>
-                                                <Field label="可确认差异点">
-                                                    <Input.TextArea
-                                                        value={draftAnalysis.differentiationPoints.join("\n")}
-                                                        autoSize={{ minRows: 3, maxRows: 6 }}
-                                                        placeholder="每行一个真实差异点"
-                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, differentiationPoints: lines(event.target.value, 8) }))}
-                                                    />
-                                                </Field>
-                                                <Field label="用户顾虑">
-                                                    <Input.TextArea
-                                                        value={draftAnalysis.userConcerns.join("\n")}
-                                                        autoSize={{ minRows: 3, maxRows: 6 }}
-                                                        placeholder="例如：是否易清洁、尺寸是否合适"
-                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, userConcerns: lines(event.target.value, 8) }))}
-                                                    />
-                                                </Field>
-                                                <Field label="结构与使用事实">
-                                                    <Input.TextArea
-                                                        value={draftAnalysis.additionalInformation}
-                                                        autoSize={{ minRows: 3, maxRows: 6 }}
+                                                        className="mt-3"
+                                                        value={draftAnalysis.sourceNotes || ""}
+                                                        autoSize={{ minRows: 2, maxRows: 4 }}
                                                         maxLength={2_000}
-                                                        placeholder="部件关系、使用方式、已确认规格和未知信息"
-                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, additionalInformation: event.target.value }))}
+                                                        placeholder="必须保留的包装文字、颜色、结构或卖点"
+                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, sourceNotes: event.target.value }))}
                                                     />
-                                                </Field>
+                                                </details>
+                                            </div>
+                                            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+                                                {hasProductAnalysis(activeProject) && canAnalyze && analysisAvailable ? (
+                                                    <Button loading={analyzing} onClick={() => void analyzeCurrentProject()}>
+                                                        重新解析
+                                                    </Button>
+                                                ) : null}
+                                                <Button type="primary" size="large" loading={analyzing} icon={<ArrowRight className="size-4" />} onClick={() => void analyzeAndContinue()}>
+                                                    {hasProductAnalysis(activeProject) ? "确认方案" : canAnalyze && analysisAvailable ? "解析商品并继续" : "继续选择方案"}
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+                            ) : workflowStep === "plan" ? (
+                                <div className="space-y-8 pb-24">
+                                    <section>
+                                        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                                            <div>
+                                                <div className="text-xs font-medium text-stone-500">第二步 · 确认方案</div>
+                                                <h2 className="mt-1 text-xl font-semibold">告诉 AI 这次要完成什么</h2>
+                                                <p className="mt-2 text-sm text-stone-500">默认方案已经收敛到可直接生成的范围，需要时再展开细节。</p>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <Button type="text" icon={<ArrowLeft className="size-4" />} onClick={() => setWorkflowStep("source")}>
+                                                    返回商品图
+                                                </Button>
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-6 grid grid-cols-[112px_minmax(0,1fr)] gap-4 sm:grid-cols-[160px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-5">
+                                            <div className="aspect-square overflow-hidden border border-stone-200 bg-white dark:border-white/10 dark:bg-white/[0.025]">
+                                                <img src={activeProject.sourceUrl} alt={activeProject.title} className="size-full object-contain" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <div className="border-b border-stone-200 pb-5 dark:border-white/10">
+                                                    <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                                                        <Tag bordered={false}>{draftAnalysis.category || "未确认类目"}</Tag>
+                                                        {draftAnalysis.subcategory ? <span>{draftAnalysis.subcategory}</span> : null}
+                                                    </div>
+                                                    <h3 className="mt-3 text-lg font-semibold">{draftAnalysis.productName || activeProject.title}</h3>
+                                                    <div className="mt-3 flex flex-wrap gap-2">
+                                                        {draftAnalysis.sellingPoints.length ? (
+                                                            draftAnalysis.sellingPoints.slice(0, 4).map((point) => (
+                                                                <span key={point} className="border border-stone-200 bg-white px-2.5 py-1 text-xs text-stone-600 dark:border-white/10 dark:bg-white/[0.025] dark:text-stone-300">
+                                                                    {point}
+                                                                </span>
+                                                            ))
+                                                        ) : (
+                                                            <span className="text-xs text-stone-400">尚未整理卖点，可在下方补充。</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <details className="mt-4 border-b border-stone-200 pb-4 dark:border-white/10">
+                                                    <summary className="cursor-pointer text-sm font-medium text-stone-700 marker:text-stone-400 dark:text-stone-300">编辑商品信息</summary>
+                                                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                                                        <Field label="商品名称">
+                                                            <Input value={draftAnalysis.productName} maxLength={120} onChange={(event) => setDraftAnalysis((current) => ({ ...current, productName: event.target.value }))} />
+                                                        </Field>
+                                                        <Field label="商品类目">
+                                                            <Input value={draftAnalysis.category} maxLength={120} placeholder="例如：茶具 / 家居 / 食品" onChange={(event) => setDraftAnalysis((current) => ({ ...current, category: event.target.value }))} />
+                                                        </Field>
+                                                        <Field label="细分类">
+                                                            <Input
+                                                                value={draftAnalysis.subcategory}
+                                                                maxLength={120}
+                                                                placeholder="例如：马克杯 / 便携榨汁杯"
+                                                                onChange={(event) => setDraftAnalysis((current) => ({ ...current, subcategory: event.target.value }))}
+                                                            />
+                                                        </Field>
+                                                        <Field label="目标人群">
+                                                            <Input
+                                                                value={draftAnalysis.targetAudience}
+                                                                maxLength={500}
+                                                                placeholder="这件商品适合谁"
+                                                                onChange={(event) => setDraftAnalysis((current) => ({ ...current, targetAudience: event.target.value }))}
+                                                            />
+                                                        </Field>
+                                                        <Field label="标题建议">
+                                                            <Input
+                                                                value={draftAnalysis.titleSuggestion}
+                                                                maxLength={200}
+                                                                placeholder="保持真实，不堆砌夸张词"
+                                                                onChange={(event) => setDraftAnalysis((current) => ({ ...current, titleSuggestion: event.target.value }))}
+                                                            />
+                                                        </Field>
+                                                        <Field label="商品卖点" className="sm:col-span-2">
+                                                            <Input.TextArea
+                                                                value={draftAnalysis.sellingPoints.join("\n")}
+                                                                autoSize={{ minRows: 3, maxRows: 6 }}
+                                                                placeholder="每行一个可确认的卖点"
+                                                                onChange={(event) =>
+                                                                    setDraftAnalysis((current) => ({
+                                                                        ...current,
+                                                                        sellingPoints: event.target.value
+                                                                            .split(/\r?\n/)
+                                                                            .map((item) => item.trim())
+                                                                            .filter(Boolean)
+                                                                            .slice(0, 8),
+                                                                    }))
+                                                                }
+                                                            />
+                                                        </Field>
+                                                        <details className="sm:col-span-2 border-y border-stone-200 py-3 dark:border-white/10">
+                                                            <summary className="cursor-pointer text-sm font-medium text-stone-700 marker:text-stone-400 dark:text-stone-300">商品事实与详情页依据</summary>
+                                                            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                                                                <Field label="材质">
+                                                                    <Input value={draftAnalysis.material} maxLength={240} placeholder="只填写可确认材质" onChange={(event) => setDraftAnalysis((current) => ({ ...current, material: event.target.value }))} />
+                                                                </Field>
+                                                                <Field label="固有颜色">
+                                                                    <Input
+                                                                        value={draftAnalysis.color}
+                                                                        maxLength={240}
+                                                                        placeholder="商品本身的颜色，不是背景色"
+                                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, color: event.target.value }))}
+                                                                    />
+                                                                </Field>
+                                                                <Field label="真实使用场景">
+                                                                    <Input.TextArea
+                                                                        value={draftAnalysis.usageScenarios.join("\n")}
+                                                                        autoSize={{ minRows: 3, maxRows: 6 }}
+                                                                        placeholder="每行一个真实使用场景"
+                                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, usageScenarios: lines(event.target.value, 8) }))}
+                                                                    />
+                                                                </Field>
+                                                                <Field label="可确认差异点">
+                                                                    <Input.TextArea
+                                                                        value={draftAnalysis.differentiationPoints.join("\n")}
+                                                                        autoSize={{ minRows: 3, maxRows: 6 }}
+                                                                        placeholder="每行一个真实差异点"
+                                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, differentiationPoints: lines(event.target.value, 8) }))}
+                                                                    />
+                                                                </Field>
+                                                                <Field label="用户顾虑">
+                                                                    <Input.TextArea
+                                                                        value={draftAnalysis.userConcerns.join("\n")}
+                                                                        autoSize={{ minRows: 3, maxRows: 6 }}
+                                                                        placeholder="例如：是否易清洁、尺寸是否合适"
+                                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, userConcerns: lines(event.target.value, 8) }))}
+                                                                    />
+                                                                </Field>
+                                                                <Field label="结构与使用事实">
+                                                                    <Input.TextArea
+                                                                        value={draftAnalysis.additionalInformation}
+                                                                        autoSize={{ minRows: 3, maxRows: 6 }}
+                                                                        maxLength={2_000}
+                                                                        placeholder="部件关系、使用方式、已确认规格和未知信息"
+                                                                        onChange={(event) => setDraftAnalysis((current) => ({ ...current, additionalInformation: event.target.value }))}
+                                                                    />
+                                                                </Field>
+                                                            </div>
+                                                        </details>
+                                                        <Field label="视觉方向">
+                                                            <Input.TextArea
+                                                                value={draftAnalysis.visualDirection}
+                                                                autoSize={{ minRows: 2, maxRows: 5 }}
+                                                                maxLength={1_000}
+                                                                placeholder="例如：明亮、克制、留白充足"
+                                                                onChange={(event) => setDraftAnalysis((current) => ({ ...current, visualDirection: event.target.value }))}
+                                                            />
+                                                        </Field>
+                                                        <Field label="补充说明">
+                                                            <Input.TextArea
+                                                                value={draftAnalysis.sourceNotes || ""}
+                                                                autoSize={{ minRows: 2, maxRows: 5 }}
+                                                                maxLength={2_000}
+                                                                placeholder="必须保留的包装文字、颜色或结构"
+                                                                onChange={(event) => setDraftAnalysis((current) => ({ ...current, sourceNotes: event.target.value }))}
+                                                            />
+                                                        </Field>
+                                                    </div>
+                                                </details>
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    <section className="border-t border-stone-200 pt-7 dark:border-white/10">
+                                        <SectionHeading icon={<FlaskConical className="size-4" />} title="本次创作目标" />
+                                        <div className="mt-4 flex w-full min-w-0 max-w-full snap-x gap-3 overflow-x-auto pb-2 md:grid md:grid-cols-3 md:overflow-visible md:pb-0">
+                                            {PRODUCT_PLAN_PRESETS.map((preset) => {
+                                                const ids = productPlanPresetSelection(preset.key, selectablePlanItems);
+                                                const selected = selectedPreset === preset.key;
+                                                return (
+                                                    <button
+                                                        key={preset.key}
+                                                        type="button"
+                                                        disabled={!ids.length}
+                                                        className={cn(
+                                                            "min-h-28 min-w-64 snap-start border p-4 text-left transition md:min-w-0",
+                                                            selected
+                                                                ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/65 dark:bg-[#c9a86a]/10 dark:text-[#f2ead8]"
+                                                                : ids.length
+                                                                  ? "border-stone-200 bg-white hover:border-stone-400 dark:border-white/10 dark:bg-white/[0.018] dark:hover:border-white/25"
+                                                                  : "cursor-not-allowed border-stone-200 bg-stone-100 opacity-45 dark:border-white/6 dark:bg-white/[0.015]",
+                                                        )}
+                                                        onClick={() => selectPlanPreset(preset.key)}
+                                                    >
+                                                        <span className="flex items-start justify-between gap-3">
+                                                            <span className="text-sm font-semibold">{preset.label}</span>
+                                                            <span className={cn("shrink-0 text-[11px]", selected ? "text-white/60 dark:text-[#d8c59e]/70" : "text-stone-400")}>{preset.badge}</span>
+                                                        </span>
+                                                        <span className="mt-2 block text-xs leading-5 opacity-70">{preset.description}</span>
+                                                        <span className="mt-3 block text-xs font-medium">{ids.length ? `${ids.length} 幅` : "当前不可用"}</span>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                        {selectedPreset === "custom" ? <div className="mt-3 text-xs text-stone-500">当前为自定义方案，共选择 {selectedPlanIds.length} 幅。</div> : null}
+                                    </section>
+
+                                    <div className="sticky bottom-0 z-20 flex flex-col gap-3 border-y border-stone-200 bg-[#f7f7f5]/95 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-[#101110]/95 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <div className="text-sm font-medium">本次将生成 {selectedPlanIds.length} 幅商品画卷</div>
+                                            <div className="mt-1 text-xs text-stone-500">按现有额度规则逐张处理，完成后再手动入藏。</div>
+                                        </div>
+                                        <Button type="primary" size="large" loading={savingPlan} disabled={!selectedPlanIds.length} icon={<ArrowRight className="size-4" />} onClick={() => void savePlanningAndContinue()}>
+                                            确认并进入生成
+                                        </Button>
+                                    </div>
+
+                                    <section className="border-t border-stone-200 pt-7 dark:border-white/10">
+                                        <SectionHeading icon={<Layers3 className="size-4" />} title="视觉基调" action={<Tag bordered={false}>拼多多</Tag>} />
+                                        <div className={cn("mt-5 grid min-w-0 gap-6", visualControls.showTemplates && "lg:grid-cols-2")}>
+                                            <div className="min-w-0">
+                                                <div>
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <div className="text-xs font-medium text-stone-500">{visualControls.styleLabel}</div>
+                                                        <div className="text-xs text-stone-400">{visualControls.styleHint}</div>
+                                                    </div>
+                                                    <div className={cn("mt-2 grid grid-cols-2 gap-2", !visualControls.showTemplates && "lg:grid-cols-4")}>
+                                                        {productStyleOptions.map((style) => {
+                                                            const selected = selectedStyles[0] === style.value;
+                                                            return (
+                                                                <button
+                                                                    key={style.value}
+                                                                    type="button"
+                                                                    className={cn(
+                                                                        "min-h-16 border px-3 py-2 text-left transition",
+                                                                        selected
+                                                                            ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/65 dark:bg-[#c9a86a]/10 dark:text-[#f0e5cc]"
+                                                                            : "border-stone-200 hover:border-stone-400 dark:border-white/10 dark:hover:border-white/25",
+                                                                    )}
+                                                                    onClick={() => selectPrimaryStyle(style.value)}
+                                                                >
+                                                                    <span className="flex items-center justify-between gap-2 text-sm font-medium">
+                                                                        <span>{style.label}</span>
+                                                                        {style.value === "value" ? <span className="text-[10px] opacity-60">推荐</span> : null}
+                                                                    </span>
+                                                                    <span className="mt-1 block text-xs opacity-65">{style.description}</span>
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {visualControls.showTemplates ? (
+                                                <div className="min-w-0">
+                                                    <div className="text-xs font-medium text-stone-500">推荐版式</div>
+                                                    <div className="mt-2 flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-2">
+                                                        {templates.map((template) => (
+                                                            <button
+                                                                key={template.id}
+                                                                type="button"
+                                                                className={cn(
+                                                                    "flex min-h-16 min-w-56 items-center justify-between gap-3 border px-3 py-2 text-left transition",
+                                                                    selectedTemplateId === template.id
+                                                                        ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/65 dark:bg-[#c9a86a]/10 dark:text-[#f2ead8]"
+                                                                        : "border-stone-200 hover:border-stone-400 dark:border-white/10 dark:hover:border-white/25",
+                                                                )}
+                                                                onClick={() => applyTemplate(template)}
+                                                            >
+                                                                <span>
+                                                                    <span className="flex items-center gap-2 text-sm font-medium">
+                                                                        <span>{template.name}</span>
+                                                                        {template.id === "pdd-main-contrast-banner" ? <span className="text-[10px] opacity-60">推荐</span> : null}
+                                                                    </span>
+                                                                    <span className={cn("mt-1 block text-xs", selectedTemplateId === template.id ? "text-white/60 dark:text-[#d8c59e]/70" : "text-stone-500")}>
+                                                                        {template.aspectRatio} · {styleLabel(template.styleKey)}
+                                                                    </span>
+                                                                </span>
+                                                                <ImagePlus className="size-4 shrink-0 text-stone-400" />
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                        </div>
+
+                                        <details className="mt-7 border-y border-stone-200 py-4 dark:border-white/10">
+                                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-stone-700 dark:text-stone-300">
+                                                <span className="flex items-center gap-2">
+                                                    <Settings2 className="size-4" />
+                                                    更多设置
+                                                </span>
+                                                <span className="text-xs font-normal text-stone-400">模型、能力、多风格与逐页调整</span>
+                                            </summary>
+                                            <div className="mt-6 space-y-7">
+                                                <div className="grid gap-5 lg:grid-cols-2">
+                                                    <Field label="生图模型">
+                                                        <ModelPicker config={effectiveConfig} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(true, "channels")} />
+                                                    </Field>
+                                                    <Field label="目标平台">
+                                                        <Select value={activeProject.platform} options={PLATFORM_OPTIONS} className="w-full" disabled />
+                                                    </Field>
+                                                    {canUseBrand ? (
+                                                        <Field label="品牌信息">
+                                                            <Input value={brandName} maxLength={120} placeholder="可选，用于统一整套视觉表达" onChange={(event) => setBrandName(event.target.value)} />
+                                                        </Field>
+                                                    ) : null}
+                                                    {canUseMultipleStyles ? (
+                                                        <div>
+                                                            <div className="text-xs font-medium text-stone-500">附加风格探索</div>
+                                                            <div className="mt-2 flex flex-wrap gap-2">
+                                                                {productStyleOptions.map((style) => (
+                                                                    <button
+                                                                        key={style.value}
+                                                                        type="button"
+                                                                        className={cn(
+                                                                            "border px-3 py-2 text-xs transition",
+                                                                            selectedStyles.includes(style.value)
+                                                                                ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/65 dark:bg-[#c9a86a]/10"
+                                                                                : "border-stone-200 hover:border-stone-400 dark:border-white/10 dark:hover:border-white/25",
+                                                                        )}
+                                                                        onClick={() => toggleStyle(style.value)}
+                                                                    >
+                                                                        {style.label}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                            <div className="mt-2 text-xs text-stone-400">添加风格后，可在下方逐张选择需要的版本。</div>
+                                                        </div>
+                                                    ) : null}
+                                                </div>
+
+                                                <div>
+                                                    <div className="text-xs font-medium text-stone-500">当前可用内容</div>
+                                                    <div className="mt-3">
+                                                        <ProductOutputGrid outputs={outputs} selectedKinds={selectedKinds} onToggle={toggleOutput} />
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <div className="text-xs font-medium text-stone-500">逐张调整</div>
+                                                        <Tag bordered={false}>
+                                                            已选 {selectedPlanIds.length}/{selectablePlanItems.length}
+                                                        </Tag>
+                                                    </div>
+                                                    <div className="mt-3 max-h-80 overflow-y-auto border-y border-stone-200 dark:border-white/10">
+                                                        {selectablePlanItems.map((item) => (
+                                                            <div key={item.id} className="flex min-h-14 items-center gap-3 border-b border-stone-200/80 px-1 py-2 last:border-0 dark:border-white/8">
+                                                                <Checkbox checked={selectedPlanIds.includes(item.id)} onChange={() => togglePlanItem(item.id)} aria-label={`选择${item.title}`} />
+                                                                <span className="min-w-0 flex-1">
+                                                                    <span className="block truncate text-sm font-medium">{item.title}</span>
+                                                                    <span className="mt-0.5 block truncate text-xs text-stone-500">{item.description}</span>
+                                                                </span>
+                                                                <span className="shrink-0 text-[11px] text-stone-400">{item.aspectRatio}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="border-t border-stone-200 pt-6 dark:border-white/10">
+                                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                                        <div>
+                                                            <div className="text-xs font-medium text-stone-500">统一视觉规范</div>
+                                                            <div className="mt-1 text-sm font-semibold">{activeVisualStyleGuide.styleName}</div>
+                                                        </div>
+                                                        <Tag bordered={false}>{styleLabel(selectedStyles[0] || "value")}</Tag>
+                                                    </div>
+                                                    <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+                                                        <VisualRule label="色彩" value={activeVisualStyleGuide.colorPalette} />
+                                                        <VisualRule label="背景体系" value={activeVisualStyleGuide.backgroundSystem} />
+                                                        <VisualRule label="光线与镜头" value={`${activeVisualStyleGuide.lighting}；${activeVisualStyleGuide.cameraLanguage}`} />
+                                                        <VisualRule label="禁止项" value={activeVisualStyleGuide.negativeStyleConstraints} />
+                                                    </div>
+                                                </div>
                                             </div>
                                         </details>
-                                        <Field label="视觉方向">
-                                            <Input.TextArea
-                                                value={draftAnalysis.visualDirection}
-                                                autoSize={{ minRows: 2, maxRows: 5 }}
-                                                maxLength={1_000}
-                                                placeholder="例如：明亮、克制、留白充足"
-                                                onChange={(event) => setDraftAnalysis((current) => ({ ...current, visualDirection: event.target.value }))}
-                                            />
-                                        </Field>
-                                        <Field label="补充说明">
-                                            <Input.TextArea
-                                                value={draftAnalysis.sourceNotes || ""}
-                                                autoSize={{ minRows: 2, maxRows: 5 }}
-                                                maxLength={2_000}
-                                                placeholder="必须保留的包装文字、颜色或结构"
-                                                onChange={(event) => setDraftAnalysis((current) => ({ ...current, sourceNotes: event.target.value }))}
-                                            />
-                                        </Field>
-                                    </div>
+                                    </section>
                                 </div>
-                            </section>
-
-                            <section className="border-t border-stone-200 pt-7 dark:border-white/10">
-                                <SectionHeading icon={<Layers3 className="size-4" />} title="视觉规划" />
-                                <div className="mt-5 grid gap-6 xl:grid-cols-2">
-                                    <div className="space-y-5">
-                                        <Field label="目标平台">
-                                            <Select value={activeProject.platform} options={PLATFORM_OPTIONS} className="w-full" disabled />
-                                        </Field>
-                                        <div>
-                                            <div className="flex items-center justify-between gap-3">
-                                                <div className="text-xs font-medium text-stone-500">视觉风格</div>
-                                                <div className="text-xs text-stone-400">{canUseMultipleStyles ? "最多同时选择 3 种" : "当前可选择 1 种"}</div>
-                                            </div>
-                                            <div className="mt-2 grid grid-cols-2 gap-2">
-                                                {productStyleOptions.map((style) => {
-                                                    const selected = selectedStyles.includes(style.value);
-                                                    return (
-                                                        <button
-                                                            key={style.value}
-                                                            type="button"
-                                                            className={cn(
-                                                                "min-h-16 border px-3 py-2 text-left transition",
-                                                                selected
-                                                                    ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/65 dark:bg-[#c9a86a]/10 dark:text-[#f0e5cc]"
-                                                                    : "border-stone-200 hover:border-stone-400 dark:border-white/10 dark:hover:border-white/25",
-                                                            )}
-                                                            onClick={() => toggleStyle(style.value)}
-                                                        >
-                                                            <span className="block text-sm font-medium">{style.label}</span>
-                                                            <span className="mt-1 block text-xs opacity-65">{style.description}</span>
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                        {canUseBrand ? (
-                                            <Field label="品牌信息">
-                                                <Input value={brandName} maxLength={120} placeholder="可选，用于统一整套视觉表达" onChange={(event) => setBrandName(event.target.value)} />
-                                            </Field>
-                                        ) : null}
-                                    </div>
-
-                                    <div>
-                                        <div className="text-xs font-medium text-stone-500">拼多多模板</div>
-                                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                                            {templates.map((template) => (
-                                                <button
-                                                    key={template.id}
-                                                    type="button"
-                                                    className="flex min-h-16 items-center justify-between gap-3 border border-stone-200 px-3 py-2 text-left transition hover:border-stone-400 dark:border-white/10 dark:hover:border-white/25"
-                                                    onClick={() => applyTemplate(template)}
-                                                >
-                                                    <span>
-                                                        <span className="block text-sm font-medium">{template.name}</span>
-                                                        <span className="mt-1 block text-xs text-stone-500">
-                                                            {template.aspectRatio} · {styleLabel(template.styleKey)}
-                                                        </span>
-                                                    </span>
-                                                    <ImagePlus className="size-4 shrink-0 text-stone-400" />
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="mt-7 border-t border-stone-200 pt-6 dark:border-white/10">
-                                    <div className="flex flex-wrap items-center justify-between gap-3">
-                                        <div>
-                                            <div className="text-xs font-medium text-stone-500">统一视觉规范</div>
-                                            <div className="mt-1 text-sm font-semibold">{activeVisualStyleGuide.styleName}</div>
-                                        </div>
-                                        <Tag bordered={false}>{styleLabel(selectedStyles[0] || "clean")}</Tag>
-                                    </div>
-                                    <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-                                        <VisualRule label="色彩" value={activeVisualStyleGuide.colorPalette} />
-                                        <VisualRule label="背景体系" value={activeVisualStyleGuide.backgroundSystem} />
-                                        <VisualRule label="光线与镜头" value={`${activeVisualStyleGuide.lighting}；${activeVisualStyleGuide.cameraLanguage}`} />
-                                        <VisualRule label="禁止项" value={activeVisualStyleGuide.negativeStyleConstraints} />
-                                    </div>
-                                </div>
-
-                                <div className="mt-6 flex justify-end">
-                                    <Button type="primary" loading={savingPlan} icon={<Check className="size-4" />} onClick={savePlanning}>
-                                        保存视觉规划
-                                    </Button>
-                                </div>
-                            </section>
-
-                            <section className="border-t border-stone-200 pt-7 dark:border-white/10 2xl:hidden">
+                            ) : (
                                 <GenerationWorkbench
-                                    outputs={outputs}
-                                    selectedKinds={selectedKinds}
-                                    onToggle={toggleOutput}
                                     plan={selectablePlanItems}
                                     selectedPlanIds={selectedPlanIds}
-                                    onTogglePlan={togglePlanItem}
                                     model={model}
                                     config={effectiveConfig}
                                     onModelChange={(value) => updateConfig("imageModel", value)}
@@ -904,8 +1189,9 @@ export default function ProductLabPage() {
                                     generationBlockReason={generationBlockReason}
                                     onGenerate={generateSelectedPlan}
                                     onArchive={archiveGeneration}
+                                    onBack={() => setWorkflowStep("plan")}
                                 />
-                            </section>
+                            )}
                         </div>
                     ) : (
                         <div className="grid min-h-[520px] place-items-center">
@@ -925,44 +1211,14 @@ export default function ProductLabPage() {
                         </div>
                     )}
                 </main>
-
-                <aside className="hidden border-l border-stone-200 bg-white/45 p-5 dark:border-white/10 dark:bg-white/[0.015] 2xl:block">
-                    {activeProject ? (
-                        <GenerationWorkbench
-                            outputs={outputs}
-                            selectedKinds={selectedKinds}
-                            onToggle={toggleOutput}
-                            plan={selectablePlanItems}
-                            selectedPlanIds={selectedPlanIds}
-                            onTogglePlan={togglePlanItem}
-                            model={model}
-                            config={effectiveConfig}
-                            onModelChange={(value) => updateConfig("imageModel", value)}
-                            onMissingConfig={() => openConfigDialog(true, "channels")}
-                            generations={generations}
-                            archivedAssetKeys={archivedAssetKeys}
-                            savingArchiveIds={savingArchiveIds}
-                            generating={generating}
-                            progress={generationProgress}
-                            actionLabel={realmExperience.actionLabel}
-                            generationBlockReason={generationBlockReason}
-                            onGenerate={generateSelectedPlan}
-                            onArchive={archiveGeneration}
-                        />
-                    ) : null}
-                </aside>
             </div>
         </div>
     );
 }
 
 function GenerationWorkbench({
-    outputs,
-    selectedKinds,
-    onToggle,
     plan,
     selectedPlanIds,
-    onTogglePlan,
     model,
     config,
     onModelChange,
@@ -976,13 +1232,10 @@ function GenerationWorkbench({
     generationBlockReason,
     onGenerate,
     onArchive,
+    onBack,
 }: {
-    outputs: ReturnType<typeof availableProductOutputs>;
-    selectedKinds: ProductOutputKind[];
-    onToggle: (kind: ProductOutputKind) => void;
     plan: ProductPlanItem[];
     selectedPlanIds: readonly string[];
-    onTogglePlan: (itemId: string) => void;
     model: string;
     config: ReturnType<typeof useEffectiveConfig>;
     onModelChange: (value: string) => void;
@@ -996,60 +1249,62 @@ function GenerationWorkbench({
     generationBlockReason: string | null;
     onGenerate: () => void;
     onArchive: (generation: ProductGeneration) => Promise<void>;
+    onBack: () => void;
 }) {
     const succeededGenerations = generations
         .filter((generation) => generation.status === "succeeded" && generation.assetUrl)
         .slice()
         .reverse()
         .slice(0, 24);
-    const generationColumns = productGenerationColumns(succeededGenerations);
+    const selectedItems = plan.filter((item) => selectedPlanIds.includes(item.id));
 
     return (
         <div className="space-y-7">
-            <section>
-                <SectionHeading icon={<FlaskConical className="size-4" />} title="炼制内容" />
-                <div className="mt-4">
-                    <ProductOutputGrid outputs={outputs} selectedKinds={selectedKinds} onToggle={onToggle} />
+            <div className="flex items-start justify-between gap-4">
+                <div>
+                    <div className="text-xs font-medium text-stone-500">第三步 · 生成与挑选</div>
+                    <h2 className="mt-1 text-xl font-semibold">生成商品画卷</h2>
+                    <p className="mt-2 text-sm text-stone-500">确认生成内容，完成后挑选满意作品手动入藏。</p>
                 </div>
-            </section>
-
-            <section className="border-t border-stone-200 pt-6 dark:border-white/10">
-                <div className="text-xs font-medium text-stone-500">生图模型</div>
-                <div className="mt-2">
-                    <ModelPicker config={config} value={model} onChange={onModelChange} capability="image" fullWidth onMissingConfig={onMissingConfig} />
-                </div>
-            </section>
+                <Button type="text" icon={<ArrowLeft className="size-4" />} onClick={onBack}>
+                    调整方案
+                </Button>
+            </div>
+            {succeededGenerations.length ? <GenerationResults generations={succeededGenerations} archivedAssetKeys={archivedAssetKeys} savingArchiveIds={savingArchiveIds} onArchive={onArchive} /> : null}
 
             <section className="border-t border-stone-200 pt-6 dark:border-white/10">
                 <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs font-medium text-stone-500">画卷规划</div>
-                    <Tag bordered={false}>
-                        已选 {selectedPlanIds.length}/{plan.length}
-                    </Tag>
+                    <div>
+                        <div className="text-xs font-medium text-stone-500">本次生成内容</div>
+                        <div className="mt-1 text-sm font-semibold">{selectedItems.length} 幅商品画卷</div>
+                    </div>
+                    <Tag bordered={false}>{model || "未选择模型"}</Tag>
                 </div>
-                <div className="mt-3 max-h-72 space-y-1 overflow-y-auto pr-1">
-                    {plan.length ? (
-                        plan.map((item) => (
-                            <div key={item.id} className="flex min-h-16 items-center gap-3 border-b border-stone-200/80 py-2 last:border-0 dark:border-white/8">
-                                <Checkbox checked={selectedPlanIds.includes(item.id)} onChange={() => onTogglePlan(item.id)} aria-label={`选择${item.title}`} />
+                <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {selectedItems.length ? (
+                        selectedItems.map((item, index) => (
+                            <div key={item.id} className="flex min-h-20 items-start gap-3 border border-stone-200 bg-white p-3 dark:border-white/10 dark:bg-white/[0.018]">
+                                <span className="grid size-7 shrink-0 place-items-center border border-stone-300 text-xs font-semibold text-stone-500 dark:border-white/15">{index + 1}</span>
                                 <span className="min-w-0 flex-1">
-                                    <span className="flex min-w-0 items-center gap-2">
-                                        <span className="min-w-0 truncate text-sm font-medium" title={item.title}>
-                                            {item.title}
-                                        </span>
-                                        <span className="shrink-0 text-[10px] text-stone-400">{productSectionTypeLabel(item.sectionType)}</span>
+                                    <span className="block truncate text-sm font-medium" title={item.title}>
+                                        {item.title}
                                     </span>
-                                    <span className="mt-0.5 block truncate text-xs text-stone-500" title={item.description}>
-                                        {item.description}
+                                    <span className="mt-1 block text-xs leading-5 text-stone-500">
+                                        {productSectionTypeLabel(item.sectionType)} · {item.aspectRatio}
                                     </span>
                                 </span>
-                                <span className="shrink-0 text-[11px] text-stone-400">{item.aspectRatio}</span>
                             </div>
                         ))
                     ) : (
                         <div className="py-8 text-center text-xs text-stone-500">当前境界或模型下暂无可生成的商品页面。</div>
                     )}
                 </div>
+                <details className="mt-4 border-y border-stone-200 py-3 dark:border-white/10">
+                    <summary className="cursor-pointer text-sm font-medium text-stone-600 marker:text-stone-400 dark:text-stone-300">更换生图模型</summary>
+                    <div className="mt-3 max-w-xl">
+                        <ModelPicker config={config} value={model} onChange={onModelChange} capability="image" fullWidth onMissingConfig={onMissingConfig} />
+                    </div>
+                </details>
             </section>
 
             {generating && progress ? (
@@ -1064,54 +1319,73 @@ function GenerationWorkbench({
                 </section>
             ) : null}
 
-            <section className="border-t border-stone-200 pt-6 dark:border-white/10">
+            {!succeededGenerations.length ? <GenerationResults generations={[]} archivedAssetKeys={archivedAssetKeys} savingArchiveIds={savingArchiveIds} onArchive={onArchive} /> : null}
+
+            <section className="sticky bottom-0 z-20 border-t border-stone-200 bg-[#f7f7f5]/95 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-[#101110]/95">
                 {generationBlockReason ? <div className="mb-3 text-xs leading-5 text-amber-700 dark:text-amber-300">{generationBlockReason}</div> : null}
                 <Button type="primary" size="large" block loading={generating} disabled={!selectedPlanIds.length || Boolean(generationBlockReason)} icon={generating ? undefined : <Sparkles className="size-4" />} onClick={onGenerate}>
                     {generating ? "天地法则正在演化..." : `${actionLabel} · ${selectedPlanIds.length} 幅`}
                 </Button>
             </section>
-
-            <section className="border-t border-stone-200 pt-6 dark:border-white/10">
-                <SectionHeading icon={<Archive className="size-4" />} title="已成画卷" />
-                {succeededGenerations.length ? (
-                    <div className="mt-4 grid grid-cols-2 items-start gap-2">
-                        {generationColumns.map((column, columnIndex) => (
-                            <div key={columnIndex} className="space-y-2">
-                                {column.map((generation) => {
-                                    const archived = Boolean(generation.assetKey && archivedAssetKeys.has(generation.assetKey));
-                                    const saving = savingArchiveIds.includes(generation.id);
-                                    return (
-                                        <div key={generation.id} className="overflow-hidden border border-stone-200 bg-stone-100 dark:border-white/10 dark:bg-white/5">
-                                            <div className="overflow-hidden bg-[linear-gradient(45deg,#ececea_25%,transparent_25%,transparent_75%,#ececea_75%),linear-gradient(45deg,#ececea_25%,transparent_25%,transparent_75%,#ececea_75%)] bg-[length:16px_16px] bg-[position:0_0,8px_8px] dark:bg-none" style={{ aspectRatio: productGenerationAspectRatio(generation.outputKind) }}>
-                                                <img src={generation.assetUrl} alt={outputLabel(generation.outputKind)} className="size-full object-contain" loading="lazy" />
-                                            </div>
-                                            <div className="flex min-h-10 items-center justify-between gap-2 border-t border-stone-200 bg-white px-2 py-1.5 dark:border-white/10 dark:bg-stone-950/70">
-                                                <span className="min-w-0 truncate text-[11px] text-stone-500">{productGenerationTitle("", generation)}</span>
-                                                <Tooltip title={archived ? "已在藏卷阁" : "入藏卷阁"}>
-                                                    <Button
-                                                        type="text"
-                                                        size="small"
-                                                        className="h-7 shrink-0 px-1.5 text-xs"
-                                                        icon={archived ? <Check className="size-3.5" /> : <FolderPlus className="size-3.5" />}
-                                                        loading={saving}
-                                                        disabled={archived || saving || !generation.assetKey}
-                                                        onClick={() => void onArchive(generation)}
-                                                    >
-                                                        {archived ? "已入藏" : "入藏"}
-                                                    </Button>
-                                                </Tooltip>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="mt-4 py-7 text-center text-xs leading-5 text-stone-500">生成后的商品视觉会先保留在当前项目，你可以手动选择入藏卷阁。</div>
-                )}
-            </section>
         </div>
+    );
+}
+
+function GenerationResults({
+    generations,
+    archivedAssetKeys,
+    savingArchiveIds,
+    onArchive,
+}: {
+    generations: ProductGeneration[];
+    archivedAssetKeys: ReadonlySet<string>;
+    savingArchiveIds: readonly string[];
+    onArchive: (generation: ProductGeneration) => Promise<void>;
+}) {
+    return (
+        <section className="border-y border-stone-200 py-6 dark:border-white/10">
+            <SectionHeading icon={<Archive className="size-4" />} title={generations.length ? `已成画卷 · ${generations.length}` : "生成结果"} />
+            {generations.length ? (
+                <div className="mt-4 columns-1 gap-3 sm:columns-2 xl:columns-3">
+                    {generations.map((generation) => {
+                        const archived = Boolean(generation.assetKey && archivedAssetKeys.has(generation.assetKey));
+                        const saving = savingArchiveIds.includes(generation.id);
+                        return (
+                            <div key={generation.id} className="mb-3 break-inside-avoid overflow-hidden border border-stone-200 bg-stone-100 dark:border-white/10 dark:bg-white/5">
+                                <div
+                                    className="overflow-hidden bg-[linear-gradient(45deg,#ececea_25%,transparent_25%,transparent_75%,#ececea_75%),linear-gradient(45deg,#ececea_25%,transparent_25%,transparent_75%,#ececea_75%)] bg-[length:16px_16px] bg-[position:0_0,8px_8px] dark:bg-none"
+                                    style={{ aspectRatio: productGenerationAspectRatio(generation.outputKind) }}
+                                >
+                                    <img src={generation.assetUrl} alt={outputLabel(generation.outputKind)} className="size-full object-contain" loading="lazy" />
+                                </div>
+                                <div className="flex min-h-11 items-center justify-between gap-2 border-t border-stone-200 bg-white px-2.5 py-2 dark:border-white/10 dark:bg-stone-950/70">
+                                    <span className="min-w-0 truncate text-xs text-stone-500">{productGenerationTitle("", generation)}</span>
+                                    <Tooltip title={archived ? "已在藏卷阁" : "入藏卷阁"}>
+                                        <Button
+                                            type="text"
+                                            size="small"
+                                            className="h-7 shrink-0 px-1.5 text-xs"
+                                            icon={archived ? <Check className="size-3.5" /> : <FolderPlus className="size-3.5" />}
+                                            loading={saving}
+                                            disabled={archived || saving || !generation.assetKey}
+                                            onClick={() => void onArchive(generation)}
+                                        >
+                                            {archived ? "已入藏" : "入藏"}
+                                        </Button>
+                                    </Tooltip>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            ) : (
+                <div className="mt-4 border border-dashed border-stone-300 bg-white/45 px-5 py-10 text-center dark:border-white/12 dark:bg-white/[0.015]">
+                    <ImagePlus className="mx-auto size-6 text-stone-400" />
+                    <div className="mt-3 text-sm font-medium">这里会出现本次生成的商品图</div>
+                    <div className="mt-1 text-xs leading-5 text-stone-500">生成结果先保留在当前项目，满意后再手动入藏卷阁。</div>
+                </div>
+            )}
+        </section>
     );
 }
 
@@ -1294,21 +1568,4 @@ function productGenerationAspectRatio(kind: ProductOutputKind) {
     if (kind === "selling_poster" || kind === "detail_page") return "3 / 4";
     if (kind === "scene_image") return "4 / 3";
     return "1 / 1";
-}
-
-function productGenerationColumns(generations: ProductGeneration[]) {
-    const columns: ProductGeneration[][] = [[], []];
-    const heights = [0, 0];
-    for (const generation of generations) {
-        const columnIndex = heights[0] <= heights[1] ? 0 : 1;
-        columns[columnIndex].push(generation);
-        heights[columnIndex] += productGenerationHeightWeight(generation.outputKind);
-    }
-    return columns;
-}
-
-function productGenerationHeightWeight(kind: ProductOutputKind) {
-    if (kind === "selling_poster" || kind === "detail_page") return 1.58;
-    if (kind === "scene_image") return 1;
-    return 1.25;
 }

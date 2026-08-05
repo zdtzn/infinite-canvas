@@ -1,34 +1,73 @@
-import { Check, LockKeyhole, Sparkles } from "lucide-react";
+import { Check, ChevronRight, LockKeyhole, Sparkles } from "lucide-react";
 
 import { cultivationStageLabel } from "@/features/cultivation/utils";
 import { cn } from "@/lib/utils";
 import type { ProductOutputKind } from "./product-lab";
 
-export function ProductRealmHeader({ realmName, stageName, title, description, imperial, capabilities }: { realmName: string; stageName: string; title: string; description: string; imperial: boolean; capabilities: string[] }) {
-    const productCapabilityCount = capabilities.filter((capability) => capability.startsWith("product.")).length;
+export function ProductRealmHeader({ realmName, stageName, title, description, imperial }: { realmName: string; stageName: string; title: string; description: string; imperial: boolean }) {
     return (
-        <section className={cn("product-realm-header relative overflow-hidden border-b border-stone-200 px-5 py-6 dark:border-white/10 lg:px-8", imperial && "is-imperial")}>
-            <div className="relative z-10 mx-auto flex max-w-[1560px] flex-col justify-between gap-5 lg:flex-row lg:items-end">
-                <div className="min-w-0 max-w-3xl">
-                    <div className="mb-3 flex flex-wrap items-center gap-2 text-xs font-medium text-stone-500 dark:text-stone-400">
+        <section className={cn("product-realm-header relative overflow-hidden border-b border-stone-200 px-5 py-4 dark:border-white/10 lg:px-8", imperial && "is-imperial")}>
+            <div className="relative z-10 mx-auto flex max-w-[1560px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-stone-500 dark:text-stone-400">
                         <span className="inline-flex h-7 items-center gap-1.5 border border-stone-300 bg-background/70 px-2.5 dark:border-white/12">
                             <Sparkles className="size-3.5" />
                             {cultivationStageLabel(realmName, stageName)}
                         </span>
                         {imperial ? <span className="product-imperial-kicker inline-flex h-7 items-center border border-[#c9a86a]/45 px-2.5 text-[#a68142] dark:text-[#d9bf83]">帝境商品领域</span> : null}
                     </div>
-                    <h1 className="text-2xl font-semibold text-stone-950 dark:text-[#f4f1e8]">{title}</h1>
-                    <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-600 dark:text-stone-400">{description}</p>
-                </div>
-                <div className="flex shrink-0 items-end gap-7 border-l border-stone-200 pl-5 dark:border-white/10">
-                    <div>
-                        <div className="text-[11px] text-stone-500 dark:text-stone-500">当前已掌握</div>
-                        <div className="mt-1 text-xl font-semibold text-stone-900 dark:text-stone-100">{productCapabilityCount}</div>
+                    <div className="mt-2 flex min-w-0 flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
+                        <h1 className="shrink-0 text-lg font-semibold text-stone-950 dark:text-[#f4f1e8]">{title}</h1>
+                        <p className="min-w-0 truncate text-sm text-stone-500 dark:text-stone-400" title={description}>
+                            {description}
+                        </p>
                     </div>
-                    <div className="max-w-44 text-xs leading-5 text-stone-500 dark:text-stone-400">商品能力来自当前境界与系统开放状态</div>
                 </div>
             </div>
         </section>
+    );
+}
+
+export type ProductWorkflowStep = "source" | "plan" | "generate";
+
+const PRODUCT_WORKFLOW_STEPS: Array<{ key: ProductWorkflowStep; label: string; description: string }> = [
+    { key: "source", label: "上传商品", description: "提供真实商品图" },
+    { key: "plan", label: "确认方案", description: "选择创作目标" },
+    { key: "generate", label: "生成与挑选", description: "生成后手动入藏" },
+];
+
+export function ProductWorkflowSteps({ currentStep, availableSteps, onSelect }: { currentStep: ProductWorkflowStep; availableSteps: readonly ProductWorkflowStep[]; onSelect: (step: ProductWorkflowStep) => void }) {
+    const currentIndex = PRODUCT_WORKFLOW_STEPS.findIndex((step) => step.key === currentStep);
+    return (
+        <nav aria-label="商品幻境创作步骤" className="product-workflow-steps grid grid-cols-3 border-b border-stone-200 bg-white/75 dark:border-white/10 dark:bg-white/[0.018]">
+            {PRODUCT_WORKFLOW_STEPS.map((step, index) => {
+                const available = availableSteps.includes(step.key);
+                const completed = index < currentIndex;
+                const current = step.key === currentStep;
+                return (
+                    <button
+                        key={step.key}
+                        type="button"
+                        disabled={!available}
+                        aria-current={current ? "step" : undefined}
+                        className={cn(
+                            "group flex min-w-0 items-center gap-1.5 border-r border-stone-200 px-2 py-3 text-left last:border-r-0 dark:border-white/10 sm:gap-3 sm:px-5",
+                            current ? "bg-stone-950 text-white dark:bg-[#c9a86a]/10 dark:text-[#f3e9d3]" : available ? "hover:bg-stone-50 dark:hover:bg-white/[0.035]" : "cursor-not-allowed opacity-45",
+                        )}
+                        onClick={() => available && onSelect(step.key)}
+                    >
+                        <span className={cn("grid size-6 shrink-0 place-items-center border text-[11px] font-semibold sm:size-7 sm:text-xs", current ? "border-white/35 dark:border-[#c9a86a]/55" : "border-stone-300 dark:border-white/15")}>
+                            {completed ? <Check className="size-3.5" /> : index + 1}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-semibold sm:text-sm">{step.label}</span>
+                            <span className={cn("mt-0.5 hidden truncate text-[11px] sm:block", current ? "text-white/65 dark:text-[#d7c59e]/65" : "text-stone-400")}>{step.description}</span>
+                        </span>
+                        {index < PRODUCT_WORKFLOW_STEPS.length - 1 ? <ChevronRight className="hidden size-3.5 shrink-0 opacity-30 md:block" /> : null}
+                    </button>
+                );
+            })}
+        </nav>
     );
 }
 
@@ -50,7 +89,7 @@ export function ProductOutputGrid({
     onToggle: (kind: ProductOutputKind) => void;
 }) {
     return (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {outputs.map((output) => {
                 const selected = selectedKinds.includes(output.kind);
                 return (

@@ -15,10 +15,49 @@ const COMMON_SIZES = ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"];
 const GPT_IMAGE_2_SIZES = ["1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "9:21", "3:1", "1:3"];
 const LEGACY_GPT_IMAGE_SIZES = ["1:1", "3:2", "2:3"];
 const SADAI_SIZES = ["1:1", "4:3", "3:4", "16:9", "9:16"];
+const DRAGON_FOUR_K_SIZES = ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"];
 const OUTPUT_RESOLUTIONS = ["low", "medium", "high"];
 
 export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFormat, baseUrl = ""): ImageModelCapabilities {
     const name = model.toLowerCase().split("::").at(-1)?.trim() || "";
+    if (isDragonImageHost(baseUrl)) {
+        if (name === "gpt-image-2") {
+            return {
+                resolutions: ["low"],
+                generationQualities: ["auto", "low", "medium", "high"],
+                outputFormats: ["auto", "png", "jpeg", "webp"],
+                sizes: LEGACY_GPT_IMAGE_SIZES,
+                customSize: false,
+                transparentBackground: false,
+                maxReferences: 16,
+                maxOutputs: 10,
+            };
+        }
+        if (["gpt-image-2-4k超分", "gpt-image-2-原生4k"].includes(name)) {
+            return {
+                resolutions: ["low", "high"],
+                generationQualities: ["auto", "low", "medium", "high"],
+                outputFormats: ["auto", "png", "jpeg", "webp"],
+                sizes: DRAGON_FOUR_K_SIZES,
+                customSize: false,
+                transparentBackground: false,
+                maxReferences: 16,
+                maxOutputs: 10,
+            };
+        }
+        if (["gemini-3.1-flash-image", "gemini-3.1-flash-image-preview", "gemini-3-pro-image", "gemini-3-pro-image-preview"].includes(name)) {
+            return {
+                resolutions: ["medium"],
+                generationQualities: ["auto"],
+                outputFormats: ["auto"],
+                sizes: ["1:1"],
+                customSize: false,
+                transparentBackground: false,
+                maxReferences: 10,
+                maxOutputs: 1,
+            };
+        }
+    }
     if (isUuAsyncGptImageModel(baseUrl, name)) {
         return {
             resolutions: OUTPUT_RESOLUTIONS,
@@ -113,6 +152,14 @@ export function deriveImageModelCapabilities(model: string, apiFormat: ApiCallFo
         maxReferences: 4,
         maxOutputs: 4,
     };
+}
+
+function isDragonImageHost(baseUrl: string) {
+    try {
+        return ["dragtokens.com", "draw.dragtokens.com"].includes(new URL(baseUrl).hostname.toLowerCase());
+    } catch {
+        return false;
+    }
 }
 
 export function supportsGeminiImageSize(model: string) {

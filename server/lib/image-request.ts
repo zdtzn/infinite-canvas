@@ -1,3 +1,5 @@
+import { resolveDragonImageSize } from "./dragon-image";
+
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
     medium: 2048,
@@ -22,6 +24,7 @@ type OpenAiImageRequestOptionsInput = {
     outputFormat?: string;
     size?: string;
     background?: string;
+    responseFormat?: "b64_json" | null;
 };
 
 export function imageResponseItems(payload: unknown): Array<Record<string, unknown>> {
@@ -50,19 +53,21 @@ export function usesJsonReferenceGeneration(baseUrl: string, model: string, refe
 }
 
 /** Keep the common Images API payload compatible with strict OpenAI-style gateways. */
-export function buildOpenAiImageRequestOptions({ count, quality, outputFormat, size, background }: OpenAiImageRequestOptionsInput) {
+export function buildOpenAiImageRequestOptions({ count, quality, outputFormat, size, background, responseFormat = "b64_json" }: OpenAiImageRequestOptionsInput) {
     return {
         ...(count > 1 ? { n: count } : {}),
         ...(quality ? { quality } : {}),
         ...(outputFormat ? { output_format: outputFormat } : {}),
         ...(size ? { size } : {}),
         ...(background ? { background } : {}),
-        response_format: "b64_json",
+        ...(responseFormat ? { response_format: responseFormat } : {}),
     };
 }
 
 /** Convert the workbench's ratio presets to OpenAI-compatible pixel dimensions. */
-export function resolveOpenAiImageSize(size?: string, quality?: string, model = "") {
+export function resolveOpenAiImageSize(size?: string, quality?: string, model = "", baseUrl = "") {
+    const dragonSize = resolveDragonImageSize(size, quality, model, baseUrl);
+    if (dragonSize) return dragonSize;
     const requestedValue = String(size || "").trim();
     if (!requestedValue) return undefined;
     const value = requestedValue.toLowerCase() === "auto" ? "1:1" : requestedValue;

@@ -1,17 +1,7 @@
 export type ProductOutputKind = "basic_image" | "main_image" | "detail_page" | "selling_poster" | "scene_image";
+export type ProductPlanPreset = "single" | "essential" | "full";
 
-export type ProductSectionType =
-    | "basic"
-    | "hero"
-    | "selling_points"
-    | "scenario"
-    | "detail_closeup"
-    | "specs"
-    | "material"
-    | "comparison"
-    | "brand_trust"
-    | "summary"
-    | "custom";
+export type ProductSectionType = "basic" | "hero" | "selling_points" | "scenario" | "detail_closeup" | "specs" | "material" | "comparison" | "brand_trust" | "summary" | "custom";
 
 export type ProductVisualStyleGuide = {
     styleName: string;
@@ -329,6 +319,32 @@ export function reconcileProductPlanSelection(current: readonly string[], plan: 
     return preferred ? [preferred.id] : [];
 }
 
+export function productPlanPresetSelection(preset: ProductPlanPreset, plan: readonly ProductPlanItem[]) {
+    if (!plan.length) return [];
+    const preferred = plan.find((item) => item.kind === "main_image") || plan.find((item) => item.kind === "basic_image") || plan[0];
+    const primaryStylePlan = plan.filter((item) => item.styleKey === preferred.styleKey);
+    if (preset === "single") return [preferred.id];
+    if (preset === "full") return primaryStylePlan.slice(0, 12).map((item) => item.id);
+
+    const selected = (["main_image", "selling_poster", "scene_image"] as const).map((kind) => primaryStylePlan.find((item) => item.kind === kind)?.id).filter((id): id is string => Boolean(id));
+    return selected.length ? selected : [preferred.id];
+}
+
+export function productPlanVisualControls(mode: ProductPlanPreset | "custom", selectedKinds: readonly ProductOutputKind[]) {
+    const singleOutput = mode === "single" || (mode === "custom" && new Set(selectedKinds).size === 1);
+    return singleOutput
+        ? {
+              styleLabel: "主图视觉风格",
+              styleHint: "选择一张图的主要视觉表达",
+              showTemplates: true,
+          }
+        : {
+              styleLabel: "整套视觉基调",
+              styleHint: "统一主图、卖点图与场景图的色彩和质感",
+              showTemplates: false,
+          };
+}
+
 export function toggleProductPlanItemSelection(current: readonly string[], itemId: string) {
     return current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId];
 }
@@ -407,13 +423,15 @@ function createPlanItem(input: {
         .filter(Boolean)
         .join("；");
     const negative = Array.from(
-        new Set([
-            ...input.negativeConstraints,
-            ...input.analysis.complianceNotes,
-            input.guide.negativeStyleConstraints,
-            "不得改变商品品类、几何结构、颜色、材质、开口、按钮、线缆、包装文字或 Logo",
-            "不得出现悬浮、穿模、断裂阴影、错误反射、反向气流、液体逆流或不合理手部动作",
-        ].filter(Boolean)),
+        new Set(
+            [
+                ...input.negativeConstraints,
+                ...input.analysis.complianceNotes,
+                input.guide.negativeStyleConstraints,
+                "不得改变商品品类、几何结构、颜色、材质、开口、按钮、线缆、包装文字或 Logo",
+                "不得出现悬浮、穿模、断裂阴影、错误反射、反向气流、液体逆流或不合理手部动作",
+            ].filter(Boolean),
+        ),
     );
     const prompt = [
         `为${platformLabel(input.platform)}生成一张完成度高的${productSectionTypeLabel(input.sectionType)}。`,

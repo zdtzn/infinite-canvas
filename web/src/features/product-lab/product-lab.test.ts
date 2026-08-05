@@ -6,6 +6,8 @@ import {
     buildProductVisualPlan,
     emptyProductAnalysis,
     productDetailPageLimit,
+    productPlanPresetSelection,
+    productPlanVisualControls,
     productRealmExperience,
     reconcileProductPlanSelection,
     resolveProductTemplatePrompt,
@@ -109,11 +111,7 @@ describe("product lab experience and planning", () => {
 
     test("fills duplicate AI sections with missing commercial page roles", () => {
         const analysis = analysisFixture();
-        analysis.detailSections = [
-            ...analysis.detailSections,
-            { ...analysis.detailSections[0], title: "重复材质页" },
-            { ...analysis.detailSections[1], title: "重复场景页" },
-        ];
+        analysis.detailSections = [...analysis.detailSections, { ...analysis.detailSections[0], title: "重复材质页" }, { ...analysis.detailSections[1], title: "重复场景页" }];
         const detailTypes = buildProductVisualPlan({
             analysis,
             platform: "pinduoduo",
@@ -124,16 +122,7 @@ describe("product lab experience and planning", () => {
             .filter((item) => item.kind === "detail_page")
             .map((item) => item.sectionType);
 
-        expect(detailTypes).toEqual([
-            "material",
-            "scenario",
-            "selling_points",
-            "detail_closeup",
-            "specs",
-            "comparison",
-            "brand_trust",
-            "summary",
-        ]);
+        expect(detailTypes).toEqual(["material", "scenario", "selling_points", "detail_closeup", "specs", "comparison", "brand_trust", "summary"]);
     });
 
     test("selects one main image by default and allows individual detail-page generation", () => {
@@ -156,6 +145,41 @@ describe("product lab experience and planning", () => {
         const allDetails = toggleProductPlanKindSelection(oneDetail, plan, "detail_page");
         expect(detailItems.every((item) => allDetails.includes(item.id))).toBe(true);
         expect(selectedProductOutputKinds(oneDetail, plan)).toEqual(expect.arrayContaining(["main_image", "detail_page"]));
+    });
+
+    test("keeps recommended presets focused on one visual style and a predictable image count", () => {
+        const plan = buildMultiStyleProductPlan({
+            analysis: analysisFixture(),
+            platform: "pinduoduo",
+            styleKeys: ["value", "premium"],
+            brandName: "",
+            detailPageLimit: 3,
+        });
+
+        expect(productPlanPresetSelection("single", plan)).toEqual(["value:main-image"]);
+        expect(productPlanPresetSelection("essential", plan)).toEqual(["value:main-image", "value:selling-poster", "value:scene-image"]);
+
+        const fullSelection = productPlanPresetSelection("full", plan);
+        expect(fullSelection.length).toBe(7);
+        expect(fullSelection.every((id) => id.startsWith("value:"))).toBe(true);
+    });
+
+    test("shows single-image templates only when the current plan targets one output kind", () => {
+        expect(productPlanVisualControls("single", ["main_image"])).toEqual({
+            styleLabel: "主图视觉风格",
+            styleHint: "选择一张图的主要视觉表达",
+            showTemplates: true,
+        });
+        expect(productPlanVisualControls("essential", ["main_image", "selling_poster", "scene_image"])).toEqual({
+            styleLabel: "整套视觉基调",
+            styleHint: "统一主图、卖点图与场景图的色彩和质感",
+            showTemplates: false,
+        });
+        expect(productPlanVisualControls("full", ["main_image", "detail_page"])).toMatchObject({
+            styleLabel: "整套视觉基调",
+            showTemplates: false,
+        });
+        expect(productPlanVisualControls("custom", ["scene_image"]).showTemplates).toBe(true);
     });
 
     test("resolves the current product name inside reusable commerce templates", () => {
