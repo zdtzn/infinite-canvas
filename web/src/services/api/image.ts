@@ -27,6 +27,8 @@ export type RequestedImage = {
     bytes?: number;
     durationMs?: number;
     mimeType?: string;
+    persisted?: boolean;
+    expiresAt?: string;
 };
 
 export function serverImageReferenceInput(reference: { storageKey?: string }): ServerImageReferenceInput | null {
@@ -1016,6 +1018,8 @@ async function requestServerImageJob(
             bytes: image.bytes,
             durationMs: image.durationMs,
             mimeType: image.mimeType,
+            persisted: image.persisted,
+            expiresAt: image.expiresAt,
         }));
     } finally {
         options?.signal?.removeEventListener("abort", abort);

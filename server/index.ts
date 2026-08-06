@@ -15,6 +15,7 @@ import { ImageJobReferenceInputError, imageJobReferenceTotalBytes, parseClientIm
 import { resolveServerImageCapabilityProfile, validateServerImageCapabilityRequest } from "./lib/image-capabilities";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
+import { createDeferredImageResult, hasDeferredImageResults, isCompletedUuResultRecovery, isRecoverableImageDownloadError, recoverDeferredImageResults } from "./lib/image-result-recovery";
 import { buildDragonChatImageRequest, dragonChatImageUrls, dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel } from "./lib/dragon-image";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { isAllowedMediaMimeType, resolveMediaMimeType } from "./lib/media-mime";
@@ -52,7 +53,7 @@ import {
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
-import { UuImageChannelScheduler, buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask } from "./lib/uu-image-async";
+import { UuImageChannelScheduler, buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -105,6 +106,8 @@ const REQUEST_TIMEOUT_MS = Math.max(30_000, positiveInt(process.env.UPSTREAM_TIM
 const UU_ASYNC_REQUEST_TIMEOUT_MS = Math.min(30_000, REQUEST_TIMEOUT_MS);
 const UU_ASYNC_POLL_INTERVAL_MS = 2_500;
 const UU_ASYNC_MAX_WAIT_MS = Math.max(UU_ASYNC_POLL_INTERVAL_MS, positiveInt(process.env.UU_ASYNC_MAX_WAIT_MS, 15 * 60_000));
+const UU_RESULT_DOWNLOAD_TIMEOUT_MS = Math.max(3_000, Math.min(30_000, positiveInt(process.env.UU_RESULT_DOWNLOAD_TIMEOUT_MS, 8_000)));
+const UU_RESULT_RECOVERY_DELAYS_MS = [15_000, 60_000, 5 * 60_000];
 const PROMPT_PROXY_CONCURRENCY = Math.max(1, Math.min(8, positiveInt(process.env.PROMPT_PROXY_CONCURRENCY, 3)));
 const PROMPT_PROXY_TIMEOUT_MS = Math.max(3_000, Math.min(30_000, positiveInt(process.env.PROMPT_PROXY_TIMEOUT_MS, 8_000)));
 const PROMPT_OPTIMIZE_CONCURRENCY = Math.max(1, Math.min(4, positiveInt(process.env.PROMPT_OPTIMIZE_CONCURRENCY, 2)));
@@ -185,6 +188,9 @@ const previousEncryptionSecrets = [
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 const activeMediaProxyRequests = new Map<string, number>();
 const activeMediaProxyUsageIds = new Set<string>();
+type ImageRecoveryResult = { recovered: number; remaining: number; lastError?: string };
+const imageRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const imageRecoveryRuns = new Map<string, Promise<ImageRecoveryResult>>();
 const requestClientIps = new WeakMap<Request, string>();
 const requestPeerIps = new WeakMap<Request, string>();
 let stateWriteQueued = false;
@@ -219,9 +225,10 @@ const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
         state.jobs[job.id] = job;
         appDatabase.saveJob(job);
         if (["succeeded", "failed", "canceled"].includes(job.status)) pruneTerminalJobs();
+        if (job.status === "succeeded" && job.result?.recoveryPending) scheduleJobImageRecovery(job.id);
     },
     onInitializationFailure: (job) => {
-        cultivation?.refundGeneration(job.id, "initial job persistence failed");
+        if (!job.input.recoveryOnly) cultivation?.refundGeneration(job.id, "initial job persistence failed");
     },
 });
 
@@ -240,6 +247,7 @@ for (const job of Object.values(state.jobs)) {
         }
     }
     imageQueue.restore(job);
+    if (job.status === "succeeded" && job.result?.recoveryPending) scheduleJobImageRecovery(job.id);
 }
 cultivation?.reconcileReservations(
     Object.values(state.jobs)
@@ -398,6 +406,8 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/jobs" && request.method === "GET") return listJobs(session);
         const retryMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/retry$/);
         if (retryMatch && request.method === "POST") return retryJob(request, session, retryMatch[1]);
+        const recoverMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/recover$/);
+        if (recoverMatch && request.method === "POST") return recoverJobResult(session, recoverMatch[1]);
         const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/);
         if (jobMatch && request.method === "GET") return getJob(session, jobMatch[1]);
         if (jobMatch && request.method === "DELETE") return deleteJob(url, session, jobMatch[1]);
@@ -1421,6 +1431,7 @@ async function deleteGenerationHistoryItems(request: Request, session: SessionPa
         const job = imageQueue.get(id);
         if (!job || job.input.userId !== session.userId || ["queued", "running"].includes(job.status)) continue;
         if (!imageQueue.remove(id)) continue;
+        clearJobImageRecovery(id);
         delete state.jobs[id];
         appDatabase.deleteJob(id);
         cleanupJobFiles(job);
@@ -1949,38 +1960,102 @@ async function retryJob(request: Request, session: SessionPayload, id: string) {
     if (referenceBytes > MAX_IMAGE_REFERENCE_TOTAL_BYTES)
         throw new HttpError(413, `参考图与蒙版总大小不能超过 ${Math.floor(MAX_IMAGE_REFERENCE_TOTAL_BYTES / 1024 / 1024)} MB`);
     assertDiskCapacity(referenceBytes);
-    cultivation?.reserveGeneration({
-        jobId,
-        userId: session.userId,
-        channelId: source.input.channelId,
-        model: source.input.model,
-        count: source.input.count,
-        quality: source.input.quality,
-        referenceCount: source.input.references.length,
-        hasMask: Boolean(source.input.mask),
-        activeJobs: activeUserJobs(session.userId),
-    });
+    const recoveryOnly = source.status === "failed" && isCompletedUuResultRecovery(source.input);
+    if (!recoveryOnly)
+        cultivation?.reserveGeneration({
+            jobId,
+            userId: session.userId,
+            channelId: source.input.channelId,
+            model: source.input.model,
+            count: source.input.count,
+            quality: source.input.quality,
+            referenceCount: source.input.references.length,
+            hasMask: Boolean(source.input.mask),
+            activeJobs: activeUserJobs(session.userId),
+        });
     try {
-        const input = await copyImageJobInputForRetry(source.input, jobId, id);
+        const input = await copyImageJobInputForRetry(source.input, jobId, id, recoveryOnly);
         const job = imageQueue.add(input, jobId);
         return json({ job: publicJob(job) }, 202);
     } catch (error) {
         cleanupJobFilesFor(session.userId, jobId);
-        cultivation?.refundGeneration(jobId, "retry job creation failed");
+        if (!recoveryOnly) cultivation?.refundGeneration(jobId, "retry job creation failed");
         throw error;
     }
+}
+
+async function recoverJobResult(session: SessionPayload, id: string) {
+    const source = ownedJob(session.userId, id);
+    if (source.status !== "succeeded" || !source.result) throw new HttpError(409, "任务尚未生成可恢复的结果");
+    if (!hasDeferredImageResults(source.result.images)) return json({ job: publicJob(source), recovered: 0, recoveryPending: false });
+    clearJobImageRecovery(id);
+    const outcome = await recoverJobImages(id);
+    const job = imageQueue.get(id) || source;
+    if (outcome.remaining) scheduleJobImageRecovery(id);
+    return json({ job: publicJob(job), recovered: outcome.recovered, recoveryPending: outcome.remaining > 0, lastError: outcome.lastError }, outcome.remaining ? 202 : 200);
+}
+
+function scheduleJobImageRecovery(jobId: string, attempt = 0) {
+    if (attempt >= UU_RESULT_RECOVERY_DELAYS_MS.length || imageRecoveryTimers.has(jobId)) return;
+    const timer = setTimeout(() => {
+        imageRecoveryTimers.delete(jobId);
+        void recoverJobImages(jobId).then((outcome) => {
+            if (outcome.remaining) scheduleJobImageRecovery(jobId, attempt + 1);
+        });
+    }, UU_RESULT_RECOVERY_DELAYS_MS[attempt]);
+    (timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
+    imageRecoveryTimers.set(jobId, timer);
+}
+
+function clearJobImageRecovery(jobId: string) {
+    const timer = imageRecoveryTimers.get(jobId);
+    if (timer) clearTimeout(timer);
+    imageRecoveryTimers.delete(jobId);
+}
+
+function recoverJobImages(jobId: string) {
+    const existing = imageRecoveryRuns.get(jobId);
+    if (existing) return existing;
+    const operation = performJobImageRecovery(jobId).finally(() => imageRecoveryRuns.delete(jobId));
+    imageRecoveryRuns.set(jobId, operation);
+    return operation;
+}
+
+async function performJobImageRecovery(jobId: string): Promise<ImageRecoveryResult> {
+    const job = imageQueue.get(jobId);
+    if (!job?.result || job.status !== "succeeded" || !hasDeferredImageResults(job.result.images)) return { recovered: 0, remaining: 0 };
+    let lastError = "";
+    const outcome = await recoverDeferredImageResults(job.result.images, async (image) => {
+        const url = assertAllowedUpstreamUrl(image.dataUrl);
+        if (url.protocol !== "https:") throw new Error("临时图片地址不安全");
+        try {
+            return await persistJobImage(job.input.userId, job.id, url.toString(), image.durationMs, new AbortController().signal, {
+                downloadTimeoutMs: UU_RESULT_DOWNLOAD_TIMEOUT_MS,
+                downloadAttempts: 1,
+            });
+        } catch (error) {
+            lastError = error instanceof Error ? error.message : "结果图片仍无法连接";
+            throw error;
+        }
+    });
+    if (outcome.recovered) {
+        job.result = { ...job.result, images: outcome.images, recoveryPending: outcome.remaining > 0 };
+        await imageQueue.touch(job.id);
+        console.info(JSON.stringify({ event: "job_image_recovered", jobId, recovered: outcome.recovered, remaining: outcome.remaining }));
+    }
+    return { recovered: outcome.recovered, remaining: outcome.remaining, ...(lastError ? { lastError } : {}) };
 }
 
 function storedImageReferenceBytes(reference: string | StoredImageReference) {
     return typeof reference === "string" ? assertSafeDataImage(reference) : reference.bytes;
 }
 
-async function copyImageJobInputForRetry(input: ImageJobInput, jobId: string, retryOf: string): Promise<ImageJobInput> {
+async function copyImageJobInputForRetry(input: ImageJobInput, jobId: string, retryOf: string, recoveryOnly = false): Promise<ImageJobInput> {
     const references: StoredImageReference[] = [];
     for (const [index, reference] of input.references.entries()) references.push(copyStoredImageReferenceForRetry(input.userId, jobId, index, reference));
     const mask = input.mask ? copyStoredImageReferenceForRetry(input.userId, jobId, 10_000, input.mask) : undefined;
     const upstream = input.upstream && !["failed", "canceled", "unknown"].includes(input.upstream.status || "pending") ? { ...input.upstream } : undefined;
-    return { ...input, references, mask, retryOf: input.retryOf || retryOf, upstream };
+    return { ...input, references, mask, retryOf: input.retryOf || retryOf, recoveryOnly: recoveryOnly || undefined, upstream };
 }
 
 function copyStoredImageReferenceForRetry(userId: string, jobId: string, index: number, reference: string | StoredImageReference) {
@@ -2000,8 +2075,10 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
     if (["queued", "running"].includes(job.status)) {
         const previousStatus = job.status;
         if (imageQueue.cancel(id)) {
-            if (previousStatus === "queued") cultivation?.refundGeneration(id, "user canceled before submission");
-            else cultivation?.consumeGeneration(id, Math.max(0, Date.now() - (job.startedAt || Date.now())));
+            if (!job.input.recoveryOnly) {
+                if (previousStatus === "queued") cultivation?.refundGeneration(id, "user canceled before submission");
+                else cultivation?.consumeGeneration(id, Math.max(0, Date.now() - (job.startedAt || Date.now())));
+            }
             void cancelUuImageTask(job.input).catch((error) =>
                 console.warn(
                     JSON.stringify({
@@ -2016,6 +2093,7 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
     }
     if (url.searchParams.get("remove") === "1") {
         if (!imageQueue.remove(id)) throw new HttpError(409, "任务仍在运行，无法移除");
+        clearJobImageRecovery(id);
         delete state.jobs[id];
         appDatabase.deleteJob(id);
         cleanupJobFiles(job);
@@ -2064,27 +2142,50 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                   ? await uuImageChannelScheduler.run(input.channelId, signal, () => generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId))
                   : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
         const images: ImageJobImage[] = [];
+        const uuDimensions = useUuAsync ? resolveUuAsyncImageSize(input.size, input.quality) : undefined;
         for (const raw of rawImages) {
             if (signal.aborted || job.status === "canceled") throw abortError(signal);
-            images.push(await persistJobImage(input.userId, job.id, raw, Date.now() - startedAt, signal));
+            const durationMs = Date.now() - startedAt;
+            try {
+                images.push(
+                    await persistJobImage(input.userId, job.id, raw, durationMs, signal, useUuAsync ? { downloadTimeoutMs: UU_RESULT_DOWNLOAD_TIMEOUT_MS, downloadAttempts: 1 } : undefined),
+                );
+            } catch (error) {
+                if (!useUuAsync || input.upstream?.status !== "succeeded" || !uuDimensions || !isRecoverableImageDownloadError(error)) throw error;
+                const url = assertAllowedUpstreamUrl(raw);
+                if (url.protocol !== "https:") throw error;
+                images.push(
+                    createDeferredImageResult({
+                        id: randomUUID(),
+                        url: url.toString(),
+                        durationMs,
+                        width: uuDimensions.width,
+                        height: uuDimensions.height,
+                        expiresAt: input.upstream.expiresAt,
+                    }),
+                );
+            }
         }
         if (!images.length) throw new Error("上游接口没有返回图片");
+        const recoveryPending = hasDeferredImageResults(images);
         const result = {
             images,
             successCount: images.length,
             failCount: Math.max(0, input.count - images.length),
             durationMs: Date.now() - startedAt,
+            ...(recoveryPending ? { recoveryPending: true } : {}),
         };
-        cultivation?.settleGeneration({
-            jobId: job.id,
-            successCount: result.successCount,
-            failCount: result.failCount,
-            durationMs: result.durationMs,
-        });
+        if (!input.recoveryOnly)
+            cultivation?.settleGeneration({
+                jobId: job.id,
+                successCount: result.successCount,
+                failCount: result.failCount,
+                durationMs: result.durationMs,
+            });
         return result;
     } catch (error) {
         cleanupJobOutputFilesFor(input.userId, job.id);
-        if (job.status !== "canceled") cultivation?.refundGeneration(job.id, error instanceof Error ? error.message : "generation failed");
+        if (job.status !== "canceled" && !input.recoveryOnly) cultivation?.refundGeneration(job.id, error instanceof Error ? error.message : "generation failed");
         throw error;
     }
 }
@@ -2386,7 +2487,14 @@ async function generateGeminiImages(channel: ChannelRecord, apiKey: string, inpu
     return outputs.flat();
 }
 
-async function persistJobImage(userId: string, jobId: string, value: string, durationMs: number, signal: AbortSignal): Promise<ImageJobImage> {
+async function persistJobImage(
+    userId: string,
+    jobId: string,
+    value: string,
+    durationMs: number,
+    signal: AbortSignal,
+    options: { downloadTimeoutMs?: number; downloadAttempts?: number } = {},
+): Promise<ImageJobImage> {
     if (signal.aborted) throw abortError(signal);
     let bytes: Uint8Array;
     let mimeType = "image/png";
@@ -2396,7 +2504,7 @@ async function persistJobImage(userId: string, jobId: string, value: string, dur
         mimeType = parsed.mimeType;
     } else {
         assertAllowedUpstreamUrl(value);
-        const response = await upstreamFetch(value, { signal }, false);
+        const response = await upstreamFetch(value, { signal }, false, options.downloadTimeoutMs ?? REQUEST_TIMEOUT_MS, options.downloadAttempts);
         if (!response.ok) throw new Error(`下载生成图片失败：${response.status}`);
         bytes = await readResponseBytes(response, MAX_UPSTREAM_IMAGE_BYTES, "上游返回图片过大");
         mimeType = response.headers.get("content-type")?.split(";")[0]?.toLowerCase() || "";
@@ -2752,8 +2860,8 @@ function deleteProject(url: URL, session: SessionPayload, id: string) {
     return new Response(null, { status: 204 });
 }
 
-async function upstreamFetch(url: string, init: RequestInit, retryable: boolean, timeoutMs = REQUEST_TIMEOUT_MS) {
-    const attempts = retryable || ["GET", "HEAD"].includes(init.method || "GET") ? 3 : 1;
+async function upstreamFetch(url: string, init: RequestInit, retryable: boolean, timeoutMs = REQUEST_TIMEOUT_MS, attemptLimit?: number) {
+    const attempts = attemptLimit ?? (retryable || ["GET", "HEAD"].includes(init.method || "GET") ? 3 : 1);
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
         const timeout = AbortSignal.timeout(timeoutMs);
@@ -3219,6 +3327,7 @@ function pruneTerminalJobs() {
             const finishedAt = job.finishedAt || job.createdAt;
             if (index < MAX_TERMINAL_JOBS_PER_USER && now - finishedAt < JOB_RETENTION_MS) continue;
             if (!imageQueue.remove(job.id)) continue;
+            clearJobImageRecovery(job.id);
             delete state.jobs[job.id];
             appDatabase.deleteJob(job.id);
             cleanupJobFiles(job);

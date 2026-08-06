@@ -1,7 +1,7 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, FolderPlus, History, ImagePlus, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { App, Button, Checkbox, Drawer, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Input, Modal, Tag, Typography } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
@@ -16,9 +16,9 @@ import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeImageSizeSelection, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
-import { formatBytes, formatDuration } from "@/lib/image-utils";
+import { formatDuration } from "@/lib/image-utils";
 import { convertImageOutput, resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { clearImageGenerationJob, getImageGenerationSnapshot, replaceImageGenerationResult, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
+import { clearImageGenerationJob, generatedImageFromServerImage, getImageGenerationSnapshot, replaceImageGenerationResult, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
 import { IMAGE_WORKBENCH_ASSET_SOURCE } from "@/stores/asset-source";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -33,8 +33,9 @@ import { cultivationGenerationBlockReason, cultivationRefundNotice, quotaText, r
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, persistGenerationHistoryRecords, synchronizeGenerationHistory } from "@/services/generation-history";
 import { mergeServerJobsIntoImageHistory, serverJobModelValue } from "@/services/image-generation-history";
-import { fetchServerJobs, type ServerJob } from "@/services/server-api";
+import { fetchServerJobs, recoverServerJobResult, type ServerJob } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { ResultImageCard } from "./result-image-card";
 
 type GenerationLog = {
     id: string;
@@ -63,7 +64,6 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 
 export default function ImagePage() {
@@ -87,12 +87,14 @@ export default function ImagePage() {
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [savingAssetIds, setSavingAssetIds] = useState<string[]>([]);
+    const [recoveringImageIds, setRecoveringImageIds] = useState<string[]>([]);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [deletingLogs, setDeletingLogs] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
     const savingAssetIdsRef = useRef(new Set<string>());
+    const recoveringImageIdsRef = useRef(new Set<string>());
     const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
     const clearImageCommand = useWorkbenchAgentStore((state) => state.clearImageCommand);
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
@@ -222,6 +224,7 @@ export default function ImagePage() {
                     });
                 const logImages = await Promise.all(
                     successImages.map(async (image) => {
+                        if (image.persisted === false) return image;
                         const stored = await uploadImage(image.dataUrl, { outputFormat: snapshot.config.imageOutputFormat });
                         return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
                     }),
@@ -279,12 +282,55 @@ export default function ImagePage() {
     }, [autoRunToken]);
 
     const downloadImage = async (image: GeneratedImage, index: number) => {
+        if (image.persisted === false) {
+            window.open(image.dataUrl, "_blank", "noopener,noreferrer");
+            message.info("临时原图已在新标签页打开");
+            return;
+        }
         try {
             const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
             const blob = await convertImageOutput(image.dataUrl, outputFormat);
             saveAs(blob, `image-${index + 1}.${imageFileExtension(blob.type)}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "下载图片失败");
+        }
+    };
+
+    const recoverResult = async (image: GeneratedImage) => {
+        if (!image.serverJobId || recoveringImageIdsRef.current.has(image.id)) return;
+        recoveringImageIdsRef.current.add(image.id);
+        setRecoveringImageIds((ids) => [...ids, image.id]);
+        try {
+            const response = await recoverServerJobResult(image.serverJobId, historyUserId);
+            const serverImage = response.job.result?.images.find((item) => item.id === image.id) || response.job.result?.images[0];
+            if (!serverImage) throw new Error("任务没有返回可恢复的图片");
+            const recovered = await generatedImageFromServerImage(serverImage, response.job.id, response.job.result?.durationMs);
+            replaceImageGenerationResult(recovered);
+            if (recovered.persisted === false) {
+                message.warning(response.lastError ? `结果仍在回传：${response.lastError}` : "结果仍在回传，稍后可再次恢复");
+            } else {
+                const nextLogs = logs.map((log) => {
+                    if (!log.images.some((item) => item.id === recovered.id)) return log;
+                    const images = log.images.map((item) => (item.id === recovered.id ? recovered : item));
+                    return { ...log, images, thumbnails: images.map((item) => item.dataUrl), updatedAt: Date.now() };
+                });
+                const changedLogs = nextLogs.filter((log, index) => log !== logs[index]);
+                if (changedLogs.length) {
+                    setLogs(nextLogs);
+                    changedLogs.forEach(saveLog);
+                }
+                setPreviewLog((log) => {
+                    if (!log?.images.some((item) => item.id === recovered.id)) return log;
+                    const images = log.images.map((item) => (item.id === recovered.id ? recovered : item));
+                    return { ...log, images, thumbnails: images.map((item) => item.dataUrl), updatedAt: Date.now() };
+                });
+                message.success("结果已恢复归档");
+            }
+        } catch (error) {
+            message.error(error instanceof Error ? `恢复归档失败：${error.message}` : "恢复归档失败，请稍后重试");
+        } finally {
+            recoveringImageIdsRef.current.delete(image.id);
+            setRecoveringImageIds((ids) => ids.filter((id) => id !== image.id));
         }
     };
 
@@ -447,8 +493,18 @@ export default function ImagePage() {
         try {
             const image = await retryImageGeneration(index, snapshot);
             if (!image) return;
-            const stored = await uploadImage(image.dataUrl, { outputFormat: snapshot.config.imageOutputFormat });
-            const logImage = { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+            const logImage =
+                image.persisted === false
+                    ? image
+                    : await uploadImage(image.dataUrl, { outputFormat: snapshot.config.imageOutputFormat }).then((stored) => ({
+                          ...image,
+                          dataUrl: stored.url,
+                          storageKey: stored.storageKey,
+                          width: stored.width,
+                          height: stored.height,
+                          bytes: stored.bytes,
+                          mimeType: stored.mimeType,
+                      }));
             replaceImageGenerationResult(logImage);
             saveLog(
                 buildLog({
@@ -653,9 +709,11 @@ export default function ImagePage() {
                                             image={result.image}
                                             index={index}
                                             savingAsset={savingAssetIds.includes(result.image.id)}
+                                            recovering={recoveringImageIds.includes(result.image.id)}
                                             onEdit={addResultToReferences}
                                             onDownload={downloadImage}
                                             onSaveAsset={saveResultToAssets}
+                                            onRecover={recoverResult}
                                         />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} id={result.id} error={result.error} isDouEmperor={isDouEmperor} onRetry={() => retryResult(index)} />
@@ -728,105 +786,6 @@ function GenerationSettings({ config, updateConfig }: { config: AiConfig; update
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return <ImageSettingsPanel config={config} selectedModel={config.imageModel || config.model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />;
-}
-
-function ResultImageCard({
-    image,
-    index,
-    savingAsset,
-    onEdit,
-    onDownload,
-    onSaveAsset,
-}: {
-    image: GeneratedImage;
-    index: number;
-    savingAsset: boolean;
-    onEdit: (image: GeneratedImage, index: number) => void;
-    onDownload: (image: GeneratedImage, index: number) => void;
-    onSaveAsset: (image: GeneratedImage, index: number) => void;
-}) {
-    const [previewStatus, setPreviewStatus] = useState<"loading" | "loaded" | "error">("loading");
-    const [previewAttempt, setPreviewAttempt] = useState(0);
-
-    useEffect(() => {
-        setPreviewStatus("loading");
-        setPreviewAttempt(0);
-    }, [image.dataUrl]);
-
-    return (
-        <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
-            <div className="relative aspect-square overflow-hidden bg-stone-100 dark:bg-stone-900">
-                {previewStatus !== "loaded" ? (
-                    <div className="absolute inset-0 z-10 grid place-items-center p-4 text-center" aria-live="polite">
-                        {previewStatus === "error" ? (
-                            <div className="space-y-2">
-                                <div className="text-sm text-stone-500 dark:text-stone-400">高清预览加载失败</div>
-                                <Button
-                                    size="small"
-                                    onClick={() => {
-                                        setPreviewStatus("loading");
-                                        setPreviewAttempt((attempt) => attempt + 1);
-                                    }}
-                                >
-                                    重新加载预览
-                                </Button>
-                            </div>
-                        ) : (
-                            <div className="flex items-center gap-2 text-sm text-stone-500 dark:text-stone-400">
-                                <LoaderCircle className="size-4 animate-spin" />
-                                正在载入高清预览
-                            </div>
-                        )}
-                    </div>
-                ) : null}
-                <Image
-                    key={`${image.id}:${previewAttempt}`}
-                    src={retryImageUrl(image.dataUrl, previewAttempt)}
-                    alt={`生成结果 ${index + 1}`}
-                    rootClassName="block size-full"
-                    className={`size-full object-contain transition-opacity duration-200 ${previewStatus === "loaded" ? "opacity-100" : "opacity-0"}`}
-                    style={{ width: "100%", height: "100%" }}
-                    loading="eager"
-                    decoding="async"
-                    fetchPriority={index === 0 ? "high" : "auto"}
-                    preview={previewStatus === "loaded"}
-                    onLoad={() => setPreviewStatus("loaded")}
-                    onError={() => setPreviewStatus("error")}
-                />
-            </div>
-            <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
-                <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
-                    <span>
-                        {image.width}x{image.height}
-                    </span>
-                    <span>{formatBytes(image.bytes)}</span>
-                    <span>{formatDuration(image.durationMs)}</span>
-                </div>
-                <div className="grid min-w-0 grid-cols-3 gap-2">
-                    <Tooltip title="入藏卷阁">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} loading={savingAsset} disabled={savingAsset} onClick={() => void onSaveAsset(image, index)}>
-                            入藏卷阁
-                        </Button>
-                    </Tooltip>
-                    <Tooltip title="加入参考图">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<ImagePlus className="size-3.5" />} onClick={() => void onEdit(image, index)}>
-                            加入参考图
-                        </Button>
-                    </Tooltip>
-                    <Tooltip title="下载">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => void onDownload(image, index)}>
-                            下载
-                        </Button>
-                    </Tooltip>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-function retryImageUrl(url: string, attempt: number) {
-    if (!attempt || !url.startsWith("/")) return url;
-    return `${url}${url.includes("?") ? "&" : "?"}previewRetry=${attempt}`;
 }
 
 function PendingImageCard() {
@@ -1021,7 +980,7 @@ async function prepareImageLogForServer(log: GenerationLog, expectedUserId: stri
     );
     const images = await Promise.all(
         log.images.map(async (image) => {
-            if (image.storageKey || !image.dataUrl) return image;
+            if (image.persisted === false || image.storageKey || !image.dataUrl) return image;
             const stored = await uploadImage(image.dataUrl, { outputFormat: log.config.imageOutputFormat, expectedUserId });
             return {
                 ...image,
@@ -1056,6 +1015,8 @@ function buildLogFromServerJob(job: ServerJob): GenerationLog {
         bytes: image.bytes || 0,
         mimeType: image.mimeType,
         serverJobId: job.id,
+        persisted: image.persisted,
+        expiresAt: image.expiresAt,
     }));
     const model = serverJobModelValue(job);
     const config: GenerationLogConfig = {

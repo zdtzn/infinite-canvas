@@ -19,7 +19,7 @@ export type PromptOptimizerAdminConfiguration = {
 };
 export type ServerAssetLibrary = { initialized: boolean; items: Asset[] };
 export type ServerJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
-export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string; width?: number; height?: number };
+export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string; width?: number; height?: number; persisted?: boolean; expiresAt?: string };
 export type ServerJob = {
     id: string;
     status: ServerJobStatus;
@@ -38,7 +38,7 @@ export type ServerJob = {
     size?: string;
     background?: string;
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
-    result?: { images: ServerJobImage[]; successCount: number; failCount: number; durationMs: number };
+    result?: { images: ServerJobImage[]; successCount: number; failCount: number; durationMs: number; recoveryPending?: boolean };
 };
 
 export class ServerRequestError extends Error {
@@ -330,6 +330,14 @@ export async function removeServerJob(id: string, expectedUserId?: string) {
 
 export async function retryServerJob(id: string, expectedUserId?: string, idempotencyKey = nanoid()) {
     return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}/retry`, { method: "POST", headers: { "Idempotency-Key": idempotencyKey }, expectedUserId });
+}
+
+export async function recoverServerJobResult(id: string, expectedUserId?: string) {
+    return serverRequest<{ job: ServerJob; recovered: number; recoveryPending: boolean; lastError?: string }>(`/api/jobs/${encodeURIComponent(id)}/recover`, {
+        method: "POST",
+        timeoutMs: 30_000,
+        expectedUserId,
+    });
 }
 
 export async function fetchCultivationProfile() {

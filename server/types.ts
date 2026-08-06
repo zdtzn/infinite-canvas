@@ -107,6 +107,7 @@ export type ImageJobInput = {
     label?: string;
   };
   retryOf?: string;
+  recoveryOnly?: boolean;
   upstream?: {
     provider: "uu-image";
     taskId: string;
@@ -122,12 +123,15 @@ export type ImageJobImage = {
   mimeType: string;
   width?: number;
   height?: number;
+  persisted?: boolean;
+  expiresAt?: string;
 };
 export type ImageJobOutput = {
   images: ImageJobImage[];
   successCount: number;
   failCount: number;
   durationMs: number;
+  recoveryPending?: boolean;
 };
 export type StoredImageJob = QueueJob<ImageJobInput, ImageJobOutput>;
 export type ServerState = {

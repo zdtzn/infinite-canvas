@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
     clearImageGenerationJob,
+    generatedImageFromServerImage,
     getImageGenerationSnapshot,
     replaceImageGenerationResult,
     startImageGeneration,
@@ -11,6 +12,28 @@ import {
     type ImageGenerationCompletion,
     type ImageGenerationSnapshot,
 } from "./image-generation-runtime";
+
+test("preserves temporary persistence metadata from a completed server job", async () => {
+    const image = await generatedImageFromServerImage(
+        {
+            id: "temporary-image",
+            dataUrl: "https://img.uuapi.net/result.png",
+            durationMs: 42_000,
+            width: 1024,
+            height: 1024,
+            bytes: 0,
+            mimeType: "image/png",
+            persisted: false,
+            expiresAt: "2026-08-13T00:00:00.000Z",
+        },
+        "job-a",
+    );
+
+    assert.equal(image.serverJobId, "job-a");
+    assert.equal(image.persisted, false);
+    assert.equal(image.expiresAt, "2026-08-13T00:00:00.000Z");
+    assert.equal(image.dataUrl, "https://img.uuapi.net/result.png");
+});
 
 test("keeps an image task running while the workbench page is unsubscribed", async () => {
     clearImageGenerationJob();

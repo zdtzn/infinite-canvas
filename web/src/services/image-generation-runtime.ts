@@ -5,7 +5,7 @@ import { requestEdit, requestGeneration } from "@/services/api/image";
 import { settleWithConcurrency } from "@/lib/async-pool";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { fetchServerJob, retryServerJob, waitForServerJob } from "@/services/server-api";
+import { fetchServerJob, retryServerJob, waitForServerJob, type ServerJobImage } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -21,6 +21,8 @@ export type GeneratedImage = {
     height: number;
     bytes: number;
     mimeType?: string;
+    persisted?: boolean;
+    expiresAt?: string;
 };
 
 export type GenerationResult = {
@@ -263,6 +265,8 @@ async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: numb
         height: meta.height,
         bytes: image.bytes || getDataUrlByteSize(image.dataUrl),
         mimeType: image.mimeType || meta.mimeType,
+        persisted: image.persisted,
+        expiresAt: image.expiresAt,
     };
 }
 
@@ -297,8 +301,23 @@ async function restoreServerImage(serverJobId: string, expectedUserId: string) {
     const job = current.job.status === "succeeded" ? current.job : await waitForServerJob(serverJobId, { expectedUserId });
     const image = job.result?.images[0];
     if (!image) throw new Error(job.error || "任务没有返回图片");
+    return generatedImageFromServerImage(image, serverJobId, job.result?.durationMs);
+}
+
+export async function generatedImageFromServerImage(image: ServerJobImage, serverJobId: string, fallbackDurationMs = 0): Promise<GeneratedImage> {
     const meta = await resolveGeneratedImageMeta(image);
-    return { id: image.id, dataUrl: image.dataUrl, durationMs: image.durationMs || job.result?.durationMs || 0, width: meta.width, height: meta.height, bytes: image.bytes || getDataUrlByteSize(image.dataUrl), mimeType: image.mimeType };
+    return {
+        id: image.id,
+        serverJobId,
+        dataUrl: image.dataUrl,
+        durationMs: image.durationMs || fallbackDurationMs,
+        width: meta.width,
+        height: meta.height,
+        bytes: image.bytes || getDataUrlByteSize(image.dataUrl),
+        mimeType: image.mimeType,
+        persisted: image.persisted,
+        expiresAt: image.expiresAt,
+    };
 }
 
 async function retryServerImage(serverJobId: string, idempotencyKey: string, expectedUserId: string, onServerJobCreated: (jobId: string) => void) {
