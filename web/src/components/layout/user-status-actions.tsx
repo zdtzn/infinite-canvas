@@ -51,7 +51,7 @@ export function WorkspaceMenuAction({ showConfig = true, variant = "default", on
             ? {
                   key: "config",
                   icon: <Settings2 className="size-4" />,
-                  label: "工作台设置",
+                  label: "洞府",
                   onClick: () => openConfigDialog(false),
               }
             : null,

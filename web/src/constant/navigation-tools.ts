@@ -1,4 +1,4 @@
-import { FileText, ImagePlus, Images, Maximize2, PackageSearch, Settings2, TrendingUp, Video } from "lucide-react";
+import { FileText, ImagePlus, Images, Maximize2, PackageSearch, TrendingUp, Video } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -36,11 +36,6 @@ export const navigationTools = [
         label: "我的修炼",
         icon: TrendingUp,
     },
-    {
-        slug: "config",
-        label: "配置",
-        icon: Settings2,
-    },
 ] as const;
 
 export type NavigationToolSlug = (typeof navigationTools)[number]["slug"];
@@ -54,7 +49,6 @@ export const navigationSceneNames: Record<NavigationToolSlug, string> = {
     prompts: "功法楼",
     assets: "藏卷阁",
     cultivation: "命宫",
-    config: "洞府",
 };
 
 const primaryNavigationSlugs: NavigationToolSlug[] = ["canvas", "image", "product-lab", "assets"];

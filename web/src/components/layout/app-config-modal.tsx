@@ -382,8 +382,8 @@ export function AppConfigModal() {
         <Modal
             title={
                 <div>
-                    <div className="text-lg font-semibold">配置与用户偏好</div>
-                    <div className="mt-1 text-xs font-normal text-stone-500">渠道聚合、默认模型和同步偏好</div>
+                    <div className="text-lg font-semibold">洞府</div>
+                    <div className="mt-1 text-xs font-normal text-stone-500">管理渠道、默认模型与用户偏好</div>
                 </div>
             }
             open={isConfigOpen}
