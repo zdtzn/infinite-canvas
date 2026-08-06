@@ -56,7 +56,8 @@ describe("image model capabilities", () => {
         assert.equal(capabilities.customSize, false);
         assert.equal(capabilities.transparentBackground, false);
         assert.deepEqual(capabilities.outputFormats, ["auto"]);
-        assert.deepEqual(capabilities.sizes, ["1:1", "4:3", "3:4", "16:9", "9:16"]);
+        assert.deepEqual(capabilities.sizes, ["1:1", "5:4", "9:16", "21:9", "16:9", "3:2", "4:3", "4:5", "3:4", "2:3"]);
+        assert.equal(capabilities.maxReferences, 6);
     });
 
     test("standard GPT Image 2 channels expose the documented flexible ratio range", () => {

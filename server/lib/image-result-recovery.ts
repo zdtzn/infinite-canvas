@@ -4,8 +4,8 @@ type DeferredImageInput = {
   id: string;
   url: string;
   durationMs: number;
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
   expiresAt?: string;
 };
 
@@ -18,11 +18,15 @@ export function createDeferredImageResult(
     bytes: 0,
     durationMs: input.durationMs,
     mimeType: imageMimeType(input.url),
-    width: input.width,
-    height: input.height,
+    ...(positiveDimension(input.width) ? { width: input.width } : {}),
+    ...(positiveDimension(input.height) ? { height: input.height } : {}),
     persisted: false,
     ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
   };
+}
+
+function positiveDimension(value?: number) {
+  return Number.isSafeInteger(value) && (value || 0) > 0;
 }
 
 export function hasDeferredImageResults(images: ImageJobImage[]) {

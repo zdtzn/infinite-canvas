@@ -5,7 +5,7 @@ import { type CanvasTheme } from "@/lib/canvas-theme";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { modelOptionName, normalizeImageSizeSelection, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
-import { isUuAsyncGptImageModel } from "@/stores/model-capabilities";
+import { isSadaiImage2Model, isUuAsyncGptImageModel } from "@/stores/model-capabilities";
 
 const resolutionOptions = [
     { value: "low", label: "1K" },
@@ -74,6 +74,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
     const automaticResolution = capabilities.resolutions.length === 1 && capabilities.resolutions[0] === "auto";
     const selectedModelName = modelOptionName(selectedModel);
     const isUuAsyncModel = isUuAsyncGptImageModel(channel.baseUrl, selectedModelName);
+    const isSadaiModel = isSadaiImage2Model(channel.baseUrl, selectedModelName);
     const visibleGenerationQualities = generationQualityOptions.filter((item) => capabilities.generationQualities.includes(item.value));
     const canChooseGenerationQuality = !isUuAsyncModel && visibleGenerationQualities.some((item) => item.value !== "auto");
     // A selected output type is enforced while saving/downloading, even when a gateway ignores output_format.
@@ -210,7 +211,13 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                         <div className="space-y-0.5">
                             <SettingTitle color={theme.node.muted}>实际请求尺寸</SettingTitle>
                             <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                                {automaticResolution ? "构图比例仍会生效，像素尺寸由模型决定" : customSizeActive ? "自定义尺寸会覆盖比例和分辨率" : "按比例和分辨率精确换算"}
+                                {isSadaiModel
+                                    ? "生图分组按比例与分辨率档位映射；默认分组可能由上游决定"
+                                    : automaticResolution
+                                      ? "构图比例仍会生效，像素尺寸由模型决定"
+                                      : customSizeActive
+                                        ? "自定义尺寸会覆盖比例和分辨率"
+                                        : "按比例和分辨率精确换算"}
                             </div>
                         </div>
                         {capabilities.customSize ? (
@@ -224,7 +231,11 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                             </div>
                         ) : null}
                     </div>
-                    {automaticResolution ? (
+                    {isSadaiModel ? (
+                        <div className="flex h-9 items-center rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                            按 {activeSize} · {imageResolutionLabel(resolution)} 请求，最终像素由 SADAI 返回
+                        </div>
+                    ) : automaticResolution ? (
                         <div className="flex h-9 items-center rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
                             像素尺寸将在生成时由当前模型自动确定
                         </div>

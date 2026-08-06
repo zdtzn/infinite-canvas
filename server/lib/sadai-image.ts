@@ -1,5 +1,5 @@
 const SADAI_IMAGE_API_HOST = "api.sadai.top";
-const SADAI_ASPECT_RATIOS = new Set(["1:1", "4:3", "3:4", "16:9", "9:16"]);
+const SADAI_ASPECT_RATIOS = new Set(["1:1", "5:4", "9:16", "21:9", "16:9", "3:2", "4:3", "4:5", "3:4", "2:3"]);
 
 const SADAI_RESOLUTION_MAP: Record<string, string> = {
     low: "1k",
@@ -45,6 +45,7 @@ export function buildSadaiImageRequestOptions({ count, size, outputResolution, g
         ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
         ...(resolution ? { resolution } : {}),
         ...(quality ? { quality } : {}),
+        response_format: "url",
         ...(references.length ? { images: [...references] } : {}),
     };
 }
@@ -58,6 +59,8 @@ function resolveSadaiAspectRatio(size?: string) {
     const width = Number(match[1]);
     const height = Number(match[2]);
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return undefined;
+    const requestedRatio = `${width}:${height}`;
+    if (SADAI_ASPECT_RATIOS.has(requestedRatio)) return requestedRatio;
     const divisor = greatestCommonDivisor(width, height);
     const aspectRatio = `${width / divisor}:${height / divisor}`;
     if (!SADAI_ASPECT_RATIOS.has(aspectRatio)) throw new Error(`SADAI Image2 does not support aspect ratio ${aspectRatio}`);

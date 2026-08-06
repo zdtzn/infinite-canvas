@@ -99,9 +99,10 @@ test("image settings expose only parameters the selected provider can honor", ()
             showTitle: false,
         } as Parameters<typeof ImageSettingsPanel>[0]),
     );
-    assert.doesNotMatch(sadaiHtml, />2:3<\/span>/);
-    assert.doesNotMatch(sadaiHtml, />3:2<\/span>/);
+    assert.match(sadaiHtml, />2:3<\/span>/);
+    assert.match(sadaiHtml, />3:2<\/span>/);
     assert.match(sadaiHtml, />3:4<\/span>/);
+    assert.match(sadaiHtml, /默认分组可能由上游决定/);
 });
 
 test("GPT Image 2 settings show flexible ratios and their constrained request dimensions", () => {

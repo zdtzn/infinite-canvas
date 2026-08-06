@@ -33,6 +33,24 @@ describe("deferred upstream image recovery", () => {
     expect(hasDeferredImageResults([image])).toBe(true);
   });
 
+  test("keeps a successful SADAI HTTPS result visible without inventing dimensions", () => {
+    const image = createDeferredImageResult({
+      id: "image-sadai",
+      url: "https://example.sadai.top/generated/result.webp?token=temporary",
+      durationMs: 18_000,
+    });
+
+    expect(image).toEqual({
+      id: "image-sadai",
+      dataUrl: "https://example.sadai.top/generated/result.webp?token=temporary",
+      bytes: 0,
+      durationMs: 18_000,
+      mimeType: "image/webp",
+      persisted: false,
+    });
+    expect(hasDeferredImageResults([image])).toBe(true);
+  });
+
   test("treats only connection and timeout failures as recoverable", () => {
     expect(isRecoverableImageDownloadError({ status: 502 })).toBe(true);
     expect(isRecoverableImageDownloadError({ status: 503 })).toBe(true);

@@ -31,6 +31,14 @@ describe("server image channel capabilities", () => {
     expect(profile.capabilities.maxOutputs).toBe(10);
   });
 
+  test("uses the latest SADAI mapped-group ratios and reference limit", () => {
+    const profile = resolveServerImageCapabilityProfile("gpt-image-2", "openai", "https://api.sadai.top/v1", { mode: "auto" });
+
+    expect(profile.source).toBe("documented");
+    expect(profile.capabilities.sizes).toEqual(["1:1", "5:4", "9:16", "21:9", "16:9", "3:2", "4:3", "4:5", "3:4", "2:3"]);
+    expect(profile.capabilities.maxReferences).toBe(6);
+  });
+
   test("validates custom ratio, format, output and reference limits", () => {
     const capabilities = resolveServerImageCapabilityProfile("vendor-image", "openai", "https://api.vendor.example", {
       mode: "custom",

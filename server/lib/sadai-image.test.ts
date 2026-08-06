@@ -16,7 +16,7 @@ test("maps workbench ratio and resolution to SADAI Image2 fields", () => {
             outputResolution: "low",
             references: [],
         }),
-    ).toEqual({ n: 1, aspect_ratio: "9:16", resolution: "1k" });
+    ).toEqual({ n: 1, aspect_ratio: "9:16", resolution: "1k", response_format: "url" });
 
     expect(
         buildSadaiImageRequestOptions({
@@ -31,6 +31,7 @@ test("maps workbench ratio and resolution to SADAI Image2 fields", () => {
         aspect_ratio: "16:9",
         resolution: "2k",
         quality: "high",
+        response_format: "url",
         images: ["data:image/png;base64,reference"],
     });
 });
@@ -44,7 +45,7 @@ test("migrates legacy automatic ratios to square and reduces explicit dimensions
             generationQuality: "auto",
             references: [],
         }),
-    ).toEqual({ n: 1, aspect_ratio: "1:1" });
+    ).toEqual({ n: 1, aspect_ratio: "1:1", response_format: "url" });
 
     expect(
         buildSadaiImageRequestOptions({
@@ -53,16 +54,29 @@ test("migrates legacy automatic ratios to square and reduces explicit dimensions
             outputResolution: "high",
             references: [],
         }),
-    ).toEqual({ n: 1, aspect_ratio: "4:3", resolution: "4k" });
+    ).toEqual({ n: 1, aspect_ratio: "4:3", resolution: "4k", response_format: "url" });
 });
 
-test("rejects aspect ratios that SADAI Image2 does not support", () => {
+test("supports the latest documented SADAI Image2 mapped ratios", () => {
+    for (const size of ["1:1", "5:4", "9:16", "21:9", "16:9", "3:2", "4:3", "4:5", "3:4", "2:3"]) {
+        expect(
+            buildSadaiImageRequestOptions({
+                count: 1,
+                size,
+                outputResolution: "low",
+                references: [],
+            }).aspect_ratio,
+        ).toBe(size);
+    }
+});
+
+test("rejects ratios outside the documented SADAI Image2 mapped group", () => {
     expect(() =>
         buildSadaiImageRequestOptions({
             count: 1,
-            size: "2:3",
+            size: "9:21",
             outputResolution: "low",
             references: [],
         }),
-    ).toThrow("SADAI Image2 does not support aspect ratio 2:3");
+    ).toThrow("SADAI Image2 does not support aspect ratio 3:7");
 });

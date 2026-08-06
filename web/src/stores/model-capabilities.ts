@@ -30,7 +30,7 @@ export type ImageCapabilityProfile = {
 const COMMON_SIZES = ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"];
 const GPT_IMAGE_2_SIZES = ["1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "9:21", "3:1", "1:3"];
 const LEGACY_GPT_IMAGE_SIZES = ["1:1", "3:2", "2:3"];
-const SADAI_SIZES = ["1:1", "4:3", "3:4", "16:9", "9:16"];
+const SADAI_SIZES = ["1:1", "5:4", "9:16", "21:9", "16:9", "3:2", "4:3", "4:5", "3:4", "2:3"];
 const DRAGON_FOUR_K_SIZES = ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"];
 const OUTPUT_RESOLUTIONS = ["low", "medium", "high"];
 
@@ -123,14 +123,14 @@ function documentedImageCapabilities(model: string, apiFormat: "openai" | "gemin
         });
     }
     if (isSadaiImage2Model(baseUrl, name)) {
-        return documented("SADAI Image2", {
+        return documented("SADAI Image2 生图分组", {
             resolutions: OUTPUT_RESOLUTIONS,
             generationQualities: ["auto", "low", "medium", "high"],
             outputFormats: ["auto"],
             sizes: SADAI_SIZES,
             customSize: false,
             transparentBackground: false,
-            maxReferences: 16,
+            maxReferences: 6,
             maxOutputs: 10,
         });
     }
@@ -272,7 +272,7 @@ export function resolveImageSlotConcurrency(baseUrl: string, model: string, requ
     return isUuAsyncGptImageModel(baseUrl, model) ? 1 : concurrency;
 }
 
-function isSadaiImage2Model(baseUrl: string, model: string) {
+export function isSadaiImage2Model(baseUrl: string, model: string) {
     try {
         return new URL(baseUrl).hostname.toLowerCase() === "api.sadai.top" && model.trim().toLowerCase() === "gpt-image-2";
     } catch {

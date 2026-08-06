@@ -54,8 +54,9 @@ describe("resolved image model settings", () => {
         expect(sadaiSettings.config.size).toBe("16:9");
         expect(sadaiSettings.config.background).toBe("");
 
-        const unsupportedSadaiRatio = resolveImageModelSettings({ ...defaultConfig, channels: [sadai], model: sadaiModel, imageModel: sadaiModel, size: "2:3" }, sadaiModel);
-        expect(unsupportedSadaiRatio.config.size).toBe("3:4");
+        const supportedSadaiRatio = resolveImageModelSettings({ ...defaultConfig, channels: [sadai], model: sadaiModel, imageModel: sadaiModel, size: "2:3" }, sadaiModel);
+        expect(supportedSadaiRatio.config.size).toBe("2:3");
+        expect(supportedSadaiRatio.capabilities.maxReferences).toBe(6);
 
         const uuSettings = resolveImageModelSettings({ ...defaultConfig, channels: [uu], model: uuModel, imageModel: uuModel, quality: "high", imageQuality: "high", imageOutputFormat: "webp" }, uuModel);
         expect(uuSettings.capabilities.resolutions).toEqual(["low", "medium", "high"]);

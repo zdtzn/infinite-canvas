@@ -106,8 +106,11 @@ const REQUEST_TIMEOUT_MS = Math.max(30_000, positiveInt(process.env.UPSTREAM_TIM
 const UU_ASYNC_REQUEST_TIMEOUT_MS = Math.min(30_000, REQUEST_TIMEOUT_MS);
 const UU_ASYNC_POLL_INTERVAL_MS = 2_500;
 const UU_ASYNC_MAX_WAIT_MS = Math.max(UU_ASYNC_POLL_INTERVAL_MS, positiveInt(process.env.UU_ASYNC_MAX_WAIT_MS, 15 * 60_000));
-const UU_RESULT_DOWNLOAD_TIMEOUT_MS = Math.max(3_000, Math.min(30_000, positiveInt(process.env.UU_RESULT_DOWNLOAD_TIMEOUT_MS, 8_000)));
-const UU_RESULT_RECOVERY_DELAYS_MS = [15_000, 60_000, 5 * 60_000];
+const RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS = Math.max(
+    3_000,
+    Math.min(30_000, positiveInt(process.env.RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS, positiveInt(process.env.UU_RESULT_DOWNLOAD_TIMEOUT_MS, 8_000))),
+);
+const RESULT_IMAGE_RECOVERY_DELAYS_MS = [15_000, 60_000, 5 * 60_000];
 const PROMPT_PROXY_CONCURRENCY = Math.max(1, Math.min(8, positiveInt(process.env.PROMPT_PROXY_CONCURRENCY, 3)));
 const PROMPT_PROXY_TIMEOUT_MS = Math.max(3_000, Math.min(30_000, positiveInt(process.env.PROMPT_PROXY_TIMEOUT_MS, 8_000)));
 const PROMPT_OPTIMIZE_CONCURRENCY = Math.max(1, Math.min(4, positiveInt(process.env.PROMPT_OPTIMIZE_CONCURRENCY, 2)));
@@ -1996,13 +1999,13 @@ async function recoverJobResult(session: SessionPayload, id: string) {
 }
 
 function scheduleJobImageRecovery(jobId: string, attempt = 0) {
-    if (attempt >= UU_RESULT_RECOVERY_DELAYS_MS.length || imageRecoveryTimers.has(jobId)) return;
+    if (attempt >= RESULT_IMAGE_RECOVERY_DELAYS_MS.length || imageRecoveryTimers.has(jobId)) return;
     const timer = setTimeout(() => {
         imageRecoveryTimers.delete(jobId);
         void recoverJobImages(jobId).then((outcome) => {
             if (outcome.remaining) scheduleJobImageRecovery(jobId, attempt + 1);
         });
-    }, UU_RESULT_RECOVERY_DELAYS_MS[attempt]);
+    }, RESULT_IMAGE_RECOVERY_DELAYS_MS[attempt]);
     (timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
     imageRecoveryTimers.set(jobId, timer);
 }
@@ -2030,7 +2033,7 @@ async function performJobImageRecovery(jobId: string): Promise<ImageRecoveryResu
         if (url.protocol !== "https:") throw new Error("临时图片地址不安全");
         try {
             return await persistJobImage(job.input.userId, job.id, url.toString(), image.durationMs, new AbortController().signal, {
-                downloadTimeoutMs: UU_RESULT_DOWNLOAD_TIMEOUT_MS,
+                downloadTimeoutMs: RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
                 downloadAttempts: 1,
             });
         } catch (error) {
@@ -2148,10 +2151,17 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
             const durationMs = Date.now() - startedAt;
             try {
                 images.push(
-                    await persistJobImage(input.userId, job.id, raw, durationMs, signal, useUuAsync ? { downloadTimeoutMs: UU_RESULT_DOWNLOAD_TIMEOUT_MS, downloadAttempts: 1 } : undefined),
+                    await persistJobImage(
+                        input.userId,
+                        job.id,
+                        raw,
+                        durationMs,
+                        signal,
+                        raw.startsWith("data:") ? undefined : { downloadTimeoutMs: RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS, downloadAttempts: 1 },
+                    ),
                 );
             } catch (error) {
-                if (!useUuAsync || input.upstream?.status !== "succeeded" || !uuDimensions || !isRecoverableImageDownloadError(error)) throw error;
+                if (!isRecoverableImageDownloadError(error)) throw error;
                 const url = assertAllowedUpstreamUrl(raw);
                 if (url.protocol !== "https:") throw error;
                 images.push(
@@ -2159,9 +2169,8 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                         id: randomUUID(),
                         url: url.toString(),
                         durationMs,
-                        width: uuDimensions.width,
-                        height: uuDimensions.height,
-                        expiresAt: input.upstream.expiresAt,
+                        ...(uuDimensions || {}),
+                        ...(useUuAsync && input.upstream?.expiresAt ? { expiresAt: input.upstream.expiresAt } : {}),
                     }),
                 );
             }
