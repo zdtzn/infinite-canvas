@@ -8,7 +8,7 @@ import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { imageToDataUrl } from "@/services/image-storage";
-import { cancelServerJob, saveServerChannel, submitImageJob, waitForServerJob, type ServerImageReferenceInput } from "@/services/server-api";
+import { cancelServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput } from "@/services/server-api";
 import { deriveImageModelCapabilities, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useUserStore } from "@/stores/use-user-store";
@@ -163,18 +163,18 @@ function normalizeImageOutputFormat(format: string | undefined) {
 }
 
 /** Do not leak a stale model-quality setting into channels that do not support it. */
-function resolveSupportedImageQuality(config: Pick<AiConfig, "model" | "apiFormat" | "baseUrl" | "imageQuality">) {
+function resolveSupportedImageQuality(config: Pick<ManagedAiConfig, "model" | "apiFormat" | "baseUrl" | "imageQuality" | "imageCapabilities">) {
     const quality = normalizeImageQuality(config.imageQuality);
     if (!quality) return undefined;
-    const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat, config.baseUrl);
+    const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat, config.baseUrl, config.imageCapabilities);
     return capabilities.generationQualities.includes(quality) ? quality : undefined;
 }
 
 /** Only forward output_format when the selected model documents that capability. */
-function resolveSupportedImageOutputFormat(config: Pick<AiConfig, "model" | "apiFormat" | "baseUrl" | "imageOutputFormat" | "background">) {
+function resolveSupportedImageOutputFormat(config: Pick<ManagedAiConfig, "model" | "apiFormat" | "baseUrl" | "imageOutputFormat" | "background" | "imageCapabilities">) {
     const format = normalizeImageOutputFormat(config.imageOutputFormat);
     if (!format || (format === "jpeg" && normalizeBackground(config.background) === "transparent")) return undefined;
-    const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat, config.baseUrl);
+    const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat, config.baseUrl, config.imageCapabilities);
     return capabilities.outputFormats.includes(format) ? format : undefined;
 }
 
@@ -966,8 +966,7 @@ export async function fetchImageModels(config: ManagedAiConfig) {
 
 export async function fetchChannelModels(channel: ModelChannel) {
     if (PUBLIC_MODE) {
-        await saveServerChannel(channel);
-        return fetchImageModels({ ...defaultConfig, baseUrl: channel.baseUrl, apiKey: "", apiFormat: channel.apiFormat, channelId: channel.id, serverManaged: true });
+        return (await testServerChannel(channel)).models;
     }
     return fetchImageModels({ ...defaultConfig, baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
 }
@@ -981,7 +980,7 @@ async function requestServerImageJob(
     options?: RequestOptions,
 ): Promise<RequestedImage[]> {
     const expectedUserId = options?.expectedUserId ?? useUserStore.getState().user?.id ?? "";
-    const capabilities = deriveImageModelCapabilities(requestConfig.model, requestConfig.apiFormat, requestConfig.baseUrl);
+    const capabilities = deriveImageModelCapabilities(requestConfig.model, requestConfig.apiFormat, requestConfig.baseUrl, requestConfig.imageCapabilities);
     const resolution = requestConfig.quality || "low";
     const imageQuality = resolveSupportedImageQuality(requestConfig);
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);

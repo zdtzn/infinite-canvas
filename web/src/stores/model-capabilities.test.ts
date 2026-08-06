@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { deriveImageModelCapabilities, resolveImageSlotConcurrency, validateImageRequest } from "./model-capabilities";
+import { deriveImageModelCapabilities, resolveImageModelCapabilityProfile, resolveImageSlotConcurrency, validateImageRequest } from "./model-capabilities";
 
 describe("image model capabilities", () => {
     test("Gemini disables transparent output and limits references", () => {
@@ -18,12 +18,26 @@ describe("image model capabilities", () => {
         assert.throws(() => validateImageRequest(capabilities, { resolution: "low", size: "1:1", background: "", referenceCount: capabilities.maxReferences + 1 }), /参考图/);
     });
 
+    test("new unknown auto models are conservative while old models remain legacy compatible", () => {
+        const automatic = resolveImageModelCapabilityProfile("vendor-new-image", "openai", "https://api.vendor.example", { mode: "auto" });
+        const legacy = resolveImageModelCapabilityProfile("vendor-existing-image", "openai", "https://api.vendor.example");
+
+        assert.equal(automatic.source, "conservative");
+        assert.deepEqual(automatic.capabilities.sizes, ["1:1"]);
+        assert.deepEqual(automatic.capabilities.resolutions, ["auto"]);
+        assert.equal(automatic.capabilities.maxOutputs, 1);
+        assert.equal(legacy.source, "legacy");
+        assert.equal(legacy.capabilities.customSize, true);
+        assert.equal(legacy.capabilities.maxOutputs, 4);
+    });
+
     test("allows GPT Image output resolution and generation quality to be selected independently", () => {
         const capabilities = deriveImageModelCapabilities("gpt-image-2", "openai");
         assert.deepEqual(capabilities.generationQualities, ["auto", "low", "medium", "high"]);
         assert.deepEqual(capabilities.outputFormats, ["auto", "png", "jpeg", "webp"]);
         assert.doesNotThrow(() => validateImageRequest(capabilities, { resolution: "medium", imageQuality: "high", imageOutputFormat: "webp", size: "1:1", background: "", referenceCount: 0 }));
         assert.throws(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "transparent", referenceCount: 0 }), /透明背景/);
+        assert.throws(() => validateImageRequest({ ...capabilities, outputFormats: ["auto", "png"] }, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "", referenceCount: 0 }), /输出格式/);
     });
 
     test("UU async GPT Image exposes 4K but serializes multi-image submissions", () => {
@@ -32,7 +46,7 @@ describe("image model capabilities", () => {
         assert.equal(capabilities.customSize, false);
         assert.deepEqual(capabilities.generationQualities, ["auto"]);
         assert.deepEqual(capabilities.outputFormats, ["auto"]);
-        assert.doesNotThrow(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "", referenceCount: 0 }));
+        assert.throws(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "", referenceCount: 0 }), /输出格式/);
         assert.equal(resolveImageSlotConcurrency("https://uuapi.net/v1", "uuapi::gpt-image-2", 4), 1);
         assert.equal(resolveImageSlotConcurrency("https://api.example.com/v1", "gpt-image-2", 4), 4);
     });

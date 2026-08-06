@@ -84,9 +84,11 @@ export function normalizeChannelModels(input: unknown): ChannelModelRecord[] {
     if (!name || seen.has(name)) continue;
     seen.add(name);
     const requestedCapability = String(source.capability || "") as ChannelCapability;
+    const capability = CAPABILITIES.has(requestedCapability) ? requestedCapability : guessModelCapability(name);
     models.push({
       name,
-      capability: CAPABILITIES.has(requestedCapability) ? requestedCapability : guessModelCapability(name),
+      capability,
+      ...(capability === "image" ? { imageCapabilities: normalizeChannelImageCapabilities(source.imageCapabilities) } : {}),
     });
   }
   return models;
@@ -108,6 +110,37 @@ function guessModelCapability(name: string): ChannelCapability {
   if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
   if (IMAGE_KEYWORDS.some((keyword) => value.includes(keyword))) return "image";
   return "text";
+}
+
+export function normalizeChannelImageCapabilities(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const source = input as Record<string, unknown>;
+  const mode = String(source.mode || "");
+  if (!["auto", "conservative", "custom"].includes(mode)) return undefined;
+  if (mode !== "custom") return { mode: mode as "auto" | "conservative" };
+
+  const options = (value: unknown, allowed: string[], fallback: string[]) => {
+    const normalized = Array.isArray(value) ? Array.from(new Set(value.map((item) => String(item).trim().toLowerCase()).filter((item) => allowed.includes(item)))) : [];
+    return normalized.length ? normalized : fallback;
+  };
+  const sizes = Array.isArray(source.sizes)
+    ? Array.from(new Set(source.sizes.map((item) => String(item).trim()).filter((item) => /^\d{1,3}:\d{1,3}$/.test(item)))).slice(0, 30)
+    : [];
+  const integer = (value: unknown, minimum: number, maximum: number, fallback: number) => {
+    const parsed = Math.floor(Number(value));
+    return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
+  };
+  return {
+    mode: "custom" as const,
+    resolutions: options(source.resolutions, ["auto", "low", "medium", "high"], ["auto"]),
+    generationQualities: options(source.generationQualities, ["auto", "low", "medium", "high", "standard", "hd"], ["auto"]),
+    outputFormats: options(source.outputFormats, ["auto", "png", "jpeg", "webp"], ["auto"]),
+    sizes: sizes.length ? sizes : ["1:1"],
+    customSize: Boolean(source.customSize),
+    transparentBackground: Boolean(source.transparentBackground),
+    maxReferences: integer(source.maxReferences, 0, 16, 1),
+    maxOutputs: integer(source.maxOutputs, 1, 10, 1),
+  };
 }
 
 function channelSortOrder(value: unknown, fallback: number) {

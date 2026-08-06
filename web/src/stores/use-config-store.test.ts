@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyPlatformChannels, createModelChannel, defaultConfig, encodeChannelModel, normalizeImageSizeSelection, resolveModelForCapability, useConfigStore } from "./use-config-store";
+import { applyPlatformChannels, createModelChannel, defaultConfig, encodeChannelModel, normalizeChannelModels, normalizeImageSizeSelection, resolveModelForCapability, resolveModelRequestConfig, useConfigStore } from "./use-config-store";
 
 test("legacy automatic image ratios migrate to an explicit square ratio", () => {
     expect(normalizeImageSizeSelection("auto")).toBe("1:1");
@@ -76,6 +76,17 @@ describe("platform channel hydration", () => {
 
         expect(config.reasoningEffort).toBe("auto");
         expect(resolveModelForCapability(config, encodeChannelModel("shared", "image-model"), "text")).toBe(encodeChannelModel("shared", "text-model"));
+    });
+
+    test("preserves image capability metadata through hydration and request resolution", () => {
+        const imageCapabilities = { mode: "custom" as const, sizes: ["1:1", "16:9"], resolutions: ["low"], maxOutputs: 2, maxReferences: 1 };
+        const channel = createModelChannel({ id: "custom", models: [{ name: "vendor-image", capability: "image", imageCapabilities }] });
+        const config = applyPlatformChannels(defaultConfig, [channel]);
+        const selected = encodeChannelModel("custom", "vendor-image");
+
+        expect(config.channels[0]?.models[0]?.imageCapabilities).toMatchObject(imageCapabilities);
+        expect(resolveModelRequestConfig(config, selected).imageCapabilities).toMatchObject(imageCapabilities);
+        expect(normalizeChannelModels([{ name: "vendor-image", capability: "text", imageCapabilities }])).toEqual([{ name: "vendor-image", capability: "text", script: undefined, imageCapabilities: undefined }]);
     });
 });
 

@@ -6,11 +6,13 @@ const RESOLUTION_ORDER = ["low", "medium", "high"];
 export function resolveImageModelSettings(config: AiConfig, selectedModel: string, maxCount = 15) {
     const model = selectedModel || config.imageModel || config.model;
     const channel = resolveModelChannel(config, model);
-    const capabilities = deriveImageModelCapabilities(modelOptionName(model), channel.apiFormat, channel.baseUrl);
+    const modelName = modelOptionName(model);
+    const configuredCapabilities = channel.models.find((item) => item.name === modelName)?.imageCapabilities;
+    const capabilities = deriveImageModelCapabilities(modelName, channel.apiFormat, channel.baseUrl, configuredCapabilities);
     const quality = supportedResolution(config.quality, capabilities.resolutions);
-    const imageQuality = capabilities.generationQualities.includes(config.imageQuality) ? config.imageQuality : "auto";
+    const imageQuality = supportedOption(config.imageQuality, capabilities.generationQualities);
     const size = supportedSize(config.size, capabilities.sizes, capabilities.customSize);
-    const imageOutputFormat = ["auto", "png", "jpeg", "webp"].includes(config.imageOutputFormat) ? config.imageOutputFormat : "auto";
+    const imageOutputFormat = supportedOption(config.imageOutputFormat, capabilities.outputFormats);
     const background = config.background === "transparent" && capabilities.transparentBackground && imageOutputFormat !== "jpeg" ? "transparent" : "";
     const count = Math.max(1, Math.min(maxCount, capabilities.maxOutputs, Math.floor(Math.abs(Number(config.count)) || 1)));
 
@@ -29,6 +31,11 @@ export function resolveImageModelSettings(config: AiConfig, selectedModel: strin
             count: String(count),
         },
     };
+}
+
+function supportedOption(value: string, supported: string[]) {
+    if (supported.includes(value)) return value;
+    return supported.includes("auto") ? "auto" : supported[0] || "auto";
 }
 
 function supportedResolution(value: string, supported: string[]) {

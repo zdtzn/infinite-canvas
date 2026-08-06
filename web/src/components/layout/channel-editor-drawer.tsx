@@ -1,11 +1,13 @@
 import { App, Button, Drawer, Input, Segmented, Select, Space } from "antd";
-import { ListPlus, Trash2 } from "lucide-react";
+import { Cable, ListPlus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 
 import { lazyRoute } from "@/lib/lazy-route";
 import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelSelectModal } from "./model-select-modal";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { testServerChannel } from "@/services/server-api";
+import { ImageCapabilityEditor } from "./image-capability-editor";
 
 const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "OpenAI", value: "openai" },
@@ -20,6 +22,7 @@ const capabilityOptions: Array<{ label: string; value: ModelCapability }> = [
 ];
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
+type ImageCapabilityTarget = { name: string };
 const ModelScriptEditor = lazyRoute(() => import("./model-script-editor").then((module) => ({ default: module.ModelScriptEditor })));
 
 export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: boolean; channel: ModelChannel | null; onSave: (channel: ModelChannel) => void | Promise<void>; onClose: () => void }) {
@@ -27,7 +30,9 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const [draft, setDraft] = useState<ModelChannel | null>(channel);
     const [selectOpen, setSelectOpen] = useState(false);
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
+    const [imageCapabilityTarget, setImageCapabilityTarget] = useState<ImageCapabilityTarget | null>(null);
     const [saving, setSaving] = useState(false);
+    const [testing, setTesting] = useState(false);
 
     useEffect(() => {
         if (open && channel) setDraft(channel);
@@ -45,12 +50,33 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
     const applySelection = (names: string[]) => {
         const map = new Map(draft.models.map((model) => [model.name, model]));
-        setModels(names.map((name) => map.get(name) || { name, capability: guessCapability(name) }));
+        setModels(
+            names.map((name) => {
+                const existing = map.get(name);
+                if (existing) return existing;
+                const capability = guessCapability(name);
+                return { name, capability, ...(capability === "image" ? { imageCapabilities: { mode: "auto" as const } } : {}) };
+            }),
+        );
     };
 
-    const setCapability = (name: string, capability: ModelCapability) => setModels(draft.models.map((model) => (model.name === name ? { ...model, capability } : model)));
+    const setCapability = (name: string, capability: ModelCapability) =>
+        setModels(draft.models.map((model) => (model.name !== name ? model : capability === "image" ? { ...model, capability, imageCapabilities: model.imageCapabilities || { mode: "auto" } } : { ...model, capability, imageCapabilities: undefined })));
     const setScript = (name: string, script: string) => setModels(draft.models.map((model) => (model.name === name ? { ...model, script: script || undefined } : model)));
+    const setImageCapabilities = (name: string, imageCapabilities: NonNullable<ChannelModel["imageCapabilities"]>) => setModels(draft.models.map((model) => (model.name === name ? { ...model, imageCapabilities } : model)));
     const removeModel = (name: string) => setModels(draft.models.filter((model) => model.name !== name));
+
+    const testConnection = async () => {
+        setTesting(true);
+        try {
+            const result = await testServerChannel(draft);
+            message.success(`连接成功，读取到 ${result.modelCount} 个模型`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "渠道连接失败");
+        } finally {
+            setTesting(false);
+        }
+    };
 
     const save = async () => {
         setSaving(true);
@@ -67,7 +93,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     return (
         <Drawer
             open={open}
-            width={640}
+            width="min(640px, 100vw)"
             title="编辑渠道"
             onClose={onClose}
             styles={{ body: { paddingTop: 16 } }}
@@ -97,6 +123,13 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                     <span className="mb-1 block text-sm font-medium">API Key</span>
                     <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder={draft.credentialState === "saved" ? "已安全保存；留空表示不更换" : "sk-..."} />
                 </label>
+                {PUBLIC_MODE ? (
+                    <div className="md:col-span-2 flex justify-end">
+                        <Button icon={<Cable className="size-4" />} loading={testing} onClick={() => void testConnection()}>
+                            测试连接
+                        </Button>
+                    </div>
+                ) : null}
             </div>
 
             <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -118,6 +151,11 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                             </span>
                             <div className="flex shrink-0 items-center gap-2">
                                 <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />
+                                {model.capability === "image" ? (
+                                    <Button size="small" icon={<SlidersHorizontal className="size-3.5" />} onClick={() => setImageCapabilityTarget({ name: model.name })}>
+                                        生图能力
+                                    </Button>
+                                ) : null}
                                 {!PUBLIC_MODE ? (
                                     <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
                                         {model.script ? "脚本已设" : "调用脚本"}
@@ -134,16 +172,21 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
             <ModelSelectModal open={selectOpen} channel={draft} selectedNames={draft.models.map((model) => model.name)} onConfirm={applySelection} onClose={() => setSelectOpen(false)} />
 
+            {imageCapabilityTarget ? (
+                <ImageCapabilityEditor
+                    open
+                    modelName={imageCapabilityTarget.name}
+                    apiFormat={draft.apiFormat}
+                    baseUrl={draft.baseUrl}
+                    value={draft.models.find((model) => model.name === imageCapabilityTarget.name)?.imageCapabilities}
+                    onSave={(imageCapabilities) => setImageCapabilities(imageCapabilityTarget.name, imageCapabilities)}
+                    onClose={() => setImageCapabilityTarget(null)}
+                />
+            ) : null}
+
             {!PUBLIC_MODE && scriptTarget ? (
                 <Suspense fallback={null}>
-                    <ModelScriptEditor
-                        open
-                        capability={scriptTarget.capability}
-                        modelName={scriptTarget.name}
-                        value={scriptTarget.value}
-                        onSave={(script) => setScript(scriptTarget.name, script)}
-                        onClose={() => setScriptTarget(null)}
-                    />
+                    <ModelScriptEditor open capability={scriptTarget.capability} modelName={scriptTarget.name} value={scriptTarget.value} onSave={(script) => setScript(scriptTarget.name, script)} onClose={() => setScriptTarget(null)} />
                 </Suspense>
             ) : null}
         </Drawer>

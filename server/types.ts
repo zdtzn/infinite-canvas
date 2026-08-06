@@ -4,9 +4,21 @@ import type { ProviderProtocol } from "./lib/url-policy";
 
 export type UserStatus = "NORMAL" | "DISABLED" | "BANNED";
 export type ChannelCapability = "image" | "video" | "text" | "audio";
+export type ChannelImageCapabilityConfig = {
+  mode: "auto" | "conservative" | "custom";
+  resolutions?: string[];
+  generationQualities?: string[];
+  outputFormats?: string[];
+  sizes?: string[];
+  customSize?: boolean;
+  transparentBackground?: boolean;
+  maxReferences?: number;
+  maxOutputs?: number;
+};
 export type ChannelModelRecord = {
   name: string;
   capability: ChannelCapability;
+  imageCapabilities?: ChannelImageCapabilityConfig;
 };
 export type UserRecord = {
   userId: string;
@@ -99,8 +111,7 @@ export type ImageJobInput = {
     provider: "uu-image";
     taskId: string;
     expiresAt?: string;
-    status?:
-      "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
+    status?: "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
   };
 };
 export type ImageJobImage = {

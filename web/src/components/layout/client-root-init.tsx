@@ -72,7 +72,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                     const merged = channels.map((channel) => {
                         const local = localById.get(channel.id);
                         if (!local?.models.length) return channel;
-                        return { ...channel, models: normalizeChannelModels([...local.models, ...channel.models]) };
+                        return { ...channel, models: normalizeChannelModels([...channel.models, ...local.models]) };
                     });
                     const changed = merged.filter((channel, index) => !sameChannelModels(channel, channels[index]));
                     if (changed.length) await Promise.all(changed.map(saveServerChannel));
@@ -145,5 +145,8 @@ function toClientChannel(channel: ServerChannel): ModelChannel {
 
 function sameChannelModels(left: ModelChannel, right: ModelChannel) {
     if (left.models.length !== right.models.length) return false;
-    return left.models.every((model, index) => model.name === right.models[index]?.name && model.capability === right.models[index]?.capability);
+    return left.models.every((model, index) => {
+        const other = right.models[index];
+        return model.name === other?.name && model.capability === other.capability && JSON.stringify(model.imageCapabilities || null) === JSON.stringify(other.imageCapabilities || null);
+    });
 }

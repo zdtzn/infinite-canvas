@@ -1,9 +1,10 @@
 import { nanoid } from "nanoid";
 
 import { buildApiUrl, type AiConfig } from "@/stores/use-config-store";
+import type { ChannelImageCapabilityConfig } from "@/stores/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
 
-export type ManagedAiConfig = AiConfig & { channelId?: string; serverManaged?: boolean };
+export type ManagedAiConfig = AiConfig & { channelId?: string; serverManaged?: boolean; imageCapabilities?: ChannelImageCapabilityConfig };
 
 export function isServerManagedConfig(config: Pick<ManagedAiConfig, "channelId" | "serverManaged">): config is ManagedAiConfig & { channelId: string; serverManaged: true } {
     return Boolean(config.serverManaged && config.channelId);

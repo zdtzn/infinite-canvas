@@ -80,6 +80,38 @@ describe("platform channels", () => {
     ]);
   });
 
+  test("normalizes image capability metadata without changing non-image models", () => {
+    expect(
+      normalizeChannelModels([
+        { name: "new-image", capability: "image", imageCapabilities: { mode: "auto", sizes: ["16:9"] } },
+        {
+          name: "custom-image",
+          capability: "image",
+          imageCapabilities: { mode: "custom", sizes: ["16:9", "bad"], resolutions: ["high", "invalid"], maxOutputs: 99, maxReferences: -1 },
+        },
+        { name: "text-model", capability: "text", imageCapabilities: { mode: "conservative" } },
+      ]),
+    ).toEqual([
+      { name: "new-image", capability: "image", imageCapabilities: { mode: "auto" } },
+      {
+        name: "custom-image",
+        capability: "image",
+        imageCapabilities: {
+          mode: "custom",
+          sizes: ["16:9"],
+          resolutions: ["high"],
+          generationQualities: ["auto"],
+          outputFormats: ["auto"],
+          customSize: false,
+          transparentBackground: false,
+          maxOutputs: 10,
+          maxReferences: 0,
+        },
+      },
+      { name: "text-model", capability: "text" },
+    ]);
+  });
+
   test("stores one administrator prompt optimizer target without changing the database schema", () => {
     const state = createState();
     state.channels["admin:shared"].models = [

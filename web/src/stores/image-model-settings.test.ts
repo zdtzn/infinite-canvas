@@ -57,8 +57,26 @@ describe("resolved image model settings", () => {
         const unsupportedSadaiRatio = resolveImageModelSettings({ ...defaultConfig, channels: [sadai], model: sadaiModel, imageModel: sadaiModel, size: "2:3" }, sadaiModel);
         expect(unsupportedSadaiRatio.config.size).toBe("3:4");
 
-        const uuSettings = resolveImageModelSettings({ ...defaultConfig, channels: [uu], model: uuModel, imageModel: uuModel, quality: "high" }, uuModel);
+        const uuSettings = resolveImageModelSettings({ ...defaultConfig, channels: [uu], model: uuModel, imageModel: uuModel, quality: "high", imageQuality: "high", imageOutputFormat: "webp" }, uuModel);
         expect(uuSettings.capabilities.resolutions).toEqual(["low", "medium", "high"]);
         expect(uuSettings.config.quality).toBe("high");
+        expect(uuSettings.config.imageQuality).toBe("auto");
+        expect(uuSettings.config.imageOutputFormat).toBe("auto");
+    });
+
+    test("uses conservative defaults for newly configured unknown image models", () => {
+        const channel = createModelChannel({
+            id: "vendor",
+            baseUrl: "https://api.vendor.example",
+            models: [{ name: "vendor-image-v1", capability: "image", imageCapabilities: { mode: "auto" } }],
+        });
+        const model = encodeChannelModel(channel.id, "vendor-image-v1");
+        const resolved = resolveImageModelSettings({ ...defaultConfig, channels: [channel], model, imageModel: model, quality: "high", imageQuality: "high", imageOutputFormat: "webp", size: "16:9", count: "4" }, model);
+
+        expect(resolved.config.quality).toBe("auto");
+        expect(resolved.config.imageQuality).toBe("auto");
+        expect(resolved.config.imageOutputFormat).toBe("auto");
+        expect(resolved.config.size).toBe("1:1");
+        expect(resolved.config.count).toBe("1");
     });
 });

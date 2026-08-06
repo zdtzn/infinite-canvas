@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import type { ChannelImageCapabilityConfig } from "@/stores/model-capabilities";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -12,6 +13,7 @@ export type ChannelModel = {
     name: string;
     capability: ModelCapability;
     script?: string;
+    imageCapabilities?: ChannelImageCapabilityConfig;
 };
 
 export type ModelChannel = {
@@ -310,9 +312,35 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         seen.add(name);
         const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
-        result.push({ name, capability, script });
+        const imageCapabilities = typeof item === "string" || capability !== "image" ? undefined : normalizeChannelImageCapabilities(item.imageCapabilities);
+        result.push({ name, capability, script, imageCapabilities });
     }
     return result;
+}
+
+export function normalizeChannelImageCapabilities(input: ChannelImageCapabilityConfig | undefined): ChannelImageCapabilityConfig | undefined {
+    if (!input || !["auto", "conservative", "custom"].includes(input.mode)) return undefined;
+    if (input.mode !== "custom") return { mode: input.mode };
+    const ratios = Array.from(new Set((input.sizes || []).map((value) => String(value).trim()).filter((value) => /^\d{1,3}:\d{1,3}$/.test(value)))).slice(0, 30);
+    const options = (values: string[] | undefined, allowed: string[], fallback: string[]) => {
+        const normalized = Array.from(new Set((values || []).map((value) => String(value).trim().toLowerCase()).filter((value) => allowed.includes(value))));
+        return normalized.length ? normalized : fallback;
+    };
+    const integer = (value: number | undefined, minimum: number, maximum: number, fallback: number) => {
+        const parsed = Math.floor(Number(value));
+        return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
+    };
+    return {
+        mode: "custom",
+        resolutions: options(input.resolutions, ["auto", "low", "medium", "high"], ["auto"]),
+        generationQualities: options(input.generationQualities, ["auto", "low", "medium", "high", "standard", "hd"], ["auto"]),
+        outputFormats: options(input.outputFormats, ["auto", "png", "jpeg", "webp"], ["auto"]),
+        sizes: ratios.length ? ratios : ["1:1"],
+        customSize: Boolean(input.customSize),
+        transparentBackground: Boolean(input.transparentBackground),
+        maxReferences: integer(input.maxReferences, 0, 16, 1),
+        maxOutputs: integer(input.maxOutputs, 1, 10, 1),
+    };
 }
 
 export function createModelChannel(channel?: Partial<ModelChannel>): ModelChannel {
@@ -411,14 +439,16 @@ export function resolveModelChannel(config: AiConfig, value: string) {
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const channel = resolveModelChannel(config, value);
+    const model = modelOptionName(value || config.model);
     return {
         ...config,
-        model: modelOptionName(value || config.model),
+        model,
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
         channelId: channel.id,
         serverManaged: channel.credentialState === "saved",
+        imageCapabilities: channel.models.find((item) => item.name === model)?.imageCapabilities,
     };
 }
 

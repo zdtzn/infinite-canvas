@@ -181,9 +181,21 @@ export async function saveServerChannel(channel: ModelChannel) {
             baseUrl: channel.baseUrl,
             apiFormat: channel.apiFormat,
             apiKey: channel.apiKey,
-            models: channel.models.map(({ name, capability }) => ({ name, capability })),
+            models: channel.models.map(({ name, capability, imageCapabilities }) => ({ name, capability, ...(imageCapabilities ? { imageCapabilities } : {}) })),
             sortOrder: channel.sortOrder,
         },
+    });
+}
+
+export async function testServerChannel(channel: ModelChannel) {
+    return serverRequest<{ ok: true; modelCount: number; models: string[] }>(`/api/channels/${encodeURIComponent(channel.id)}/test`, {
+        method: "POST",
+        body: {
+            baseUrl: channel.baseUrl,
+            apiFormat: channel.apiFormat,
+            apiKey: channel.apiKey,
+        },
+        timeoutMs: 30_000,
     });
 }
 

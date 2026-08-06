@@ -12,6 +12,7 @@ import { decryptSecret, encryptSecret, normalizeEncryptionSecret } from "./lib/c
 import { generationHistoryJobIdsForDeletion, GenerationHistoryInputError, normalizeGenerationHistory, normalizeGenerationHistoryDeletion, normalizeGenerationHistoryItem } from "./lib/generation-history";
 import { parseSingleByteRange } from "./lib/http-range";
 import { ImageJobReferenceInputError, imageJobReferenceTotalBytes, parseClientImageJobReference } from "./lib/image-job-reference";
+import { resolveServerImageCapabilityProfile, validateServerImageCapabilityRequest } from "./lib/image-capabilities";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
 import { buildDragonChatImageRequest, dragonChatImageUrls, dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel } from "./lib/dragon-image";
@@ -60,7 +61,7 @@ import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
 import { createProductLabService, productOutputCapability, ProductLabError } from "./modules/product-lab/service";
-import type { ChannelRecord, GenerationHistoryKind, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
+import type { ChannelModelRecord, ChannelRecord, GenerationHistoryKind, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
 
 const PORT = positiveInt(process.env.PORT, 3000);
 const DATA_DIR = resolve(process.env.DATA_DIR || "/data");
@@ -346,6 +347,8 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/cultivation/breakthroughs" && request.method === "GET") return adminCultivationBreakthroughs(url, session);
         if (url.pathname === "/api/channels" && request.method === "GET") return listChannels(session);
         if (url.pathname === "/api/channels/order" && request.method === "PUT") return reorderChannels(request, session);
+        const channelTestMatch = url.pathname.match(/^\/api\/channels\/([^/]+)\/test$/);
+        if (channelTestMatch && request.method === "POST") return testChannel(request, session, decodeRouteSegment(channelTestMatch[1], "渠道 ID"));
         const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)$/);
         if (channelMatch && request.method === "PUT") return saveChannel(request, session, decodeRouteSegment(channelMatch[1], "渠道 ID"));
         if (channelMatch && request.method === "DELETE") return deleteChannel(session, decodeRouteSegment(channelMatch[1], "渠道 ID"));
@@ -875,6 +878,53 @@ async function saveChannel(request: Request, session: SessionPayload, id: string
     };
     writeState();
     return json({ ok: true, channel: platformChannelPublicRecord({ ...state.channels[key], models: platformChannelModels(state, id) }) });
+}
+
+async function testChannel(request: Request, session: SessionPayload, id: string) {
+    requireAdmin(session);
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(id) || ["__proto__", "prototype", "constructor"].includes(id.toLowerCase())) throw new HttpError(400, "渠道 ID 无效");
+    const body = await readJson<{ baseUrl?: unknown; apiFormat?: unknown; apiKey?: unknown }>(request);
+    const existing = resolvePlatformChannel(state, id);
+    const baseUrl = String(body.baseUrl || existing?.baseUrl || "").trim();
+    try {
+        const parsed = assertAllowedUpstreamUrl(baseUrl);
+        if (parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error("渠道地址不能包含账号、密码、查询参数或片段");
+    } catch (error) {
+        throw new HttpError(400, error instanceof Error ? error.message : "渠道地址无效");
+    }
+    const apiFormat: ProviderProtocol = body.apiFormat === "gemini" ? "gemini" : "openai";
+    const apiKey = String(body.apiKey || "").trim() || (existing ? decryptChannelApiKey(existing) : "");
+    if (!apiKey) throw new HttpError(400, "请填写 API Key 后再测试连接");
+
+    try {
+        const headers = new Headers(apiFormat === "gemini" ? { "x-goog-api-key": apiKey } : { Authorization: `Bearer ${apiKey}` });
+        const response = await upstreamFetch(buildUpstreamUrl(baseUrl, apiFormat, "/models"), { method: "GET", headers, signal: request.signal }, true, 20_000);
+        const payload = await parseUpstreamJson(response);
+        const models = upstreamModelNames(payload);
+        return json({ ok: true, modelCount: models.length, models });
+    } catch (error) {
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(502, error instanceof Error ? error.message : "渠道连接失败");
+    }
+}
+
+function upstreamModelNames(payload: unknown) {
+    const source = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+    const records = Array.isArray(source.data) ? source.data : Array.isArray(source.models) ? source.models : [];
+    return Array.from(
+        new Set(
+            records
+                .slice(0, 2_000)
+                .map((item) => {
+                    if (typeof item === "string") return item;
+                    if (!item || typeof item !== "object") return "";
+                    const record = item as Record<string, unknown>;
+                    return String(record.id || record.name || "").replace(/^models\//, "");
+                })
+                .map((name) => name.trim().slice(0, 200))
+                .filter((name) => Boolean(name) && !/\p{C}/u.test(name)),
+        ),
+    ).sort((left, right) => left.localeCompare(right));
 }
 
 async function reorderChannels(request: Request, session: SessionPayload) {
@@ -1777,11 +1827,28 @@ async function createImageJob(request: Request, session: SessionPayload) {
     if (existing) return json({ job: publicJob(existing) }, 200);
     const model = String(body.model || "").trim();
     if (!model) throw new HttpError(400, "模型不能为空");
-    assertPlatformModelAllowed(channelId, model, "image");
+    const configuredModel = assertPlatformModelAllowed(channelId, model, "image");
     const resolution = optionalString(body.quality);
     const isUuGptImage2 = isUuAsyncGptImage2Channel(channel.baseUrl, model);
-    const imageQuality = isUuGptImage2 ? undefined : normalizeImageQuality(body.imageQuality);
-    const imageOutputFormat = isUuGptImage2 ? undefined : normalizeImageOutputFormat(body.imageOutputFormat, model);
+    const requestedImageQuality = normalizeImageQuality(body.imageQuality);
+    const requestedImageOutputFormat = normalizeImageOutputFormat(body.imageOutputFormat);
+    const size = optionalString(body.size);
+    const background = optionalString(body.background);
+    try {
+        validateServerImageCapabilityRequest(resolveServerImageCapabilityProfile(model, channel.apiFormat, channel.baseUrl, configuredModel.imageCapabilities).capabilities, {
+            resolution,
+            imageQuality: requestedImageQuality,
+            imageOutputFormat: requestedImageOutputFormat,
+            size,
+            background,
+            referenceCount: references.length,
+            count,
+        });
+    } catch (error) {
+        throw new HttpError(400, error instanceof Error ? error.message : "生图参数超出渠道能力范围");
+    }
+    const imageQuality = isUuGptImage2 ? undefined : requestedImageQuality;
+    const imageOutputFormat = isUuGptImage2 ? undefined : requestedImageOutputFormat;
     cultivation?.reserveGeneration({
         jobId,
         userId: session.userId,
@@ -1804,8 +1871,8 @@ async function createImageJob(request: Request, session: SessionPayload) {
             quality: resolution,
             imageQuality,
             imageOutputFormat,
-            size: optionalString(body.size),
-            background: optionalString(body.background),
+            size,
+            background,
             references: references.map((reference, index) => persistPreparedImageJobReference(session.userId, jobId, index, reference)),
             mask: mask ? persistPreparedImageJobReference(session.userId, jobId, 10_000, mask) : undefined,
             source: normalizeJobSource(body.source),
@@ -2609,10 +2676,11 @@ function proxyPromptCharacterCount(value: unknown, key = ""): number {
     return Object.entries(value as Record<string, unknown>).reduce((total, [entryKey, item]) => total + proxyPromptCharacterCount(item, entryKey), 0);
 }
 
-function assertPlatformModelAllowed(channelId: string, model: string, capability?: "image" | "video" | "text" | "audio") {
+function assertPlatformModelAllowed(channelId: string, model: string, capability?: "image" | "video" | "text" | "audio"): ChannelModelRecord {
     const configured = platformChannelModels(state, channelId).find((item) => item.name === model);
     if (!configured) throw new HttpError(403, "该模型未在当前平台渠道中开放");
     if (capability && configured.capability !== capability) throw new HttpError(403, "该模型未开放当前生成能力");
+    return configured;
 }
 
 async function saveProject(request: Request, session: SessionPayload, id: string) {
@@ -3485,11 +3553,11 @@ function normalizeImageQuality(value: unknown) {
     throw new HttpError(400, "生成质量参数无效");
 }
 
-function normalizeImageOutputFormat(value: unknown, model: string) {
+function normalizeImageOutputFormat(value: unknown) {
     const format = optionalString(value)?.toLowerCase();
     if (!format || format === "auto") return undefined;
     if (!["png", "jpeg", "webp"].includes(format)) throw new HttpError(400, "输出格式参数无效");
-    return model.toLowerCase().includes("gpt-image") ? format : undefined;
+    return format;
 }
 
 function imageOutputFormatMimeType(format?: string) {
