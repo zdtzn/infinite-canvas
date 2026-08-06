@@ -11,6 +11,7 @@ const CanvasPage = lazyRoute(() => import("@/pages/canvas"));
 const CanvasProjectPage = lazyRoute(() => import("@/pages/canvas/project"));
 const ConfigPage = lazyRoute(() => import("@/pages/config"));
 const CultivationPage = lazyRoute(() => import("@/pages/cultivation"));
+const DocsPage = lazyRoute(() => import("@/pages/docs"));
 const AdminCultivationPage = lazyRoute(() => import("@/pages/admin/cultivation"));
 const HomePage = lazyRoute(() => import("@/pages/home"));
 const ImagePage = lazyRoute(() => import("@/pages/image"));
@@ -99,6 +100,14 @@ export const router = createBrowserRouter([
                 element: (
                     <RoutePage>
                         <CanvasProjectPage />
+                    </RoutePage>
+                ),
+            },
+            {
+                path: "/docs",
+                element: (
+                    <RoutePage>
+                        <DocsPage />
                     </RoutePage>
                 ),
             },
