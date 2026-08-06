@@ -45,7 +45,8 @@ export function buildSadaiImageRequestOptions({ count, size, outputResolution, g
         ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
         ...(resolution ? { resolution } : {}),
         ...(quality ? { quality } : {}),
-        response_format: "url",
+        // SADAI result URLs can briefly return 404 after generation completes.
+        response_format: "b64_json",
         ...(references.length ? { images: [...references] } : {}),
     };
 }

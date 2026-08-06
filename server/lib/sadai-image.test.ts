@@ -16,7 +16,7 @@ test("maps workbench ratio and resolution to SADAI Image2 fields", () => {
             outputResolution: "low",
             references: [],
         }),
-    ).toEqual({ n: 1, aspect_ratio: "9:16", resolution: "1k", response_format: "url" });
+    ).toEqual({ n: 1, aspect_ratio: "9:16", resolution: "1k", response_format: "b64_json" });
 
     expect(
         buildSadaiImageRequestOptions({
@@ -31,7 +31,7 @@ test("maps workbench ratio and resolution to SADAI Image2 fields", () => {
         aspect_ratio: "16:9",
         resolution: "2k",
         quality: "high",
-        response_format: "url",
+        response_format: "b64_json",
         images: ["data:image/png;base64,reference"],
     });
 });
@@ -45,7 +45,7 @@ test("migrates legacy automatic ratios to square and reduces explicit dimensions
             generationQuality: "auto",
             references: [],
         }),
-    ).toEqual({ n: 1, aspect_ratio: "1:1", response_format: "url" });
+    ).toEqual({ n: 1, aspect_ratio: "1:1", response_format: "b64_json" });
 
     expect(
         buildSadaiImageRequestOptions({
@@ -54,7 +54,7 @@ test("migrates legacy automatic ratios to square and reduces explicit dimensions
             outputResolution: "high",
             references: [],
         }),
-    ).toEqual({ n: 1, aspect_ratio: "4:3", resolution: "4k", response_format: "url" });
+    ).toEqual({ n: 1, aspect_ratio: "4:3", resolution: "4k", response_format: "b64_json" });
 });
 
 test("supports the latest documented SADAI Image2 mapped ratios", () => {
