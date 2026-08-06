@@ -1,11 +1,10 @@
 import type { CSSProperties } from "react";
-import { BookOpen, CircleUserRound, Crown, Keyboard, LogOut, Moon, MoreHorizontal, Puzzle, Settings2, Sun } from "lucide-react";
+import { BookOpen, CircleUserRound, Crown, Keyboard, LogOut, Moon, MoreHorizontal, Puzzle, Sun } from "lucide-react";
 import { Dropdown, type MenuProps } from "antd";
 
 import { VersionReleaseModal } from "@/components/layout/version-release-modal";
 import { DOCS_URL, REPOSITORY_URL } from "@/constant/env";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { useConfigStore } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { TaskCenter } from "@/components/layout/task-center";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -16,7 +15,6 @@ import { cn } from "@/lib/utils";
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 
 type UserStatusActionsProps = {
-    showConfig?: boolean;
     showTaskCenter?: boolean;
     showWorkspaceMenu?: boolean;
     variant?: "default" | "canvas";
@@ -26,10 +24,9 @@ type UserStatusActionsProps = {
 
 const naturalIconClass = "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white [&_svg]:size-4";
 
-export function WorkspaceMenuAction({ showConfig = true, variant = "default", onOpenShortcuts, onOpenPlugins }: Omit<UserStatusActionsProps, "showTaskCenter" | "showWorkspaceMenu">) {
+export function WorkspaceMenuAction({ variant = "default", onOpenShortcuts, onOpenPlugins }: Omit<UserStatusActionsProps, "showTaskCenter" | "showWorkspaceMenu">) {
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
-    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const canvasTheme = canvasThemes[theme];
     const iconStyle: CSSProperties | undefined = variant === "canvas" ? { color: canvasTheme.node.text } : undefined;
     const menuItems: MenuProps["items"] = [
@@ -47,14 +44,6 @@ export function WorkspaceMenuAction({ showConfig = true, variant = "default", on
             label: "文档",
             onClick: () => window.open(DOCS_URL, "_blank", "noopener,noreferrer"),
         },
-        showConfig
-            ? {
-                  key: "config",
-                  icon: <Settings2 className="size-4" />,
-                  label: "洞府",
-                  onClick: () => openConfigDialog(false),
-              }
-            : null,
         {
             key: "theme",
             icon: theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />,
@@ -85,7 +74,7 @@ export function WorkspaceMenuAction({ showConfig = true, variant = "default", on
     );
 }
 
-export function UserStatusActions({ showConfig = true, showTaskCenter = true, showWorkspaceMenu = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
+export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
     const theme = useThemeStore((state) => state.theme);
     const user = useUserStore((state) => state.user);
     const clearSession = useUserStore((state) => state.clearSession);
@@ -113,7 +102,7 @@ export function UserStatusActions({ showConfig = true, showTaskCenter = true, sh
     return (
         <div className="inline-flex shrink-0 items-center gap-1">
             {showTaskCenter ? <TaskCenter /> : null}
-            {showWorkspaceMenu ? <WorkspaceMenuAction showConfig={showConfig} variant={variant} onOpenShortcuts={onOpenShortcuts} onOpenPlugins={onOpenPlugins} /> : null}
+            {showWorkspaceMenu ? <WorkspaceMenuAction variant={variant} onOpenShortcuts={onOpenShortcuts} onOpenPlugins={onOpenPlugins} /> : null}
             {PUBLIC_MODE ? (
                 <Dropdown menu={{ items: accountMenuItems }} trigger={["click"]}>
                     <button
