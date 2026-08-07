@@ -348,14 +348,27 @@ export async function recoverServerJobResult(id: string, expectedUserId?: string
 }
 
 const serverJobArchiveRuns = new Map<string, Promise<{ job: ServerJob; image: ServerJobImage; archived: boolean }>>();
+const SERVER_JOB_ARCHIVE_RETRY_DELAYS_MS = [1_200, 3_000];
 
 export async function archiveDeferredServerJob(job: ServerJob, expectedUserId?: string, signal?: AbortSignal) {
     let current = job;
     const images = current.result?.images || [];
     for (const source of images) {
-        const image = current.result?.images.find((candidate) => candidate.id === source.id) || source;
-        if (image.persisted !== false || !image.recoveryUrl) continue;
-        current = (await archiveServerJobImage(current.id, image, expectedUserId, signal)).job;
+        for (let attempt = 0; attempt <= SERVER_JOB_ARCHIVE_RETRY_DELAYS_MS.length; attempt += 1) {
+            try {
+                if (attempt) current = (await fetchServerJob(current.id, expectedUserId)).job;
+                const image = current.result?.images.find((candidate) => candidate.id === source.id) || source;
+                if (image.persisted !== false) break;
+                if (!image.recoveryUrl) throw new Error("图片没有可用的自动保存地址");
+                current = (await archiveServerJobImage(current.id, image, expectedUserId, signal)).job;
+                break;
+            } catch (error) {
+                if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
+                const delay = SERVER_JOB_ARCHIVE_RETRY_DELAYS_MS[attempt];
+                if (delay === undefined) throw error;
+                await abortableSleep(delay, signal);
+            }
+        }
     }
     return current;
 }

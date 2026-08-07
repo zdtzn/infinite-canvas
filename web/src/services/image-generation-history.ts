@@ -1,11 +1,20 @@
-import type { ServerJob } from "./server-api";
+import type { ServerJob, ServerJobImage } from "./server-api";
+
+type ImageHistoryItem = {
+    id: string;
+    dataUrl?: string;
+    persisted?: boolean;
+    serverJobId?: string;
+};
 
 type ImageHistoryRecord = {
     id: string;
     createdAt: number;
+    updatedAt?: number;
     prompt: string;
     model: string;
-    images: Array<{ id: string }>;
+    images: ImageHistoryItem[];
+    thumbnails?: string[];
     serverJobIds?: string[];
 };
 
@@ -19,8 +28,10 @@ export function mergeServerJobsIntoImageHistory<T extends ImageHistoryRecord>(hi
         const matchedByImage = (job.result?.images || []).map((image) => imageOwners.get(image.id)).find((index) => index !== undefined);
         const matchedIndex = matchedByImage ?? records.findIndex((record) => record.prompt === job.prompt && record.model === serverJobModelValue(job) && Math.abs(record.createdAt - job.createdAt) <= 120_000);
         if (matchedIndex >= 0) {
-            const record = records[matchedIndex];
+            let record = records[matchedIndex];
             if (!record.serverJobIds.includes(job.id)) record.serverJobIds.push(job.id);
+            record = mergePersistedImagesIntoHistoryRecord(record, job.result?.images || [], job.id, job.finishedAt || record.updatedAt || record.createdAt);
+            records[matchedIndex] = record;
             continue;
         }
 
@@ -34,4 +45,24 @@ export function mergeServerJobsIntoImageHistory<T extends ImageHistoryRecord>(hi
 
 export function serverJobModelValue(job: Pick<ServerJob, "channelId" | "model">) {
     return job.channelId ? `${job.channelId}::${job.model}` : job.model;
+}
+
+export function mergePersistedImagesIntoHistoryRecord<T extends ImageHistoryRecord>(record: T, archivedImages: readonly ImageHistoryItem[] | readonly ServerJobImage[], serverJobId?: string, updatedAt = Date.now()): T {
+    const archivedById = new Map(archivedImages.filter((image) => image.persisted !== false && image.dataUrl).map((image) => [image.id, image]));
+    let changed = false;
+    const images = record.images.map((image) => {
+        if (image.persisted !== false) return image;
+        const archived = archivedById.get(image.id);
+        if (!archived) return image;
+        changed = true;
+        const archivedServerJobId = "serverJobId" in archived ? archived.serverJobId : undefined;
+        return { ...image, ...archived, serverJobId: archivedServerJobId || serverJobId };
+    });
+    if (!changed) return record;
+    return {
+        ...record,
+        images,
+        ...(record.thumbnails ? { thumbnails: images.map((image) => image.dataUrl || "") } : {}),
+        updatedAt: Math.max(record.updatedAt || record.createdAt, updatedAt),
+    } as T;
 }

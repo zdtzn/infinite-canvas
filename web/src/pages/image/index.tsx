@@ -17,8 +17,9 @@ import { normalizeImageSizeSelection, useConfigStore, useEffectiveConfig, type A
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatDuration } from "@/lib/image-utils";
+import { settleWithConcurrency } from "@/lib/async-pool";
 import { convertImageOutput, resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { clearImageGenerationJob, generatedImageFromServerImage, getImageGenerationSnapshot, replaceImageGenerationResult, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
+import { clearImageGenerationJob, getImageGenerationSnapshot, replaceImageGenerationResult, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
 import { IMAGE_WORKBENCH_ASSET_SOURCE } from "@/stores/asset-source";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -32,8 +33,8 @@ import { GenerationFailureToast, generationFailureFeedback, generationFailureTex
 import { cultivationGenerationBlockReason, cultivationRefundNotice, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, persistGenerationHistoryRecords, synchronizeGenerationHistory } from "@/services/generation-history";
-import { mergeServerJobsIntoImageHistory, serverJobModelValue } from "@/services/image-generation-history";
-import { fetchServerJobs, recoverServerJobResult, type ServerJob } from "@/services/server-api";
+import { mergePersistedImagesIntoHistoryRecord, mergeServerJobsIntoImageHistory, serverJobModelValue } from "@/services/image-generation-history";
+import { archiveDeferredServerJob, fetchServerJobs, type ServerJob } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { ResultImageCard } from "./result-image-card";
 
@@ -87,14 +88,13 @@ export default function ImagePage() {
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [savingAssetIds, setSavingAssetIds] = useState<string[]>([]);
-    const [recoveringImageIds, setRecoveringImageIds] = useState<string[]>([]);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [deletingLogs, setDeletingLogs] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
     const savingAssetIdsRef = useRef(new Set<string>());
-    const recoveringImageIdsRef = useRef(new Set<string>());
+    const historyArchiveRunsRef = useRef(new Set<string>());
     const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
     const clearImageCommand = useWorkbenchAgentStore((state) => state.clearImageCommand);
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
@@ -127,6 +127,11 @@ export default function ImagePage() {
     const generateButtonLabel = isDouEmperor ? (running || imperialGenerationCue.active ? "天地法则演化中……" : "执笔天地") : running ? "生成中……" : "开始生成";
     const elapsedMs = generationJob?.elapsedMs || 0;
     const results: GenerationResult[] = previewLog ? previewLog.images.map((image) => ({ id: image.id, status: "success", image })) : generationJob?.results || [];
+    const archivedGenerationImages = (generationJob?.results || []).flatMap((result) => {
+        const image = result.image;
+        return result.status === "success" && image?.persisted !== false && image?.serverJobId ? [image] : [];
+    });
+    const archivedResultSignature = archivedGenerationImages.map((image) => `${image.id}:${image.dataUrl}`).join("|");
 
     useEffect(() => {
         void refreshLogs();
@@ -296,44 +301,6 @@ export default function ImagePage() {
         }
     };
 
-    const recoverResult = async (image: GeneratedImage) => {
-        if (!image.serverJobId || recoveringImageIdsRef.current.has(image.id)) return;
-        recoveringImageIdsRef.current.add(image.id);
-        setRecoveringImageIds((ids) => [...ids, image.id]);
-        try {
-            const response = await recoverServerJobResult(image.serverJobId, historyUserId);
-            const serverImage = response.job.result?.images.find((item) => item.id === image.id) || response.job.result?.images[0];
-            if (!serverImage) throw new Error("任务没有返回可恢复的图片");
-            const recovered = await generatedImageFromServerImage(serverImage, response.job.id, response.job.result?.durationMs);
-            replaceImageGenerationResult(recovered);
-            if (recovered.persisted === false) {
-                message.warning(response.lastError ? `结果仍在回传：${response.lastError}` : "结果仍在回传，稍后可再次恢复");
-            } else {
-                const nextLogs = logs.map((log) => {
-                    if (!log.images.some((item) => item.id === recovered.id)) return log;
-                    const images = log.images.map((item) => (item.id === recovered.id ? recovered : item));
-                    return { ...log, images, thumbnails: images.map((item) => item.dataUrl), updatedAt: Date.now() };
-                });
-                const changedLogs = nextLogs.filter((log, index) => log !== logs[index]);
-                if (changedLogs.length) {
-                    setLogs(nextLogs);
-                    changedLogs.forEach(saveLog);
-                }
-                setPreviewLog((log) => {
-                    if (!log?.images.some((item) => item.id === recovered.id)) return log;
-                    const images = log.images.map((item) => (item.id === recovered.id ? recovered : item));
-                    return { ...log, images, thumbnails: images.map((item) => item.dataUrl), updatedAt: Date.now() };
-                });
-                message.success("结果已恢复归档");
-            }
-        } catch (error) {
-            message.error(error instanceof Error ? `恢复归档失败：${error.message}` : "恢复归档失败，请稍后重试");
-        } finally {
-            recoveringImageIdsRef.current.delete(image.id);
-            setRecoveringImageIds((ids) => ids.filter((id) => id !== image.id));
-        }
-    };
-
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
         const limited = limitImageReferenceAdditions(references, [image], activeImageCapabilities.maxReferences);
         if (!limited.added) {
@@ -439,6 +406,14 @@ export default function ImagePage() {
                 const merged = mergeServerJobsIntoImageHistory(nextLogs, jobs, buildLogFromServerJob);
                 if (imageHistoryChanged(nextLogs, merged)) nextLogs = await persistGenerationHistoryRecords(options, merged);
                 else nextLogs = merged;
+                const pendingJobs = jobs.filter((job) => job.status === "succeeded" && job.result?.recoveryPending && !historyArchiveRunsRef.current.has(job.id));
+                if (pendingJobs.length) {
+                    pendingJobs.forEach((job) => historyArchiveRunsRef.current.add(job.id));
+                    void settleWithConcurrency(pendingJobs, 2, (job) => archiveDeferredServerJob(job, historyUserId)).then((outcomes) => {
+                        pendingJobs.forEach((job) => historyArchiveRunsRef.current.delete(job.id));
+                        if (outcomes.some((outcome) => outcome.status === "fulfilled" && !outcome.value.result?.recoveryPending)) void refreshLogs();
+                    });
+                }
             } catch {
                 // The account history remains usable even if task recovery is temporarily unavailable.
             }
@@ -446,6 +421,16 @@ export default function ImagePage() {
         setLogs(nextLogs);
         return nextLogs;
     };
+
+    useEffect(() => {
+        if (!archivedResultSignature || !logs.length) return;
+        const nextLogs = logs.map((log) => mergePersistedImagesIntoHistoryRecord(log, archivedGenerationImages));
+        const changedLogs = nextLogs.filter((log, index) => log !== logs[index]);
+        if (!changedLogs.length) return;
+        setLogs(nextLogs);
+        changedLogs.forEach(saveLog);
+        setPreviewLog((log) => (log ? mergePersistedImagesIntoHistoryRecord(log, archivedGenerationImages) : log));
+    }, [archivedResultSignature, historyUserId, logs]);
 
     const previewGenerationLog = async (log: GenerationLog) => {
         setPreviewLog(log);
@@ -709,11 +694,9 @@ export default function ImagePage() {
                                             image={result.image}
                                             index={index}
                                             savingAsset={savingAssetIds.includes(result.image.id)}
-                                            recovering={recoveringImageIds.includes(result.image.id)}
                                             onEdit={addResultToReferences}
                                             onDownload={downloadImage}
                                             onSaveAsset={saveResultToAssets}
-                                            onRecover={recoverResult}
                                         />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} id={result.id} error={result.error} isDouEmperor={isDouEmperor} onRetry={() => retryResult(index)} />
@@ -1058,7 +1041,10 @@ function imageHistoryChanged(previous: GenerationLog[], next: GenerationLog[]) {
     return next.some((log) => {
         const current = previousById.get(log.id);
         if (!current) return true;
-        return [...(current.serverJobIds || [])].sort().join("|") !== [...(log.serverJobIds || [])].sort().join("|");
+        if ([...(current.serverJobIds || [])].sort().join("|") !== [...(log.serverJobIds || [])].sort().join("|")) return true;
+        const currentImages = current.images.map((image) => `${image.id}:${image.persisted === false ? "temporary" : image.dataUrl}`).join("|");
+        const nextImages = log.images.map((image) => `${image.id}:${image.persisted === false ? "temporary" : image.dataUrl}`).join("|");
+        return currentImages !== nextImages;
     });
 }
 
