@@ -8,7 +8,7 @@ import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { imageToDataUrl } from "@/services/image-storage";
-import { cancelServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput } from "@/services/server-api";
+import { archiveDeferredServerJob, cancelServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput, type ServerJob } from "@/services/server-api";
 import { deriveImageModelCapabilities, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useUserStore } from "@/stores/use-user-store";
@@ -124,6 +124,7 @@ type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseTool
 export type RequestOptions = {
     signal?: AbortSignal;
     onJobCreated?: (jobId: string) => void;
+    onJobArchived?: (job: ServerJob) => void | Promise<void>;
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
     expectedUserId?: string;
     idempotencyKey?: string;
@@ -1009,7 +1010,16 @@ async function requestServerImageJob(
     const abort = () => void cancelServerJob(job.id, expectedUserId).catch(() => undefined);
     options?.signal?.addEventListener("abort", abort, { once: true });
     try {
-        const completed = await waitForServerJob(job.id, { signal: options?.signal, expectedUserId });
+        let completed = await waitForServerJob(job.id, { signal: options?.signal, expectedUserId });
+        if (completed.result?.recoveryPending) {
+            if (options?.source?.route === "/image") {
+                void archiveDeferredServerJob(completed, expectedUserId)
+                    .then((archived) => options?.onJobArchived?.(archived))
+                    .catch(() => undefined);
+            } else {
+                completed = await archiveDeferredServerJob(completed, expectedUserId, options?.signal);
+            }
+        }
         return (completed.result?.images || []).map((image) => ({
             id: image.id,
             dataUrl: image.dataUrl,

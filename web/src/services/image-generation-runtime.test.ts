@@ -35,6 +35,63 @@ test("preserves temporary persistence metadata from a completed server job", asy
     assert.equal(image.dataUrl, "https://img.uuapi.net/result.png");
 });
 
+test("replaces a temporary workbench result after browser archiving completes", async () => {
+    clearImageGenerationJob();
+    const snapshot = { text: "browser archive", config: {} as ImageGenerationSnapshot["config"], references: [] };
+    const completed = new Promise<ImageGenerationCompletion>((resolve) => {
+        startImageGeneration(snapshot, 1, resolve, async (_snapshot, _index, onJobCreated, _expectedUserId, _idempotencyKey, onJobArchived) => {
+            onJobCreated?.("job-archive");
+            queueMicrotask(() => {
+                onJobArchived?.({
+                    id: "job-archive",
+                    status: "succeeded",
+                    createdAt: Date.now(),
+                    prompt: "browser archive",
+                    model: "gpt-image-2",
+                    count: 1,
+                    result: {
+                        images: [
+                            {
+                                id: "image-archive",
+                                dataUrl: "/api/job-files/job-archive/result.png",
+                                durationMs: 42_000,
+                                width: 1024,
+                                height: 1024,
+                                bytes: 2048,
+                                mimeType: "image/png",
+                                persisted: true,
+                            },
+                        ],
+                        successCount: 1,
+                        failCount: 0,
+                        durationMs: 42_000,
+                        recoveryPending: false,
+                    },
+                });
+            });
+            return {
+                id: "image-archive",
+                serverJobId: "job-archive",
+                dataUrl: "https://img.uuapi.net/uu-image-temp/result.png",
+                durationMs: 42_000,
+                width: 1024,
+                height: 1024,
+                bytes: 0,
+                mimeType: "image/png",
+                persisted: false,
+            };
+        });
+    });
+
+    await completed;
+    await Bun.sleep(1);
+    const image = getImageGenerationSnapshot()?.results[0]?.image;
+    assert.equal(image?.dataUrl, "/api/job-files/job-archive/result.png");
+    assert.equal(image?.persisted, true);
+    assert.equal(image?.bytes, 2048);
+    assert.equal(clearImageGenerationJob(), true);
+});
+
 test("keeps an image task running while the workbench page is unsubscribed", async () => {
     clearImageGenerationJob();
     let resolveSlot: (image: GeneratedImage) => void = () => undefined;

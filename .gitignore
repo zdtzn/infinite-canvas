@@ -10,6 +10,7 @@ data/
 *.tsbuildinfo
 .DS_Store
 .idea
+.wrangler/
 web/dist
 
 **/dist

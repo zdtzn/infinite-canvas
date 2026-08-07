@@ -5,7 +5,7 @@ import { requestEdit, requestGeneration } from "@/services/api/image";
 import { settleWithConcurrency } from "@/lib/async-pool";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { fetchServerJob, retryServerJob, waitForServerJob, type ServerJobImage } from "@/services/server-api";
+import { archiveDeferredServerJob, fetchServerJob, retryServerJob, waitForServerJob, type ServerJob, type ServerJobImage } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -64,7 +64,14 @@ export type ImageGenerationCompletion = {
 };
 
 type CompletionHandler = (completion: ImageGenerationCompletion) => void | Promise<void>;
-type SlotRunner = (snapshot: ImageGenerationSnapshot, index: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string, idempotencyKey?: string) => Promise<GeneratedImage>;
+type SlotRunner = (
+    snapshot: ImageGenerationSnapshot,
+    index: number,
+    onServerJobCreated?: (jobId: string) => void,
+    expectedUserId?: string,
+    idempotencyKey?: string,
+    onServerJobArchived?: (job: ServerJob) => void,
+) => Promise<GeneratedImage>;
 
 let currentJob: ImageGenerationJob | null = null;
 let elapsedTimer: ReturnType<typeof setInterval> | undefined;
@@ -229,18 +236,29 @@ async function runGenerationSlot(
         if (!currentResult?.idempotencyKey) updateResult(jobId, index, { idempotencyKey });
         await persistCurrentJob();
         let serverJobId = existingServerJobId;
+        let archivedImage: GeneratedImage | undefined;
+        const onServerJobArchived = (archivedJob: ServerJob) => {
+            const serverImage = archivedJob.result?.images[0];
+            if (!serverImage) return;
+            void generatedImageFromServerImage(serverImage, archivedJob.id, archivedJob.result?.durationMs).then((image) => {
+                archivedImage = image;
+                if (runtimeOwnerUserId !== expectedUserId || currentJob?.id !== jobId) return;
+                const current = currentJob.results[index];
+                if (current?.serverJobId === archivedJob.id && current.status === "success") updateResult(jobId, index, { image });
+            });
+        };
         const nextImage = existingServerJobId
             ? retryExistingServerJob && PUBLIC_MODE
                 ? await retryServerImage(existingServerJobId, idempotencyKey, expectedUserId, (createdJobId) => {
                       serverJobId = createdJobId;
                       updateResult(jobId, index, { serverJobId: createdJobId });
-                  })
-                : await restoreServerImage(existingServerJobId, expectedUserId)
+                  }, onServerJobArchived)
+                : await restoreServerImage(existingServerJobId, expectedUserId, onServerJobArchived)
             : await slotRunner(snapshot, index, (createdJobId) => {
                   serverJobId = createdJobId;
                   updateResult(jobId, index, { serverJobId: createdJobId });
-              }, expectedUserId, idempotencyKey);
-        const persistedImage = serverJobId ? { ...nextImage, serverJobId } : nextImage;
+              }, expectedUserId, idempotencyKey, onServerJobArchived);
+        const persistedImage = archivedImage || (serverJobId ? { ...nextImage, serverJobId } : nextImage);
         updateResult(jobId, index, { status: "success", image: persistedImage });
         return persistedImage;
     } catch (error) {
@@ -249,11 +267,18 @@ async function runGenerationSlot(
     }
 }
 
-async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string, idempotencyKey?: string) {
+async function requestImageSlot(
+    snapshot: ImageGenerationSnapshot,
+    _index?: number,
+    onServerJobCreated?: (jobId: string) => void,
+    expectedUserId?: string,
+    idempotencyKey?: string,
+    onServerJobArchived?: (job: ServerJob) => void,
+) {
     const itemStartedAt = Date.now();
     const result = snapshot.references.length
-        ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, { onJobCreated: onServerJobCreated, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey })
-        : await requestGeneration(snapshot.config, snapshot.text, { onJobCreated: onServerJobCreated, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey });
+        ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, { onJobCreated: onServerJobCreated, onJobArchived: onServerJobArchived, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey })
+        : await requestGeneration(snapshot.config, snapshot.text, { onJobCreated: onServerJobCreated, onJobArchived: onServerJobArchived, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey });
     const image = result[0];
     if (!image) throw new Error("接口没有返回图片");
     const meta = await resolveGeneratedImageMeta(image);
@@ -296,9 +321,14 @@ function emit() {
     listeners.forEach((listener) => listener());
 }
 
-async function restoreServerImage(serverJobId: string, expectedUserId: string) {
+async function restoreServerImage(serverJobId: string, expectedUserId: string, onServerJobArchived?: (job: ServerJob) => void) {
     const current = await fetchServerJob(serverJobId, expectedUserId);
     const job = current.job.status === "succeeded" ? current.job : await waitForServerJob(serverJobId, { expectedUserId });
+    if (job.result?.recoveryPending) {
+        void archiveDeferredServerJob(job, expectedUserId)
+            .then((archived) => onServerJobArchived?.(archived))
+            .catch(() => undefined);
+    }
     const image = job.result?.images[0];
     if (!image) throw new Error(job.error || "任务没有返回图片");
     return generatedImageFromServerImage(image, serverJobId, job.result?.durationMs);
@@ -320,10 +350,16 @@ export async function generatedImageFromServerImage(image: ServerJobImage, serve
     };
 }
 
-async function retryServerImage(serverJobId: string, idempotencyKey: string, expectedUserId: string, onServerJobCreated: (jobId: string) => void) {
+async function retryServerImage(
+    serverJobId: string,
+    idempotencyKey: string,
+    expectedUserId: string,
+    onServerJobCreated: (jobId: string) => void,
+    onServerJobArchived?: (job: ServerJob) => void,
+) {
     const { job } = await retryServerJob(serverJobId, expectedUserId, idempotencyKey);
     onServerJobCreated(job.id);
-    return restoreServerImage(job.id, expectedUserId);
+    return restoreServerImage(job.id, expectedUserId, onServerJobArchived);
 }
 
 async function resolveGeneratedImageMeta(image: { dataUrl: string; width?: number; height?: number; mimeType?: string }) {

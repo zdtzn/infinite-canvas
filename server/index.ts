@@ -16,6 +16,8 @@ import { resolveServerImageCapabilityProfile, validateServerImageCapabilityReque
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
 import { createDeferredImageResult, hasDeferredImageResults, isCompletedUuResultRecovery, isRecoverableImageDownloadError, recoverDeferredImageResults } from "./lib/image-result-recovery";
+import { createResultImageRelayConfig, isRelayEligibleResultUrl, resultImageDownloadUrl } from "./lib/result-image-relay";
+import { KeyedSerialExecutor } from "./lib/keyed-serial-executor";
 import { buildDragonChatImageRequest, dragonChatImageUrls, dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel } from "./lib/dragon-image";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { isAllowedMediaMimeType, resolveMediaMimeType } from "./lib/media-mime";
@@ -53,7 +55,7 @@ import {
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
-import { UuImageChannelScheduler, buildUuAsyncImageRequest, hasUuAsyncTask, isUuAsyncGptImage2Channel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
+import { UuImageChannelScheduler, buildUuAsyncImageRequest, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -110,7 +112,14 @@ const RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS = Math.max(
     3_000,
     Math.min(30_000, positiveInt(process.env.RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS, positiveInt(process.env.UU_RESULT_DOWNLOAD_TIMEOUT_MS, 8_000))),
 );
-const RESULT_IMAGE_RECOVERY_DELAYS_MS = [15_000, 60_000, 5 * 60_000];
+const RESULT_IMAGE_RELAY_CONFIG = createResultImageRelayConfig(
+    process.env.RESULT_IMAGE_RELAY_URL,
+    process.env.RESULT_IMAGE_RELAY_SECRET,
+    process.env.RESULT_IMAGE_RELAY_TTL_SECONDS,
+);
+const RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS = Math.max(10_000, Math.min(60_000, positiveInt(process.env.RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS, 30_000)));
+const RESULT_IMAGE_RELAY_SERVER_DOWNLOAD = process.env.RESULT_IMAGE_RELAY_SERVER_DOWNLOAD !== "0";
+const RESULT_IMAGE_RECOVERY_DELAYS_MS = [0, 15_000, 60_000, 5 * 60_000];
 const PROMPT_PROXY_CONCURRENCY = Math.max(1, Math.min(8, positiveInt(process.env.PROMPT_PROXY_CONCURRENCY, 3)));
 const PROMPT_PROXY_TIMEOUT_MS = Math.max(3_000, Math.min(30_000, positiveInt(process.env.PROMPT_PROXY_TIMEOUT_MS, 8_000)));
 const PROMPT_OPTIMIZE_CONCURRENCY = Math.max(1, Math.min(4, positiveInt(process.env.PROMPT_OPTIMIZE_CONCURRENCY, 2)));
@@ -194,6 +203,7 @@ const activeMediaProxyUsageIds = new Set<string>();
 type ImageRecoveryResult = { recovered: number; remaining: number; lastError?: string };
 const imageRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const imageRecoveryRuns = new Map<string, Promise<ImageRecoveryResult>>();
+const jobImageMutationExecutor = new KeyedSerialExecutor();
 const requestClientIps = new WeakMap<Request, string>();
 const requestPeerIps = new WeakMap<Request, string>();
 let stateWriteQueued = false;
@@ -411,6 +421,8 @@ async function route(request: Request, requestId: string) {
         if (retryMatch && request.method === "POST") return retryJob(request, session, retryMatch[1]);
         const recoverMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/recover$/);
         if (recoverMatch && request.method === "POST") return recoverJobResult(session, recoverMatch[1]);
+        const archiveImageMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/archive$/);
+        if (archiveImageMatch && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => archiveJobResultImage(request, session, archiveImageMatch[1]));
         const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/);
         if (jobMatch && request.method === "GET") return getJob(session, jobMatch[1]);
         if (jobMatch && request.method === "DELETE") return deleteJob(url, session, jobMatch[1]);
@@ -1998,8 +2010,36 @@ async function recoverJobResult(session: SessionPayload, id: string) {
     return json({ job: publicJob(job), recovered: outcome.recovered, recoveryPending: outcome.remaining > 0, lastError: outcome.lastError }, outcome.remaining ? 202 : 200);
 }
 
+async function archiveJobResultImage(request: Request, session: SessionPayload, id: string) {
+    const { form, file } = await readAssetUploadForm(request, MAX_REQUEST_BYTES, MAX_UPSTREAM_IMAGE_BYTES, "归档图片请求过大", "归档图片不能超过 32 MB");
+    const imageId = String(form.get("imageId") || "").trim();
+    if (!imageId) throw new HttpError(400, "归档图片 ID 缺失");
+    return jobImageMutationExecutor.run(id, async () => {
+        const job = ownedJob(session.userId, id);
+        if (job.status !== "succeeded" || !job.result) throw new HttpError(409, "任务尚未生成可归档的结果");
+        const imageIndex = job.result.images.findIndex((image) => image.id === imageId);
+        if (imageIndex < 0) throw new HttpError(404, "待归档图片不存在");
+        const current = job.result.images[imageIndex];
+        if (current.persisted !== false) return json({ job: publicJob(job), image: current, archived: false });
+        if (!isRelayEligibleResultUrl(current.dataUrl)) throw new HttpError(409, "该图片不支持浏览器归档");
+
+        clearJobImageRecovery(job.id);
+        const persisted = await persistJobImageBlob(session.userId, job.id, file, current.durationMs, request.signal);
+        const archived = { ...persisted, id: current.id, persisted: true, expiresAt: undefined };
+        job.result = {
+            ...job.result,
+            images: job.result.images.map((image, index) => (index === imageIndex ? archived : image)),
+            recoveryPending: job.result.images.some((image, index) => index !== imageIndex && image.persisted === false),
+        };
+        await imageQueue.touch(job.id);
+        return json({ job: publicJob(job), image: archived, archived: true });
+    });
+}
+
 function scheduleJobImageRecovery(jobId: string, attempt = 0) {
     if (attempt >= RESULT_IMAGE_RECOVERY_DELAYS_MS.length || imageRecoveryTimers.has(jobId)) return;
+    const job = imageQueue.get(jobId);
+    if (!job?.result || !hasServerRecoverableDeferredImages(job.result.images)) return;
     const timer = setTimeout(() => {
         imageRecoveryTimers.delete(jobId);
         void recoverJobImages(jobId).then((outcome) => {
@@ -2019,7 +2059,7 @@ function clearJobImageRecovery(jobId: string) {
 function recoverJobImages(jobId: string) {
     const existing = imageRecoveryRuns.get(jobId);
     if (existing) return existing;
-    const operation = performJobImageRecovery(jobId).finally(() => imageRecoveryRuns.delete(jobId));
+    const operation = jobImageMutationExecutor.run(jobId, () => performJobImageRecovery(jobId)).finally(() => imageRecoveryRuns.delete(jobId));
     imageRecoveryRuns.set(jobId, operation);
     return operation;
 }
@@ -2027,13 +2067,19 @@ function recoverJobImages(jobId: string) {
 async function performJobImageRecovery(jobId: string): Promise<ImageRecoveryResult> {
     const job = imageQueue.get(jobId);
     if (!job?.result || job.status !== "succeeded" || !hasDeferredImageResults(job.result.images)) return { recovered: 0, remaining: 0 };
+    const remainingBeforeRecovery = job.result.images.filter((image) => image.persisted === false).length;
+    if (!hasServerRecoverableDeferredImages(job.result.images)) {
+        return { recovered: 0, remaining: remainingBeforeRecovery, lastError: "等待浏览器完成结果归档" };
+    }
     let lastError = "";
     const outcome = await recoverDeferredImageResults(job.result.images, async (image) => {
         const url = assertAllowedUpstreamUrl(image.dataUrl);
         if (url.protocol !== "https:") throw new Error("临时图片地址不安全");
+        const usesRelay = Boolean(RESULT_IMAGE_RELAY_CONFIG && isRelayEligibleResultUrl(url));
         try {
+            if (usesRelay && !RESULT_IMAGE_RELAY_SERVER_DOWNLOAD) throw new Error("等待浏览器完成结果归档");
             return await persistJobImage(job.input.userId, job.id, url.toString(), image.durationMs, new AbortController().signal, {
-                downloadTimeoutMs: RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
+                downloadTimeoutMs: usesRelay ? RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS : RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
                 downloadAttempts: 1,
             });
         } catch (error) {
@@ -2047,6 +2093,13 @@ async function performJobImageRecovery(jobId: string): Promise<ImageRecoveryResu
         console.info(JSON.stringify({ event: "job_image_recovered", jobId, recovered: outcome.recovered, remaining: outcome.remaining }));
     }
     return { recovered: outcome.recovered, remaining: outcome.remaining, ...(lastError ? { lastError } : {}) };
+}
+
+function hasServerRecoverableDeferredImages(images: ImageJobImage[]) {
+    return images.some((image) => {
+        if (image.persisted !== false || !/^https:\/\//i.test(image.dataUrl)) return false;
+        return !(RESULT_IMAGE_RELAY_CONFIG && isRelayEligibleResultUrl(image.dataUrl) && !RESULT_IMAGE_RELAY_SERVER_DOWNLOAD);
+    });
 }
 
 function storedImageReferenceBytes(reference: string | StoredImageReference) {
@@ -2106,7 +2159,20 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
 }
 
 function publicJob(job: StoredImageJob) {
-    const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : "waiting_upstream";
+    const channel = resolvePlatformChannel(state, job.input.channelId);
+    const usesUuAsync = job.input.apiFormat === "openai" && job.input.count === 1 && Boolean(channel && isUuImageAsyncChannel(channel.baseUrl, job.input.model, job.input.references.length, Boolean(job.input.mask)));
+    const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : usesUuAsync && !hasUuAsyncTask(job.input) ? "submitting" : "waiting_upstream";
+    const result = job.result
+        ? {
+              ...job.result,
+              images: job.result.images.map((image) => ({
+                  ...image,
+                  ...(image.persisted === false && RESULT_IMAGE_RELAY_CONFIG && isRelayEligibleResultUrl(image.dataUrl)
+                      ? { recoveryUrl: resultImageDownloadUrl(image.dataUrl, RESULT_IMAGE_RELAY_CONFIG) }
+                      : {}),
+              })),
+          }
+        : undefined;
     return {
         id: job.id,
         status: job.status,
@@ -2125,7 +2191,7 @@ function publicJob(job: StoredImageJob) {
         size: job.input.size,
         background: job.input.background,
         source: job.input.source,
-        result: job.result,
+        result,
     };
 }
 
@@ -2135,9 +2201,9 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
     try {
         const channel = platformChannel(input.channelId);
         const apiKey = decryptChannelApiKey(channel);
-        // New UU jobs use the documented synchronous b64_json response. Keep
-        // the async path only to resume tasks created by earlier deployments.
-        const useUuAsync = input.apiFormat === "openai" && hasUuAsyncTask(input);
+        const useUuAsync =
+            input.apiFormat === "openai" &&
+            (hasUuAsyncTask(input) || (input.count === 1 && isUuImageAsyncChannel(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))));
         const rawImages =
             input.apiFormat === "gemini"
                 ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
@@ -2149,6 +2215,18 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         for (const raw of rawImages) {
             if (signal.aborted || job.status === "canceled") throw abortError(signal);
             const durationMs = Date.now() - startedAt;
+            if (useUuAsync && isRelayEligibleResultUrl(raw)) {
+                images.push(
+                    createDeferredImageResult({
+                        id: randomUUID(),
+                        url: new URL(raw).toString(),
+                        durationMs,
+                        ...(uuDimensions || {}),
+                        ...(input.upstream?.expiresAt ? { expiresAt: input.upstream.expiresAt } : {}),
+                    }),
+                );
+                continue;
+            }
             try {
                 images.push(
                     await persistJobImage(
@@ -2507,7 +2585,8 @@ async function persistJobImage(
         mimeType = parsed.mimeType;
     } else {
         assertAllowedUpstreamUrl(value);
-        const response = await upstreamFetch(value, { signal }, false, options.downloadTimeoutMs ?? REQUEST_TIMEOUT_MS, options.downloadAttempts);
+        const downloadUrl = resultImageDownloadUrl(value, RESULT_IMAGE_RELAY_CONFIG);
+        const response = await upstreamFetch(downloadUrl, { signal }, false, options.downloadTimeoutMs ?? REQUEST_TIMEOUT_MS, options.downloadAttempts);
         if (!response.ok) throw new Error(`下载生成图片失败：${response.status}`);
         bytes = await readResponseBytes(response, MAX_UPSTREAM_IMAGE_BYTES, "上游返回图片过大");
         mimeType = response.headers.get("content-type")?.split(";")[0]?.toLowerCase() || "";
@@ -2515,7 +2594,18 @@ async function persistJobImage(
     }
     const detectedMimeType = detectImageMimeFromBytes(bytes);
     if (!isAllowedImageMimeType(detectedMimeType) || bytes.byteLength > MAX_UPSTREAM_IMAGE_BYTES) throw new Error("上游返回的图片格式或大小不受支持");
-    mimeType = detectedMimeType;
+    return persistJobImageBytes(userId, jobId, bytes, detectedMimeType, durationMs, signal);
+}
+
+async function persistJobImageBlob(userId: string, jobId: string, file: Blob, durationMs: number, signal: AbortSignal) {
+    if (signal.aborted) throw abortError(signal);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const mimeType = detectImageMimeFromBytes(bytes);
+    if (!isAllowedImageMimeType(mimeType) || !bytes.byteLength || bytes.byteLength > MAX_UPSTREAM_IMAGE_BYTES) throw new HttpError(400, "归档图片格式或大小不受支持");
+    return persistJobImageBytes(userId, jobId, bytes, mimeType, durationMs, signal);
+}
+
+async function persistJobImageBytes(userId: string, jobId: string, bytes: Uint8Array, mimeType: string, durationMs: number, signal: AbortSignal): Promise<ImageJobImage> {
     if (signal.aborted) throw abortError(signal);
     const extension = imageExtension(mimeType);
     const filename = `${randomUUID()}${extension}`;

@@ -19,7 +19,7 @@ export type PromptOptimizerAdminConfiguration = {
 };
 export type ServerAssetLibrary = { initialized: boolean; items: Asset[] };
 export type ServerJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
-export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string; width?: number; height?: number; persisted?: boolean; expiresAt?: string };
+export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string; width?: number; height?: number; persisted?: boolean; expiresAt?: string; recoveryUrl?: string };
 export type ServerJob = {
     id: string;
     status: ServerJobStatus;
@@ -333,11 +333,72 @@ export async function retryServerJob(id: string, expectedUserId?: string, idempo
 }
 
 export async function recoverServerJobResult(id: string, expectedUserId?: string) {
+    const current = await serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}`, { timeoutMs: 12_000, expectedUserId });
+    const before = current.job.result?.images.filter((image) => image.persisted === false).length || 0;
+    if (before && current.job.result?.images.some((image) => image.recoveryUrl)) {
+        const job = await archiveDeferredServerJob(current.job, expectedUserId);
+        const remaining = job.result?.images.filter((image) => image.persisted === false).length || 0;
+        return { job, recovered: Math.max(0, before - remaining), recoveryPending: remaining > 0 };
+    }
     return serverRequest<{ job: ServerJob; recovered: number; recoveryPending: boolean; lastError?: string }>(`/api/jobs/${encodeURIComponent(id)}/recover`, {
         method: "POST",
         timeoutMs: 30_000,
         expectedUserId,
     });
+}
+
+const serverJobArchiveRuns = new Map<string, Promise<{ job: ServerJob; image: ServerJobImage; archived: boolean }>>();
+
+export async function archiveDeferredServerJob(job: ServerJob, expectedUserId?: string, signal?: AbortSignal) {
+    let current = job;
+    const images = current.result?.images || [];
+    for (const source of images) {
+        const image = current.result?.images.find((candidate) => candidate.id === source.id) || source;
+        if (image.persisted !== false || !image.recoveryUrl) continue;
+        current = (await archiveServerJobImage(current.id, image, expectedUserId, signal)).job;
+    }
+    return current;
+}
+
+export function archiveServerJobImage(jobId: string, image: ServerJobImage, expectedUserId?: string, signal?: AbortSignal) {
+    if (image.persisted !== false || !image.recoveryUrl) throw new Error("图片没有可用的归档地址");
+    const key = `${jobId}:${image.id}`;
+    const existing = serverJobArchiveRuns.get(key);
+    if (existing) return existing;
+    const pending = performServerJobImageArchive(jobId, image, expectedUserId, signal).finally(() => {
+        if (serverJobArchiveRuns.get(key) === pending) serverJobArchiveRuns.delete(key);
+    });
+    serverJobArchiveRuns.set(key, pending);
+    return pending;
+}
+
+async function performServerJobImageArchive(jobId: string, image: ServerJobImage, expectedUserId?: string, signal?: AbortSignal) {
+    const relayController = new AbortController();
+    const timeout = window.setTimeout(() => relayController.abort(new DOMException("Timeout", "TimeoutError")), 45_000);
+    const relaySignal = signal ? AbortSignal.any([signal, relayController.signal]) : relayController.signal;
+    let blob: Blob;
+    try {
+        const response = await fetch(image.recoveryUrl!, { signal: relaySignal, credentials: "omit", cache: "no-store" });
+        if (!response.ok) throw new Error(`图片中转返回 ${response.status}`);
+        blob = await response.blob();
+    } finally {
+        window.clearTimeout(timeout);
+    }
+    if (!blob.size || blob.size > 32 * 1024 * 1024 || !blob.type.startsWith("image/")) throw new Error("图片中转没有返回有效图片");
+    const form = new FormData();
+    form.set("imageId", image.id);
+    form.set("file", blob, `result.${imageFileExtension(blob.type)}`);
+    return serverRequest<{ job: ServerJob; image: ServerJobImage; archived: boolean }>(`/api/jobs/${encodeURIComponent(jobId)}/archive`, {
+        method: "POST",
+        body: form,
+        timeoutMs: 60_000,
+        expectedUserId,
+        signal,
+    });
+}
+
+function imageFileExtension(mimeType: string) {
+    return ({ "image/jpeg": "jpg", "image/webp": "webp", "image/avif": "avif" } as Record<string, string>)[mimeType.toLowerCase()] || "png";
 }
 
 export async function fetchCultivationProfile() {
@@ -386,7 +447,10 @@ export async function waitForServerJob(id: string, options?: { signal?: AbortSig
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const { job } = await fetchServerJob(id, options?.expectedUserId);
         options?.onUpdate?.(job);
-        if (job.status === "succeeded") return job;
+        if (job.status === "succeeded") {
+            void archiveDeferredServerJob(job, options?.expectedUserId).catch(() => undefined);
+            return job;
+        }
         if (job.status === "failed") throw new Error(`${friendlyErrorMessage(job.error || "生成失败")}（任务编号 ${job.id.slice(0, 12)}）`);
         if (job.status === "canceled") throw new DOMException("Aborted", "AbortError");
         await abortableSleep(job.status === "queued" ? 1200 : 1800, options?.signal);
@@ -423,8 +487,12 @@ export async function serverRequest<T = unknown>(url: string, options: ServerReq
     const headers = expectedUserHeaders(options.headers, options.expectedUserId);
     let body: BodyInit | undefined;
     if (options.body !== undefined) {
-        headers.set("Content-Type", "application/json");
-        body = JSON.stringify(options.body);
+        if (options.body instanceof FormData) {
+            body = options.body;
+        } else {
+            headers.set("Content-Type", "application/json");
+            body = JSON.stringify(options.body);
+        }
     }
     const { body: _body, timeoutMs: _timeoutMs, expectedUserId: _expectedUserId, ...requestOptions } = options;
     try {
