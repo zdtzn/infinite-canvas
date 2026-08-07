@@ -184,7 +184,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                     ) : (
                         <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
                             <span>自动</span>
-                            <span className="min-w-0 truncate">{isUuAsyncModel ? "当前异步渠道由模型自动控制" : "当前模型未开放独立质量参数"}</span>
+                            <span className="min-w-0 truncate">{isUuAsyncModel ? "当前 UU 渠道由模型自动控制" : "当前模型未开放独立质量参数"}</span>
                         </div>
                     )}
                 </div>
@@ -202,7 +202,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                     ) : (
                         <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
                             <span>自动</span>
-                            <span className="min-w-0 truncate">{isUuAsyncModel ? "当前异步渠道未开放输出格式参数" : "当前模型由接口决定输出格式"}</span>
+                            <span className="min-w-0 truncate">{isUuAsyncModel ? "当前 UU 渠道未开放输出格式参数" : "当前模型由接口决定输出格式"}</span>
                         </div>
                     )}
                 </div>

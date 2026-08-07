@@ -53,7 +53,7 @@ import {
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
-import { UuImageChannelScheduler, buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
+import { UuImageChannelScheduler, buildUuAsyncImageRequest, hasUuAsyncTask, isUuAsyncGptImage2Channel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -2106,9 +2106,7 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
 }
 
 function publicJob(job: StoredImageJob) {
-    const channel = resolvePlatformChannel(state, job.input.channelId);
-    const usesUuAsync = job.input.apiFormat === "openai" && job.input.count === 1 && Boolean(channel && isUuImageAsyncChannel(channel.baseUrl, job.input.model, job.input.references.length, Boolean(job.input.mask)));
-    const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : usesUuAsync && !hasUuAsyncTask(job.input) ? "submitting" : "waiting_upstream";
+    const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : "waiting_upstream";
     return {
         id: job.id,
         status: job.status,
@@ -2137,7 +2135,9 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
     try {
         const channel = platformChannel(input.channelId);
         const apiKey = decryptChannelApiKey(channel);
-        const useUuAsync = input.apiFormat === "openai" && (hasUuAsyncTask(input) || (input.count === 1 && isUuImageAsyncChannel(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))));
+        // New UU jobs use the documented synchronous b64_json response. Keep
+        // the async path only to resume tasks created by earlier deployments.
+        const useUuAsync = input.apiFormat === "openai" && hasUuAsyncTask(input);
         const rawImages =
             input.apiFormat === "gemini"
                 ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
@@ -2413,12 +2413,6 @@ async function cancelUuImageTask(input: ImageJobInput) {
         UU_ASYNC_REQUEST_TIMEOUT_MS,
     );
     await response.body?.cancel();
-}
-
-function hasUuAsyncTask(input: ImageJobInput): input is ImageJobInput & {
-    upstream: NonNullable<ImageJobInput["upstream"]>;
-} {
-    return input.upstream?.provider === "uu-image" && Boolean(input.upstream.taskId);
 }
 
 function waitForAbortableDelay(milliseconds: number, signal: AbortSignal) {

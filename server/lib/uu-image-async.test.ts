@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { UuImageChannelScheduler, buildUuAsyncImageRequest, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
+import { UuImageChannelScheduler, buildUuAsyncImageRequest, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
 
 test("uses the UU async API only for compatible gpt-image-2 jobs", () => {
     expect(isUuImageAsyncChannel("https://uuapi.cc/v1", "gpt-image-2", 0, false)).toBe(true);
@@ -30,6 +30,26 @@ test("converts workbench sizing into UU async width and height", () => {
 test("builds UU async form fields for text and image modes", () => {
     expect(buildUuAsyncImageRequest({ size: "16:9", referenceCount: 0 })).toEqual({ mode: "text", width: 1280, height: 720 });
     expect(buildUuAsyncImageRequest({ size: "1:1", quality: "medium", referenceCount: 1 })).toEqual({ mode: "image", width: 2048, height: 2048 });
+});
+
+test("resumes the async endpoint only for an existing UU task", () => {
+    const input = {
+        userId: "user",
+        channelId: "uu",
+        apiFormat: "openai" as const,
+        model: "gpt-image-2",
+        prompt: "test",
+        count: 1,
+        references: [],
+    };
+
+    expect(hasUuAsyncTask(input)).toBe(false);
+    expect(
+        hasUuAsyncTask({
+            ...input,
+            upstream: { provider: "uu-image", taskId: "task-existing", status: "running" },
+        }),
+    ).toBe(true);
 });
 
 test("serializes UU generation per channel without blocking another channel", async () => {

@@ -84,7 +84,7 @@ test("image settings expose only parameters the selected provider can honor", ()
             showTitle: false,
         } as Parameters<typeof ImageSettingsPanel>[0]),
     );
-    assert.match(uuHtml, /当前异步渠道由模型自动控制/);
+    assert.match(uuHtml, /当前 UU 渠道由模型自动控制/);
     assert.match(uuHtml, />4K<\/button>/);
     assert.doesNotMatch(uuHtml, /16倍数对齐/);
 

@@ -1,5 +1,6 @@
 import { resolveOpenAiImageSize } from "./image-request";
 import { AsyncSemaphore } from "./async-semaphore";
+import type { ImageJobInput } from "../types";
 
 export type UuImageAsyncTaskStatus = "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
 
@@ -39,6 +40,12 @@ export function isUuAsyncGptImage2Channel(baseUrl: string, model: string) {
 
 export function isUuImageAsyncChannel(baseUrl: string, model: string, referenceCount: number, hasMask: boolean) {
     return isUuAsyncGptImage2Channel(baseUrl, model) && referenceCount <= 1 && !hasMask;
+}
+
+export function hasUuAsyncTask(input: ImageJobInput): input is ImageJobInput & {
+    upstream: NonNullable<ImageJobInput["upstream"]>;
+} {
+    return input.upstream?.provider === "uu-image" && Boolean(input.upstream.taskId);
 }
 
 export function resolveUuAsyncImageSize(size?: string, quality?: string) {
