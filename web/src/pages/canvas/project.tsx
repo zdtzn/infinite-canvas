@@ -3222,17 +3222,17 @@ function InfiniteCanvasPage() {
                     ))}
 
                     {selectionBox ? (
-                        <div
-                            className="pointer-events-none absolute z-[100] border"
+                        <svg
+                            className="pointer-events-none absolute z-[100] overflow-visible"
                             style={{
                                 left: Math.min(selectionBox.startWorldX, selectionBox.currentWorldX),
                                 top: Math.min(selectionBox.startWorldY, selectionBox.currentWorldY),
                                 width: Math.abs(selectionBox.currentWorldX - selectionBox.startWorldX),
                                 height: Math.abs(selectionBox.currentWorldY - selectionBox.startWorldY),
-                                borderColor: theme.canvas.selectionStroke,
-                                background: theme.canvas.selectionFill,
                             }}
-                        />
+                        >
+                            <rect width="100%" height="100%" fill={theme.canvas.selectionFill} stroke={theme.canvas.selectionStroke} strokeOpacity={0.55} strokeWidth={1 / viewport.k} strokeDasharray={`${6 / viewport.k} ${4 / viewport.k}`} />
+                        </svg>
                     ) : null}
                     {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
                     {nodeCreatePosition ? (

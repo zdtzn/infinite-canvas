@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { canPromoteServerJobImage, convertImageOutput, readImageBlob } from "./image-storage";
+import { canPromoteServerJobImage, collectImageStorageKeysFromHistory, convertImageOutput, readImageBlob } from "./image-storage";
 
 const originalFetch = globalThis.fetch;
 const originalCreateImageBitmap = globalThis.createImageBitmap;
@@ -49,6 +49,17 @@ test("promotes server job images only when no local format conversion is needed"
     expect(canPromoteServerJobImage(png, "jpeg")).toBe(false);
     expect(canPromoteServerJobImage("/api/assets/image.png", "png")).toBe(false);
     expect(canPromoteServerJobImage("https://example.com/image.png", "png")).toBe(false);
+});
+
+test("keeps local images referenced by generation history during cleanup", () => {
+    const keys = collectImageStorageKeysFromHistory([
+        {
+            images: [{ storageKey: "image:generated" }, { thumbnailKey: "image:generated-thumbnail" }],
+            references: [{ storageKey: "image:reference" }],
+        },
+    ]);
+
+    expect(Array.from(keys).sort()).toEqual(["image:generated", "image:generated-thumbnail", "image:reference"]);
 });
 
 test("recognizes a PNG response when the upstream file uses a generic MIME type", async () => {

@@ -61,6 +61,7 @@ import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, ne
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, isLoopbackSetupRequest, isSameApplicationOrigin, normalizePublicBaseUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
+import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, promptProxyLane } from "./lib/prompt-cache-policy";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
 import { createProductLabService, productOutputCapability, ProductLabError } from "./modules/product-lab/service";
@@ -95,7 +96,7 @@ const MAX_PROMPT_CHARS = Math.max(1_000, positiveInt(process.env.MAX_PROMPT_CHAR
 const MAX_PROJECTS_PER_USER = Math.max(10, positiveInt(process.env.MAX_PROJECTS_PER_USER, 100));
 const MAX_PROJECT_BYTES_PER_USER = Math.max(8 * 1024 * 1024, positiveInt(process.env.MAX_PROJECT_BYTES_PER_USER, 128 * 1024 * 1024));
 const MIN_FREE_DISK_BYTES = Math.max(64 * 1024 * 1024, positiveInt(process.env.MIN_FREE_DISK_BYTES, 512 * 1024 * 1024));
-const MAX_PROMPT_CACHE_ENTRIES = Math.max(50, positiveInt(process.env.MAX_PROMPT_CACHE_ENTRIES, 500));
+const MAX_PROMPT_CACHE_ENTRIES = Math.max(50, positiveInt(process.env.MAX_PROMPT_CACHE_ENTRIES, DEFAULT_PROMPT_CACHE_MAX_ENTRIES));
 const MAX_PROMPT_CACHE_BYTES = Math.max(MAX_PROMPT_PROXY_BYTES, positiveInt(process.env.MAX_PROMPT_CACHE_BYTES, 256 * 1024 * 1024));
 const JOB_RETENTION_MS = Math.max(60 * 60_000, positiveInt(process.env.JOB_RETENTION_MS, 30 * 24 * 60 * 60_000));
 const MAX_TERMINAL_JOBS_PER_USER = Math.max(20, positiveInt(process.env.MAX_TERMINAL_JOBS_PER_USER, 200));
@@ -227,7 +228,8 @@ let shuttingDown = false;
 let shutdownPromise: Promise<void> | null = null;
 const geminiImageSemaphore = new AsyncSemaphore(GEMINI_IMAGE_CONCURRENCY);
 const uuImageChannelScheduler = new UuImageChannelScheduler();
-const promptProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
+const promptAssetProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
+const promptThumbnailProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
 const promptOptimizeSemaphore = new AsyncSemaphore(PROMPT_OPTIMIZE_CONCURRENCY);
 const heavyRequestSemaphore = new AsyncSemaphore(HEAVY_REQUEST_CONCURRENCY);
 
@@ -3018,7 +3020,8 @@ async function proxyPromptAsset(request: Request, url: URL, requestId: string) {
     const cachePath = join(PROMPT_CACHE_ROOT, cacheKey);
     if (isFreshPromptCache(cachePath)) return promptCachedResponse(cachePath, requestId);
     try {
-        return await promptProxySemaphore.run(request.signal, async () => {
+        const semaphore = promptProxyLane(url.pathname) === "thumbnail" ? promptThumbnailProxySemaphore : promptAssetProxySemaphore;
+        return await semaphore.run(request.signal, async () => {
             if (isFreshPromptCache(cachePath)) return promptCachedResponse(cachePath, requestId);
             const response = await upstreamFetch(
                 target,

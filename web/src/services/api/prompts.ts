@@ -26,10 +26,11 @@ export type PromptSourceStatus = {
     lastError: string;
 };
 
-const cacheTtlMs = 1000 * 60 * 60;
+export const PROMPT_SOURCE_CACHE_TTL_MS = 1000 * 60 * 60;
 const promptCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "prompt_cache" });
 
 type SourceCache = PromptSourceStatus & { items: Prompt[]; fetchedAt: number; signature: string };
+export type PromptSourceCacheState = "missing" | "invalid" | "fresh" | "stale";
 
 const loadingSources = new Map<string, Promise<Prompt[]>>();
 
@@ -48,6 +49,13 @@ export function promptSourceCacheKey(sourceId: string) {
 
 export function promptSourceCacheRevision(sourceId: string) {
     return sourceCacheRevisions[sourceId] || "";
+}
+
+/** Describes whether a cached source can be used without waiting for a remote refresh. */
+export function promptSourceCacheState(cached: Pick<SourceCache, "items" | "fetchedAt" | "signature"> | null | undefined, signature: string, now = Date.now()): PromptSourceCacheState {
+    if (!cached || !Array.isArray(cached.items)) return "missing";
+    if (cached.signature !== signature) return "invalid";
+    return now - cached.fetchedAt < PROMPT_SOURCE_CACHE_TTL_MS ? "fresh" : "stale";
 }
 
 /** Cheap stable signature of a source so cached prompts invalidate when the script or name changes. */
@@ -81,31 +89,45 @@ async function runSource(source: PromptSource): Promise<Prompt[]> {
     return prompts;
 }
 
-async function getSourcePrompts(source: PromptSource, force = false): Promise<Prompt[]> {
-    const signature = sourceSignature(source);
-    const cached = await promptCacheStore.getItem<SourceCache>(promptSourceCacheKey(source.id));
-    if (!force) {
-        if (cached?.items?.length && cached.signature === signature && Date.now() - cached.fetchedAt < cacheTtlMs) return cached.items.map(normalizePromptAssets);
-    }
-    if (!force && loadingSources.has(source.id)) return loadingSources.get(source.id)!;
+function cachedPromptItems(cached: SourceCache) {
+    return cached.items.map(normalizePromptAssets);
+}
+
+function refreshSourceCache(source: PromptSource, cached: SourceCache | null, signature: string): Promise<Prompt[]> {
+    const inFlight = loadingSources.get(source.id);
+    if (inFlight) return inFlight;
+
     const loading = runSource(source)
         .catch(async (error) => {
             const lastError = error instanceof Error ? error.message : String(error);
+            const hasMatchingCache = cached?.signature === signature;
             await promptCacheStore.setItem<SourceCache>(promptSourceCacheKey(source.id), {
                 sourceId: source.id,
-                items: cached?.signature === signature ? cached.items || [] : [],
-                count: cached?.signature === signature ? cached.items?.length || 0 : 0,
-                fetchedAt: cached?.signature === signature ? cached.fetchedAt || 0 : 0,
-                lastSuccessAt: cached?.signature === signature ? cached.lastSuccessAt || "" : "",
+                items: hasMatchingCache ? cached.items || [] : [],
+                count: hasMatchingCache ? cached.items?.length || 0 : 0,
+                fetchedAt: hasMatchingCache ? cached.fetchedAt || 0 : 0,
+                lastSuccessAt: hasMatchingCache ? cached.lastSuccessAt || "" : "",
                 lastError,
                 signature,
             });
-            if (!force && cached?.items?.length && cached.signature === signature) return cached.items.map(normalizePromptAssets);
             throw error;
         })
         .finally(() => loadingSources.delete(source.id));
     loadingSources.set(source.id, loading);
     return loading;
+}
+
+async function getSourcePrompts(source: PromptSource, force = false): Promise<Prompt[]> {
+    const signature = sourceSignature(source);
+    const cached = await promptCacheStore.getItem<SourceCache>(promptSourceCacheKey(source.id));
+    const cacheState = promptSourceCacheState(cached, signature);
+    if (!force && cached?.items?.length && cacheState === "fresh") return cachedPromptItems(cached);
+    if (!force && cached?.items?.length && cacheState === "stale") {
+        // Preserve a responsive gallery while the source refreshes for the next visit.
+        void refreshSourceCache(source, cached, signature).catch(() => undefined);
+        return cachedPromptItems(cached);
+    }
+    return refreshSourceCache(source, cached, signature);
 }
 
 /** Aggregate prompts across all enabled sources; a failing source is skipped so others still load. */

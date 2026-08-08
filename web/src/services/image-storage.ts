@@ -36,6 +36,8 @@ type UploadImageOptions = {
 };
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
+const imageLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
+const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 const objectUrls = new Map<string, string>();
 const promotedJobImages = new Map<string, Promise<UploadedImage>>();
 
@@ -247,6 +249,14 @@ export async function deleteStoredImages(keys: Iterable<string>, expectedUserId 
 
 export async function cleanupUnusedImages(usedData: unknown) {
     const usedKeys = collectImageStorageKeys(usedData);
+    await Promise.all([
+        imageLogStore.iterate((value) => {
+            collectImageStorageKeysFromHistory([value], usedKeys);
+        }),
+        videoLogStore.iterate((value) => {
+            collectImageStorageKeysFromHistory([value], usedKeys);
+        }),
+    ]);
     const unused: string[] = [];
     await store.iterate((_value, key) => {
         if (!usedKeys.has(key)) unused.push(key);
@@ -259,6 +269,11 @@ export function collectImageStorageKeys(value: unknown, keys = new Set<string>()
     if ("storageKey" in value && typeof value.storageKey === "string" && value.storageKey.startsWith("image:")) keys.add(value.storageKey);
     if ("thumbnailKey" in value && typeof value.thumbnailKey === "string" && value.thumbnailKey.startsWith("image:")) keys.add(value.thumbnailKey);
     Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectImageStorageKeys(child, keys)) : collectImageStorageKeys(item, keys)));
+    return keys;
+}
+
+export function collectImageStorageKeysFromHistory(entries: Iterable<unknown>, keys = new Set<string>()) {
+    for (const entry of entries) collectImageStorageKeys(entry, keys);
     return keys;
 }
 

@@ -6,7 +6,7 @@ const PROXY_SOURCE_HOSTS: Record<string, string> = {
     awesome: "awesome.re",
     atomgit: "atomgit.com",
 };
-const IMAGE_LOAD_TIMEOUT_MS = 8_000;
+export const PROMPT_COVER_FALLBACK_TIMEOUT_MS = 2_500;
 
 export function promptOriginalUrl(value?: string) {
     const input = String(value || "").trim();
@@ -70,7 +70,7 @@ export function PromptCover({
     className,
     loading = "lazy",
     fetchPriority = "auto",
-    timeoutMs = IMAGE_LOAD_TIMEOUT_MS,
+    timeoutMs = PROMPT_COVER_FALLBACK_TIMEOUT_MS,
 }: {
     sources?: string[];
     alt: string;

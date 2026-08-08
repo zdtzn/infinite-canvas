@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { promptImageCandidates, promptOriginalCandidates, promptOriginalUrl, promptThumbnailUrl } from "./prompt-cover";
+import { PROMPT_COVER_FALLBACK_TIMEOUT_MS, promptImageCandidates, promptOriginalCandidates, promptOriginalUrl, promptThumbnailUrl } from "./prompt-cover";
 
 describe("prompt image URLs", () => {
+    test("switches away from a stalled thumbnail before the old eight-second wait", () => {
+        assert.ok(PROMPT_COVER_FALLBACK_TIMEOUT_MS <= 3_000);
+    });
+
     test("routes GitHub originals directly through jsDelivr", () => {
         assert.equal(
             promptOriginalUrl("/prompt-proxy/raw/freestylefly/awesome-gpt-image-2/main/data/images/case1.jpg"),
