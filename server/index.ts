@@ -55,7 +55,7 @@ import {
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
-import { UuImageChannelScheduler, buildUuAsyncImageRequest, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
+import { UuImageChannelScheduler, buildUuAsyncImageForm, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -2455,18 +2455,13 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
 async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal, upstreamRequestId: string) {
     if (!hasUuAsyncTask(input)) {
         const runtimeInput = await materializeImageInput(input);
-        const requestOptions = buildUuAsyncImageRequest({
+        const form = buildUuAsyncImageForm({
+            model: input.model,
+            prompt: input.prompt,
             size: input.size,
             quality: input.quality,
-            referenceCount: runtimeInput.references.length,
+            references: runtimeInput.references.map((reference) => dataUrlBlob(reference)),
         });
-        const form = new FormData();
-        form.set("model", input.model);
-        form.set("mode", requestOptions.mode);
-        form.set("prompt", input.prompt);
-        form.set("width", String(requestOptions.width));
-        form.set("height", String(requestOptions.height));
-        if (runtimeInput.references[0]) form.set("image", dataUrlBlob(runtimeInput.references[0]), "reference.png");
 
         const response = await upstreamFetch(
             buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations/async"),

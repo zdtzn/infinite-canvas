@@ -60,7 +60,42 @@ export function resolveUuAsyncImageSize(size?: string, quality?: string) {
 
 export function buildUuAsyncImageRequest({ size, quality, referenceCount }: { size?: string; quality?: string; referenceCount: number }) {
     const { width, height } = resolveUuAsyncImageSize(size, quality);
-    return { mode: referenceCount ? "image" : "text", width, height };
+    return { mode: referenceCount ? "image" : "text", sizeTier: resolveUuAsyncImageSizeTier(width, height), width, height };
+}
+
+export function buildUuAsyncImageForm({
+    model,
+    prompt,
+    size,
+    quality,
+    references,
+}: {
+    model: string;
+    prompt: string;
+    size?: string;
+    quality?: string;
+    references: Blob[];
+}) {
+    const request = buildUuAsyncImageRequest({ size, quality, referenceCount: references.length });
+    const form = new FormData();
+    form.set("model", model);
+    form.set("mode", request.mode);
+    form.set("prompt", prompt);
+    form.set("size_tier", request.sizeTier);
+    form.set("width", String(request.width));
+    form.set("height", String(request.height));
+    references.forEach((reference, index) => {
+        form.append("images", reference, `reference-${index + 1}.png`);
+        if (index === 0) form.append("image", reference, "reference.png");
+    });
+    return form;
+}
+
+function resolveUuAsyncImageSizeTier(width: number, height: number): "1K" | "2K" | "4K" {
+    const longestEdge = Math.max(width, height);
+    if (longestEdge <= 1024) return "1K";
+    if (longestEdge <= 2048) return "2K";
+    return "4K";
 }
 
 export function readUuAsyncTask(payload: unknown): UuImageAsyncTask {

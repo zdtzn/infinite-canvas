@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { UuImageChannelScheduler, buildUuAsyncImageRequest, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
+import { UuImageChannelScheduler, buildUuAsyncImageForm, buildUuAsyncImageRequest, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
 
 test("uses the UU async API only for compatible gpt-image-2 jobs", () => {
     expect(isUuImageAsyncChannel("https://uuapi.cc/v1", "gpt-image-2", 0, false)).toBe(true);
@@ -28,8 +28,29 @@ test("converts workbench sizing into UU async width and height", () => {
 });
 
 test("builds UU async form fields for text and image modes", () => {
-    expect(buildUuAsyncImageRequest({ size: "16:9", referenceCount: 0 })).toEqual({ mode: "text", width: 1280, height: 720 });
-    expect(buildUuAsyncImageRequest({ size: "1:1", quality: "medium", referenceCount: 1 })).toEqual({ mode: "image", width: 2048, height: 2048 });
+    expect(buildUuAsyncImageRequest({ size: "16:9", referenceCount: 0 })).toEqual({ mode: "text", sizeTier: "2K", width: 1280, height: 720 });
+    expect(buildUuAsyncImageRequest({ size: "1:1", quality: "medium", referenceCount: 1 })).toEqual({ mode: "image", sizeTier: "2K", width: 2048, height: 2048 });
+    expect(buildUuAsyncImageRequest({ size: "1:1", quality: "high", referenceCount: 1 })).toEqual({ mode: "image", sizeTier: "4K", width: 2880, height: 2880 });
+});
+
+test("matches the UU image studio multipart fields for reference generation", () => {
+    const reference = new Blob(["reference"], { type: "image/png" });
+    const form = buildUuAsyncImageForm({
+        model: "gpt-image-2",
+        prompt: "edit the reference",
+        size: "1:1",
+        quality: "low",
+        references: [reference],
+    });
+
+    expect(form.get("model")).toBe("gpt-image-2");
+    expect(form.get("mode")).toBe("image");
+    expect(form.get("prompt")).toBe("edit the reference");
+    expect(form.get("size_tier")).toBe("1K");
+    expect(form.get("width")).toBe("1024");
+    expect(form.get("height")).toBe("1024");
+    expect(form.getAll("images")).toHaveLength(1);
+    expect(form.getAll("image")).toHaveLength(1);
 });
 
 test("resumes the async endpoint only for an existing UU task", () => {
