@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { canPromoteServerJobImage, collectImageStorageKeysFromHistory, convertImageOutput, readImageBlob } from "./image-storage";
+import { canPromoteServerJobImage, collectImageStorageKeysFromHistory, convertImageOutput, fitImageWithinEdge, readImageBlob } from "./image-storage";
 
 const originalFetch = globalThis.fetch;
 const originalCreateImageBitmap = globalThis.createImageBitmap;
@@ -60,6 +60,11 @@ test("keeps local images referenced by generation history during cleanup", () =>
     ]);
 
     expect(Array.from(keys).sort()).toEqual(["image:generated", "image:generated-thumbnail", "image:reference"]);
+});
+
+test("fits generation reference previews within a 1280 pixel edge", () => {
+    expect(fitImageWithinEdge(2304, 4096, 1280)).toEqual({ width: 720, height: 1280 });
+    expect(fitImageWithinEdge(800, 600, 1280)).toEqual({ width: 800, height: 600 });
 });
 
 test("recognizes a PNG response when the upstream file uses a generic MIME type", async () => {

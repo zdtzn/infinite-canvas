@@ -16,6 +16,14 @@ const ownedImage: StoredAsset = {
   createdAt: 1,
 };
 
+const ownedThumbnail: StoredAsset = {
+  key: "image:owned-thumbnail",
+  userId: "user-a",
+  mimeType: "image/webp",
+  bytes: 45,
+  createdAt: 2,
+};
+
 describe("generation history validation", () => {
   test("normalizes one batch deletion request without duplicate writes", () => {
     expect(
@@ -77,6 +85,7 @@ describe("generation history validation", () => {
             id: "image-one",
             dataUrl: "blob:browser-only",
             storageKey: ownedImage.key,
+            thumbnailKey: ownedThumbnail.key,
             width: 800,
             height: 600,
             bytes: 999,
@@ -85,7 +94,12 @@ describe("generation history validation", () => {
         ],
       },
       "history-one",
-      (key) => (key === ownedImage.key ? ownedImage : undefined),
+      (key) =>
+        key === ownedImage.key
+          ? ownedImage
+          : key === ownedThumbnail.key
+            ? ownedThumbnail
+            : undefined,
     );
 
     expect(item).toMatchObject({
@@ -103,6 +117,7 @@ describe("generation history validation", () => {
             id: "image-one",
             dataUrl: "",
             storageKey: "image:owned",
+            thumbnailKey: "image:owned-thumbnail",
             bytes: 123,
             mimeType: "image/png",
           },
@@ -123,6 +138,27 @@ describe("generation history validation", () => {
         },
         undefined,
         () => undefined,
+      ),
+    ).toThrow(GenerationHistoryInputError);
+  });
+
+  test("rejects a thumbnail reference owned by another user", () => {
+    expect(() =>
+      normalizeGenerationHistoryItem(
+        "image",
+        {
+          id: "history-one",
+          createdAt: 10,
+          references: [
+            {
+              id: "reference-one",
+              storageKey: ownedImage.key,
+              thumbnailKey: "image:foreign-thumbnail",
+            },
+          ],
+        },
+        undefined,
+        (key) => (key === ownedImage.key ? ownedImage : undefined),
       ),
     ).toThrow(GenerationHistoryInputError);
   });

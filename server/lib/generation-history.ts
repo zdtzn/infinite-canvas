@@ -124,9 +124,15 @@ function sanitizeHistoryValue(
   const source = input as Record<string, unknown>;
   const storageKey = String(source.storageKey || "").trim();
   const stored = storageKey ? ownedAsset(storageKey) : undefined;
+  const thumbnailKey = String(source.thumbnailKey || "").trim();
+  const thumbnail = thumbnailKey ? ownedAsset(thumbnailKey) : undefined;
   if (storageKey && !stored)
     throw new GenerationHistoryInputError(
       "生成记录引用的素材不存在或不属于当前用户",
+    );
+  if (thumbnailKey && !thumbnail)
+    throw new GenerationHistoryInputError(
+      "生成记录引用的缩略素材不存在或不属于当前用户",
     );
 
   const result: Record<string, unknown> = {};
@@ -144,6 +150,7 @@ function sanitizeHistoryValue(
     result.bytes = stored.bytes;
     result.mimeType = stored.mimeType;
   }
+  if (thumbnailKey && thumbnail) result.thumbnailKey = thumbnailKey;
   return result;
 }
 

@@ -31,6 +31,7 @@ type UploadImageOptions = {
     imageMeta?: ImageUploadMeta;
     dimensions?: { width: number; height: number };
     createThumbnail?: boolean;
+    thumbnailMaxEdge?: number;
     previewUrl?: string;
     expectedUserId?: string;
 };
@@ -63,7 +64,7 @@ export async function uploadImage(input: string | Blob, options?: UploadImageOpt
         : await readBlobMeta(blob);
     const mimeType = blob.type || meta.mimeType || "image/png";
     assertImageUploadAllowed({ bytes: blob.size, mimeType, width: meta.width, height: meta.height });
-    const thumbnail = options?.createThumbnail === false ? null : await createThumbnail(blob, meta.width, meta.height);
+    const thumbnail = options?.createThumbnail === false ? null : await createThumbnail(blob, meta.width, meta.height, options?.thumbnailMaxEdge);
     if (PUBLIC_MODE) {
         const { asset } = await uploadServerAsset(blob, "image", undefined, expectedUserId);
         const thumbnailAsset = thumbnail ? (await uploadServerAsset(thumbnail, "image", undefined, expectedUserId)).asset : undefined;
@@ -277,19 +278,24 @@ export function collectImageStorageKeysFromHistory(entries: Iterable<unknown>, k
     return keys;
 }
 
-async function createThumbnail(blob: Blob, width: number, height: number) {
-    const longest = Math.max(width, height);
-    if (longest <= 1024 || typeof createImageBitmap !== "function") return null;
-    const scale = 512 / longest;
-    const targetWidth = Math.max(1, Math.round(width * scale));
-    const targetHeight = Math.max(1, Math.round(height * scale));
+async function createThumbnail(blob: Blob, width: number, height: number, requestedMaxEdge = 512) {
+    const maxEdge = Math.max(128, Math.min(1280, Math.round(requestedMaxEdge) || 512));
+    const target = fitImageWithinEdge(width, height, maxEdge);
+    if (Math.max(width, height) <= Math.max(1024, maxEdge) || typeof createImageBitmap !== "function") return null;
     const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
     const canvas = document.createElement("canvas");
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
-    canvas.getContext("2d", { alpha: false })?.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+    canvas.width = target.width;
+    canvas.height = target.height;
+    canvas.getContext("2d", { alpha: false })?.drawImage(bitmap, 0, 0, target.width, target.height);
     bitmap.close();
     return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
+}
+
+export function fitImageWithinEdge(width: number, height: number, maxEdge: number) {
+    const longest = Math.max(width, height);
+    if (!Number.isFinite(longest) || longest <= 0 || !Number.isFinite(maxEdge) || maxEdge <= 0 || longest <= maxEdge) return { width, height };
+    const scale = maxEdge / longest;
+    return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
 
 function blobToDataUrl(blob: Blob) {

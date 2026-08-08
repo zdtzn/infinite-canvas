@@ -151,8 +151,8 @@ export default function ImagePage() {
         try {
             const nextReferences = await Promise.all(
                 limited.accepted.map(async (file) => {
-                    const image = await uploadImage(file);
-                    return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+                    const image = await uploadImage(file, { thumbnailMaxEdge: 1280 });
+                    return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey };
                 }),
             );
             setReferences((value) => limitImageReferenceAdditions(value, nextReferences, activeImageCapabilities.maxReferences).items as ReferenceImage[]);
@@ -174,8 +174,15 @@ export default function ImagePage() {
             if (!limited.accepted.length) return;
             const nextReferences = await Promise.all(
                 limited.accepted.map(async (blob, index) => {
-                    const image = await uploadImage(blob);
-                    return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+                    const image = await uploadImage(blob, { thumbnailMaxEdge: 1280 });
+                    return {
+                        id: nanoid(),
+                        name: `clipboard-${index + 1}.png`,
+                        type: image.mimeType,
+                        dataUrl: image.url,
+                        storageKey: image.storageKey,
+                        thumbnailKey: image.thumbnailKey,
+                    };
                 }),
             );
             setReferences((value) => limitImageReferenceAdditions(value, nextReferences, activeImageCapabilities.maxReferences).items as ReferenceImage[]);
@@ -308,8 +315,17 @@ export default function ImagePage() {
             return;
         }
         const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
-        const stored = image.storageKey ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" } : await uploadImage(image.dataUrl, { outputFormat });
-        const reference = { id: nanoid(), name: `result-${index + 1}.${imageFileExtension(stored.mimeType)}`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey };
+        const stored = image.storageKey
+            ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
+            : await uploadImage(image.dataUrl, { outputFormat, thumbnailMaxEdge: 1280 });
+        const reference = {
+            id: nanoid(),
+            name: `result-${index + 1}.${imageFileExtension(stored.mimeType)}`,
+            type: stored.mimeType,
+            dataUrl: stored.url,
+            storageKey: stored.storageKey,
+            thumbnailKey: "thumbnailKey" in stored ? stored.thumbnailKey : undefined,
+        };
         setReferences((value) => limitImageReferenceAdditions(value, [reference], activeImageCapabilities.maxReferences).items as ReferenceImage[]);
         message.success("已加入参考图");
     };
@@ -352,8 +368,15 @@ export default function ImagePage() {
                 message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图`);
                 return;
             }
-            const stored = await uploadImage(payload.dataUrl);
-            const reference = { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey };
+            const stored = await uploadImage(payload.dataUrl, { thumbnailMaxEdge: 1280 });
+            const reference = {
+                id: nanoid(),
+                name: payload.title,
+                type: stored.mimeType,
+                dataUrl: stored.url,
+                storageKey: stored.storageKey,
+                thumbnailKey: stored.thumbnailKey,
+            };
             setReferences((value) => limitImageReferenceAdditions(value, [reference], activeImageCapabilities.maxReferences).items as ReferenceImage[]);
         } else {
             message.warning("生图工作台只能使用文本或图片资产");
@@ -957,8 +980,8 @@ async function prepareImageLogForServer(log: GenerationLog, expectedUserId: stri
     const references = await Promise.all(
         log.references.map(async (item) => {
             if (item.storageKey || !item.dataUrl) return item;
-            const stored = await uploadImage(item.dataUrl, { expectedUserId });
-            return { ...item, dataUrl: stored.url, storageKey: stored.storageKey, type: stored.mimeType };
+            const stored = await uploadImage(item.dataUrl, { expectedUserId, thumbnailMaxEdge: 1280 });
+            return { ...item, dataUrl: stored.url, storageKey: stored.storageKey, thumbnailKey: stored.thumbnailKey, type: stored.mimeType };
         }),
     );
     const images = await Promise.all(

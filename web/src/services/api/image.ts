@@ -9,7 +9,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { imageToDataUrl } from "@/services/image-storage";
 import { archiveDeferredServerJob, cancelServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput, type ServerJob } from "@/services/server-api";
-import { deriveImageModelCapabilities, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
+import { deriveImageModelCapabilities, isUuAsyncGptImageModel, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useUserStore } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -31,8 +31,10 @@ export type RequestedImage = {
     expiresAt?: string;
 };
 
-export function serverImageReferenceInput(reference: { storageKey?: string }): ServerImageReferenceInput | null {
-    const assetKey = String(reference.storageKey || "").trim();
+export function serverImageReferenceInput(reference: { storageKey?: string; thumbnailKey?: string }, preferOptimized = false): ServerImageReferenceInput | null {
+    const original = String(reference.storageKey || "").trim();
+    const optimized = String(reference.thumbnailKey || "").trim();
+    const assetKey = [preferOptimized ? optimized : "", original].find((value) => /^image:[A-Za-z0-9._:-]{1,180}$/.test(value)) || "";
     return /^image:[A-Za-z0-9._:-]{1,180}$/.test(assetKey) ? { assetKey } : null;
 }
 
@@ -989,7 +991,9 @@ async function requestServerImageJob(
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
     const size = normalizeImageSizeSelection(requestConfig.size);
     validateImageRequest(capabilities, { resolution, imageQuality: imageQuality || "auto", imageOutputFormat: imageOutputFormat || "auto", size, background: requestConfig.background || "", referenceCount: references.length, count });
-    const referenceData = await Promise.all(references.map((reference) => serverImageReferenceInput(reference) || imageToDataUrl(reference, expectedUserId)));
+    const preferOptimizedReferences =
+        !mask && normalizeResolution(resolution) === "low" && requestConfig.apiFormat === "openai" && isUuAsyncGptImageModel(requestConfig.baseUrl, requestConfig.model);
+    const referenceData = await Promise.all(references.map((reference) => serverImageReferenceInput(reference, preferOptimizedReferences) || imageToDataUrl(reference, expectedUserId)));
     const maskData = mask ? serverImageReferenceInput(mask) || (await imageToDataUrl(mask, expectedUserId)) : undefined;
     const { job } = await submitImageJob({
         channelId: requestConfig.channelId,

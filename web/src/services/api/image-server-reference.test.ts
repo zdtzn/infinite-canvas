@@ -9,6 +9,14 @@ test("uses compact server asset handles instead of embedding uploaded reference 
     expect(JSON.stringify({ references }).length).toBeLessThan(256);
 });
 
+test("prefers an optimized server asset for low-resolution reference generation", () => {
+    const reference = { storageKey: "image:original", thumbnailKey: "image:optimized" };
+
+    expect(serverImageReferenceInput(reference, true)).toEqual({ assetKey: "image:optimized" });
+    expect(serverImageReferenceInput(reference)).toEqual({ assetKey: "image:original" });
+    expect(serverImageReferenceInput({ ...reference, thumbnailKey: "file:invalid" }, true)).toEqual({ assetKey: "image:original" });
+});
+
 test("falls back to image data for references that are not server image assets", () => {
     expect(serverImageReferenceInput({ storageKey: "" })).toBeNull();
     expect(serverImageReferenceInput({ storageKey: "file:reference" })).toBeNull();
