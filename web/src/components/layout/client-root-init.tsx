@@ -5,8 +5,9 @@ import { App } from "antd";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useProjectServerSync } from "@/hooks/use-project-server-sync";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
-import { fetchServerChannels, saveServerChannel, type ServerChannel } from "@/services/server-api";
+import { fetchServerChannels, fetchServerPromptSources, saveServerChannel, saveServerPromptSource, type ServerChannel } from "@/services/server-api";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { isBuiltInPromptSource, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import { createModelChannel, normalizeChannelModels, useConfigStore, type ModelChannel } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -14,6 +15,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
     const handledConfigParams = useRef(false);
     const syncedChannelUser = useRef("");
+    const syncedPromptSourceUser = useRef("");
     const user = useUserStore((state) => state.user);
     const config = useConfigStore((state) => state.config);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -22,9 +24,44 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const localAssetsHydrated = useAssetStore((state) => state.hydrated);
     const prepareAssetsForUser = useAssetStore((state) => state.prepareForUser);
     const hydrateAssetsFromServer = useAssetStore((state) => state.hydrateFromServer);
+    const promptSources = usePromptSourceStore((state) => state.sources);
+    const promptSourcesHydrated = usePromptSourceStore((state) => state.hydrated);
+    const setSharedPromptSources = usePromptSourceStore((state) => state.setSharedSources);
 
     usePromptSourceScheduler();
     useProjectServerSync(user?.id);
+
+    useEffect(() => {
+        if (!user?.id) {
+            syncedPromptSourceUser.current = "";
+            return;
+        }
+        if (!PUBLIC_MODE || !promptSourcesHydrated || syncedPromptSourceUser.current === user.id) return;
+        let active = true;
+        syncedPromptSourceUser.current = user.id;
+
+        void (async () => {
+            try {
+                let response = await fetchServerPromptSources();
+                if (user.admin && response.items.length === 0) {
+                    const localCustomSources = promptSources.filter((source) => !isBuiltInPromptSource(source));
+                    if (localCustomSources.length) {
+                        await Promise.all(localCustomSources.map(saveServerPromptSource));
+                        response = await fetchServerPromptSources();
+                    }
+                }
+                if (active) setSharedPromptSources(response.items);
+            } catch (error) {
+                if (!active) return;
+                syncedPromptSourceUser.current = "";
+                message.error(error instanceof Error ? error.message : "提示词来源同步失败");
+            }
+        })();
+
+        return () => {
+            active = false;
+        };
+    }, [message, promptSources, promptSourcesHydrated, setSharedPromptSources, user?.admin, user?.id]);
 
     useLayoutEffect(() => {
         if (PUBLIC_MODE && user?.id) prepareAssetsForUser(user.id);

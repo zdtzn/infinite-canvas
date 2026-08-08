@@ -30,6 +30,8 @@ export type AppDatabase = {
   mode: "sqlite" | "legacy";
   loadState(): ServerState;
   saveState(state: ServerState): void;
+  loadSetting(key: string): unknown | null;
+  saveSetting(key: string, value: unknown): void;
   saveAsset(asset: StoredAsset): void;
   deleteAsset(userId: string, assetKey: string): void;
   loadAssetLibrary(userId: string): {
@@ -617,6 +619,24 @@ function sqliteStore(database: Database): AppDatabase {
     raw: database,
     loadState: () => loadState(database),
     saveState: (state) => replaceState(database, state),
+    loadSetting: (key) => {
+      const row = database
+        .query("SELECT value_json FROM cultivation_settings WHERE setting_key = ?")
+        .get(key) as { value_json?: string } | null;
+      if (!row?.value_json) return null;
+      try {
+        return JSON.parse(row.value_json);
+      } catch {
+        return null;
+      }
+    },
+    saveSetting: (key, value) => {
+      database
+        .query(
+          "INSERT INTO cultivation_settings(setting_key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(setting_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at",
+        )
+        .run(key, JSON.stringify(value ?? null), Date.now());
+    },
     saveAsset: (asset) =>
       database
         .query(

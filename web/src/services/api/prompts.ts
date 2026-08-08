@@ -1,7 +1,7 @@
 import localforage from "localforage";
 
 import { normalizePromptAssets, runPromptSource, runTrustedPromptSource, type RawPrompt } from "./prompt-source-runtime";
-import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
+import { isBuiltInPromptSource, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "./prompt-source-presets";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 
@@ -74,7 +74,7 @@ function withSourceMeta(source: PromptSource, items: RawPrompt[]): Prompt[] {
 }
 
 async function runSource(source: PromptSource): Promise<Prompt[]> {
-    const items = PUBLIC_MODE ? await runTrustedPromptSource(source.id) : await runPromptSource(source.script);
+    const items = PUBLIC_MODE && isBuiltInPromptSource(source) ? await runTrustedPromptSource(source.id) : await runPromptSource(source.script);
     const prompts = withSourceMeta(source, items);
     const fetchedAt = Date.now();
     await promptCacheStore.setItem<SourceCache>(promptSourceCacheKey(source.id), {

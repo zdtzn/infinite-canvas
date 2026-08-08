@@ -6,9 +6,11 @@ import { Suspense, useState } from "react";
 import { lazyRoute } from "@/lib/lazy-route";
 import { PromptSourceContentModal } from "./prompt-source-content-modal";
 import { fetchPromptSourceStatuses, refreshAllSources, refreshSource } from "@/services/api/prompts";
-import { PROMPT_SOURCE_INTERVAL_OPTIONS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
+import { deleteServerPromptSource, saveServerPromptSource } from "@/services/server-api";
+import { isBuiltInPromptSource, PROMPT_SOURCE_INTERVAL_OPTIONS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { useUserStore } from "@/stores/use-user-store";
 
 const PromptSourceEditorDrawer = lazyRoute(() => import("./prompt-source-editor-drawer").then((module) => ({ default: module.PromptSourceEditorDrawer })));
 const STATUS_QUERY_KEY = ["prompt-source-statuses"];
@@ -23,7 +25,9 @@ export function ConfigPromptSources() {
     const removeSource = usePromptSourceStore((state) => state.removeSource);
     const toggleSource = usePromptSourceStore((state) => state.toggleSource);
     const updateSchedule = usePromptSourceStore((state) => state.updateSchedule);
+    const user = useUserStore((state) => state.user);
     const statusQuery = useQuery({ queryKey: STATUS_QUERY_KEY, queryFn: fetchPromptSourceStatuses });
+    const canManageSources = !PUBLIC_MODE || Boolean(user?.admin);
 
     const [editingId, setEditingId] = useState("");
     const [viewingId, setViewingId] = useState("");
@@ -41,22 +45,46 @@ export function ConfigPromptSources() {
         ]);
 
     const handleAdd = () => {
+        if (!canManageSources) return;
         const source = addSource();
         setEditingId(source.id);
     };
 
-    const handleSave = (source: PromptSource) => {
-        saveSource(source);
-        void invalidatePromptQueries();
+    const handleSave = async (source: PromptSource) => {
+        try {
+            const saved = PUBLIC_MODE ? (await saveServerPromptSource(source)).source : source;
+            saveSource(saved);
+            await invalidatePromptQueries();
+            message.success("提示词来源已保存");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "提示词来源保存失败");
+            throw error;
+        }
     };
 
-    const handleDelete = (source: PromptSource) => {
-        if (sources.length <= 1) {
-            message.warning("至少保留一个来源");
+    const handleDelete = async (source: PromptSource) => {
+        if (!canManageSources || (PUBLIC_MODE && isBuiltInPromptSource(source))) return;
+        try {
+            if (PUBLIC_MODE) await deleteServerPromptSource(source.id);
+            removeSource(source.id);
+            await invalidatePromptQueries();
+            message.success("提示词来源已删除");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "提示词来源删除失败");
+        }
+    };
+
+    const handleToggle = async (source: PromptSource, enabled: boolean) => {
+        if (PUBLIC_MODE && user?.admin && !isBuiltInPromptSource(source)) {
+            try {
+                saveSource((await saveServerPromptSource({ ...source, enabled })).source);
+                await invalidatePromptQueries();
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "提示词来源状态保存失败");
+            }
             return;
         }
-        removeSource(source.id);
-        void invalidatePromptQueries();
+        toggleSource(source.id, enabled);
     };
 
     const handleRefreshOne = async (source: PromptSource) => {
@@ -90,8 +118,10 @@ export function ConfigPromptSources() {
     return (
         <div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs text-stone-500">公网模式仅启用内置可信来源；资源由本站代理缓存，单个来源异常不会拖垮整个图库。</div>
-                {!PUBLIC_MODE ? <Button type="primary" icon={<Plus className="size-4" />} onClick={handleAdd}>新增来源</Button> : null}
+                <div className="text-xs text-stone-500">
+                    {PUBLIC_MODE ? (user?.admin ? "管理员可新增、编辑和删除共享来源；脚本仅配置你信任的公开数据源。" : "提示词来源由管理员统一配置，资源由本站代理缓存。") : "资源由浏览器按来源拉取和缓存，单个来源异常不会拖垮整个图库。"}
+                </div>
+                {canManageSources ? <Button type="primary" icon={<Plus className="size-4" />} onClick={handleAdd}>新增来源</Button> : null}
             </div>
 
             <div className="space-y-2">
@@ -100,7 +130,7 @@ export function ConfigPromptSources() {
                     return (
                         <div key={source.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-stone-200 px-4 py-3 dark:border-stone-800">
                             <div className="flex min-w-0 flex-1 items-center gap-3">
-                                <Switch size="small" checked={source.enabled} onChange={(checked) => toggleSource(source.id, checked)} />
+                                <Switch size="small" checked={source.enabled} onChange={(checked) => void handleToggle(source, checked)} />
                                 <div className="min-w-0">
                                     <div className="truncate text-sm font-semibold">{source.name || "未命名来源"}</div>
                                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-stone-500">
@@ -118,8 +148,8 @@ export function ConfigPromptSources() {
                                 <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={refreshingId === source.id} onClick={() => void handleRefreshOne(source)}>
                                     立即拉取
                                 </Button>
-                                {!PUBLIC_MODE ? <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingId(source.id)}>编辑脚本</Button> : null}
-                                {!PUBLIC_MODE ? <Button size="small" danger icon={<Trash2 className="size-3.5" />} aria-label="删除来源" onClick={() => handleDelete(source)} /> : null}
+                                {canManageSources && (!PUBLIC_MODE || !isBuiltInPromptSource(source)) ? <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingId(source.id)}>编辑脚本</Button> : null}
+                                {canManageSources && (!PUBLIC_MODE || !isBuiltInPromptSource(source)) ? <Button size="small" danger icon={<Trash2 className="size-3.5" />} aria-label="删除来源" onClick={() => void handleDelete(source)} /> : null}
                             </div>
                         </div>
                     );
@@ -141,7 +171,7 @@ export function ConfigPromptSources() {
                 <div className="mt-2 text-xs text-stone-400">开启周期后，页面打开期间会按周期自动拉取所有启用的来源。</div>
             </section>
 
-            {!PUBLIC_MODE && editingSource ? (
+            {canManageSources && editingSource && (!PUBLIC_MODE || !isBuiltInPromptSource(editingSource)) ? (
                 <Suspense fallback={null}>
                     <PromptSourceEditorDrawer open source={editingSource} onSave={handleSave} onClose={() => setEditingId("")} />
                 </Suspense>

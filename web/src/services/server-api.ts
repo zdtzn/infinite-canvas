@@ -4,12 +4,14 @@ import { friendlyErrorMessage } from "@/lib/friendly-error";
 import type { Asset } from "@/stores/use-asset-store";
 import type { ApiCallFormat, ModelChannel } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
+import type { PromptSource } from "@/services/api/prompt-source-presets";
 
 export type AuthUser = { userId: string; displayName: string; admin?: boolean; avatarUrl?: string };
 export type AuthStatus = { configured: boolean; authenticated: boolean; user: AuthUser | null; publicMode: boolean };
 export type ServerMember = AuthUser & { createdAt: number; disabled: boolean };
 export type ServerAsset = { key: string; url: string; mimeType: string; bytes: number; createdAt: number };
 export type ServerChannel = Omit<ModelChannel, "apiKey" | "credentialState"> & { hasApiKey: boolean };
+export type ServerPromptSource = Omit<PromptSource, "trusted"> & { trusted: true };
 export type ServerImageReferenceInput = string | { assetKey: string };
 export type PromptOptimizerTarget = { channelId: string; model: string };
 export type PromptOptimizerAdminConfiguration = {
@@ -205,6 +207,27 @@ export async function reorderServerChannels(channelIds: string[]) {
 
 export async function deleteServerChannel(channelId: string) {
     await serverRequest(`/api/channels/${encodeURIComponent(channelId)}`, { method: "DELETE" });
+}
+
+export async function fetchServerPromptSources() {
+    return serverRequest<{ items: ServerPromptSource[] }>("/api/prompt-sources", { timeoutMs: 12_000 });
+}
+
+export async function saveServerPromptSource(source: PromptSource) {
+    return serverRequest<{ ok: true; source: ServerPromptSource }>(`/api/admin/prompt-sources/${encodeURIComponent(source.id)}`, {
+        method: "PUT",
+        body: {
+            id: source.id,
+            name: source.name,
+            githubUrl: source.githubUrl,
+            enabled: source.enabled,
+            script: source.script,
+        },
+    });
+}
+
+export async function deleteServerPromptSource(sourceId: string) {
+    await serverRequest(`/api/admin/prompt-sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" });
 }
 
 export async function fetchPromptOptimizerAdminConfiguration() {

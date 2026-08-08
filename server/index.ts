@@ -62,6 +62,7 @@ import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, isLoopbackSetupRequest, isSameApplicationOrigin, normalizePublicBaseUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, promptProxyLane } from "./lib/prompt-cache-policy";
+import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
 import { createProductLabService, productOutputCapability, ProductLabError } from "./modules/product-lab/service";
@@ -342,6 +343,10 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/channels/metrics" && request.method === "GET") return adminChannelMetrics(url, session);
         if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "GET") return adminPromptOptimizationConfiguration(session);
         if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "PUT") return adminUpdatePromptOptimizationConfiguration(request, session);
+        if (url.pathname === "/api/prompt-sources" && request.method === "GET") return listPromptSources();
+        const adminPromptSourceMatch = url.pathname.match(/^\/api\/admin\/prompt-sources\/([^/]+)$/);
+        if (adminPromptSourceMatch && request.method === "PUT") return savePromptSource(request, session, decodeRouteSegment(adminPromptSourceMatch[1], "提示词来源 ID"));
+        if (adminPromptSourceMatch && request.method === "DELETE") return deletePromptSource(session, decodeRouteSegment(adminPromptSourceMatch[1], "提示词来源 ID"));
         if (url.pathname === "/api/admin/users" && request.method === "GET") return listUsers(session);
         const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
         if (userMatch && request.method === "PUT") return updateUserAccess(request, session, decodeRouteSegment(userMatch[1], "用户 ID"));
@@ -1029,6 +1034,37 @@ function promptOptimizationPreferredTarget() {
         return { channelId: PROMPT_OPTIMIZE_CHANNEL_ID, model: PROMPT_OPTIMIZE_MODEL };
     }
     return platformPromptOptimizationTarget(state) || {};
+}
+
+function listPromptSources() {
+    return json({ items: loadManagedPromptSources(appDatabase).map(publicPromptSource) });
+}
+
+async function savePromptSource(request: Request, session: SessionPayload, id: string) {
+    requireAdmin(session);
+    const body = await readJson<Record<string, unknown>>(request);
+    let source: ManagedPromptSource;
+    try {
+        source = normalizeManagedPromptSource(body, id);
+    } catch (error) {
+        throw new HttpError(400, error instanceof Error ? error.message : "提示词来源配置无效");
+    }
+    const sources = loadManagedPromptSources(appDatabase).filter((item) => item.id !== id);
+    saveManagedPromptSources(appDatabase, [...sources, source]);
+    console.info(JSON.stringify({ event: "prompt_source_updated", adminUserId: session.userId, sourceId: source.id }));
+    return json({ ok: true, source: publicPromptSource(source) });
+}
+
+function deletePromptSource(session: SessionPayload, id: string) {
+    requireAdmin(session);
+    const sources = loadManagedPromptSources(appDatabase);
+    saveManagedPromptSources(appDatabase, sources.filter((item) => item.id !== id));
+    console.info(JSON.stringify({ event: "prompt_source_deleted", adminUserId: session.userId, sourceId: id }));
+    return new Response(null, { status: 204 });
+}
+
+function publicPromptSource(source: ManagedPromptSource) {
+    return { ...source, trusted: true as const };
 }
 
 async function optimizeImagePrompt(request: Request, session: SessionPayload, requestId: string) {

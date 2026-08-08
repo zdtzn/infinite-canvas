@@ -10,8 +10,9 @@ function isDarkMode() {
     return typeof document !== "undefined" && document.documentElement.classList.contains("dark");
 }
 
-export function PromptSourceEditorDrawer({ open, source, onSave, onClose }: { open: boolean; source: PromptSource | null; onSave: (source: PromptSource) => void; onClose: () => void }) {
+export function PromptSourceEditorDrawer({ open, source, onSave, onClose }: { open: boolean; source: PromptSource | null; onSave: (source: PromptSource) => void | Promise<void>; onClose: () => void }) {
     const [draft, setDraft] = useState<PromptSource | null>(source);
+    const [saving, setSaving] = useState(false);
 
     useEffect(() => {
         if (open && source) setDraft(source);
@@ -21,9 +22,16 @@ export function PromptSourceEditorDrawer({ open, source, onSave, onClose }: { op
 
     const patch = (value: Partial<PromptSource>) => setDraft((current) => (current ? { ...current, ...value } : current));
 
-    const save = () => {
-        onSave({ ...draft, name: draft.name.trim() || "未命名来源", githubUrl: draft.githubUrl.trim(), script: draft.script.trim() });
-        onClose();
+    const save = async () => {
+        setSaving(true);
+        try {
+            await onSave({ ...draft, name: draft.name.trim() || "未命名来源", githubUrl: draft.githubUrl.trim(), script: draft.script.trim() });
+            onClose();
+        } catch {
+            // The save handler already presents the server error and keeps the drawer open.
+        } finally {
+            setSaving(false);
+        }
     };
 
     return (
@@ -35,8 +43,8 @@ export function PromptSourceEditorDrawer({ open, source, onSave, onClose }: { op
             styles={{ body: { paddingTop: 16 } }}
             extra={
                 <Space>
-                    <Button onClick={onClose}>取消</Button>
-                    <Button type="primary" onClick={save}>
+                    <Button onClick={onClose} disabled={saving}>取消</Button>
+                    <Button type="primary" onClick={() => void save()} loading={saving}>
                         保存
                     </Button>
                 </Space>

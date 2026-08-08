@@ -117,6 +117,19 @@ describe("SQLite application database", () => {
     store.close();
   });
 
+  test("persists shared application settings without changing user state", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      store.saveSetting("app.prompt-sources", [{ id: "custom", enabled: true }]);
+      expect(store.loadSetting("app.prompt-sources")).toEqual([{ id: "custom", enabled: true }]);
+      expect(store.loadState().users).toEqual({});
+    } finally {
+      store.close();
+    }
+  });
+
   test("creates the product lab tables in the latest migration", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
