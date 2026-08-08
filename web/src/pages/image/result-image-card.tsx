@@ -73,33 +73,25 @@ export function ResultImageCard({
                 />
             </div>
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
-                {recoveryPending ? (
-                    <div className="flex items-center gap-2 border-b border-amber-200 pb-2 text-xs text-amber-700 dark:border-amber-900/60 dark:text-amber-300" aria-live="polite">
-                        <LoaderCircle className="size-3.5 shrink-0 animate-spin" />
-                        <span className="inline-flex min-w-0 items-center gap-1.5 text-amber-700 dark:text-amber-300">
-                            <span className="truncate">画卷已成，正在自动保存原图</span>
-                        </span>
-                    </div>
-                ) : null}
                 <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                     <span>
                         {image.width}x{image.height}
                     </span>
-                    <span>{image.bytes ? formatBytes(image.bytes) : "原图保存中"}</span>
+                    {image.bytes ? <span>{formatBytes(image.bytes)}</span> : null}
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
                 <div className="grid min-w-0 grid-cols-3 gap-2">
-                    <Tooltip title={recoveryPending ? "原图保存完成后可入藏卷阁" : "入藏卷阁"}>
+                    <Tooltip title={recoveryPending ? "图片处理中，请稍候" : "入藏卷阁"}>
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} loading={savingAsset} disabled={savingAsset || recoveryPending} onClick={() => void onSaveAsset(image, index)}>
                             入藏卷阁
                         </Button>
                     </Tooltip>
-                    <Tooltip title={recoveryPending ? "原图保存完成后可加入参考图" : "加入参考图"}>
+                    <Tooltip title={recoveryPending ? "图片处理中，请稍候" : "加入参考图"}>
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<ImagePlus className="size-3.5" />} disabled={recoveryPending} onClick={() => void onEdit(image, index)}>
                             加入参考图
                         </Button>
                     </Tooltip>
-                    <Tooltip title={recoveryPending ? "打开临时原图" : "下载"}>
+                    <Tooltip title="下载">
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => void onDownload(image, index)}>
                             下载
                         </Button>

@@ -17,7 +17,7 @@ const temporaryImage = {
     persisted: false,
 };
 
-test("shows automatic original saving without exposing a manual archive action", () => {
+test("keeps automatic original saving invisible to the user", () => {
     const html = renderToStaticMarkup(
         createElement(ResultImageCard, {
             image: temporaryImage,
@@ -29,8 +29,8 @@ test("shows automatic original saving without exposing a manual archive action",
         }),
     );
 
-    assert.match(html, /画卷已成，正在自动保存原图/);
-    assert.match(html, /原图保存中/);
+    assert.doesNotMatch(html, /自动保存原图/);
+    assert.doesNotMatch(html, /原图保存中/);
     assert.doesNotMatch(html, /恢复归档/);
     assert.match(html, /入藏卷阁/);
 });
@@ -47,6 +47,7 @@ test("keeps the normal result card unchanged after the server file is persisted"
         }),
     );
 
-    assert.doesNotMatch(html, /正在自动保存原图/);
+    assert.doesNotMatch(html, /自动保存原图/);
+    assert.doesNotMatch(html, /原图保存中/);
     assert.doesNotMatch(html, /恢复归档/);
 });
