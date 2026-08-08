@@ -84,11 +84,10 @@ export function buildUuAsyncImageForm({
     form.set("size_tier", request.sizeTier);
     form.set("width", String(request.width));
     form.set("height", String(request.height));
-    references.forEach((reference, index) => {
-        const filename = `reference-${index + 1}${imageFilenameExtension(reference.type)}`;
-        form.append("images", reference, filename);
-        if (index === 0) form.append("image", reference, `reference${imageFilenameExtension(reference.type)}`);
-    });
+    // UU's async image mode documents a single `image` upload. The image-mode
+    // routing above already limits this path to one reference image.
+    const reference = references[0];
+    if (reference) form.append("image", reference, `reference-1${imageFilenameExtension(reference.type)}`);
     return form;
 }
 

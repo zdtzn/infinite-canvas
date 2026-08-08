@@ -49,10 +49,9 @@ test("matches the UU image studio multipart fields for reference generation", ()
     expect(form.get("size_tier")).toBe("1K");
     expect(form.get("width")).toBe("1024");
     expect(form.get("height")).toBe("1024");
-    expect(form.getAll("images")).toHaveLength(1);
     expect(form.getAll("image")).toHaveLength(1);
-    expect((form.get("images") as File).name).toBe("reference-1.png");
     expect((form.get("image") as File).name).toBe("reference-1.png");
+    expect(form.getAll("images")).toHaveLength(0);
 });
 
 test("keeps the reference filename extension aligned with its MIME type", () => {
@@ -65,9 +64,9 @@ test("keeps the reference filename extension aligned with its MIME type", () => 
         references: [reference],
     });
 
-    expect((form.get("images") as File).name).toBe("reference-1.jpg");
-    expect((form.get("images") as File).type).toBe("image/jpeg");
     expect((form.get("image") as File).name).toBe("reference-1.jpg");
+    expect((form.get("image") as File).type).toBe("image/jpeg");
+    expect(form.getAll("images")).toHaveLength(0);
 });
 
 test("resumes the async endpoint only for an existing UU task", () => {
