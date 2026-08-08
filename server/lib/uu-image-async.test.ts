@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 
 import { UuImageChannelScheduler, buildUuAsyncImageForm, buildUuAsyncImageRequest, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
 
-test("uses the UU async API only for compatible gpt-image-2 jobs", () => {
+test("uses the UU async API only for text-to-image gpt-image-2 jobs", () => {
     expect(isUuImageAsyncChannel("https://uuapi.cc/v1", "gpt-image-2", 0, false)).toBe(true);
-    expect(isUuImageAsyncChannel("https://api.uuapi.net", "GPT-IMAGE-2", 1, false)).toBe(true);
+    expect(isUuImageAsyncChannel("https://api.uuapi.net", "GPT-IMAGE-2", 1, false)).toBe(false);
     expect(isUuImageAsyncChannel("https://api.example.com", "gpt-image-2", 0, false)).toBe(false);
     expect(isUuImageAsyncChannel("https://uuapi.cc", "gpt-image-1", 0, false)).toBe(false);
     expect(isUuImageAsyncChannel("https://uuapi.cc", "gpt-image-2", 2, false)).toBe(false);

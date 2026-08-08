@@ -39,7 +39,7 @@ export function isUuAsyncGptImage2Channel(baseUrl: string, model: string) {
 }
 
 export function isUuImageAsyncChannel(baseUrl: string, model: string, referenceCount: number, hasMask: boolean) {
-    return isUuAsyncGptImage2Channel(baseUrl, model) && referenceCount <= 1 && !hasMask;
+    return isUuAsyncGptImage2Channel(baseUrl, model) && referenceCount === 0 && !hasMask;
 }
 
 export function hasUuAsyncTask(input: ImageJobInput): input is ImageJobInput & {
