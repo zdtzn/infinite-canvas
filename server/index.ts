@@ -2424,8 +2424,14 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         form.set("model", input.model);
         form.set("prompt", prompt);
         Object.entries(requestOptions).forEach(([key, value]) => form.set(key, String(value)));
-        input.references.forEach((dataUrl, index) => form.append("image", dataUrlBlob(dataUrl), `reference-${index + 1}.png`));
-        if (input.mask) form.set("mask", dataUrlBlob(input.mask), "mask.png");
+        input.references.forEach((dataUrl, index) => {
+            const image = dataUrlBlob(dataUrl);
+            form.append("image", image, `reference-${index + 1}${imageExtension(image.type)}`);
+        });
+        if (input.mask) {
+            const mask = dataUrlBlob(input.mask);
+            form.set("mask", mask, `mask${imageExtension(mask.type)}`);
+        }
         response = await upstreamFetch(buildUpstreamUrl(imageBaseUrl, "openai", "/images/edits"), { method: "POST", headers, body: form, signal }, retryPaidRequest);
     } else {
         response = await upstreamFetch(

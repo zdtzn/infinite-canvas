@@ -51,6 +51,23 @@ test("matches the UU image studio multipart fields for reference generation", ()
     expect(form.get("height")).toBe("1024");
     expect(form.getAll("images")).toHaveLength(1);
     expect(form.getAll("image")).toHaveLength(1);
+    expect((form.get("images") as File).name).toBe("reference-1.png");
+    expect((form.get("image") as File).name).toBe("reference-1.png");
+});
+
+test("keeps the reference filename extension aligned with its MIME type", () => {
+    const reference = new Blob(["reference"], { type: "image/jpeg" });
+    const form = buildUuAsyncImageForm({
+        model: "gpt-image-2",
+        prompt: "edit the reference",
+        size: "1:1",
+        quality: "low",
+        references: [reference],
+    });
+
+    expect((form.get("images") as File).name).toBe("reference-1.jpg");
+    expect((form.get("images") as File).type).toBe("image/jpeg");
+    expect((form.get("image") as File).name).toBe("reference-1.jpg");
 });
 
 test("resumes the async endpoint only for an existing UU task", () => {

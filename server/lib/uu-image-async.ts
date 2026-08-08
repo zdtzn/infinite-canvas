@@ -85,10 +85,21 @@ export function buildUuAsyncImageForm({
     form.set("width", String(request.width));
     form.set("height", String(request.height));
     references.forEach((reference, index) => {
-        form.append("images", reference, `reference-${index + 1}.png`);
-        if (index === 0) form.append("image", reference, "reference.png");
+        const filename = `reference-${index + 1}${imageFilenameExtension(reference.type)}`;
+        form.append("images", reference, filename);
+        if (index === 0) form.append("image", reference, `reference${imageFilenameExtension(reference.type)}`);
     });
     return form;
+}
+
+function imageFilenameExtension(mimeType: string) {
+    return (
+        {
+            "image/jpeg": ".jpg",
+            "image/webp": ".webp",
+            "image/avif": ".avif",
+        } as Record<string, string>
+    )[mimeType.toLowerCase()] || ".png";
 }
 
 function resolveUuAsyncImageSizeTier(width: number, height: number): "1K" | "2K" | "4K" {
