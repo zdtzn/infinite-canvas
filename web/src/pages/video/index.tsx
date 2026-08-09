@@ -1,6 +1,6 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Music2, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, Eye, FolderPlus, LoaderCircle, Music2, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
@@ -82,6 +82,7 @@ export default function VideoPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const videoInputRef = useRef<HTMLInputElement>(null);
     const audioInputRef = useRef<HTMLInputElement>(null);
+    const resultPanelRef = useRef<HTMLDivElement>(null);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
     const deletedLogIdsRef = useRef<Set<string>>(new Set());
     const config = useConfigStore((state) => state.config);
@@ -97,7 +98,7 @@ export default function VideoPage() {
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [running, setRunning] = useState(false);
-    const [logsOpen, setLogsOpen] = useState(false);
+    const [resultView, setResultView] = useState<"results" | "history">("results");
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
@@ -127,6 +128,8 @@ export default function VideoPage() {
           })
         : null;
     const canGenerate = Boolean(prompt.trim()) && !generationBlockReason;
+    const selectedPreviewLog = previewLog ? logs.find((log) => log.id === previewLog.id) || previewLog : null;
+    const displayResults = selectedPreviewLog ? videoLogResults(selectedPreviewLog) : results;
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -206,6 +209,7 @@ export default function VideoPage() {
         setElapsedMs(0);
         setRunning(true);
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
+        setResultView("results");
         setPreviewLog(null);
         setResults([{ id: nanoid(), status: "pending" }]);
         const batchStartedAt = performance.now();
@@ -321,6 +325,10 @@ export default function VideoPage() {
     };
 
     const createSession = () => {
+        if (running) {
+            message.warning("当前任务仍在生成，请等待完成后再开始新作");
+            return;
+        }
         setPrompt("");
         setReferences([]);
         setVideoReferences([]);
@@ -330,6 +338,7 @@ export default function VideoPage() {
         setStartedAt(0);
         setSelectedLogIds([]);
         setPreviewLog(null);
+        setResultView("results");
     };
 
     const deleteSelectedLogs = async () => {
@@ -341,22 +350,20 @@ export default function VideoPage() {
         try {
             await deleteGenerationHistoryRecords({ kind: "video", userId: historyUserId, store: logStore }, deletingIds);
             await refreshLogs();
-            if (deletingActiveLog || (previewLog && deletingIds.includes(previewLog.id))) {
-                setPreviewLog(null);
-                setResults([]);
-            }
+            if (previewLog && deletingIds.includes(previewLog.id)) setPreviewLog(null);
+            if (deletingActiveLog) setResults([]);
             if (deletingActiveLog && !Array.from(activeLogIdsRef.current).some((id) => !deletingIds.includes(id))) {
                 setRunning(false);
                 setStartedAt(0);
             }
             setSelectedLogIds([]);
             setDeleteConfirmOpen(false);
-            message.success(`已删除 ${deletingIds.length} 条历史记录`);
+            message.success(`已从太古遗迹移除 ${deletingIds.length} 条记录`);
         } catch (error) {
             deletingIds.forEach((id) => deletedLogIdsRef.current.delete(id));
             await refreshLogs().catch(() => undefined);
             console.error("Failed to delete video generation history", error);
-            message.error("历史记录删除失败，请稍后重试");
+            message.error("太古遗迹记录删除失败，请稍后重试");
         } finally {
             setDeletingLogs(false);
         }
@@ -442,7 +449,12 @@ export default function VideoPage() {
 
     const previewGenerationLog = (log: GenerationLog) => {
         setPreviewLog(log);
-        setLogsOpen(false);
+        setResultView("results");
+    };
+
+    const continueFromGenerationLog = (log: GenerationLog) => {
+        setPreviewLog(log);
+        setResultView("results");
         setPrompt(log.prompt);
         setReferences(log.references || []);
         setVideoReferences(log.videoReferences || []);
@@ -453,24 +465,12 @@ export default function VideoPage() {
         if (log.config.videoSeconds) updateConfig("videoSeconds", log.config.videoSeconds);
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
-        setResults(log.status === "生成中" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: log.video }] : [{ id: log.id, status: "failed", error: log.error || "生成失败" }]);
+        message.success("已恢复提示词与生成参数");
     };
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
-            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
-                <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
-                    <LogPanel
-                        logs={logs}
-                        selectedLogIds={selectedLogIds}
-                        activeLogId={previewLog?.id}
-                        onSelectedLogIdsChange={setSelectedLogIds}
-                        onCreateSession={createSession}
-                        onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                        onPreviewLog={previewGenerationLog}
-                    />
-                </aside>
-
+            <main className="min-h-0 flex-1 overflow-y-auto p-3 lg:overflow-hidden">
                 <section className="grid min-w-0 gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
                     <div className="thin-scrollbar flex min-w-0 flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
                         {/* 流光阁 · 场景横幅(仅 UI,逻辑不变) */}
@@ -484,8 +484,15 @@ export default function VideoPage() {
                                     <p className="font-display mt-1.5 text-xs tracking-[0.1em] text-[#edede6]/70">流光一瞬,亦可成境 · 视频由此而生</p>
                                 </div>
                                 <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto lg:hidden">
-                                    <Button className="min-w-0" icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
-                                        记录
+                                    <Button
+                                        className="min-w-0"
+                                        icon={<Archive className="size-4" />}
+                                        onClick={() => {
+                                            setResultView("history");
+                                            window.setTimeout(() => resultPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+                                        }}
+                                    >
+                                        太古遗迹
                                     </Button>
                                     <Button className="min-w-0" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
                                         参数
@@ -670,14 +677,55 @@ export default function VideoPage() {
                         </div>
                     </div>
 
-                    <div className="thin-scrollbar min-w-0 rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto lg:p-5">
-                        <div className="mb-4 flex items-center justify-between gap-3">
-                            <h2 className="text-xl font-semibold">生成结果</h2>
-                            {running ? <Tag className="m-0 px-2 py-1">等待 {formatDuration(elapsedMs)}</Tag> : null}
+                    <div ref={resultPanelRef} className="thin-scrollbar min-w-0 rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto lg:p-5">
+                        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex min-w-0 items-center gap-2">
+                                <h2 className="text-xl font-semibold">{resultView === "results" ? "生成结果" : "太古遗迹"}</h2>
+                                {resultView === "results" && selectedPreviewLog ? <Tag className="m-0">遗迹预览</Tag> : null}
+                                {resultView === "history" ? <Tag className="m-0">{logs.length}</Tag> : null}
+                                {running ? <Tag className="m-0 px-2 py-1">等待 {formatDuration(elapsedMs)}</Tag> : null}
+                            </div>
+                            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 sm:justify-end">
+                                {resultView === "results" && selectedPreviewLog ? (
+                                    <Button size="small" type="text" icon={<ArrowLeft className="size-3.5" />} onClick={() => setPreviewLog(null)}>
+                                        返回本次
+                                    </Button>
+                                ) : null}
+                                {resultView === "history" ? (
+                                    <Button
+                                        size="small"
+                                        type="text"
+                                        icon={<ArrowLeft className="size-3.5" />}
+                                        onClick={() => {
+                                            setPreviewLog(null);
+                                            setResultView("results");
+                                        }}
+                                    >
+                                        返回生成结果
+                                    </Button>
+                                ) : (
+                                    <Button size="small" icon={<Archive className="size-3.5" />} onClick={() => setResultView("history")}>
+                                        太古遗迹
+                                    </Button>
+                                )}
+                                <Tooltip title="开始新作">
+                                    <Button aria-label="开始新作" size="small" type="text" icon={<Plus className="size-4" />} onClick={createSession} />
+                                </Tooltip>
+                            </div>
                         </div>
-                        {results.length ? (
+                        {resultView === "history" ? (
+                            <LogPanel
+                                logs={logs}
+                                selectedLogIds={selectedLogIds}
+                                activeLogId={previewLog?.id}
+                                onSelectedLogIdsChange={setSelectedLogIds}
+                                onDeleteSelected={() => setDeleteConfirmOpen(true)}
+                                onPreviewLog={previewGenerationLog}
+                                onContinueLog={continueFromGenerationLog}
+                            />
+                        ) : displayResults.length ? (
                             <div className="grid gap-4">
-                                {results.map((result) =>
+                                {displayResults.map((result) =>
                                     result.status === "success" && result.video ? (
                                         <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
                                     ) : result.status === "failed" ? (
@@ -729,17 +777,6 @@ export default function VideoPage() {
                     e.target.value = "";
                 }}
             />
-            <Drawer title="生成记录" placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
-                <LogPanel
-                    logs={logs}
-                    selectedLogIds={selectedLogIds}
-                    activeLogId={previewLog?.id}
-                    onSelectedLogIdsChange={setSelectedLogIds}
-                    onCreateSession={createSession}
-                    onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                    onPreviewLog={previewGenerationLog}
-                />
-            </Drawer>
             <Drawer title="参数" placement="bottom" height="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
                     <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
@@ -748,7 +785,7 @@ export default function VideoPage() {
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
             <Modal
-                title="删除历史记录"
+                title="移除太古遗迹记录"
                 open={deleteConfirmOpen}
                 onCancel={() => setDeleteConfirmOpen(false)}
                 onOk={() => void deleteSelectedLogs()}
@@ -761,8 +798,8 @@ export default function VideoPage() {
                 cancelText="取消"
             >
                 <div className="space-y-2">
-                    <p>确定删除选中的 {selectedLogIds.length} 条历史记录吗？</p>
-                    <p className="text-sm text-stone-500 dark:text-stone-400">记录将从生成历史中移除，已入藏卷阁的作品不会受影响。</p>
+                    <p>确定从太古遗迹移除选中的 {selectedLogIds.length} 条记录吗？</p>
+                    <p className="text-sm text-stone-500 dark:text-stone-400">已入藏卷阁的作品不会受到影响。</p>
                 </div>
             </Modal>
         </div>
@@ -844,83 +881,143 @@ function LogPanel({
     selectedLogIds,
     activeLogId,
     onSelectedLogIdsChange,
-    onCreateSession,
     onDeleteSelected,
     onPreviewLog,
+    onContinueLog,
 }: {
     logs: GenerationLog[];
     selectedLogIds: string[];
     activeLogId?: string;
     onSelectedLogIdsChange: (ids: string[]) => void;
-    onCreateSession: () => void;
     onDeleteSelected: () => void;
     onPreviewLog: (log: GenerationLog) => void;
+    onContinueLog: (log: GenerationLog) => void;
 }) {
+    const [managing, setManaging] = useState(false);
     const allSelected = Boolean(logs.length) && selectedLogIds.length === logs.length;
     const toggleAll = () => onSelectedLogIdsChange(allSelected ? [] : logs.map((log) => log.id));
+    const finishManaging = () => {
+        setManaging(false);
+        onSelectedLogIdsChange([]);
+    };
 
     return (
-        <>
-            <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold">生成记录</h2>
-                <Tag className="m-0">{logs.length}</Tag>
+        <div>
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm leading-6 text-stone-500 dark:text-stone-400">视频生成记录会自动保留，满意的作品仍需手动入藏卷阁。</p>
+                <div className="flex shrink-0 items-center gap-1">
+                    {managing ? (
+                        <>
+                            <Button size="small" type="text" disabled={!logs.length} onClick={toggleAll}>
+                                {allSelected ? "取消全选" : "全选"}
+                            </Button>
+                            <Button size="small" type="text" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>
+                                移除
+                            </Button>
+                            <Button size="small" onClick={finishManaging}>
+                                完成
+                            </Button>
+                        </>
+                    ) : (
+                        <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!logs.length} onClick={() => setManaging(true)}>
+                            管理
+                        </Button>
+                    )}
+                </div>
             </div>
-            <div className="mb-4 flex flex-wrap gap-2">
-                <Button size="small" icon={<Plus className="size-3.5" />} onClick={onCreateSession}>
-                    新建
-                </Button>
-                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!logs.length} onClick={toggleAll}>
-                    {allSelected ? "取消" : "全选"}
-                </Button>
-                <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>
-                    删除
-                </Button>
-            </div>
-            <div className="space-y-3">
+            <div className="grid gap-3 2xl:grid-cols-2">
                 {logs.map((log) => (
                     <LogCard
                         key={log.id}
                         log={log}
                         selected={selectedLogIds.includes(log.id)}
                         active={activeLogId === log.id}
+                        managing={managing}
                         onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))}
-                        onClick={() => onPreviewLog(log)}
+                        onPreview={() => onPreviewLog(log)}
+                        onContinue={() => onContinueLog(log)}
                     />
                 ))}
-                {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700">暂无生成记录</div> : null}
+                {!logs.length ? (
+                    <div className="col-span-full flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700">
+                        <VideoIcon className="mb-3 size-8 text-stone-400" />
+                        <div className="text-sm font-medium">遗迹尚未留下流光</div>
+                        <div className="mt-1 text-xs text-stone-500">完成第一次视频生成后，记录会自动出现在这里。</div>
+                    </div>
+                ) : null}
             </div>
-        </>
+        </div>
     );
 }
 
-function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
+function LogCard({
+    log,
+    selected,
+    active,
+    managing,
+    onSelectedChange,
+    onPreview,
+    onContinue,
+}: {
+    log: GenerationLog;
+    selected: boolean;
+    active: boolean;
+    managing: boolean;
+    onSelectedChange: (checked: boolean) => void;
+    onPreview: () => void;
+    onContinue: () => void;
+}) {
+    const title = log.prompt.replace(/\s+/g, " ").trim() || log.title || "未命名流光";
+
     return (
-        <button
-            type="button"
-            className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}
-            onClick={onClick}
+        <article
+            className={`relative overflow-hidden rounded-lg border bg-background transition ${active ? "border-stone-900 ring-1 ring-stone-900/10 dark:border-stone-100 dark:ring-stone-100/10" : "border-stone-200 hover:border-stone-300 dark:border-stone-800 dark:hover:border-stone-700"}`}
         >
-            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2">
-                <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
-                <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.size}</Tag>
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.resolution}p</Tag>
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.seconds}s</Tag>
-                    </div>
+            {managing ? (
+                <div className="absolute left-2 top-2 z-10 rounded-md bg-background/90 p-1 shadow-sm backdrop-blur-sm">
+                    <Checkbox checked={selected} onChange={(event) => onSelectedChange(event.target.checked)} />
                 </div>
-                <div className="grid justify-items-end gap-2">
-                    <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color={log.status === "成功" ? "blue" : log.status === "生成中" ? "processing" : "red"}>
+            ) : null}
+            <button type="button" className="block w-full text-left" onClick={() => (managing ? onSelectedChange(!selected) : onPreview())}>
+                <div className="relative aspect-video overflow-hidden bg-stone-950">
+                    {log.video?.url ? (
+                        <video src={log.video.url} muted preload="metadata" className="pointer-events-none h-full w-full object-cover" />
+                    ) : (
+                        <VideoIcon className="absolute left-1/2 top-1/2 size-9 -translate-x-1/2 -translate-y-1/2 text-stone-500" />
+                    )}
+                    <Tag className="absolute right-2 top-2 m-0" color={log.status === "成功" ? "success" : log.status === "生成中" ? "processing" : "error"}>
                         {log.status}
                     </Tag>
-                    <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="green">
-                        {formatDuration(log.durationMs)}
-                    </Tag>
                 </div>
-            </div>
-        </button>
+                <div className="p-3">
+                    <div className="line-clamp-2 min-h-10 text-sm font-medium leading-5">{title}</div>
+                    <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-xs text-stone-500">
+                        <span className="truncate">{log.model || "默认模型"}</span>
+                        <span className="shrink-0">
+                            {log.resolution}p · {log.seconds}s · {formatDuration(log.durationMs)}
+                        </span>
+                    </div>
+                    <div className="mt-1 truncate text-xs text-stone-400">{log.time}</div>
+                </div>
+            </button>
+            {!managing ? (
+                <div className="flex items-center justify-end gap-1 border-t border-stone-200 px-2 py-1.5 dark:border-stone-800">
+                    <Button size="small" type="text" icon={<Eye className="size-3.5" />} onClick={onPreview}>
+                        查看结果
+                    </Button>
+                    <Button size="small" type="text" icon={<PenLine className="size-3.5" />} onClick={onContinue}>
+                        继续创作
+                    </Button>
+                </div>
+            ) : null}
+        </article>
     );
+}
+
+function videoLogResults(log: GenerationLog): GenerationResult[] {
+    if (log.status === "生成中") return [{ id: log.id, status: "pending" }];
+    if (log.video) return [{ id: log.video.id, status: "success", video: log.video }];
+    return [{ id: log.id, status: "failed", error: log.error || "生成失败" }];
 }
 
 async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {

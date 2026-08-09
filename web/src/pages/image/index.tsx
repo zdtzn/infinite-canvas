@@ -1,7 +1,7 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, FolderPlus, History, ImagePlus, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { App, Button, Checkbox, Drawer, Input, Modal, Tag, Typography } from "antd";
+import { App, Button, Checkbox, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
@@ -84,7 +84,7 @@ export default function ImagePage() {
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
-    const [logsOpen, setLogsOpen] = useState(false);
+    const [resultView, setResultView] = useState<"results" | "history">("results");
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [savingAssetIds, setSavingAssetIds] = useState<string[]>([]);
@@ -114,19 +114,25 @@ export default function ImagePage() {
         referenceLimitReason ||
         (cultivationProfile
             ? cultivationGenerationBlockReason({
-              remainingToday: cultivationProfile.remainingToday,
-              unlimited: cultivationProfile.unlimited,
-              maxConcurrency: cultivationProfile.maxConcurrency,
-              capabilities: cultivationProfile.capabilities,
-              requestedCount: generationCount,
-              requiredCapabilities,
+                  remainingToday: cultivationProfile.remainingToday,
+                  unlimited: cultivationProfile.unlimited,
+                  maxConcurrency: cultivationProfile.maxConcurrency,
+                  capabilities: cultivationProfile.capabilities,
+                  requestedCount: generationCount,
+                  requiredCapabilities,
               })
             : null);
     const canGenerate = Boolean(prompt.trim()) && !generationBlockReason;
     const running = generationJob?.status === "running";
     const generateButtonLabel = isDouEmperor ? (running || imperialGenerationCue.active ? "天地法则演化中……" : "执笔天地") : running ? "生成中……" : "开始生成";
     const elapsedMs = generationJob?.elapsedMs || 0;
-    const results: GenerationResult[] = previewLog ? previewLog.images.map((image) => ({ id: image.id, status: "success", image })) : generationJob?.results || [];
+    const results: GenerationResult[] = previewLog
+        ? previewLog.images.length
+            ? previewLog.images.map((image) => ({ id: image.id, status: "success", image }))
+            : previewLog.status === "失败"
+              ? [{ id: previewLog.id, status: "failed", error: "该次创作未留下可预览的画卷" }]
+              : []
+        : generationJob?.results || [];
     const archivedGenerationImages = (generationJob?.results || []).flatMap((result) => {
         const image = result.image;
         return result.status === "success" && image?.persisted !== false && image?.serverJobId ? [image] : [];
@@ -220,6 +226,7 @@ export default function ImagePage() {
         }
 
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
+        setResultView("results");
         setPreviewLog(null);
         const jobId = startImageGeneration(
             snapshot,
@@ -238,7 +245,17 @@ export default function ImagePage() {
                     successImages.map(async (image) => {
                         if (image.persisted === false) return image;
                         const stored = await uploadImage(image.dataUrl, { outputFormat: snapshot.config.imageOutputFormat });
-                        return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, thumbnailKey: stored.thumbnailKey, thumbnailUrl: stored.thumbnailUrl, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+                        return {
+                            ...image,
+                            dataUrl: stored.url,
+                            storageKey: stored.storageKey,
+                            thumbnailKey: stored.thumbnailKey,
+                            thumbnailUrl: stored.thumbnailUrl,
+                            width: stored.width,
+                            height: stored.height,
+                            bytes: stored.bytes,
+                            mimeType: stored.mimeType,
+                        };
                     }),
                 );
                 logImages.forEach(replaceImageGenerationResult);
@@ -393,6 +410,7 @@ export default function ImagePage() {
         setReferences([]);
         setSelectedLogIds([]);
         setPreviewLog(null);
+        setResultView("results");
     };
 
     const deleteSelectedLogs = async () => {
@@ -407,10 +425,10 @@ export default function ImagePage() {
             if (previewLog && deletingIds.includes(previewLog.id)) setPreviewLog(null);
             setSelectedLogIds([]);
             setDeleteConfirmOpen(false);
-            message.success(`已删除 ${deletingIds.length} 条历史记录`);
+            message.success(`已从太古遗迹移除 ${deletingIds.length} 条记录`);
         } catch (error) {
             console.error("Failed to delete image generation history", error);
-            message.error("历史记录删除失败，请稍后重试");
+            message.error("太古遗迹记录删除失败，请稍后重试");
         } finally {
             setDeletingLogs(false);
         }
@@ -455,10 +473,15 @@ export default function ImagePage() {
         setPreviewLog((log) => (log ? mergePersistedImagesIntoHistoryRecord(log, archivedGenerationImages) : log));
     }, [archivedResultSignature, historyUserId, logs]);
 
-    const previewGenerationLog = async (log: GenerationLog) => {
+    const previewGenerationLog = (log: GenerationLog) => {
         setPreviewLog(log);
-        setLogsOpen(false);
-        setPrompt(log.prompt);
+        setResultView("results");
+    };
+
+    const continueFromGenerationLog = (log: GenerationLog) => {
+        setPreviewLog(log);
+        setResultView("results");
+        setPrompt(generationUserPrompt(log.prompt));
         setReferences(log.references || []);
         const selectedModel = log.config.imageModel || log.model;
         const restored = resolveImageModelSettings({ ...effectiveConfig, ...log.config, model: selectedModel, imageModel: selectedModel }, selectedModel, 10).config;
@@ -469,6 +492,7 @@ export default function ImagePage() {
         updateConfig("size", restored.size);
         updateConfig("count", restored.count);
         updateConfig("background", restored.background);
+        message.success("已恢复提示词与生成参数");
     };
 
     const buildRequestSnapshot = () => {
@@ -496,6 +520,7 @@ export default function ImagePage() {
             message.warning(generationBlockReason);
             return;
         }
+        setResultView("results");
         setPreviewLog(null);
         const retryStartedAt = Date.now();
         try {
@@ -660,7 +685,8 @@ export default function ImagePage() {
                                             </span>
                                             <span className="flex min-w-0 items-center gap-1.5 text-stone-500 dark:text-stone-400">
                                                 <span className="truncate text-xs font-normal">
-                                                    {imageSizeLabel(requestImageConfig.size)} · {imageResolutionLabel(requestImageConfig.quality)} · {imageGenerationQualityLabel(appliedImageQuality)} · {imageOutputFormatLabel(requestImageConfig.imageOutputFormat)}
+                                                    {imageSizeLabel(requestImageConfig.size)} · {imageResolutionLabel(requestImageConfig.quality)} · {imageGenerationQualityLabel(appliedImageQuality)} ·{" "}
+                                                    {imageOutputFormatLabel(requestImageConfig.imageOutputFormat)}
                                                 </span>
                                                 <ChevronDown className="size-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
                                             </span>
@@ -701,16 +727,52 @@ export default function ImagePage() {
                     </div>
 
                     <section className="thin-scrollbar min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:h-full lg:p-5">
-                        <div className="mb-4 flex items-center justify-between gap-3">
-                            <h2 className="text-xl font-semibold">生成结果</h2>
-                            <div className="flex flex-wrap items-center justify-end gap-2">
+                        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex min-w-0 items-center gap-2">
+                                <h2 className="text-xl font-semibold">{resultView === "results" ? "生成结果" : "太古遗迹"}</h2>
+                                {resultView === "results" && previewLog ? <Tag className="m-0">遗迹预览</Tag> : null}
+                                {resultView === "history" ? <Tag className="m-0">{logs.length}</Tag> : null}
                                 {running ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
-                                <Button size="small" icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
-                                    历史
-                                </Button>
+                            </div>
+                            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 sm:justify-end">
+                                {resultView === "results" && previewLog ? (
+                                    <Button size="small" type="text" icon={<ArrowLeft className="size-3.5" />} onClick={() => setPreviewLog(null)}>
+                                        返回本次
+                                    </Button>
+                                ) : null}
+                                {resultView === "history" ? (
+                                    <Button
+                                        size="small"
+                                        type="text"
+                                        icon={<ArrowLeft className="size-3.5" />}
+                                        onClick={() => {
+                                            setPreviewLog(null);
+                                            setResultView("results");
+                                        }}
+                                    >
+                                        返回生成结果
+                                    </Button>
+                                ) : (
+                                    <Button size="small" icon={<Archive className="size-3.5" />} onClick={() => setResultView("history")}>
+                                        太古遗迹
+                                    </Button>
+                                )}
+                                <Tooltip title="开始新作">
+                                    <Button aria-label="开始新作" size="small" type="text" icon={<Plus className="size-4" />} onClick={createSession} />
+                                </Tooltip>
                             </div>
                         </div>
-                        {results.length ? (
+                        {resultView === "history" ? (
+                            <LogPanel
+                                logs={logs}
+                                selectedLogIds={selectedLogIds}
+                                activeLogId={previewLog?.id}
+                                onSelectedLogIdsChange={setSelectedLogIds}
+                                onDeleteSelected={() => setDeleteConfirmOpen(true)}
+                                onPreviewLog={previewGenerationLog}
+                                onContinueLog={continueFromGenerationLog}
+                            />
+                        ) : results.length ? (
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                 {results.map((result, index) =>
                                     result.status === "success" && result.image ? (
@@ -755,21 +817,10 @@ export default function ImagePage() {
                     event.target.value = "";
                 }}
             />
-            <Drawer title="生成记录" placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)} destroyOnHidden>
-                <LogPanel
-                    logs={logs}
-                    selectedLogIds={selectedLogIds}
-                    activeLogId={previewLog?.id}
-                    onSelectedLogIdsChange={setSelectedLogIds}
-                    onCreateSession={createSession}
-                    onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                    onPreviewLog={(log) => void previewGenerationLog(log)}
-                />
-            </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
             <Modal
-                title="删除历史记录"
+                title="移除太古遗迹记录"
                 open={deleteConfirmOpen}
                 onCancel={() => setDeleteConfirmOpen(false)}
                 onOk={() => void deleteSelectedLogs()}
@@ -782,8 +833,8 @@ export default function ImagePage() {
                 cancelText="取消"
             >
                 <div className="space-y-2">
-                    <p>确定删除选中的 {selectedLogIds.length} 条历史记录吗？</p>
-                    <p className="text-sm text-stone-500 dark:text-stone-400">记录将从生成历史中移除，已入藏卷阁的图片不会受影响。</p>
+                    <p>确定从太古遗迹移除选中的 {selectedLogIds.length} 条记录吗？</p>
+                    <p className="text-sm text-stone-500 dark:text-stone-400">已入藏卷阁的图片不会受到影响。</p>
                 </div>
             </Modal>
         </div>
@@ -840,104 +891,156 @@ function LogPanel({
     selectedLogIds,
     activeLogId,
     onSelectedLogIdsChange,
-    onCreateSession,
     onDeleteSelected,
     onPreviewLog,
+    onContinueLog,
 }: {
     logs: GenerationLog[];
     selectedLogIds: string[];
     activeLogId?: string;
     onSelectedLogIdsChange: (ids: string[]) => void;
-    onCreateSession: () => void;
     onDeleteSelected: () => void;
     onPreviewLog: (log: GenerationLog) => void;
+    onContinueLog: (log: GenerationLog) => void;
 }) {
+    const [managing, setManaging] = useState(false);
     const allSelected = Boolean(logs.length) && selectedLogIds.length === logs.length;
     const toggleAll = () => onSelectedLogIdsChange(allSelected ? [] : logs.map((log) => log.id));
+    const finishManaging = () => {
+        setManaging(false);
+        onSelectedLogIdsChange([]);
+    };
 
     return (
-        <>
-            <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                    <h2 className="text-base font-semibold">生成记录</h2>
+        <div>
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm leading-6 text-stone-500 dark:text-stone-400">每次生成都会自动留下记录，满意的作品仍需手动入藏卷阁。</p>
+                <div className="flex shrink-0 items-center gap-1">
+                    {managing ? (
+                        <>
+                            <Button size="small" type="text" disabled={!logs.length} onClick={toggleAll}>
+                                {allSelected ? "取消全选" : "全选"}
+                            </Button>
+                            <Button size="small" type="text" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>
+                                移除
+                            </Button>
+                            <Button size="small" onClick={finishManaging}>
+                                完成
+                            </Button>
+                        </>
+                    ) : (
+                        <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!logs.length} onClick={() => setManaging(true)}>
+                            管理
+                        </Button>
+                    )}
                 </div>
-                <Tag className="m-0">{logs.length}</Tag>
             </div>
-            <div className="mb-4 flex flex-wrap gap-2">
-                <Button size="small" icon={<Plus className="size-3.5" />} onClick={onCreateSession}>
-                    新建
-                </Button>
-                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!logs.length} onClick={toggleAll}>
-                    {allSelected ? "取消" : "全选"}
-                </Button>
-                <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>
-                    删除
-                </Button>
-            </div>
-            <div className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
                 {logs.map((log) => (
                     <LogCard
                         key={log.id}
                         log={log}
                         selected={selectedLogIds.includes(log.id)}
                         active={activeLogId === log.id}
+                        managing={managing}
                         onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))}
-                        onClick={() => onPreviewLog(log)}
+                        onPreview={() => onPreviewLog(log)}
+                        onContinue={() => onContinueLog(log)}
                     />
                 ))}
-                {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700">暂无生成记录</div> : null}
+                {!logs.length ? (
+                    <div className="col-span-full flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700">
+                        <ImagePlus className="mb-3 size-7 text-stone-400" />
+                        <div className="text-sm font-medium">遗迹尚未留下痕迹</div>
+                        <div className="mt-1 text-xs text-stone-500">完成第一次生成后，记录会自动出现在这里。</div>
+                    </div>
+                ) : null}
             </div>
-        </>
+        </div>
     );
 }
 
-function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
+function LogCard({
+    log,
+    selected,
+    active,
+    managing,
+    onSelectedChange,
+    onPreview,
+    onContinue,
+}: {
+    log: GenerationLog;
+    selected: boolean;
+    active: boolean;
+    managing: boolean;
+    onSelectedChange: (checked: boolean) => void;
+    onPreview: () => void;
+    onContinue: () => void;
+}) {
     const thumbnails = (log.thumbnails || []).filter(Boolean).slice(0, 4);
+    const title = generationPromptSummary(log);
 
     return (
-        <button
-            type="button"
-            className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}
-            onClick={onClick}
+        <article
+            className={`relative overflow-hidden rounded-lg border bg-background transition ${active ? "border-stone-900 ring-1 ring-stone-900/10 dark:border-stone-100 dark:ring-stone-100/10" : "border-stone-200 hover:border-stone-300 dark:border-stone-800 dark:hover:border-stone-700"}`}
         >
-            <div className="grid grid-cols-[minmax(128px,1fr)_auto] gap-2">
-                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
-                    <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
-                    <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
-                        {thumbnails.length ? (
-                            <div className="mt-2 flex gap-1 overflow-hidden">
-                                {thumbnails.map((image, index) => (
-                                    <DeferredImage key={`${log.id}-${index}`} src={image} alt="" className="size-8 shrink-0 rounded-md object-cover" fetchPriority="low" />
-                                ))}
-                            </div>
-                        ) : null}
-                    </div>
+            {managing ? (
+                <div className="absolute left-2 top-2 z-10 rounded-md bg-background/90 p-1 shadow-sm backdrop-blur-sm">
+                    <Checkbox checked={selected} onChange={(event) => onSelectedChange(event.target.checked)} />
                 </div>
-                <div className="grid justify-items-end gap-2">
-                    <div className="flex gap-1">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="blue">
-                            成功 {log.successCount ?? log.imageCount}
-                        </Tag>
-                        {log.failCount ? (
-                            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="red">
-                                失败 {log.failCount}
-                            </Tag>
-                        ) : null}
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-1">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.imageCount} 张</Tag>
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="green">
-                            {formatDuration(log.durationMs)}
-                        </Tag>
-                    </div>
-                    <div className="flex justify-end">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.time}</Tag>
-                    </div>
+            ) : null}
+            <button type="button" className="block w-full text-left" onClick={() => (managing ? onSelectedChange(!selected) : onPreview())}>
+                <div className="relative aspect-[4/3] overflow-hidden bg-stone-100 dark:bg-stone-900">
+                    {thumbnails.length ? (
+                        <div className={`grid h-full w-full gap-px bg-stone-200 dark:bg-stone-800 ${thumbnails.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+                            {thumbnails.map((image, index) => (
+                                <DeferredImage key={`${log.id}-${index}`} src={image} alt={index === 0 ? title : ""} className="h-full w-full object-cover" fetchPriority="low" />
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex h-full flex-col items-center justify-center gap-2 text-stone-400">
+                            <ImagePlus className="size-7" />
+                            <span className="text-xs">未留下画卷</span>
+                        </div>
+                    )}
+                    <Tag className="absolute right-2 top-2 m-0" color={log.status === "成功" ? "success" : "error"}>
+                        {log.status}
+                    </Tag>
                 </div>
-            </div>
-        </button>
+                <div className="p-3">
+                    <div className="line-clamp-2 min-h-10 text-sm font-medium leading-5">{title}</div>
+                    <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-xs text-stone-500">
+                        <span className="truncate">{log.model || "默认模型"}</span>
+                        <span className="shrink-0">
+                            {log.successCount || log.imageCount} 张 · {formatDuration(log.durationMs)}
+                        </span>
+                    </div>
+                    <div className="mt-1 truncate text-xs text-stone-400">{log.time}</div>
+                </div>
+            </button>
+            {!managing ? (
+                <div className="flex items-center justify-end gap-1 border-t border-stone-200 px-2 py-1.5 dark:border-stone-800">
+                    <Button size="small" type="text" icon={<Eye className="size-3.5" />} onClick={onPreview}>
+                        查看结果
+                    </Button>
+                    <Button size="small" type="text" icon={<PenLine className="size-3.5" />} onClick={onContinue}>
+                        继续创作
+                    </Button>
+                </div>
+            ) : null}
+        </article>
     );
+}
+
+function generationUserPrompt(prompt: string) {
+    const marker = "始终以“高清、准确、真实、专业”为最高优先级。";
+    const markerIndex = prompt.lastIndexOf(marker);
+    return (markerIndex >= 0 ? prompt.slice(markerIndex + marker.length) : prompt).trim();
+}
+
+function generationPromptSummary(log: GenerationLog) {
+    const prompt = generationUserPrompt(log.prompt).replace(/\s+/g, " ").trim();
+    return prompt || log.title || log.model || "未命名画卷";
 }
 
 async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
@@ -1017,6 +1120,7 @@ function serializeLog(log: GenerationLog): GenerationLog {
 }
 
 function buildLogFromServerJob(job: ServerJob): GenerationLog {
+    const prompt = generationUserPrompt(job.prompt);
     const images: GeneratedImage[] = (job.result?.images || []).map((image) => ({
         id: image.id,
         dataUrl: image.dataUrl,
@@ -1045,8 +1149,8 @@ function buildLogFromServerJob(job: ServerJob): GenerationLog {
         createdAt: job.createdAt,
         updatedAt: job.finishedAt || job.createdAt,
         serverJobIds: [job.id],
-        title: job.prompt.slice(0, 12) || "未命名",
-        prompt: job.prompt,
+        title: prompt.slice(0, 12) || "未命名",
+        prompt,
         time: new Date(job.createdAt).toLocaleString("zh-CN", { hour12: false }),
         model,
         config,
