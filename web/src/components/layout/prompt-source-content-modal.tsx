@@ -92,7 +92,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                             ),
                         },
                         {
-                            title: "标签",
+                            title: "主题",
                             dataIndex: "tags",
                             width: 200,
                             render: (tags: string[]) => (

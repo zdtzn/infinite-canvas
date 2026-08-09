@@ -521,7 +521,7 @@ function PromptSourceGroup({
     const filtered = useMemo(() => {
         const normalizedKeyword = keyword.trim().toLowerCase();
         if (!normalizedKeyword) return query.data || [];
-        return (query.data || []).filter((item) => [item.title, item.prompt, ...item.tags].join(" ").toLowerCase().includes(normalizedKeyword));
+        return (query.data || []).filter((item) => [item.title, item.prompt, ...item.tags, ...(item.sourceTags || [])].join(" ").toLowerCase().includes(normalizedKeyword));
     }, [keyword, query.data]);
 
     return (

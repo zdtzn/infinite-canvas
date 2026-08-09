@@ -3,11 +3,13 @@ import localforage from "localforage";
 import { normalizePromptAssets, runPromptSource, runTrustedPromptSource, type RawPrompt } from "./prompt-source-runtime";
 import { isBuiltInPromptSource, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "./prompt-source-presets";
+import { classifyPromptTags, sortPromptTaxonomyTags } from "./prompt-taxonomy";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 
 export type Prompt = RawPrompt & {
     category: string;
     githubUrl: string;
+    sourceTags?: string[];
 };
 
 export const ALL_PROMPTS_OPTION = "全部";
@@ -145,7 +147,7 @@ async function getAllPrompts(): Promise<Prompt[]> {
 }
 
 export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
-    const items = await getAllPrompts();
+    const items = (await getAllPrompts()).map(withPromptTaxonomy);
     const normalizedKeyword = keyword.trim().toLowerCase();
     const normalizedPage = Math.max(1, page);
     const normalizedPageSize = Math.max(1, Math.min(100, pageSize));
@@ -164,7 +166,7 @@ export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROM
 export async function fetchSourcePrompts(sourceId: string, force = false): Promise<Prompt[]> {
     const source = usePromptSourceStore.getState().sources.find((item) => item.id === sourceId);
     if (!source) throw new Error("提示词来源不存在");
-    return getSourcePrompts(source, force);
+    return (await getSourcePrompts(source, force)).map(withPromptTaxonomy);
 }
 
 /** Force refetch one source and refresh its cache; returns the fetched count. */
@@ -210,12 +212,17 @@ function filterPrompts(items: Prompt[], options: { keyword: string; category: st
         if (isActiveOption(options.category) && item.category !== options.category) return false;
         if (options.tags.length && !options.tags.some((tag) => item.tags.includes(tag))) return false;
         if (!options.keyword) return true;
-        return [item.title, item.prompt, item.category, ...item.tags].join(" ").toLowerCase().includes(options.keyword);
+        return [item.title, item.prompt, item.category, ...item.tags, ...(item.sourceTags || [])].join(" ").toLowerCase().includes(options.keyword);
     });
 }
 
 function collectTags(items: Prompt[]) {
-    return Array.from(new Set(items.flatMap((item) => item.tags).filter(Boolean)));
+    return sortPromptTaxonomyTags(Array.from(new Set(items.flatMap((item) => item.tags).filter(Boolean))));
+}
+
+function withPromptTaxonomy(item: Prompt): Prompt {
+    const sourceTags = item.sourceTags?.length ? item.sourceTags : item.tags;
+    return { ...item, sourceTags, tags: classifyPromptTags({ title: item.title, prompt: item.prompt, tags: sourceTags }) };
 }
 
 function isActiveOption(value: string) {

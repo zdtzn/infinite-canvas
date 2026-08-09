@@ -39,7 +39,7 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
                 </div>
                 <div className="mt-5 grid gap-3">
                     <div className="grid gap-2 sm:grid-cols-[56px_minmax(0,1fr)] sm:items-start">
-                        <div className="pt-2 text-xs font-medium text-stone-500 dark:text-stone-400">分类</div>
+                        <div className="pt-2 text-xs font-medium text-stone-500 dark:text-stone-400">来源</div>
                         <div className="flex flex-wrap gap-2">
                             {promptCategories.map((category) => (
                                 <Tag.CheckableTag key={category} checked={selectedCategory === category} className={cn("prompt-filter-tag", selectedCategory === category && "is-active")} onChange={() => setSelectedCategory(category)}>
@@ -49,7 +49,7 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
                         </div>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-[56px_minmax(0,1fr)] sm:items-start">
-                        <div className="pt-2 text-xs font-medium text-stone-500 dark:text-stone-400">标签</div>
+                        <div className="pt-2 text-xs font-medium text-stone-500 dark:text-stone-400">主题</div>
                         <div className="flex flex-wrap gap-2">
                             {promptTags.map((tag) => {
                                 const active = tag === ALL_PROMPTS_OPTION ? selectedTags.length === 0 : selectedTags.includes(tag);
