@@ -72,8 +72,8 @@ test("shows a clear three-step workflow and marks the current action", () => {
     );
 
     assert.match(html, /上传商品/);
-    assert.match(html, /确认方案/);
+    assert.match(html, /确认套图/);
     assert.match(html, /生成与挑选/);
-    assert.match(html, /aria-current="step"[^>]*>.*确认方案/s);
+    assert.match(html, /aria-current="step"[^>]*>.*确认套图/s);
     assert.match(html, /disabled=""[^>]*>.*生成与挑选/s);
 });

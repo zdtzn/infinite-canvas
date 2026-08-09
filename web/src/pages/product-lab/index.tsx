@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, ArrowRight, Box, Check, ChevronRight, FlaskConical, FolderPlus, ImagePlus, Layers3, LoaderCircle, PackageSearch, RefreshCw, Settings2, Sparkles, Trash2, Upload } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, Box, Check, ChevronRight, FolderPlus, ImagePlus, LoaderCircle, PackageSearch, RefreshCw, Settings2, Sparkles, Trash2, Upload } from "lucide-react";
 import { App, Button, Checkbox, Empty, Input, Popconfirm, Progress, Select, Skeleton, Tag, Tooltip } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -99,7 +99,7 @@ export default function ProductLabPage() {
     const [draftAnalysis, setDraftAnalysis] = useState<ProductAnalysisDraft>(emptyProductAnalysis());
     const [selectedPlanIds, setSelectedPlanIds] = useState<string[]>([]);
     const [selectedStyles, setSelectedStyles] = useState<string[]>(["value"]);
-    const [selectedPreset, setSelectedPreset] = useState<ProductPlanPreset | "custom">("single");
+    const [selectedPreset, setSelectedPreset] = useState<ProductPlanPreset | "custom">("detail_suite");
     const [selectedTemplateId, setSelectedTemplateId] = useState("");
     const [workflowStep, setWorkflowStep] = useState<ProductWorkflowStep>("source");
     const [pendingTemplateSelection, setPendingTemplateSelection] = useState<{ kind: ProductOutputKind; styleKey: string } | null>(null);
@@ -112,7 +112,6 @@ export default function ProductLabPage() {
     const detailPageLimit = productDetailPageLimit(profile?.realmName || "斗之气");
     const productCapabilities = profile?.capabilities || [];
     const canAnalyze = productCapabilities.includes("product.analysis");
-    const canUseMultipleStyles = productCapabilities.includes("product.multi_style");
     const canBatch = productCapabilities.includes("product.batch_generate");
     const canUseBrand = productCapabilities.includes("product.brand_design");
     const model = effectiveConfig.imageModel || effectiveConfig.model;
@@ -186,6 +185,7 @@ export default function ProductLabPage() {
         void Promise.all([fetchProductLabContext(userId), fetchProductProjects(userId)])
             .then(([context, projectResponse]) => {
                 if (canceled) return;
+                if (!Array.isArray(context.templates) || !Array.isArray(projectResponse.items)) throw new Error("商品幻境服务未正确连接");
                 setAnalysisAvailable(context.analysisAvailable);
                 setTemplates(context.templates);
                 setProjects(projectResponse.items);
@@ -216,7 +216,8 @@ export default function ProductLabPage() {
     useEffect(() => {
         setSelectedPlanIds([]);
         setPendingTemplateSelection(null);
-        setSelectedPreset(activeProject?.plan.some((item) => item.id.startsWith("suite-")) ? "detail_suite" : "single");
+        const suiteReady = Boolean(activeProject && hasProductAnalysis(activeProject) && suiteSelectablePlanItems.length > 1);
+        setSelectedPreset((activeProject?.plan || []).some((item) => item.id.startsWith("suite-")) || suiteReady ? "detail_suite" : "single");
         setSelectedTemplateId("");
         if (!activeProject) {
             setDraftAnalysis(emptyProductAnalysis());
@@ -227,7 +228,7 @@ export default function ProductLabPage() {
         setDraftAnalysis(normalizeProjectAnalysis(activeProject));
         setSelectedStyles(inferProjectStyles(activeProject));
         setBrandName(activeProject.brandName || "");
-    }, [activeProject?.id]);
+    }, [activeProject?.id, activeProject?.updatedAt, suiteSelectablePlanItems.length]);
 
     useEffect(() => {
         if (!activeProject) {
@@ -256,14 +257,24 @@ export default function ProductLabPage() {
     }, [pendingTemplateSelection, selectablePlanSignature]);
 
     useEffect(() => {
-        if (!realmExperience.imperial) {
+        if (!realmExperience.imperial || !userId) {
             setImperialEntryVisible(false);
             return;
+        }
+        const storageKey = `product-lab:imperial-entry:${userId}`;
+        try {
+            if (window.sessionStorage.getItem(storageKey) === "shown") {
+                setImperialEntryVisible(false);
+                return;
+            }
+            window.sessionStorage.setItem(storageKey, "shown");
+        } catch {
+            // The welcome remains non-essential when session storage is unavailable.
         }
         setImperialEntryVisible(true);
         const timer = window.setTimeout(() => setImperialEntryVisible(false), 2_200);
         return () => window.clearTimeout(timer);
-    }, [realmExperience.imperial]);
+    }, [realmExperience.imperial, userId]);
 
     const replaceProject = (project: ProductProject) => {
         setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)].sort((left, right) => right.updatedAt - left.updatedAt));
@@ -297,15 +308,44 @@ export default function ProductLabPage() {
                 created.push(response.project);
             }
             setProjects((current) => [...created, ...current]);
-            if (created[0]) {
-                setActiveProjectId(created[0].id);
-                setWorkflowStep("source");
-                setSelectedPreset("single");
+            const prepared = [...created];
+            let analyzedCount = 0;
+            let analysisError = "";
+            if (canAnalyze && analysisAvailable) {
+                setAnalyzing(true);
+                for (const [index, project] of created.entries()) {
+                    try {
+                        prepared[index] = await analyzeOneProject(project, "");
+                        analyzedCount += 1;
+                    } catch (error) {
+                        analysisError ||= error instanceof Error ? error.message : "商品分析暂未完成";
+                    }
+                }
+                setAnalyzing(false);
             }
-            message.success(created.length > 1 ? `已导入 ${created.length} 个商品项目` : "商品已进入炼制台");
+            const firstProject = prepared[0];
+            if (firstProject) {
+                setActiveProjectId(firstProject.id);
+                if (hasProductAnalysis(firstProject)) {
+                    setDraftAnalysis(normalizeProjectAnalysis(firstProject));
+                    setSelectedStyles(inferProjectStyles(firstProject));
+                    setSelectedPreset("detail_suite");
+                    setWorkflowStep("plan");
+                } else {
+                    setWorkflowStep("source");
+                    setSelectedPreset("single");
+                }
+            }
+            if (analyzedCount) {
+                message.success(analyzedCount > 1 ? `已识别 ${analyzedCount} 个商品并生成推荐套图方案` : "商品已识别，推荐套图方案已生成");
+            } else {
+                message.success(created.length > 1 ? `已导入 ${created.length} 个商品项目` : "商品已进入炼制台");
+            }
+            if (analysisError) message.warning(`图片已保存，但自动分析暂未完成：${analysisError}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "商品导入失败");
         } finally {
+            setAnalyzing(false);
             setUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = "";
         }
@@ -323,10 +363,10 @@ export default function ProductLabPage() {
         );
         const analysis: ProductAnalysisDraft = { ...response.analysis, sourceNotes: notes };
         const styles = inferProjectStyles(project);
-        const plan = buildMultiStyleProductPlan({
+        const plan = buildProductSuitePlan({
             analysis,
             platform: project.platform,
-            styleKeys: styles,
+            styleKey: styles[0] || "value",
             brandName: project.brandName,
             detailPageLimit: productDetailPageLimit(profile?.realmName || "斗之气"),
         });
@@ -362,10 +402,14 @@ export default function ProductLabPage() {
     const analyzeAndContinue = async () => {
         if (!activeProject) return;
         if (hasProductAnalysis(activeProject) || !canAnalyze || !analysisAvailable) {
+            setSelectedPreset(hasProductAnalysis(activeProject) ? "detail_suite" : "single");
             setWorkflowStep("plan");
             return;
         }
-        if (await analyzeCurrentProject()) setWorkflowStep("plan");
+        if (await analyzeCurrentProject()) {
+            setSelectedPreset("detail_suite");
+            setWorkflowStep("plan");
+        }
     };
 
     const analyzePendingProjects = async () => {
@@ -439,12 +483,15 @@ export default function ProductLabPage() {
         }
     };
 
-    const savePlanningAndContinue = async () => {
-        if (!selectedPlanIds.length) {
-            message.warning("请先选择本次需要生成的商品画卷");
+    const savePlanningAndGenerate = async () => {
+        const items = [...selectedPlanItems];
+        if (!items.length) {
+            message.warning("当前没有可生成的商品画卷");
             return;
         }
-        if (await savePlanning()) setWorkflowStep("generate");
+        if (!(await savePlanning())) return;
+        setWorkflowStep("generate");
+        await generatePlanItems(items);
     };
 
     const generatePlanItems = async (items: ProductPlanItem[]) => {
@@ -691,22 +738,6 @@ export default function ProductLabPage() {
         });
     };
 
-    const toggleStyle = (styleKey: string) => {
-        setSelectedPreset("custom");
-        if (!canUseMultipleStyles) {
-            setSelectedStyles([styleKey]);
-            return;
-        }
-        setSelectedStyles((current) => {
-            if (current.includes(styleKey)) return current.length === 1 ? current : current.filter((item) => item !== styleKey);
-            if (current.length >= 3) {
-                message.warning("单个商品最多同时规划 3 种视觉方向");
-                return current;
-            }
-            return [...current, styleKey];
-        });
-    };
-
     const applyTemplate = (template: ProductTemplate) => {
         const output = outputs.find((item) => item.kind === template.outputKind);
         if (!output?.available) {
@@ -861,13 +892,13 @@ export default function ProductLabPage() {
                                     </div>
                                 </section>
                             ) : workflowStep === "plan" ? (
-                                <div className="space-y-8 pb-24">
+                                <div className="space-y-6 pb-24">
                                     <section>
                                         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
                                             <div>
-                                                <div className="text-xs font-medium text-stone-500">第二步 · 确认方案</div>
-                                                <h2 className="mt-1 text-xl font-semibold">告诉 AI 这次要完成什么</h2>
-                                                <p className="mt-2 text-sm text-stone-500">默认方案已经收敛到可直接生成的范围，需要时再展开细节。</p>
+                                                <div className="text-xs font-medium text-stone-500">第二步 · 确认套图</div>
+                                                <h2 className="mt-1 text-xl font-semibold">AI 已完成整套视觉规划</h2>
+                                                <p className="mt-2 text-sm text-stone-500">核对商品识别和每页内容即可，无需填写也能直接生成。</p>
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <Button type="text" icon={<ArrowLeft className="size-4" />} onClick={() => setWorkflowStep("source")}>
@@ -876,18 +907,18 @@ export default function ProductLabPage() {
                                             </div>
                                         </div>
 
-                                        <div className="mt-6 grid grid-cols-[112px_minmax(0,1fr)] gap-4 sm:grid-cols-[160px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-5">
+                                        <div className="mt-5 grid grid-cols-[96px_minmax(0,1fr)] gap-4 sm:grid-cols-[128px_minmax(0,1fr)] xl:grid-cols-[160px_minmax(0,1fr)] xl:gap-5">
                                             <div className="aspect-square overflow-hidden border border-stone-200 bg-white dark:border-white/10 dark:bg-white/[0.025]">
                                                 <img src={activeProject.sourceUrl} alt={activeProject.title} className="size-full object-contain" />
                                             </div>
                                             <div className="min-w-0">
-                                                <div className="border-b border-stone-200 pb-5 dark:border-white/10">
+                                                <div className="border-b border-stone-200 pb-4 dark:border-white/10">
                                                     <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
                                                         <Tag bordered={false}>{draftAnalysis.category || "未确认类目"}</Tag>
                                                         {draftAnalysis.subcategory ? <span>{draftAnalysis.subcategory}</span> : null}
                                                     </div>
-                                                    <h3 className="mt-3 text-lg font-semibold">{draftAnalysis.productName || activeProject.title}</h3>
-                                                    <div className="mt-3 flex flex-wrap gap-2">
+                                                    <h3 className="mt-2 text-lg font-semibold">{draftAnalysis.productName || activeProject.title}</h3>
+                                                    <div className="mt-2 flex flex-wrap gap-2">
                                                         {draftAnalysis.sellingPoints.length ? (
                                                             draftAnalysis.sellingPoints.slice(0, 4).map((point) => (
                                                                 <span key={point} className="border border-stone-200 bg-white px-2.5 py-1 text-xs text-stone-600 dark:border-white/10 dark:bg-white/[0.025] dark:text-stone-300">
@@ -1023,88 +1054,94 @@ export default function ProductLabPage() {
                                     </section>
 
                                     <section className="border-t border-stone-200 pt-7 dark:border-white/10">
-                                        <SectionHeading icon={<FlaskConical className="size-4" />} title="本次创作目标" />
-                                        <div className="mt-4 flex w-full min-w-0 max-w-full snap-x gap-3 overflow-x-auto pb-2 md:grid md:grid-cols-2 md:overflow-visible md:pb-0 xl:grid-cols-4">
-                                            {PRODUCT_PLAN_PRESETS.map((preset) => {
-                                                const presetPlan = preset.key === "detail_suite" ? suiteSelectablePlanItems : standardSelectablePlanItems;
-                                                const ids = productPlanPresetSelection(preset.key, presetPlan);
-                                                const selected = selectedPreset === preset.key;
-                                                return (
-                                                    <button
-                                                        key={preset.key}
-                                                        type="button"
-                                                        disabled={!ids.length}
-                                                        className={cn(
-                                                            "min-h-28 min-w-64 snap-start border p-4 text-left transition md:min-w-0",
-                                                            selected
-                                                                ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/65 dark:bg-[#c9a86a]/10 dark:text-[#f2ead8]"
-                                                                : ids.length
-                                                                  ? "border-stone-200 bg-white hover:border-stone-400 dark:border-white/10 dark:bg-white/[0.018] dark:hover:border-white/25"
-                                                                  : "cursor-not-allowed border-stone-200 bg-stone-100 opacity-45 dark:border-white/6 dark:bg-white/[0.015]",
-                                                        )}
-                                                        onClick={() => selectPlanPreset(preset.key)}
-                                                    >
-                                                        <span className="flex items-start justify-between gap-3">
-                                                            <span className="text-sm font-semibold">{preset.label}</span>
-                                                            <span className={cn("shrink-0 text-[11px]", selected ? "text-white/60 dark:text-[#d8c59e]/70" : "text-stone-400")}>{preset.badge}</span>
+                                        <SectionHeading
+                                            icon={<Sparkles className="size-4" />}
+                                            title={selectedPreset === "detail_suite" ? "AI 推荐套图" : "当前生成方案"}
+                                            action={<Tag bordered={false}>{selectedPlanIds.length} 张</Tag>}
+                                        />
+                                        <p className="mt-2 text-sm leading-6 text-stone-500">AI 已根据商品品类、外观、卖点和使用场景自动安排整套内容，无需逐项填写。</p>
+                                        <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                                            {selectedPlanItems.map((item, index) => (
+                                                <div key={item.id} className="flex min-h-24 items-start gap-3 border border-stone-200 bg-white p-3.5 dark:border-white/10 dark:bg-white/[0.018]">
+                                                    <span className={cn("grid size-8 shrink-0 place-items-center border text-xs font-semibold", index === 0 ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/60 dark:bg-[#c9a86a]/12 dark:text-[#ead9b5]" : "border-stone-300 text-stone-500 dark:border-white/15")}>
+                                                        {index + 1}
+                                                    </span>
+                                                    <span className="min-w-0 flex-1">
+                                                        <span className="flex items-center justify-between gap-2">
+                                                            <span className="truncate text-sm font-semibold">{item.title}</span>
+                                                            <span className="shrink-0 text-[11px] text-stone-400">{item.aspectRatio}</span>
                                                         </span>
-                                                        <span className="mt-2 block text-xs leading-5 opacity-70">{preset.description}</span>
-                                                        <span className="mt-3 block text-xs font-medium">{ids.length ? `${ids.length} 幅` : "当前不可用"}</span>
-                                                    </button>
-                                                );
-                                            })}
+                                                        <span className="mt-1.5 line-clamp-2 text-xs leading-5 text-stone-500">{item.description}</span>
+                                                    </span>
+                                                </div>
+                                            ))}
                                         </div>
-                                        {selectedPreset === "custom" ? <div className="mt-3 text-xs text-stone-500">当前为自定义方案，共选择 {selectedPlanIds.length} 幅。</div> : null}
+                                        {selectedPreset === "detail_suite" && selectedPlanItems.length < 7 ? (
+                                            <div className="mt-3 text-xs leading-5 text-stone-500">当前境界和已开放能力可生成 {selectedPlanItems.length} 张；更高境界会自动扩展详情页数量。</div>
+                                        ) : null}
                                     </section>
 
-                                    <div className="sticky bottom-0 z-20 flex flex-col gap-3 border-y border-stone-200 bg-[#f7f7f5]/95 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-[#101110]/95 sm:flex-row sm:items-center sm:justify-between">
-                                        <div>
-                                            <div className="text-sm font-medium">本次将生成 {selectedPlanIds.length} 幅商品画卷</div>
-                                            <div className="mt-1 text-xs text-stone-500">按现有额度规则逐张处理，完成后再手动入藏。</div>
-                                        </div>
-                                        <Button type="primary" size="large" loading={savingPlan} disabled={!selectedPlanIds.length} icon={<ArrowRight className="size-4" />} onClick={() => void savePlanningAndContinue()}>
-                                            确认并进入生成
-                                        </Button>
-                                    </div>
-
-                                    <section className="border-t border-stone-200 pt-7 dark:border-white/10">
-                                        <SectionHeading icon={<Layers3 className="size-4" />} title="视觉基调" action={<Tag bordered={false}>拼多多</Tag>} />
-                                        <div className={cn("mt-5 grid min-w-0 gap-6", visualControls.showTemplates && "lg:grid-cols-2")}>
-                                            <div className="min-w-0">
-                                                <div>
-                                                    <div className="flex items-center justify-between gap-3">
-                                                        <div className="text-xs font-medium text-stone-500">{visualControls.styleLabel}</div>
-                                                        <div className="text-xs text-stone-400">{visualControls.styleHint}</div>
-                                                    </div>
-                                                    <div className={cn("mt-2 grid grid-cols-2 gap-2", !visualControls.showTemplates && "lg:grid-cols-4")}>
-                                                        {productStyleOptions.map((style) => {
-                                                            const selected = selectedStyles[0] === style.value;
-                                                            return (
-                                                                <button
-                                                                    key={style.value}
-                                                                    type="button"
-                                                                    className={cn(
-                                                                        "min-h-16 border px-3 py-2 text-left transition",
-                                                                        selected
-                                                                            ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/65 dark:bg-[#c9a86a]/10 dark:text-[#f0e5cc]"
-                                                                            : "border-stone-200 hover:border-stone-400 dark:border-white/10 dark:hover:border-white/25",
-                                                                    )}
-                                                                    onClick={() => selectPrimaryStyle(style.value)}
-                                                                >
-                                                                    <span className="flex items-center justify-between gap-2 text-sm font-medium">
-                                                                        <span>{style.label}</span>
-                                                                        {style.value === "value" ? <span className="text-[10px] opacity-60">推荐</span> : null}
-                                                                    </span>
-                                                                    <span className="mt-1 block text-xs opacity-65">{style.description}</span>
-                                                                </button>
-                                                            );
-                                                        })}
-                                                    </div>
+                                    <details className="border-y border-stone-200 py-4 dark:border-white/10">
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-stone-700 dark:text-stone-300">
+                                            <span className="flex items-center gap-2">
+                                                <Settings2 className="size-4" />
+                                                高级调整
+                                            </span>
+                                            <span className="text-xs font-normal text-stone-400">可选，不调整也能直接生成</span>
+                                        </summary>
+                                        <div className="mt-6 space-y-7">
+                                            <div>
+                                                <div className="text-xs font-medium text-stone-500">生成范围</div>
+                                                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                                                    {PRODUCT_PLAN_PRESETS.map((preset) => {
+                                                        const presetPlan = preset.key === "detail_suite" ? suiteSelectablePlanItems : standardSelectablePlanItems;
+                                                        const ids = productPlanPresetSelection(preset.key, presetPlan);
+                                                        const selected = selectedPreset === preset.key;
+                                                        return (
+                                                            <button
+                                                                key={preset.key}
+                                                                type="button"
+                                                                disabled={!ids.length}
+                                                                className={cn(
+                                                                    "min-h-24 border p-3 text-left transition",
+                                                                    selected
+                                                                        ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/65 dark:bg-[#c9a86a]/10 dark:text-[#f2ead8]"
+                                                                        : ids.length
+                                                                          ? "border-stone-200 bg-white hover:border-stone-400 dark:border-white/10 dark:bg-white/[0.018] dark:hover:border-white/25"
+                                                                          : "cursor-not-allowed border-stone-200 bg-stone-100 opacity-45 dark:border-white/6 dark:bg-white/[0.015]",
+                                                                )}
+                                                                onClick={() => selectPlanPreset(preset.key)}
+                                                            >
+                                                                <span className="flex items-start justify-between gap-3 text-sm font-semibold">
+                                                                    <span>{preset.label}</span>
+                                                                    <span className="text-[10px] opacity-60">{ids.length ? `${ids.length} 张` : "不可用"}</span>
+                                                                </span>
+                                                                <span className="mt-2 block text-xs leading-5 opacity-70">{preset.description}</span>
+                                                            </button>
+                                                        );
+                                                    })}
                                                 </div>
                                             </div>
 
-                                            {visualControls.showTemplates ? (
-                                                <div className="min-w-0">
+                                            <div className="grid gap-5 lg:grid-cols-2">
+                                                <Field label="生图模型">
+                                                    <ModelPicker config={effectiveConfig} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(true, "channels")} />
+                                                </Field>
+                                                <Field label={visualControls.styleLabel}>
+                                                    <Select value={selectedStyles[0] || "value"} options={productStyleOptions.map((style) => ({ value: style.value, label: `${style.label} · ${style.description}` }))} className="w-full" onChange={selectPrimaryStyle} />
+                                                </Field>
+                                                {canUseBrand ? (
+                                                    <Field label="品牌信息">
+                                                        <Input value={brandName} maxLength={120} placeholder="可选，用于统一整套视觉表达" onChange={(event) => setBrandName(event.target.value)} />
+                                                    </Field>
+                                                ) : null}
+                                                <Field label="目标平台">
+                                                    <Select value={activeProject.platform} options={PLATFORM_OPTIONS} className="w-full" disabled />
+                                                </Field>
+                                            </div>
+
+                                            {visualControls.showTemplates && templates.length ? (
+                                                <div>
                                                     <div className="text-xs font-medium text-stone-500">推荐版式</div>
                                                     <div className="mt-2 flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-2">
                                                         {templates.map((template) => (
@@ -1120,13 +1157,8 @@ export default function ProductLabPage() {
                                                                 onClick={() => applyTemplate(template)}
                                                             >
                                                                 <span>
-                                                                    <span className="flex items-center gap-2 text-sm font-medium">
-                                                                        <span>{template.name}</span>
-                                                                        {template.id === "pdd-main-contrast-banner" ? <span className="text-[10px] opacity-60">推荐</span> : null}
-                                                                    </span>
-                                                                    <span className={cn("mt-1 block text-xs", selectedTemplateId === template.id ? "text-white/60 dark:text-[#d8c59e]/70" : "text-stone-500")}>
-                                                                        {template.aspectRatio} · {styleLabel(template.styleKey)}
-                                                                    </span>
+                                                                    <span className="text-sm font-medium">{template.name}</span>
+                                                                    <span className="mt-1 block text-xs opacity-60">{template.aspectRatio} · {styleLabel(template.styleKey)}</span>
                                                                 </span>
                                                                 <ImagePlus className="size-4 shrink-0 text-stone-400" />
                                                             </button>
@@ -1134,66 +1166,24 @@ export default function ProductLabPage() {
                                                     </div>
                                                 </div>
                                             ) : null}
-                                        </div>
 
-                                        <details className="mt-7 border-y border-stone-200 py-4 dark:border-white/10">
-                                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-stone-700 dark:text-stone-300">
-                                                <span className="flex items-center gap-2">
-                                                    <Settings2 className="size-4" />
-                                                    更多设置
-                                                </span>
-                                                <span className="text-xs font-normal text-stone-400">模型、能力、多风格与逐页调整</span>
-                                            </summary>
-                                            <div className="mt-6 space-y-7">
-                                                <div className="grid gap-5 lg:grid-cols-2">
-                                                    <Field label="生图模型">
-                                                        <ModelPicker config={effectiveConfig} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(true, "channels")} />
-                                                    </Field>
-                                                    <Field label="目标平台">
-                                                        <Select value={activeProject.platform} options={PLATFORM_OPTIONS} className="w-full" disabled />
-                                                    </Field>
-                                                    {canUseBrand ? (
-                                                        <Field label="品牌信息">
-                                                            <Input value={brandName} maxLength={120} placeholder="可选，用于统一整套视觉表达" onChange={(event) => setBrandName(event.target.value)} />
-                                                        </Field>
-                                                    ) : null}
-                                                    {canUseMultipleStyles && selectedPreset !== "detail_suite" ? (
-                                                        <div>
-                                                            <div className="text-xs font-medium text-stone-500">附加风格探索</div>
-                                                            <div className="mt-2 flex flex-wrap gap-2">
-                                                                {productStyleOptions.map((style) => (
-                                                                    <button
-                                                                        key={style.value}
-                                                                        type="button"
-                                                                        className={cn(
-                                                                            "border px-3 py-2 text-xs transition",
-                                                                            selectedStyles.includes(style.value)
-                                                                                ? "border-stone-950 bg-stone-950 text-white dark:border-[#c9a86a]/65 dark:bg-[#c9a86a]/10"
-                                                                                : "border-stone-200 hover:border-stone-400 dark:border-white/10 dark:hover:border-white/25",
-                                                                        )}
-                                                                        onClick={() => toggleStyle(style.value)}
-                                                                    >
-                                                                        {style.label}
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                            <div className="mt-2 text-xs text-stone-400">添加风格后，可在下方逐张选择需要的版本。</div>
+                                            {selectedPreset !== "detail_suite" ? (
+                                                <>
+                                                    <div>
+                                                        <div className="text-xs font-medium text-stone-500">可用内容</div>
+                                                        <div className="mt-3">
+                                                            <ProductOutputGrid outputs={outputs} selectedKinds={selectedKinds} onToggle={toggleOutput} />
                                                         </div>
-                                                    ) : null}
-                                                </div>
-
-                                                {selectedPreset === "detail_suite" ? (
+                                                    </div>
                                                     <div>
                                                         <div className="flex items-center justify-between gap-3">
-                                                            <div className="text-xs font-medium text-stone-500">套图结构</div>
-                                                            <Tag bordered={false}>固定结构 · {selectedPlanIds.length} 幅</Tag>
+                                                            <div className="text-xs font-medium text-stone-500">逐张选择</div>
+                                                            <Tag bordered={false}>已选 {selectedPlanIds.length}/{selectablePlanItems.length}</Tag>
                                                         </div>
                                                         <div className="mt-3 max-h-80 overflow-y-auto border-y border-stone-200 dark:border-white/10">
                                                             {selectablePlanItems.map((item) => (
                                                                 <div key={item.id} className="flex min-h-14 items-center gap-3 border-b border-stone-200/80 px-1 py-2 last:border-0 dark:border-white/8">
-                                                                    <span className="grid size-5 shrink-0 place-items-center border border-emerald-500/45 text-emerald-600 dark:text-emerald-400">
-                                                                        <Check className="size-3.5" />
-                                                                    </span>
+                                                                    <Checkbox checked={selectedPlanIds.includes(item.id)} onChange={() => togglePlanItem(item.id)} aria-label={`选择${item.title}`} />
                                                                     <span className="min-w-0 flex-1">
                                                                         <span className="block truncate text-sm font-medium">{item.title}</span>
                                                                         <span className="mt-0.5 block truncate text-xs text-stone-500">{item.description}</span>
@@ -1202,58 +1192,45 @@ export default function ProductLabPage() {
                                                                 </div>
                                                             ))}
                                                         </div>
-                                                        <div className="mt-2 text-xs leading-5 text-stone-400">主图固定为 1:1，详情页固定为 3:4；页数按当前境界能力开放。</div>
                                                     </div>
-                                                ) : (
-                                                    <>
-                                                        <div>
-                                                            <div className="text-xs font-medium text-stone-500">当前可用内容</div>
-                                                            <div className="mt-3">
-                                                                <ProductOutputGrid outputs={outputs} selectedKinds={selectedKinds} onToggle={toggleOutput} />
-                                                            </div>
-                                                        </div>
+                                                </>
+                                            ) : null}
 
-                                                        <div>
-                                                            <div className="flex items-center justify-between gap-3">
-                                                                <div className="text-xs font-medium text-stone-500">逐张调整</div>
-                                                                <Tag bordered={false}>
-                                                                    已选 {selectedPlanIds.length}/{selectablePlanItems.length}
-                                                                </Tag>
-                                                            </div>
-                                                            <div className="mt-3 max-h-80 overflow-y-auto border-y border-stone-200 dark:border-white/10">
-                                                                {selectablePlanItems.map((item) => (
-                                                                    <div key={item.id} className="flex min-h-14 items-center gap-3 border-b border-stone-200/80 px-1 py-2 last:border-0 dark:border-white/8">
-                                                                        <Checkbox checked={selectedPlanIds.includes(item.id)} onChange={() => togglePlanItem(item.id)} aria-label={`选择${item.title}`} />
-                                                                        <span className="min-w-0 flex-1">
-                                                                            <span className="block truncate text-sm font-medium">{item.title}</span>
-                                                                            <span className="mt-0.5 block truncate text-xs text-stone-500">{item.description}</span>
-                                                                        </span>
-                                                                        <span className="shrink-0 text-[11px] text-stone-400">{item.aspectRatio}</span>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    </>
-                                                )}
-
-                                                <div className="border-t border-stone-200 pt-6 dark:border-white/10">
-                                                    <div className="flex flex-wrap items-center justify-between gap-3">
-                                                        <div>
-                                                            <div className="text-xs font-medium text-stone-500">统一视觉规范</div>
-                                                            <div className="mt-1 text-sm font-semibold">{activeVisualStyleGuide.styleName}</div>
-                                                        </div>
-                                                        <Tag bordered={false}>{styleLabel(selectedStyles[0] || "value")}</Tag>
+                                            <div className="border-t border-stone-200 pt-6 dark:border-white/10">
+                                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                                    <div>
+                                                        <div className="text-xs font-medium text-stone-500">AI 统一视觉规范</div>
+                                                        <div className="mt-1 text-sm font-semibold">{activeVisualStyleGuide.styleName}</div>
                                                     </div>
-                                                    <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-                                                        <VisualRule label="色彩" value={activeVisualStyleGuide.colorPalette} />
-                                                        <VisualRule label="背景体系" value={activeVisualStyleGuide.backgroundSystem} />
-                                                        <VisualRule label="光线与镜头" value={`${activeVisualStyleGuide.lighting}；${activeVisualStyleGuide.cameraLanguage}`} />
-                                                        <VisualRule label="禁止项" value={activeVisualStyleGuide.negativeStyleConstraints} />
-                                                    </div>
+                                                    <Tag bordered={false}>{styleLabel(selectedStyles[0] || "value")}</Tag>
+                                                </div>
+                                                <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+                                                    <VisualRule label="色彩" value={activeVisualStyleGuide.colorPalette} />
+                                                    <VisualRule label="背景体系" value={activeVisualStyleGuide.backgroundSystem} />
+                                                    <VisualRule label="光线与镜头" value={`${activeVisualStyleGuide.lighting}；${activeVisualStyleGuide.cameraLanguage}`} />
+                                                    <VisualRule label="禁止项" value={activeVisualStyleGuide.negativeStyleConstraints} />
                                                 </div>
                                             </div>
-                                        </details>
-                                    </section>
+                                        </div>
+                                    </details>
+
+                                    <div className="sticky bottom-0 z-20 flex flex-col gap-3 border-y border-stone-200 bg-[#f7f7f5]/95 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-[#101110]/95 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <div className="text-sm font-medium">确认后将连续生成 {selectedPlanIds.length} 张商品图</div>
+                                            <div className="mt-1 text-xs text-stone-500">无需再次逐张确认，生成完成后由你手动选择是否入藏。</div>
+                                            {generationBlockReason ? <div className="mt-2 text-xs text-amber-700 dark:text-amber-300">{generationBlockReason}</div> : null}
+                                        </div>
+                                        <Button
+                                            type="primary"
+                                            size="large"
+                                            loading={savingPlan || generating}
+                                            disabled={!selectedPlanIds.length || Boolean(generationBlockReason)}
+                                            icon={<Sparkles className="size-4" />}
+                                            onClick={() => void savePlanningAndGenerate()}
+                                        >
+                                            确认方案并生成整套
+                                        </Button>
+                                    </div>
                                 </div>
                             ) : (
                                 <GenerationWorkbench

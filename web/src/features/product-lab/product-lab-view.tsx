@@ -31,8 +31,8 @@ export function ProductRealmHeader({ realmName, stageName, title, description, i
 export type ProductWorkflowStep = "source" | "plan" | "generate";
 
 const PRODUCT_WORKFLOW_STEPS: Array<{ key: ProductWorkflowStep; label: string; description: string }> = [
-    { key: "source", label: "上传商品", description: "提供真实商品图" },
-    { key: "plan", label: "确认方案", description: "选择创作目标" },
+    { key: "source", label: "上传商品", description: "AI 自动识别商品" },
+    { key: "plan", label: "确认套图", description: "查看主图与详情页规划" },
     { key: "generate", label: "生成与挑选", description: "生成后手动入藏" },
 ];
 

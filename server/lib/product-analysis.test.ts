@@ -48,6 +48,8 @@ describe("product image analysis", () => {
     expect(messages.system).toContain("只输出 JSON");
     expect(messages.system).toContain("不要把整套视觉规划成纯白背景");
     expect(messages.system).toContain("visualStyleGuide");
+    expect(messages.system).toContain("detailSections 必须恰好输出 6 项");
+    expect(messages.system).toContain("不得机械套用固定模板");
     expect(messages.user).toContain("保留包装文字");
     expect(
       buildOpenAiProductAnalysisBody("text-model", messages, image),

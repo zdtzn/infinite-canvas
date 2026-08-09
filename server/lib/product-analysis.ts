@@ -99,9 +99,9 @@ export function buildProductAnalysisMessages(input: ProductAnalysisInput) {
 必须遵守：
 1. 先识别商品的准确品类、结构、材质、颜色、部件关系、使用方式和容易被误判的对象。图片是商品事实来源，背景道具不能被误认为商品组成。
 2. 卖点应具体、可视化、适合电商表达，不使用无法从图片或用户说明确认的绝对化措辞。
-3. visualStyleGuide 必须建立可重复执行的统一视觉系统，包含色彩、背景、光线、镜头、排版、道具、商品还原和负面约束。
+3. visualStyleGuide 必须从当前商品的品类、固有色、材质、包装、目标人群和使用场景中推导，不得机械套用固定模板；建立可重复执行的统一视觉系统，包含色彩、背景、光线、镜头、排版、道具、商品还原和负面约束。
 4. 不要把整套视觉规划成纯白背景。纯白或中性棚拍只可用于基础商品图；主图、卖点、场景和详情页必须使用品牌色层次、材质空间、真实环境或功能可视化背景。
-5. detailSections 输出 6-8 项并形成完整节奏，优先覆盖 selling_points、scenario、detail_closeup、material、specs、comparison、brand_trust、summary；不适合商品事实的类型可以替换为 custom。
+5. detailSections 必须恰好输出 6 项，并按 selling_points、scenario、detail_closeup、specs、material、summary 的顺序形成完整详情页节奏；每项内容都要针对当前商品，不能只是通用电商模板。
 6. 每页只承担一个明确沟通目标。prompt 必须包含前景、中景、背景、商品位置、镜头、光线、道具、文字层级和商品专属物理约束；negativeConstraints 必须针对本商品，而不是通用空话。
 7. 规格、尺寸、容量、功率、配件、认证和服务承诺无法确认时不得编造，additionalInformation 中应明确哪些事实已确认、哪些仍未知。
 8. 只输出 JSON，不要 Markdown、代码块、标题或解释。
