@@ -1,4 +1,4 @@
-import { resolveOpenAiImageSize } from "./image-request";
+import { normalizeImageResponseValue, resolveOpenAiImageSize } from "./image-request";
 import { AsyncSemaphore } from "./async-semaphore";
 import type { ImageJobInput } from "../types";
 
@@ -231,13 +231,23 @@ function collectImageUrls(...records: Array<Record<string, unknown> | undefined>
 
 function readImageUrl(value: unknown, depth = 0): string[] {
     if (depth > 4 || value === undefined || value === null) return [];
-    if (typeof value === "string" && value.trim()) return [value.trim()];
+    if (typeof value === "string" && value.trim()) {
+        try {
+            return [normalizeImageResponseValue(value, "image/png")];
+        } catch {
+            return [];
+        }
+    }
     if (Array.isArray(value)) return value.flatMap((item) => readImageUrl(item, depth + 1));
     const image = asRecord(value);
     if (!image) return [];
-    const url = firstString(image.url, image.image_url, image.imageUrl, image.file_url, image.fileUrl, image.download_url, image.downloadUrl);
-    if (url) return [url];
-    const base64 = firstString(image.b64_json, image.base64, image.data);
-    if (base64) return [`data:${firstString(image.mime_type, image.mimeType) || "image/png"};base64,${base64}`];
+    for (const candidate of [image.url, image.image_url, image.imageUrl, image.file_url, image.fileUrl, image.download_url, image.downloadUrl, image.b64_json, image.base64]) {
+        if (typeof candidate !== "string" || !candidate.trim()) continue;
+        try {
+            return [normalizeImageResponseValue(candidate, firstString(image.mime_type, image.mimeType) || "image/png")];
+        } catch {
+            // Continue through alternate fields before treating the task as image-less.
+        }
+    }
     return [image.images, image.image_urls, image.imageUrls, image.image_url, image.imageUrl, image.image, image.results, image.result, image.output, image.data].flatMap((item) => readImageUrl(item, depth + 1));
 }

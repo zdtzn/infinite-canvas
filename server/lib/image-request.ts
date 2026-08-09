@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 
 import { resolveDragonImageSize } from "./dragon-image";
-import { detectImageMimeFromBytes } from "./image-mime";
+import { detectImageMimeFromBytes, isAllowedImageMimeType } from "./image-mime";
 
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
@@ -44,14 +44,110 @@ export function imageResponseItems(payload: unknown): Array<Record<string, unkno
     return emptyItems || [];
 }
 
-export function imageResponseDataUrl(value: string, fallbackMimeType: string) {
-    const input = value.trim();
-    const dataUrl = input.match(/^data:([^;,]+);base64,(.*)$/is);
-    if (dataUrl) return `data:${dataUrl[1]};base64,${dataUrl[2].replace(/\s+/g, "")}`;
+export function normalizeImageResponseValue(value: unknown, fallbackMimeType: string) {
+    const normalized = normalizeImageResponseCandidate(value, fallbackMimeType, 0);
+    if (!normalized) throw new Error("上游返回的图片数据无法识别");
+    return normalized;
+}
 
-    const base64 = input.replace(/\s+/g, "");
+export function imageResponseItemValue(item: Record<string, unknown>, fallbackMimeType: string) {
+    const candidates = [item.b64_json, item.url, item.image_url, item.imageUrl, item.file_url, item.fileUrl, item.download_url, item.downloadUrl];
+    let firstError: unknown;
+    for (const candidate of candidates) {
+        if (candidate === undefined || candidate === null) continue;
+        try {
+            return normalizeImageResponseValue(candidate, fallbackMimeType);
+        } catch (error) {
+            firstError ??= error;
+        }
+    }
+    if (firstError) throw firstError;
+    return "";
+}
+
+function normalizeImageResponseCandidate(value: unknown, fallbackMimeType: string, depth: number): string | undefined {
+    if (depth > 5 || value === undefined || value === null) return undefined;
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const normalized = normalizeImageResponseCandidate(item, fallbackMimeType, depth + 1);
+            if (normalized) return normalized;
+        }
+        return undefined;
+    }
+    if (typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        for (const key of [
+            "b64_json",
+            "url",
+            "image_url",
+            "imageUrl",
+            "file_url",
+            "fileUrl",
+            "download_url",
+            "downloadUrl",
+            "base64",
+            "data",
+            "images",
+            "results",
+            "result",
+            "output",
+        ]) {
+            const normalized = normalizeImageResponseCandidate(record[key], fallbackMimeType, depth + 1);
+            if (normalized) return normalized;
+        }
+        return undefined;
+    }
+    if (typeof value !== "string") return undefined;
+
+    const input = value.trim();
+    if (!input) return undefined;
+    if ((input.startsWith('"') && input.endsWith('"')) || ((input.startsWith("{") || input.startsWith("[")) && (input.endsWith("}") || input.endsWith("]")))) {
+        try {
+            const normalized = normalizeImageResponseCandidate(JSON.parse(input), fallbackMimeType, depth + 1);
+            if (normalized) return normalized;
+        } catch {
+            // Continue with direct URL or Base64 detection below.
+        }
+    }
+
+    if (/^https?:\/\//i.test(input)) {
+        try {
+            const url = new URL(input);
+            if ((url.protocol === "http:" || url.protocol === "https:") && url.hostname) return url.toString();
+        } catch {
+            return undefined;
+        }
+    }
+
+    if (/^(?:data|https?)%3a/i.test(input)) {
+        try {
+            return normalizeImageResponseCandidate(decodeURIComponent(input), fallbackMimeType, depth + 1);
+        } catch {
+            return undefined;
+        }
+    }
+
+    if (/^data:/i.test(input)) {
+        const commaIndex = input.indexOf(",");
+        if (commaIndex < 0) return undefined;
+        const metadata = input.slice(5, commaIndex).split(";").map((part) => part.trim());
+        if (!metadata.some((part) => part.toLowerCase() === "base64")) return undefined;
+        const payload = input.slice(commaIndex + 1).trim();
+        if (/^data:/i.test(payload)) return normalizeImageResponseCandidate(payload, fallbackMimeType, depth + 1);
+        return normalizedImageDataUrl(payload, metadata[0] || fallbackMimeType);
+    }
+
+    return normalizedImageDataUrl(input, fallbackMimeType);
+}
+
+function normalizedImageDataUrl(value: string, fallbackMimeType: string) {
+    const base64 = value.replace(/\s+/g, "");
+    if (!base64 || !/^[A-Za-z0-9+/_=-]+$/.test(base64)) return undefined;
     const sample = Buffer.from(base64.slice(0, 256), "base64");
-    const mimeType = detectImageMimeFromBytes(sample) || fallbackMimeType;
+    const detectedMimeType = detectImageMimeFromBytes(sample);
+    const fallback = fallbackMimeType.trim().toLowerCase();
+    const mimeType = detectedMimeType || (isAllowedImageMimeType(fallback) ? fallback : "");
+    if (!mimeType || !detectedMimeType) return undefined;
     return `data:${mimeType};base64,${base64}`;
 }
 

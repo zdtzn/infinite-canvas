@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 
-import { buildOpenAiImageRequestOptions, imageResponseDataUrl, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./image-request";
+import {
+    buildOpenAiImageRequestOptions,
+    imageResponseItemValue,
+    imageResponseItems,
+    normalizeImageResponseValue,
+    resolveOpenAiImageSize,
+    usesJsonReferenceGeneration,
+} from "./image-request";
 
 const ONE_PIXEL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
 
@@ -71,11 +78,45 @@ test("reads common image response arrays", () => {
 test("accepts a complete data URL returned in b64_json without wrapping it twice", () => {
     const dataUrl = `data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`;
 
-    expect(imageResponseDataUrl(dataUrl, "image/jpeg")).toBe(dataUrl);
+    expect(normalizeImageResponseValue(dataUrl, "image/jpeg")).toBe(dataUrl);
 });
 
 test("wraps a raw base64 image response with its detected MIME type", () => {
-    expect(imageResponseDataUrl(ONE_PIXEL_PNG_BASE64, "image/jpeg")).toBe(`data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`);
+    expect(normalizeImageResponseValue(ONE_PIXEL_PNG_BASE64, "image/jpeg")).toBe(`data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`);
+});
+
+test("keeps an HTTPS URL returned in b64_json as a downloadable image URL", () => {
+    expect(normalizeImageResponseValue("https://cdn.example.com/result.png?signature=abc", "image/png")).toBe(
+        "https://cdn.example.com/result.png?signature=abc",
+    );
+});
+
+test("canonicalizes a base64 data URL that contains MIME parameters", () => {
+    expect(normalizeImageResponseValue(`data:image/png;charset=utf-8;base64,${ONE_PIXEL_PNG_BASE64}`, "image/jpeg")).toBe(
+        `data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`,
+    );
+});
+
+test("unwraps a JSON-encoded image response value", () => {
+    const encoded = JSON.stringify({ data: [{ url: "https://cdn.example.com/result.webp" }] });
+
+    expect(normalizeImageResponseValue(encoded, "image/png")).toBe("https://cdn.example.com/result.webp");
+});
+
+test("falls back to the item URL when b64_json is not an image", () => {
+    expect(
+        imageResponseItemValue(
+            {
+                b64_json: "not-an-image",
+                url: "https://cdn.example.com/result.png",
+            },
+            "image/png",
+        ),
+    ).toBe("https://cdn.example.com/result.png");
+});
+
+test("rejects an unsupported image response string before persistence", () => {
+    expect(() => normalizeImageResponseValue("not-an-image", "image/png")).toThrow("上游返回的图片数据无法识别");
 });
 
 test("uses JSON reference generation only for compatible Seedream requests", () => {

@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 
 import { UuImageChannelScheduler, buildUuAsyncImageForm, buildUuAsyncImageRequest, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
 
+const ONE_PIXEL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
+
 test("uses the UU async API only for text-to-image gpt-image-2 jobs", () => {
     expect(isUuImageAsyncChannel("https://uuapi.cc/v1", "gpt-image-2", 0, false)).toBe(true);
     expect(isUuImageAsyncChannel("https://api.uuapi.net", "GPT-IMAGE-2", 1, false)).toBe(false);
@@ -171,4 +173,20 @@ test("reads UU image results from common completed task payloads", () => {
             },
         }),
     ).toEqual({ taskId: "task-result", status: "succeeded", expiresAt: undefined, imageUrls: ["https://cdn.example.com/result.webp"], message: undefined });
+});
+
+test("keeps a complete data URL returned by an async UU task canonical", () => {
+    const dataUrl = `data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`;
+
+    expect(
+        readUuAsyncTask({
+            data: {
+                task: {
+                    task_id: "task-data-url",
+                    status: "succeeded",
+                    images: [{ b64_json: dataUrl }],
+                },
+            },
+        }),
+    ).toEqual({ taskId: "task-data-url", status: "succeeded", expiresAt: undefined, imageUrls: [dataUrl], message: undefined });
 });
