@@ -28,7 +28,7 @@ export default function PromptsPage() {
 
     const toggleTag = (tag: string) => {
         if (tag === ALL_PROMPTS_OPTION) return setSelectedTags([]);
-        setSelectedTags((items) => (items.includes(tag) ? items.filter((item) => item !== tag) : [...items, tag]));
+        setSelectedTags((items) => (items[0] === tag ? [] : [tag]));
     };
 
     const savePromptAsset = (item: Prompt) => {

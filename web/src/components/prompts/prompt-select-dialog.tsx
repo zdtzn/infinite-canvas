@@ -15,7 +15,7 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
     const { query, items, tags: promptTags, categories: promptCategories } = usePromptList({ keyword, tags: selectedTags, category: selectedCategory, enabled: open });
     const toggleTag = (tag: string) => {
         if (tag === ALL_PROMPTS_OPTION) return setSelectedTags([]);
-        setSelectedTags((items) => (items.includes(tag) ? items.filter((item) => item !== tag) : [...items, tag]));
+        setSelectedTags((items) => (items[0] === tag ? [] : [tag]));
     };
     const selectPrompt = (prompt: string) => {
         onSelect(prompt);
