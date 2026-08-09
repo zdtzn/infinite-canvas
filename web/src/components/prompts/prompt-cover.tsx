@@ -6,7 +6,7 @@ const PROXY_SOURCE_HOSTS: Record<string, string> = {
     awesome: "awesome.re",
     atomgit: "atomgit.com",
 };
-export const PROMPT_COVER_FALLBACK_TIMEOUT_MS = 2_500;
+export const PROMPT_COVER_FALLBACK_TIMEOUT_MS = 9_000;
 
 export function promptOriginalUrl(value?: string) {
     const input = String(value || "").trim();

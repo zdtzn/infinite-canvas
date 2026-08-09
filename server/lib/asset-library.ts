@@ -71,6 +71,10 @@ export function normalizeAssetLibraryItem(
       throw new AssetLibraryInputError("资产文件不是图片");
     if (kind === "video" && !stored.mimeType.startsWith("video/"))
       throw new AssetLibraryInputError("资产文件不是视频");
+    const thumbnailKey = kind === "image" ? String(content.thumbnailKey || "").trim() : "";
+    const thumbnail = thumbnailKey ? ownedAsset(thumbnailKey) : undefined;
+    if (thumbnailKey && (!thumbnail || !thumbnail.mimeType.startsWith("image/")))
+      throw new AssetLibraryInputError("资产缩略图不存在或不属于当前用户");
     const media = {
       storageKey,
       width: positiveNumber(content.width),
@@ -78,7 +82,7 @@ export function normalizeAssetLibraryItem(
       bytes: stored.bytes,
       mimeType: stored.mimeType,
     };
-    payload.data = kind === "image" ? { ...media, dataUrl: "" } : { ...media, url: "" };
+    payload.data = kind === "image" ? { ...media, ...(thumbnailKey ? { thumbnailKey } : {}), dataUrl: "" } : { ...media, url: "" };
   }
 
   return {

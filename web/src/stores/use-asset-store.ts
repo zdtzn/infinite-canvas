@@ -13,7 +13,7 @@ import { normalizeAssetSource } from "./asset-source";
 
 export type AssetKind = "text" | "image" | "video";
 export type TextAsset = AssetBase<"text"> & { data: { content: string } };
-export type ImageAsset = AssetBase<"image"> & { data: { dataUrl: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
+export type ImageAsset = AssetBase<"image"> & { data: { dataUrl: string; storageKey?: string; thumbnailKey?: string; thumbnailUrl?: string; width: number; height: number; bytes: number; mimeType: string } };
 export type VideoAsset = AssetBase<"video"> & { data: { url: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
 export type Asset = TextAsset | ImageAsset | VideoAsset;
 
@@ -62,11 +62,14 @@ const assetStorage: PersistStorage<AssetStore> = {
                 if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
                 if (asset.kind !== "image") return asset;
                 if (asset.data.storageKey) {
-                    const dataUrl = await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl);
+                    const [dataUrl, thumbnailUrl] = await Promise.all([
+                        resolveImageUrl(asset.data.storageKey, asset.data.dataUrl),
+                        resolveImageUrl(asset.data.thumbnailKey, asset.data.thumbnailUrl),
+                    ]);
                     return {
                         ...asset,
-                        coverUrl: dataUrl,
-                        data: { ...asset.data, dataUrl },
+                        coverUrl: thumbnailUrl || dataUrl,
+                        data: { ...asset.data, dataUrl, thumbnailUrl },
                     };
                 }
                 if (!asset.data.dataUrl.startsWith("data:image/")) return asset;
@@ -210,8 +213,8 @@ function enqueueAssetLibraryMutation(operation: () => Promise<unknown>) {
 async function hydrateServerAsset(asset: Asset): Promise<Asset> {
     asset = normalizeAssetRecord(asset);
     if (asset.kind === "image" && asset.data.storageKey) {
-        const dataUrl = await resolveImageUrl(asset.data.storageKey);
-        return { ...asset, coverUrl: dataUrl, data: { ...asset.data, dataUrl } };
+        const [dataUrl, thumbnailUrl] = await Promise.all([resolveImageUrl(asset.data.storageKey), resolveImageUrl(asset.data.thumbnailKey)]);
+        return { ...asset, coverUrl: thumbnailUrl || dataUrl, data: { ...asset.data, dataUrl, thumbnailUrl } };
     }
     if (asset.kind === "video" && asset.data.storageKey) {
         const url = await resolveMediaUrl(asset.data.storageKey);
@@ -230,11 +233,13 @@ async function prepareAssetForServer(asset: Asset, expectedUserId: string): Prom
         const stored = await uploadImage(asset.data.dataUrl, { expectedUserId });
         return {
             ...asset,
-            coverUrl: stored.url,
+            coverUrl: stored.thumbnailUrl || stored.url,
             data: {
                 ...asset.data,
                 dataUrl: stored.url,
                 storageKey: stored.storageKey,
+                thumbnailKey: stored.thumbnailKey,
+                thumbnailUrl: stored.thumbnailUrl,
                 width: stored.width,
                 height: stored.height,
                 bytes: stored.bytes,

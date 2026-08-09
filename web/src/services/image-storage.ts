@@ -45,10 +45,11 @@ const promotedJobImages = new Map<string, Promise<UploadedImage>>();
 export async function uploadImage(input: string | Blob, options?: UploadImageOptions): Promise<UploadedImage> {
     const expectedUserId = options?.expectedUserId ?? useUserStore.getState().user?.id ?? "";
     if (PUBLIC_MODE && typeof input === "string" && canPromoteServerJobImage(input, options?.outputFormat)) {
-        const promotionKey = `${expectedUserId}:${input}`;
+        const thumbnailMode = options?.createThumbnail === false ? "none" : String(options?.thumbnailMaxEdge || 512);
+        const promotionKey = `${expectedUserId}:${input}:${thumbnailMode}`;
         const existing = promotedJobImages.get(promotionKey);
         if (existing) return existing;
-        const pending = promoteJobImage(input, expectedUserId);
+        const pending = promoteJobImage(input, expectedUserId, options);
         promotedJobImages.set(promotionKey, pending);
         try {
             return await pending;
@@ -92,16 +93,36 @@ export function canPromoteServerJobImage(input: string, outputFormat?: string) {
     return sourceMimeType === targetMimeType;
 }
 
-async function promoteJobImage(sourceUrl: string, expectedUserId: string): Promise<UploadedImage> {
+async function promoteJobImage(sourceUrl: string, expectedUserId: string, options?: UploadImageOptions): Promise<UploadedImage> {
     const { asset, width, height } = await promoteServerJobAsset(sourceUrl, expectedUserId);
-    const meta = Number.isSafeInteger(width) && Number.isSafeInteger(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : await readBlobMeta(await readImageBlob(sourceUrl, expectedUserId));
+    let sourceBlob: Blob | undefined;
+    const meta = Number.isSafeInteger(width) && Number.isSafeInteger(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : await readBlobMeta((sourceBlob = await readImageBlob(sourceUrl, expectedUserId)));
     try {
         assertImageUploadAllowed({ bytes: asset.bytes, mimeType: asset.mimeType, width: meta.width, height: meta.height });
     } catch (error) {
         await deleteServerAsset(asset.key, expectedUserId).catch(() => undefined);
         throw error;
     }
-    return { url: sourceUrl, storageKey: asset.key, width: meta.width, height: meta.height, bytes: asset.bytes, mimeType: asset.mimeType };
+    let thumbnailAsset: Awaited<ReturnType<typeof uploadServerAsset>>["asset"] | undefined;
+    if (options?.createThumbnail !== false) {
+        try {
+            sourceBlob ||= await readImageBlob(sourceUrl, expectedUserId);
+            const thumbnail = await createThumbnail(sourceBlob, meta.width, meta.height, options?.thumbnailMaxEdge);
+            if (thumbnail) thumbnailAsset = (await uploadServerAsset(thumbnail, "image", undefined, expectedUserId)).asset;
+        } catch {
+            // Thumbnail creation is an optimization and must not invalidate the original image.
+        }
+    }
+    return {
+        url: sourceUrl,
+        storageKey: asset.key,
+        width: meta.width,
+        height: meta.height,
+        bytes: asset.bytes,
+        mimeType: asset.mimeType,
+        thumbnailKey: thumbnailAsset?.key,
+        thumbnailUrl: thumbnailAsset?.url,
+    };
 }
 
 export async function readImageBlob(input: string | Blob, expectedUserId = useUserStore.getState().user?.id || "") {
@@ -281,7 +302,7 @@ export function collectImageStorageKeysFromHistory(entries: Iterable<unknown>, k
 async function createThumbnail(blob: Blob, width: number, height: number, requestedMaxEdge = 512) {
     const maxEdge = Math.max(128, Math.min(1280, Math.round(requestedMaxEdge) || 512));
     const target = fitImageWithinEdge(width, height, maxEdge);
-    if (Math.max(width, height) <= Math.max(1024, maxEdge) || typeof createImageBitmap !== "function") return null;
+    if (Math.max(width, height) <= maxEdge || typeof createImageBitmap !== "function") return null;
     const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
     const canvas = document.createElement("canvas");
     canvas.width = target.width;

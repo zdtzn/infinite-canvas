@@ -16,6 +16,8 @@ export type GeneratedImage = {
     serverJobId?: string;
     dataUrl: string;
     storageKey?: string;
+    thumbnailKey?: string;
+    thumbnailUrl?: string;
     durationMs: number;
     width: number;
     height: number;

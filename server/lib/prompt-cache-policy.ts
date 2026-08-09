@@ -1,4 +1,5 @@
 export const DEFAULT_PROMPT_CACHE_MAX_ENTRIES = 2_000;
+export const DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY = 6;
 
 export type PromptProxyLane = "asset" | "thumbnail";
 

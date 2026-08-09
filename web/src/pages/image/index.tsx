@@ -238,7 +238,7 @@ export default function ImagePage() {
                     successImages.map(async (image) => {
                         if (image.persisted === false) return image;
                         const stored = await uploadImage(image.dataUrl, { outputFormat: snapshot.config.imageOutputFormat });
-                        return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+                        return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, thumbnailKey: stored.thumbnailKey, thumbnailUrl: stored.thumbnailUrl, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
                     }),
                 );
                 logImages.forEach(replaceImageGenerationResult);
@@ -338,15 +338,15 @@ export default function ImagePage() {
             // Generated results are already persisted by the job flow. Reusing that asset avoids a
             // duplicate upload and prevents upstream MIME headers from affecting asset registration.
             const stored = image.storageKey
-                ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
+                ? { url: image.dataUrl, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey, thumbnailUrl: image.thumbnailUrl, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
                 : await uploadImage(image.dataUrl, { outputFormat: previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat });
             addAsset({
                 kind: "image",
                 title: `生成结果 ${index + 1}`,
-                coverUrl: stored.url,
+                coverUrl: stored.thumbnailUrl || stored.url,
                 tags: [],
                 source: IMAGE_WORKBENCH_ASSET_SOURCE,
-                data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
+                data: { dataUrl: stored.url, storageKey: stored.storageKey, thumbnailKey: stored.thumbnailKey, thumbnailUrl: stored.thumbnailUrl, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
                 metadata: { source: "image-page", prompt },
             });
             message.success("已入藏卷阁");
@@ -508,6 +508,8 @@ export default function ImagePage() {
                           ...image,
                           dataUrl: stored.url,
                           storageKey: stored.storageKey,
+                          thumbnailKey: stored.thumbnailKey,
+                          thumbnailUrl: stored.thumbnailUrl,
                           width: stored.width,
                           height: stored.height,
                           bytes: stored.bytes,
@@ -949,6 +951,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         (log.images || []).map(async (item) => ({
             ...item,
             dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl),
+            thumbnailUrl: await resolveImageUrl(item.thumbnailKey, item.thumbnailUrl),
         })),
     );
     const config = normalizeLogConfig(log);
@@ -992,6 +995,8 @@ async function prepareImageLogForServer(log: GenerationLog, expectedUserId: stri
                 ...image,
                 dataUrl: stored.url,
                 storageKey: stored.storageKey,
+                thumbnailKey: stored.thumbnailKey,
+                thumbnailUrl: stored.thumbnailUrl,
                 width: stored.width,
                 height: stored.height,
                 bytes: stored.bytes,

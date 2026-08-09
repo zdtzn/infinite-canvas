@@ -5,6 +5,7 @@ import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
+import { assetCardImageUrl, assetOriginalImageUrl } from "@/lib/asset-image";
 import { uploadImage } from "@/services/image-storage";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
@@ -142,7 +143,7 @@ export default function AssetsPage() {
     const readImageFile = async (file?: File) => {
         if (!file || !file.type.startsWith("image/")) return;
         const image = await uploadImage(file);
-        const draft = { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType };
+        const draft = { dataUrl: image.url, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey, thumbnailUrl: image.thumbnailUrl, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType };
         setImageDraft(draft);
         if (!form.getFieldValue("coverUrl")) form.setFieldValue("coverUrl", draft.dataUrl);
         if (!form.getFieldValue("title")) form.setFieldValue("title", file.name);
@@ -272,8 +273,8 @@ export default function AssetsPage() {
                 {/* ── 画轴瀑布 ── */}
                 <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 pb-12">
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {visibleAssets.map((asset) => (
-                            <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
+                        {visibleAssets.map((asset, index) => (
+                            <AssetScrollCard key={asset.id} asset={asset} priority={index === 0} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                         ))}
                     </div>
 
@@ -450,8 +451,8 @@ export default function AssetsPage() {
 }
 
 /** 画轴卡片:封面 + hover 浮现操作层 + 落款条 */
-function AssetScrollCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
-    const cover = asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "");
+function AssetScrollCard({ asset, priority, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; priority: boolean; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
+    const cover = assetCardImageUrl(asset);
     const summary = assetSummary(asset);
     const actions: { key: string; label: string; icon: typeof Eye; run: () => void; danger?: boolean }[] = [
         { key: "open", label: "查看", icon: Eye, run: onOpen },
@@ -466,7 +467,7 @@ function AssetScrollCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }
             <div className="relative">
                 <button type="button" className="block w-full text-left" onClick={onOpen}>
                     {cover ? (
-                        <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+                        <img src={cover} alt={asset.title} loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : "auto"} decoding="async" className="aspect-[4/3] w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
                     ) : (
                         <div className="flex aspect-[4/3] items-center justify-center bg-[#17171d] p-5 text-center text-sm leading-6 text-[#c9c4b9]">{asset.kind === "text" ? asset.data.content : "暂无封面"}</div>
                     )}
@@ -513,7 +514,7 @@ function AssetScrollCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }
 }
 
 function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | null; onClose: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void }) {
-    const cover = asset ? asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "") : "";
+    const cover = asset ? assetOriginalImageUrl(asset) : "";
     return (
         <Drawer title="资产详情" open={Boolean(asset)} size="large" onClose={onClose}>
             {asset ? (

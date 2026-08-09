@@ -61,7 +61,7 @@ import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, ne
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, isLoopbackSetupRequest, isSameApplicationOrigin, normalizePublicBaseUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
-import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, promptProxyLane } from "./lib/prompt-cache-policy";
+import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
@@ -123,6 +123,10 @@ const RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS = Math.max(10_000, Math.min(60_000,
 const RESULT_IMAGE_RELAY_SERVER_DOWNLOAD = process.env.RESULT_IMAGE_RELAY_SERVER_DOWNLOAD !== "0";
 const RESULT_IMAGE_RECOVERY_DELAYS_MS = [0, 15_000, 60_000, 5 * 60_000];
 const PROMPT_PROXY_CONCURRENCY = Math.max(1, Math.min(8, positiveInt(process.env.PROMPT_PROXY_CONCURRENCY, 3)));
+const PROMPT_THUMBNAIL_PROXY_CONCURRENCY = Math.max(
+    1,
+    Math.min(16, positiveInt(process.env.PROMPT_THUMBNAIL_PROXY_CONCURRENCY, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY)),
+);
 const PROMPT_PROXY_TIMEOUT_MS = Math.max(3_000, Math.min(30_000, positiveInt(process.env.PROMPT_PROXY_TIMEOUT_MS, 8_000)));
 const PROMPT_OPTIMIZE_CONCURRENCY = Math.max(1, Math.min(4, positiveInt(process.env.PROMPT_OPTIMIZE_CONCURRENCY, 2)));
 const PROMPT_OPTIMIZE_TIMEOUT_MS = Math.max(10_000, Math.min(90_000, positiveInt(process.env.PROMPT_OPTIMIZE_TIMEOUT_MS, 60_000)));
@@ -230,7 +234,7 @@ let shutdownPromise: Promise<void> | null = null;
 const geminiImageSemaphore = new AsyncSemaphore(GEMINI_IMAGE_CONCURRENCY);
 const uuImageChannelScheduler = new UuImageChannelScheduler();
 const promptAssetProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
-const promptThumbnailProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
+const promptThumbnailProxySemaphore = new AsyncSemaphore(PROMPT_THUMBNAIL_PROXY_CONCURRENCY);
 const promptOptimizeSemaphore = new AsyncSemaphore(PROMPT_OPTIMIZE_CONCURRENCY);
 const heavyRequestSemaphore = new AsyncSemaphore(HEAVY_REQUEST_CONCURRENCY);
 
