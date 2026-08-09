@@ -14,7 +14,7 @@ import { parseSingleByteRange } from "./lib/http-range";
 import { ImageJobReferenceInputError, imageJobReferenceTotalBytes, parseClientImageJobReference } from "./lib/image-job-reference";
 import { resolveServerImageCapabilityProfile, validateServerImageCapabilityRequest } from "./lib/image-capabilities";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
-import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
+import { buildOpenAiImageRequestOptions, imageResponseDataUrl, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
 import { createDeferredImageResult, hasDeferredImageResults, isCompletedUuResultRecovery, isRecoverableImageDownloadError, recoverDeferredImageResults } from "./lib/image-result-recovery";
 import { createResultImageRelayConfig, isRelayEligibleResultUrl, resultImageDownloadUrl } from "./lib/result-image-relay";
 import { KeyedSerialExecutor } from "./lib/keyed-serial-executor";
@@ -2459,7 +2459,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
     });
     const data = imageResponseItems(payload);
     const mimeType = imageOutputFormatMimeType(input.imageOutputFormat);
-    return data.map((item) => (typeof item?.b64_json === "string" ? base64ImageDataUrl(item.b64_json, mimeType) : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
+    return data.map((item) => (typeof item?.b64_json === "string" ? imageResponseDataUrl(item.b64_json, mimeType) : typeof item?.url === "string" ? item.url : "")).filter(Boolean);
 }
 
 async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal, upstreamRequestId: string) {
@@ -3808,12 +3808,6 @@ function normalizeImageOutputFormat(value: unknown) {
 
 function imageOutputFormatMimeType(format?: string) {
     return ({ jpeg: "image/jpeg", webp: "image/webp", png: "image/png" } as Record<string, string>)[String(format || "").toLowerCase()] || "image/png";
-}
-
-function base64ImageDataUrl(base64: string, fallbackMimeType: string) {
-    const sample = Buffer.from(base64.slice(0, 256), "base64");
-    const mimeType = detectImageMimeFromBytes(sample) || fallbackMimeType;
-    return `data:${mimeType};base64,${base64}`;
 }
 
 function normalizeJobSource(value: unknown): ImageJobInput["source"] {

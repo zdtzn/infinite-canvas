@@ -1,4 +1,7 @@
+import { Buffer } from "node:buffer";
+
 import { resolveDragonImageSize } from "./dragon-image";
+import { detectImageMimeFromBytes } from "./image-mime";
 
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
@@ -39,6 +42,17 @@ export function imageResponseItems(payload: unknown): Array<Record<string, unkno
         emptyItems ??= items;
     }
     return emptyItems || [];
+}
+
+export function imageResponseDataUrl(value: string, fallbackMimeType: string) {
+    const input = value.trim();
+    const dataUrl = input.match(/^data:([^;,]+);base64,(.*)$/is);
+    if (dataUrl) return `data:${dataUrl[1]};base64,${dataUrl[2].replace(/\s+/g, "")}`;
+
+    const base64 = input.replace(/\s+/g, "");
+    const sample = Buffer.from(base64.slice(0, 256), "base64");
+    const mimeType = detectImageMimeFromBytes(sample) || fallbackMimeType;
+    return `data:${mimeType};base64,${base64}`;
 }
 
 export function usesJsonReferenceGeneration(baseUrl: string, model: string, referenceCount: number, hasMask: boolean) {

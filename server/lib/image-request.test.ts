@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 
-import { buildOpenAiImageRequestOptions, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./image-request";
+import { buildOpenAiImageRequestOptions, imageResponseDataUrl, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./image-request";
+
+const ONE_PIXEL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
 
 test("converts workbench ratio presets to OpenAI pixel dimensions", () => {
     expect(resolveOpenAiImageSize("1:1")).toBe("1024x1024");
@@ -64,6 +66,16 @@ test("reads common image response arrays", () => {
     expect(imageResponseItems({ results: [{ b64_json: "result" }] })).toEqual([{ b64_json: "result" }]);
     expect(imageResponseItems({ data: [], images: [{ url: "fallback" }] })).toEqual([{ url: "fallback" }]);
     expect(imageResponseItems({ data: "invalid" })).toEqual([]);
+});
+
+test("accepts a complete data URL returned in b64_json without wrapping it twice", () => {
+    const dataUrl = `data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`;
+
+    expect(imageResponseDataUrl(dataUrl, "image/jpeg")).toBe(dataUrl);
+});
+
+test("wraps a raw base64 image response with its detected MIME type", () => {
+    expect(imageResponseDataUrl(ONE_PIXEL_PNG_BASE64, "image/jpeg")).toBe(`data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`);
 });
 
 test("uses JSON reference generation only for compatible Seedream requests", () => {
