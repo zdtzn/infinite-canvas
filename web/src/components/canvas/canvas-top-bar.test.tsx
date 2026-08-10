@@ -55,6 +55,6 @@ test("canvas header exposes direct home and canvas-list navigation", async () =>
     expect(html).toContain('aria-label="返回洞天列表"');
     expect(html).toContain(">洞天</span>");
     expect(html).toContain('aria-label="返回首页"');
-    expect(html).toContain('data-menu-labels="文档|新建画布|删除当前画布|导入资产|导出当前画布"');
+    expect(html).toContain('data-menu-labels="文档|新建画布|删除当前画布|导入素材|导出当前画布"');
     expect(html).not.toContain('data-menu-labels="返回首页');
 });

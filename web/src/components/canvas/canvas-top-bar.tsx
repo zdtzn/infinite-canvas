@@ -72,8 +72,8 @@ export function CanvasTopBar({
 
     return (
         <>
-            <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between pl-1 pr-4">
-                <div className="pointer-events-auto flex min-w-0 items-center gap-2">
+            <div className="pointer-events-none absolute left-0 right-0 top-0 z-[70] flex h-16 items-center justify-between gap-2 px-3 sm:px-4">
+                <div className="canvas-liquid-glass canvas-liquid-glass-surface canvas-animate-blur-fade-up pointer-events-auto flex min-w-0 max-w-[58%] items-center gap-1 rounded-xl px-1.5 py-1 sm:gap-2" style={{ animationDelay: "0ms" }}>
                     <Tooltip title={sidePanelOpen ? "收起面板" : "展开面板"}>
                         <button
                             type="button"
@@ -86,7 +86,13 @@ export function CanvasTopBar({
                         </button>
                     </Tooltip>
                     <Tooltip title="返回洞天列表">
-                        <button type="button" onClick={onProjects} className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="返回洞天列表">
+                        <button
+                            type="button"
+                            onClick={onProjects}
+                            className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10"
+                            style={{ color: theme.node.text }}
+                            aria-label="返回洞天列表"
+                        >
                             <ArrowLeft className="size-4" />
                             <span className="hidden sm:inline">洞天</span>
                         </button>
@@ -105,7 +111,7 @@ export function CanvasTopBar({
                                 { key: "new", icon: <Plus className="size-4" />, label: "新建画布", onClick: onCreateProject },
                                 { key: "delete", danger: true, icon: <Trash2 className="size-4" />, label: "删除当前画布", onClick: onDeleteProject },
                                 { type: "divider" },
-                                { key: "import", icon: <Upload className="size-4" />, label: "导入资产", onClick: onImportImage },
+                                { key: "import", icon: <Upload className="size-4" />, label: "导入素材", onClick: onImportImage },
                                 { key: "export", icon: <Download className="size-4" />, label: "导出当前画布", onClick: onExportProject },
                                 { type: "divider" },
                                 { key: "undo", disabled: !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text="撤销" shortcut="⌘ Z" />, onClick: onUndo },
@@ -118,7 +124,7 @@ export function CanvasTopBar({
                         </button>
                     </Dropdown>
 
-                    <div ref={titleRef} className="flex min-w-0 items-center gap-2">
+                    <div ref={titleRef} className="hidden min-w-0 items-center gap-2 md:flex">
                         {isTitleEditing ? (
                             <input
                                 autoFocus
@@ -143,21 +149,19 @@ export function CanvasTopBar({
                             </button>
                         )}
                     </div>
-                    <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
+                    <div className="hidden xl:block">
+                        <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
+                    </div>
                 </div>
 
-                <div className="pointer-events-auto flex items-center gap-1.5">
-                    <CultivationStatusPill />
+                <div className="canvas-liquid-glass canvas-liquid-glass-surface canvas-animate-blur-fade-up pointer-events-auto flex shrink-0 items-center gap-1 rounded-xl px-1.5 py-1 sm:gap-1.5" style={{ animationDelay: "120ms" }}>
+                    <div className="hidden xl:block">
+                        <CultivationStatusPill />
+                    </div>
                     <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
-                    <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
-                    <Button
-                        type="text"
-                        className="!h-10 !rounded-xl !px-3 !font-medium"
-                        style={{ background: agentOpen ? theme.toolbar.activeBg : theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}
-                        icon={<Bot className="size-4" />}
-                        onClick={onToggleAgent}
-                    >
-                        Agent
+                    <span className="hidden h-6 w-px sm:block" style={{ background: theme.toolbar.border }} />
+                    <Button type="text" className="!h-10 !rounded-lg !px-2 !font-medium sm:!px-3" style={{ background: agentOpen ? theme.toolbar.activeBg : "transparent", color: theme.node.text }} icon={<Bot className="size-4" />} onClick={onToggleAgent}>
+                        <span className="hidden sm:inline">Agent</span>
                     </Button>
                 </div>
             </div>

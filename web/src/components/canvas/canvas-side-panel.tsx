@@ -14,12 +14,7 @@ import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
-import {
-    CANVAS_SIDE_PANEL_MAX_WIDTH,
-    CANVAS_SIDE_PANEL_MIN_WIDTH,
-    CANVAS_SIDE_PANEL_MOTION_MS,
-    useCanvasSidePanelStore,
-} from "@/stores/use-canvas-side-panel-store";
+import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -89,7 +84,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
 
     return (
         <motion.div
-            className="relative z-[60] flex h-full shrink-0"
+            className="absolute inset-y-0 left-0 z-[60] flex h-full shrink-0 md:relative"
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: panelOpen ? width + 1 : 0, opacity: panelOpen ? 1 : 0 }}
             transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: PANEL_EASE }}
@@ -105,7 +100,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
             >
                 <div className="flex items-center gap-5 px-4 pt-3.5">
                     <TabButton label="画布" active={tab === "canvas"} theme={theme} onClick={() => setTab("canvas")} />
-                    <TabButton label="资产" active={tab === "assets"} theme={theme} onClick={() => setTab("assets")} />
+                    <TabButton label="藏卷阁" active={tab === "assets"} theme={theme} onClick={() => setTab("assets")} />
                     <TabButton label="提示词" active={tab === "prompts"} theme={theme} onClick={() => setTab("prompts")} />
                 </div>
                 <div className="mt-2 min-h-0 flex-1 overflow-hidden">
@@ -236,7 +231,13 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, th
                                         {node.metadata?.status && node.metadata.status !== "idle" ? <span className="size-1.5 shrink-0 rounded-full" style={{ background: STATUS_COLOR[node.metadata.status] || "transparent" }} /> : null}
                                     </button>
                                     {selectMode || !isImage ? null : (
-                                        <button type="button" onClick={() => onPreviewNode(node.id)} className="mr-1.5 grid size-7 shrink-0 place-items-center rounded-md opacity-55 transition hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10" aria-label="放大预览" title="放大预览">
+                                        <button
+                                            type="button"
+                                            onClick={() => onPreviewNode(node.id)}
+                                            className="mr-1.5 grid size-7 shrink-0 place-items-center rounded-md opacity-55 transition hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+                                            aria-label="放大预览"
+                                            title="放大预览"
+                                        >
                                             <Eye className="size-3.5" />
                                         </button>
                                     )}
@@ -279,7 +280,7 @@ function CheckMark({ checked, theme }: { checked: boolean; theme: CanvasTheme })
 }
 
 // ---------------------------------------------------------------------------
-// 资产 Tab —— 按类型折叠分组 + 标签筛选,点击插入画布
+// 藏卷阁 Tab —— 按类型折叠分组 + 标签筛选,点击插入画布
 // ---------------------------------------------------------------------------
 
 const ASSET_GROUPS: { kind: AssetKind; label: string; icon: typeof Square }[] = [
@@ -318,7 +319,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
         const files = Array.from(fileList || []);
         if (!files.length) return;
         setUploading(true);
-        const hide = message.loading("正在添加资产…", 0);
+        const hide = message.loading("正在加入藏卷阁…", 0);
         let added = 0;
         try {
             for (const file of files) {
@@ -332,7 +333,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                     added += 1;
                 }
             }
-            if (added) message.success(`已添加 ${added} 个资产`);
+            if (added) message.success(`已加入藏卷阁，共 ${added} 项`);
             else message.warning("仅支持图片或视频文件");
         } catch (error) {
             console.error(error);
@@ -347,7 +348,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
     return (
         <div className="flex h-full flex-col">
             <div className="flex items-center gap-2 px-3 pb-2 pt-1">
-                <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索资产" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+                <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索藏卷阁" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
                 <button
                     type="button"
                     disabled={uploading}
@@ -379,7 +380,11 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                             const isCollapsed = collapsed[group.kind];
                             return (
                                 <div key={group.kind}>
-                                    <button type="button" onClick={() => setCollapsed((prev) => ({ ...prev, [group.kind]: !prev[group.kind] }))} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold opacity-75 transition hover:opacity-100">
+                                    <button
+                                        type="button"
+                                        onClick={() => setCollapsed((prev) => ({ ...prev, [group.kind]: !prev[group.kind] }))}
+                                        className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold opacity-75 transition hover:opacity-100"
+                                    >
                                         <ChevronRight className={cn("size-3.5 transition-transform", !isCollapsed && "rotate-90")} />
                                         <group.icon className="size-3.5" />
                                         <span>{group.label}</span>
@@ -388,7 +393,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                                     {isCollapsed ? null : (
                                         <div className="grid grid-cols-2 gap-2 px-1 pb-2 pt-1">
                                             {group.items.map((asset) => (
-                                                <AssetCard key={asset.id} asset={asset} theme={theme} onInsert={() => onInsert(buildInsertPayload(asset))} onRemove={() => (removeAsset(asset.id), message.success("资产已移除"))} />
+                                                <AssetCard key={asset.id} asset={asset} theme={theme} onInsert={() => onInsert(buildInsertPayload(asset))} onRemove={() => (removeAsset(asset.id), message.success("已从藏卷阁移除"))} />
                                             ))}
                                         </div>
                                     )}
@@ -397,7 +402,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                         })}
                     </div>
                 ) : (
-                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无资产" className="pt-16" />
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="藏卷阁暂无内容" className="pt-16" />
                 )}
             </div>
         </div>
@@ -417,11 +422,11 @@ function AssetCard({ asset, theme, onInsert, onRemove }: { asset: Asset; theme: 
                 >
                     <Plus className="size-4" />
                 </button>
-                <Popconfirm title="移除该资产?" okText="移除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={onRemove}>
+                <Popconfirm title="从藏卷阁移除该内容?" okText="移除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={onRemove}>
                     <button
                         type="button"
                         className="grid size-8 place-items-center rounded-full bg-white/90 text-stone-700 shadow-sm backdrop-blur transition hover:bg-white hover:text-red-500 dark:bg-black/60 dark:text-stone-100 dark:hover:bg-black/80 dark:hover:text-red-400"
-                        aria-label="移除资产"
+                        aria-label="从藏卷阁移除"
                     >
                         <Trash2 className="size-4" />
                     </button>
@@ -545,13 +550,7 @@ function PromptSourceGroup({
                     ) : filtered.length ? (
                         <div className="space-y-1.5">
                             {filtered.map((item) => (
-                                <PromptRow
-                                    key={item.id}
-                                    item={item}
-                                    theme={theme}
-                                    onInsert={() => onInsert({ kind: "text", content: item.prompt, title: item.title })}
-                                    onView={() => onView(item)}
-                                />
+                                <PromptRow key={item.id} item={item} theme={theme} onInsert={() => onInsert({ kind: "text", content: item.prompt, title: item.title })} onView={() => onView(item)} />
                             ))}
                         </div>
                     ) : (

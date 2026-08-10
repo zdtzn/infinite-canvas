@@ -9,6 +9,7 @@ type InfiniteCanvasProps = {
     containerRef: React.RefObject<HTMLDivElement | null>;
     viewport: ViewportTransform;
     backgroundMode?: CanvasBackgroundMode;
+    transparentBackground?: boolean;
     onViewportChange: (viewport: ViewportTransform) => void;
     onCanvasMouseDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
     onCanvasDeselect?: () => void;
@@ -18,7 +19,7 @@ type InfiniteCanvasProps = {
     children: React.ReactNode;
 };
 
-export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines", transparentBackground = false, onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const panState = useRef({
         isPanning: false,
@@ -129,7 +130,6 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
             document.body.style.cursor = "grabbing";
             return;
         }
-
     };
 
     const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -199,8 +199,8 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
     return (
         <div
             ref={containerRef}
-            className="relative h-full w-full cursor-grab select-none overflow-hidden"
-            style={{ background: theme.canvas.background, cursor: isPanning ? "grabbing" : undefined }}
+            className="relative z-10 h-full w-full cursor-grab select-none overflow-hidden"
+            style={{ background: transparentBackground ? "transparent" : theme.canvas.background, cursor: isPanning ? "grabbing" : undefined }}
             onPointerDown={handlePointerDown}
             onDoubleClick={handleDoubleClick}
             onWheel={handleWheel}
@@ -208,7 +208,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
             onDragOver={(event) => event.preventDefault()}
             onDrop={onDrop}
         >
-            <CanvasGrid viewport={viewport} mode={backgroundMode} />
+            <CanvasGrid viewport={viewport} mode={backgroundMode} emphasized={transparentBackground} />
             <div
                 className="absolute origin-top-left"
                 style={{
@@ -221,7 +221,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
     );
 }
 
-function CanvasGrid({ viewport, mode }: { viewport: ViewportTransform; mode: CanvasBackgroundMode }) {
+function CanvasGrid({ viewport, mode, emphasized }: { viewport: ViewportTransform; mode: CanvasBackgroundMode; emphasized: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     if (mode === "blank") return null;
 
@@ -234,11 +234,12 @@ function CanvasGrid({ viewport, mode }: { viewport: ViewportTransform; mode: Can
 
     return (
         <div
-            className="pointer-events-none absolute inset-0 opacity-40"
+            className="pointer-events-none absolute inset-0"
             style={{
                 backgroundImage,
                 backgroundSize: `${gridSize}px ${gridSize}px`,
                 backgroundPosition: `${x}px ${y}px`,
+                opacity: emphasized ? 0.58 : 0.4,
             }}
         />
     );
