@@ -5,8 +5,8 @@ import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
-import { assetCardImageUrl, assetOriginalImageUrl } from "@/lib/asset-image";
-import { uploadImage } from "@/services/image-storage";
+import { assetCardImageUrl, assetGridImageLoading, assetNeedsThumbnail, assetOriginalImageUrl } from "@/lib/asset-image";
+import { createThumbnailFromImageElement, deleteStoredImages, fitImageWithinEdge, uploadImage } from "@/services/image-storage";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
@@ -31,6 +31,37 @@ const kindOptions = [
 ];
 
 const kindLabels: Record<string, string> = { image: "图片", video: "视频", text: "文本" };
+
+const assetThumbnailBackfills = new Set<string>();
+
+async function backfillAssetThumbnail(asset: Asset, image: HTMLImageElement) {
+    if (asset.kind !== "image" || !assetNeedsThumbnail(asset) || !asset.data.storageKey) return;
+    const originalStorageKey = asset.data.storageKey;
+    const backfillKey = `${asset.id}:${originalStorageKey}`;
+    if (assetThumbnailBackfills.has(backfillKey)) return;
+    assetThumbnailBackfills.add(backfillKey);
+
+    try {
+        const thumbnail = await createThumbnailFromImageElement(image, 512);
+        if (!thumbnail) return;
+        const dimensions = fitImageWithinEdge(image.naturalWidth || image.width, image.naturalHeight || image.height, 512);
+        const current = useAssetStore.getState().assets.find((item) => item.id === asset.id);
+        if (!current || current.kind !== "image" || current.data.storageKey !== originalStorageKey || !assetNeedsThumbnail(current)) return;
+
+        const stored = await uploadImage(thumbnail, { createThumbnail: false, dimensions });
+        const latest = useAssetStore.getState().assets.find((item) => item.id === asset.id);
+        if (!latest || latest.kind !== "image" || latest.data.storageKey !== originalStorageKey || !assetNeedsThumbnail(latest)) {
+            await deleteStoredImages([stored.storageKey]);
+            return;
+        }
+        useAssetStore.getState().updateAsset(asset.id, {
+            coverUrl: stored.url,
+            data: { ...latest.data, thumbnailKey: stored.storageKey, thumbnailUrl: stored.url },
+        });
+    } catch {
+        // Thumbnail backfill is opportunistic; the original image remains usable.
+    }
+}
 
 /**
  * 藏卷阁 · 作品库(方案B「山海境」)
@@ -274,7 +305,7 @@ export default function AssetsPage() {
                 <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 pb-12">
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {visibleAssets.map((asset, index) => (
-                            <AssetScrollCard key={asset.id} asset={asset} priority={index === 0} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
+                            <AssetScrollCard key={asset.id} asset={asset} imageIndex={index} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                         ))}
                     </div>
 
@@ -451,8 +482,9 @@ export default function AssetsPage() {
 }
 
 /** 画轴卡片:封面 + hover 浮现操作层 + 落款条 */
-function AssetScrollCard({ asset, priority, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; priority: boolean; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
+function AssetScrollCard({ asset, imageIndex, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; imageIndex: number; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
     const cover = assetCardImageUrl(asset);
+    const imageLoading = assetGridImageLoading(imageIndex);
     const summary = assetSummary(asset);
     const actions: { key: string; label: string; icon: typeof Eye; run: () => void; danger?: boolean }[] = [
         { key: "open", label: "查看", icon: Eye, run: onOpen },
@@ -467,7 +499,15 @@ function AssetScrollCard({ asset, priority, onOpen, onEdit, onCopy, onDownload, 
             <div className="relative">
                 <button type="button" className="block w-full text-left" onClick={onOpen}>
                     {cover ? (
-                        <img src={cover} alt={asset.title} loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : "auto"} decoding="async" className="aspect-[4/3] w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+                        <img
+                            src={cover}
+                            alt={asset.title}
+                            loading={imageLoading.loading}
+                            fetchPriority={imageLoading.fetchPriority}
+                            decoding="async"
+                            className="aspect-[4/3] w-full object-cover transition duration-500 group-hover:scale-[1.03]"
+                            onLoad={(event) => void backfillAssetThumbnail(asset, event.currentTarget)}
+                        />
                     ) : (
                         <div className="flex aspect-[4/3] items-center justify-center bg-[#17171d] p-5 text-center text-sm leading-6 text-[#c9c4b9]">{asset.kind === "text" ? asset.data.content : "暂无封面"}</div>
                     )}

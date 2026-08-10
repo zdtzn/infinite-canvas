@@ -92,6 +92,30 @@ export function normalizeAssetLibraryItem(
   };
 }
 
+export function publicAssetLibraryPayload(
+  payload: Record<string, unknown>,
+  ownedAsset: (storageKey: string) => StoredAsset | undefined,
+  assetUrl: (storageKey: string, version?: number) => string,
+) {
+  if (payload.kind !== "image" || !payload.data || typeof payload.data !== "object" || Array.isArray(payload.data)) return payload;
+  const data = payload.data as Record<string, unknown>;
+  const storageKey = String(data.storageKey || "").trim();
+  const thumbnailKey = String(data.thumbnailKey || "").trim();
+  const original = storageKey ? ownedAsset(storageKey) : undefined;
+  const thumbnail = thumbnailKey ? ownedAsset(thumbnailKey) : undefined;
+  const dataUrl = original ? assetUrl(original.key, original.createdAt) : "";
+  const thumbnailUrl = thumbnail ? assetUrl(thumbnail.key, thumbnail.createdAt) : "";
+  return {
+    ...payload,
+    coverUrl: thumbnailUrl || dataUrl,
+    data: {
+      ...data,
+      dataUrl,
+      ...(thumbnailKey ? { thumbnailUrl } : {}),
+    },
+  };
+}
+
 function normalizeTags(input: unknown) {
   if (!Array.isArray(input)) return [];
   return Array.from(

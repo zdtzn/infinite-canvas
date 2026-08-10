@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem } from "./asset-library";
+import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./asset-library";
 import type { StoredAsset } from "../types";
 
 const image: StoredAsset = {
@@ -107,5 +107,38 @@ describe("asset library validation", () => {
       coverUrl: "https://example.com/cover.png",
       data: { content: "A useful prompt" },
     });
+  });
+
+  test("presents versioned original and thumbnail URLs without changing stored metadata", () => {
+    const payload = normalizeAssetLibraryItem(
+      {
+        id: "asset-one",
+        kind: "image",
+        title: "Example",
+        data: {
+          storageKey: image.key,
+          thumbnailKey: thumbnail.key,
+          width: 800,
+          height: 600,
+        },
+      },
+      "asset-one",
+      (key) => (key === image.key ? image : key === thumbnail.key ? thumbnail : undefined),
+    ).payload;
+
+    const presented = publicAssetLibraryPayload(
+      payload,
+      (key) => (key === image.key ? image : key === thumbnail.key ? thumbnail : undefined),
+      (key, version) => `/api/assets/${key}?v=${version}`,
+    );
+
+    expect(presented).toMatchObject({
+      coverUrl: "/api/assets/image:thumb:mine?v=2",
+      data: {
+        dataUrl: "/api/assets/image:mine?v=1",
+        thumbnailUrl: "/api/assets/image:thumb:mine?v=2",
+      },
+    });
+    expect(payload).toMatchObject({ coverUrl: "", data: { dataUrl: "" } });
   });
 });

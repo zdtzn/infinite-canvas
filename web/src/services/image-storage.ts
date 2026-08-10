@@ -312,6 +312,21 @@ async function createThumbnail(blob: Blob, width: number, height: number, reques
     return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
 }
 
+export async function createThumbnailFromImageElement(image: HTMLImageElement, requestedMaxEdge = 512) {
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    const maxEdge = Math.max(128, Math.min(1280, Math.round(requestedMaxEdge) || 512));
+    if (!validDimensions({ width, height }) || Math.max(width, height) <= maxEdge || typeof document === "undefined") return null;
+    const target = fitImageWithinEdge(width, height, maxEdge);
+    const canvas = document.createElement("canvas");
+    canvas.width = target.width;
+    canvas.height = target.height;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return null;
+    context.drawImage(image, 0, 0, target.width, target.height);
+    return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
+}
+
 export function fitImageWithinEdge(width: number, height: number, maxEdge: number) {
     const longest = Math.max(width, height);
     if (!Number.isFinite(longest) || longest <= 0 || !Number.isFinite(maxEdge) || maxEdge <= 0 || longest <= maxEdge) return { width, height };

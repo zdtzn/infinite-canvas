@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { canPromoteServerJobImage, collectImageStorageKeysFromHistory, convertImageOutput, fitImageWithinEdge, readImageBlob } from "./image-storage";
+import { canPromoteServerJobImage, collectImageStorageKeysFromHistory, convertImageOutput, createThumbnailFromImageElement, fitImageWithinEdge, readImageBlob } from "./image-storage";
 
 const originalFetch = globalThis.fetch;
 const originalCreateImageBitmap = globalThis.createImageBitmap;
@@ -65,6 +65,42 @@ test("keeps local images referenced by generation history during cleanup", () =>
 test("fits generation reference previews within a 1280 pixel edge", () => {
     expect(fitImageWithinEdge(2304, 4096, 1280)).toEqual({ width: 720, height: 1280 });
     expect(fitImageWithinEdge(800, 600, 1280)).toEqual({ width: 800, height: 600 });
+});
+
+test("creates an asset thumbnail from the image that the browser already loaded", async () => {
+    const source = { naturalWidth: 2000, naturalHeight: 1000 } as HTMLImageElement;
+    let canvasWidth = 0;
+    let canvasHeight = 0;
+    let drawnSource: CanvasImageSource | undefined;
+    globalThis.document = {
+        createElement: () => ({
+            get width() {
+                return canvasWidth;
+            },
+            set width(value: number) {
+                canvasWidth = value;
+            },
+            get height() {
+                return canvasHeight;
+            },
+            set height(value: number) {
+                canvasHeight = value;
+            },
+            getContext: () => ({
+                drawImage: (image: CanvasImageSource) => {
+                    drawnSource = image;
+                },
+            }),
+            toBlob: (callback: BlobCallback, type?: string) => callback(new Blob(["thumbnail"], { type })),
+        }),
+    } as unknown as Document;
+
+    const thumbnail = await createThumbnailFromImageElement(source, 512);
+
+    expect(canvasWidth).toBe(512);
+    expect(canvasHeight).toBe(256);
+    expect(drawnSource).toBe(source);
+    expect(thumbnail?.type).toBe("image/webp");
 });
 
 test("recognizes a PNG response when the upstream file uses a generic MIME type", async () => {

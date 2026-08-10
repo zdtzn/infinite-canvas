@@ -63,8 +63,8 @@ const assetStorage: PersistStorage<AssetStore> = {
                 if (asset.kind !== "image") return asset;
                 if (asset.data.storageKey) {
                     const [dataUrl, thumbnailUrl] = await Promise.all([
-                        resolveImageUrl(asset.data.storageKey, asset.data.dataUrl),
-                        resolveImageUrl(asset.data.thumbnailKey, asset.data.thumbnailUrl),
+                        asset.data.dataUrl && !asset.data.dataUrl.startsWith("blob:") ? asset.data.dataUrl : resolveImageUrl(asset.data.storageKey, asset.data.dataUrl),
+                        asset.data.thumbnailUrl && !asset.data.thumbnailUrl.startsWith("blob:") ? asset.data.thumbnailUrl : resolveImageUrl(asset.data.thumbnailKey, asset.data.thumbnailUrl),
                     ]);
                     return {
                         ...asset,
@@ -213,7 +213,7 @@ function enqueueAssetLibraryMutation(operation: () => Promise<unknown>) {
 async function hydrateServerAsset(asset: Asset): Promise<Asset> {
     asset = normalizeAssetRecord(asset);
     if (asset.kind === "image" && asset.data.storageKey) {
-        const [dataUrl, thumbnailUrl] = await Promise.all([resolveImageUrl(asset.data.storageKey), resolveImageUrl(asset.data.thumbnailKey)]);
+        const [dataUrl, thumbnailUrl] = await Promise.all([asset.data.dataUrl || resolveImageUrl(asset.data.storageKey), asset.data.thumbnailUrl || resolveImageUrl(asset.data.thumbnailKey)]);
         return { ...asset, coverUrl: thumbnailUrl || dataUrl, data: { ...asset.data, dataUrl, thumbnailUrl } };
     }
     if (asset.kind === "video" && asset.data.storageKey) {

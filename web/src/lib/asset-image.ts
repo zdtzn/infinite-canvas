@@ -6,7 +6,7 @@ type AssetImageView = {
 
 function imageData(asset: AssetImageView) {
     if (!asset.data || typeof asset.data !== "object") return undefined;
-    return asset.data as { dataUrl?: string; thumbnailUrl?: string };
+    return asset.data as { dataUrl?: string; storageKey?: string; thumbnailKey?: string; thumbnailUrl?: string };
 }
 
 export function assetCardImageUrl(asset: AssetImageView) {
@@ -19,4 +19,16 @@ export function assetOriginalImageUrl(asset: AssetImageView) {
     const data = imageData(asset);
     if (asset.kind === "image") return data?.dataUrl || asset.coverUrl || "";
     return asset.coverUrl || "";
+}
+
+export function assetGridImageLoading(index: number) {
+    return {
+        loading: index < 4 ? ("eager" as const) : ("lazy" as const),
+        fetchPriority: index === 0 ? ("high" as const) : ("auto" as const),
+    };
+}
+
+export function assetNeedsThumbnail(asset: AssetImageView) {
+    const data = imageData(asset);
+    return asset.kind === "image" && Boolean(data?.storageKey) && !data?.thumbnailKey;
 }

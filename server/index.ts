@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
-import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem } from "./lib/asset-library";
+import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./lib/asset-library";
 import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
 import { AsyncSemaphore } from "./lib/async-semaphore";
 import { canAccessUserAvatar } from "./lib/avatar-access";
@@ -1401,7 +1401,7 @@ function listLibraryAssets(session: SessionPayload) {
     const library = appDatabase.loadAssetLibrary(session.userId);
     return json({
         initialized: library.initialized,
-        items: library.items.map((item) => item.payload),
+        items: library.items.map((item) => publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl)),
     });
 }
 
@@ -1412,19 +1412,19 @@ async function replaceLibraryAssets(request: Request, session: SessionPayload) {
         if (current.initialized)
             return json({
                 initialized: true,
-                items: current.items.map((item) => item.payload),
+                items: current.items.map((item) => publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl)),
             });
     }
     const items = normalizeAssetLibrary(body.items, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
     appDatabase.replaceAssetLibrary(session.userId, items);
-    return json({ initialized: true, items: items.map((item) => item.payload) });
+    return json({ initialized: true, items: items.map((item) => publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl)) });
 }
 
 async function saveLibraryAsset(request: Request, session: SessionPayload, id: string) {
     const body = await readJson<{ item?: unknown }>(request);
     const item = normalizeAssetLibraryItem(body.item, id, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
     appDatabase.upsertAssetLibraryItem(session.userId, item);
-    return json({ item: item.payload });
+    return json({ item: publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl) });
 }
 
 function deleteLibraryAsset(session: SessionPayload, id: string) {
