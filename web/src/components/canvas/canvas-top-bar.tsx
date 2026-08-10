@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, BookOpen, Bot, Download, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
+import { ArrowLeft, BookOpen, Bot, Download, Home, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
 import { Button, Dropdown, Modal, Tooltip } from "antd";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
@@ -85,18 +85,21 @@ export function CanvasTopBar({
                             {sidePanelOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
                         </button>
                     </Tooltip>
-                    <Tooltip title="返回洞天">
-                        <button type="button" onClick={onProjects} className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="返回洞天">
+                    <Tooltip title="返回洞天列表">
+                        <button type="button" onClick={onProjects} className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="返回洞天列表">
                             <ArrowLeft className="size-4" />
                             <span className="hidden sm:inline">洞天</span>
+                        </button>
+                    </Tooltip>
+                    <Tooltip title="返回首页">
+                        <button type="button" onClick={onHome} className="grid size-8 place-items-center rounded-md transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="返回首页">
+                            <Home className="size-4" />
                         </button>
                     </Tooltip>
                     <Dropdown
                         trigger={["click"]}
                         menu={{
                             items: [
-                                { key: "home", icon: <Home className="size-4" />, label: "返回首页", onClick: onHome },
-                                { key: "projects", icon: <Images className="size-4" />, label: "洞天列表", onClick: onProjects },
                                 { key: "docs", icon: <BookOpen className="size-4" />, label: "文档", onClick: () => window.open(DOCS_URL, "_blank", "noopener,noreferrer") },
                                 { type: "divider" },
                                 { key: "new", icon: <Plus className="size-4" />, label: "新建画布", onClick: onCreateProject },

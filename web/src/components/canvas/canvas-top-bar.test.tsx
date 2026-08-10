@@ -24,7 +24,7 @@ mock.module("@/stores/use-theme-store", () => ({
     useThemeStore: (selector: (state: { theme: "dark" }) => unknown) => selector({ theme: "dark" }),
 }));
 
-test("canvas header exposes a direct return to the canvas list and keeps home in the menu", async () => {
+test("canvas header exposes direct home and canvas-list navigation", async () => {
     const { CanvasTopBar } = await import("./canvas-top-bar");
     const noop = () => undefined;
     const html = renderToStaticMarkup(
@@ -52,7 +52,9 @@ test("canvas header exposes a direct return to the canvas list and keeps home in
         />,
     );
 
-    expect(html).toContain('aria-label="返回洞天"');
+    expect(html).toContain('aria-label="返回洞天列表"');
     expect(html).toContain(">洞天</span>");
-    expect(html).toContain('data-menu-labels="返回首页|洞天列表|文档');
+    expect(html).toContain('aria-label="返回首页"');
+    expect(html).toContain('data-menu-labels="文档|新建画布|删除当前画布|导入资产|导出当前画布"');
+    expect(html).not.toContain('data-menu-labels="返回首页');
 });
