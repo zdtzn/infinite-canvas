@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
-import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, Trash2, Upload, Video } from "lucide-react";
+import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Palette, Pencil, Plus, RefreshCw, Settings2, Trash2, Upload, Video } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useColorAlchemyStore } from "@/features/color-alchemy/use-color-alchemy-store";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
 import type { CanvasNodeToolbarItem } from "@/types/canvas-plugin";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
@@ -79,6 +81,8 @@ export function CanvasNodeHoverToolbar({
     const [draftImageToolIds, setDraftImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
     const [draftShowImageToolLabels, setDraftShowImageToolLabels] = useState(false);
     const [imageToolSettingsOpen, setImageToolSettingsOpen] = useState(false);
+    const location = useLocation();
+    const navigate = useNavigate();
     const { message } = App.useApp();
     const copyText = useCopyText();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -127,6 +131,26 @@ export function CanvasNodeHoverToolbar({
         copyText(prompt, "提示词已复制");
     };
     const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onMaskEdit, onCrop, onSplit, onUpscale, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
+    const colorAlchemyTool: ToolbarTool = {
+        id: "colorAlchemy",
+        title: "发送至灵彩",
+        label: "灵彩",
+        icon: <Palette className="size-4" />,
+        onClick: () => {
+            const projectId = location.pathname.match(/^\/canvas\/([^/]+)/)?.[1];
+            useColorAlchemyStore.getState().openSource({
+                key: node.metadata?.storageKey || `canvas:${projectId || "current"}:${node.id}`,
+                title: node.title || "画布图片",
+                url: node.metadata?.content || "",
+                storageKey: node.metadata?.storageKey,
+                width: node.metadata?.naturalWidth,
+                height: node.metadata?.naturalHeight,
+                mimeType: node.metadata?.mimeType,
+                origin: { route: location.pathname, projectId, nodeId: node.id },
+            });
+            navigate("/color-alchemy");
+        },
+    };
 
     function openImageToolSettings() {
         onKeep(activeNode.id);
@@ -154,7 +178,7 @@ export function CanvasNodeHoverToolbar({
         ...(isAudio ? [{ id: "uploadAudio", title: hasAudio ? "替换音频" : "上传音频", label: hasAudio ? "替换音频" : "上传音频", icon: <Music2 className="size-4" />, onClick: () => onUpload(node) }] : []),
         ...(hasImage ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
     ];
-    const toolbarTools = hasImage ? [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId)) : [...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
+    const toolbarTools = hasImage ? [colorAlchemyTool, ...[...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId))] : [...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
     const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
 
     const closeImageToolSettings = () => {

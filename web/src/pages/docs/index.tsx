@@ -1,4 +1,26 @@
-import { Bot, BookOpen, CheckCircle2, ChevronRight, CircleHelp, ExternalLink, FileText, ImagePlus, Images, ListChecks, Maximize2, PackageSearch, Search, Settings2, ShieldCheck, Sparkles, TrendingUp, Video, X, type LucideIcon } from "lucide-react";
+import {
+    Bot,
+    BookOpen,
+    CheckCircle2,
+    ChevronRight,
+    CircleHelp,
+    ExternalLink,
+    FileText,
+    ImagePlus,
+    Images,
+    ListChecks,
+    Maximize2,
+    PackageSearch,
+    Palette,
+    Search,
+    Settings2,
+    ShieldCheck,
+    Sparkles,
+    TrendingUp,
+    Video,
+    X,
+    type LucideIcon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -10,6 +32,7 @@ import { guideSections, searchGuideSections } from "./content";
 const sectionIcons: Record<string, LucideIcon> = {
     "getting-started": Sparkles,
     canvas: Maximize2,
+    "color-alchemy": Palette,
     "image-workbench": ImagePlus,
     "product-lab": PackageSearch,
     "video-workbench": Video,
@@ -73,6 +96,9 @@ export default function DocsPage() {
                         </Link>
                         <Link to="/canvas" className="inline-flex items-center gap-1.5 font-medium !text-stone-700 transition hover:!text-[#b44735] dark:!text-stone-300 dark:hover:!text-[#d8b36d]">
                             打开画布 <ChevronRight className="size-3.5" />
+                        </Link>
+                        <Link to="/color-alchemy" className="inline-flex items-center gap-1.5 font-medium !text-stone-700 transition hover:!text-[#b44735] dark:!text-stone-300 dark:hover:!text-[#d8b36d]">
+                            进入灵彩 <ChevronRight className="size-3.5" />
                         </Link>
                         <Link to="/product-lab" className="inline-flex items-center gap-1.5 font-medium !text-stone-700 transition hover:!text-[#b44735] dark:!text-stone-300 dark:hover:!text-[#d8b36d]">
                             制作商品图 <ChevronRight className="size-3.5" />

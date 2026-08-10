@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useRef } from "react";
 
 import { prepareImageGenerationRuntimeForUser } from "@/services/image-generation-runtime";
+import { prepareColorAlchemyForUser } from "@/features/color-alchemy/use-color-alchemy-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { prepareAgentForUser } from "@/stores/use-agent-store";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -27,6 +28,7 @@ export function AccountSessionController() {
         }
 
         prepareImageGenerationRuntimeForUser(userId);
+        prepareColorAlchemyForUser(userId);
         useCanvasStore.getState().prepareForUser(userId);
         useAssetStore.getState().prepareForUser(userId);
         prepareAgentForUser(userId);

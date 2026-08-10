@@ -1,13 +1,15 @@
 import { ArrowRight } from "lucide-react";
-import { useEffect, useState } from "react";
-import { App, Image, Tag } from "antd";
+import { useEffect, useMemo, useState } from "react";
+import { App, Image } from "antd";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, type Variants } from "motion/react";
 
+import { DriftWall } from "@/components/home/drift-wall";
+import { SideRays } from "@/components/home/side-rays";
 import { useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationStageLabel, quotaText } from "@/features/cultivation/utils";
-import { promptImageCandidates, promptOriginalUrl, promptServerThumbnailUrl, PromptCover } from "@/components/prompts/prompt-cover";
+import { promptImageCandidates, promptOriginalUrl, promptServerThumbnailUrl } from "@/components/prompts/prompt-cover";
 import { SpecularButton } from "@/components/ui/specular-button";
 import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
 import { cn } from "@/lib/utils";
@@ -61,6 +63,16 @@ export default function IndexPage() {
     const [previewOpen, setPreviewOpen] = useState(false);
     const { data: cultivation } = useCultivationProfile();
     const { isImperialMode } = useImperialMode();
+    const driftWallItems = useMemo(
+        () =>
+            promptShowcase.map((item, originalIndex) => ({
+                id: item.id,
+                title: item.title,
+                imageSources: promptImageCandidates(item.coverUrl, 760),
+                originalIndex,
+            })),
+        [promptShowcase],
+    );
 
     useEffect(() => {
         void fetchSourcePrompts(HOMEPAGE_PROMPT_SOURCE_ID)
@@ -74,6 +86,17 @@ export default function IndexPage() {
             <motion.section className={cn("shj-hero relative flex min-h-[calc(100dvh-3.5rem)] flex-col items-center justify-center overflow-hidden", isImperialMode && "shj-hero--imperial")} initial="hidden" animate="show" variants={heroStagger}>
                 <div className="shj-hero-stars" aria-hidden />
                 <div className="shj-hero-mist" aria-hidden />
+                <SideRays
+                    speed={0.88}
+                    rayColor1="#e3c77d"
+                    rayColor2="#9db8cb"
+                    intensity={isImperialMode ? 1.08 : 0.95}
+                    spread={1.14}
+                    origin="top-right"
+                    tilt={-4}
+                    opacity={isImperialMode ? 0.82 : 0.62}
+                    className={isImperialMode ? "is-imperial" : undefined}
+                />
                 <div className="shj-hero-motes" aria-hidden />
                 <div className="shj-grain" aria-hidden />
 
@@ -169,33 +192,20 @@ export default function IndexPage() {
                 </div>
                 <hr className="shj-gold-hairline mb-10" />
 
-                <div className="columns-1 gap-4 sm:columns-2 lg:columns-3 xl:columns-4">
-                    {promptShowcase.map((item, index) => (
-                        <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => {
-                                setPreviewIndex(index);
+                <div className="h-[480px] sm:h-[570px] lg:h-[650px]">
+                    {driftWallItems.length > 0 ? (
+                        <DriftWall
+                            items={driftWallItems}
+                            onItemClick={(_, originalIndex) => {
+                                setPreviewIndex(originalIndex);
                                 setPreviewOpen(true);
                             }}
-                            className="shj-panel group mb-4 inline-block w-full break-inside-avoid cursor-pointer overflow-hidden text-left align-top"
-                        >
-                            <div className="overflow-hidden bg-[#0f0f14]">
-                                <PromptCover sources={promptImageCandidates(item.coverUrl)} alt={item.title} className="block h-auto min-h-44 w-full object-contain transition duration-500 group-hover:scale-[1.015]" />
-                            </div>
-                            <div className="p-4">
-                                <div className="mb-3 flex flex-wrap gap-1.5">
-                                    {item.tags.slice(0, 2).map((tag) => (
-                                        <Tag key={tag} variant="filled" className="m-0 border border-white/10 bg-white/5 text-[11px] text-[#b7b7c0]">
-                                            {tag}
-                                        </Tag>
-                                    ))}
-                                </div>
-                                <h3 className="font-display text-sm text-[#edede6]">{item.title}</h3>
-                                <p className="mt-2 line-clamp-2 text-xs leading-5 text-[#8a8a96]">{item.prompt}</p>
-                            </div>
-                        </button>
-                    ))}
+                        />
+                    ) : (
+                        <div className="flex h-full items-center justify-center text-sm tracking-[0.12em] text-[#777783]" role="status">
+                            正在展开功法画卷...
+                        </div>
+                    )}
                 </div>
             </section>
 

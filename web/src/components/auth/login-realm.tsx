@@ -56,12 +56,13 @@ export function LoginRealmBackground({ children }: { children: ReactNode }) {
     return (
         <main className="login-realm relative min-h-dvh overflow-x-hidden overflow-y-auto bg-[#090b10] text-[#edede6]">
             <img
-                src="/images/ref/misty-dawn.webp"
+                src="/images/ref/login-moon-realm.webp"
                 alt=""
                 aria-hidden="true"
-                width={1280}
-                height={720}
+                width={2048}
+                height={2048}
                 loading="eager"
+                decoding="async"
                 fetchPriority="high"
                 className="login-realm-background-image absolute inset-0 h-full min-h-dvh w-full object-cover"
             />

@@ -6,12 +6,19 @@ import { navigationSceneNames, navigationTools, primaryNavigationTools, secondar
 test("keeps the core creation workspaces available in the primary navigation", () => {
     assert.deepEqual(
         primaryNavigationTools.map((tool) => tool.slug),
-        ["canvas", "image", "product-lab", "assets"],
+        ["canvas", "image", "product-lab", "assets", "color-alchemy"],
     );
 });
 
 test("keeps secondary navigation separate from the core work routes", () => {
-    assert.ok(secondaryNavigationTools.every((tool) => !["canvas", "image", "product-lab", "assets"].includes(tool.slug)));
+    assert.ok(secondaryNavigationTools.every((tool) => !["canvas", "image", "product-lab", "assets", "color-alchemy"].includes(tool.slug)));
+});
+
+test("exposes Color Alchemy as an independent primary workspace", () => {
+    const colorAlchemy = navigationTools.find((tool) => tool.slug === "color-alchemy");
+    assert.ok(colorAlchemy);
+    assert.equal(colorAlchemy.label, "灵彩调色");
+    assert.equal((navigationSceneNames as Record<string, string>)["color-alchemy"], "灵彩");
 });
 
 test("keeps the original Dong Fu page as the standalone configuration entry", () => {

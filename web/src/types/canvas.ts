@@ -1,3 +1,5 @@
+import type { ColorSettings } from "@/features/color-alchemy/types";
+
 export type Position = {
     x: number;
     y: number;
@@ -67,6 +69,8 @@ export type CanvasNodeMetadata = {
     mimeType?: string;
     bytes?: number;
     durationMs?: number;
+    colorSettings?: ColorSettings;
+    colorAlchemySourceKey?: string;
     groupId?: string;
     interactive?: boolean; // 插件节点「交互 ⇄ 移动」开关状态(见 CanvasNodeDefinition.interactionToggle)
 };

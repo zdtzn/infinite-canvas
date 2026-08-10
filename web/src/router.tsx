@@ -9,6 +9,7 @@ import RouteErrorPage from "@/pages/route-error";
 const AssetsPage = lazyRoute(() => import("@/pages/assets"));
 const CanvasPage = lazyRoute(() => import("@/pages/canvas"));
 const CanvasProjectPage = lazyRoute(() => import("@/pages/canvas/project"));
+const ColorAlchemyPage = lazyRoute(() => import("@/pages/color-alchemy"));
 const ConfigPage = lazyRoute(() => import("@/pages/config"));
 const CultivationPage = lazyRoute(() => import("@/pages/cultivation"));
 const DocsPage = lazyRoute(() => import("@/pages/docs"));
@@ -44,6 +45,14 @@ export const router = createBrowserRouter([
                 element: (
                     <RoutePage>
                         <HomePage />
+                    </RoutePage>
+                ),
+            },
+            {
+                path: "/color-alchemy",
+                element: (
+                    <RoutePage>
+                        <ColorAlchemyPage />
                     </RoutePage>
                 ),
             },

@@ -726,83 +726,95 @@ export default function ImagePage() {
                         </div>
                     </div>
 
-                    <section className="thin-scrollbar min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:h-full lg:p-5">
-                        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="flex min-w-0 items-center gap-2">
-                                <h2 className="text-xl font-semibold">{resultView === "results" ? "生成结果" : "太古遗迹"}</h2>
-                                {resultView === "results" && previewLog ? <Tag className="m-0">遗迹预览</Tag> : null}
-                                {resultView === "history" ? <Tag className="m-0">{logs.length}</Tag> : null}
-                                {running ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
-                            </div>
-                            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 sm:justify-end">
-                                {resultView === "results" && previewLog ? (
-                                    <Button size="small" type="text" icon={<ArrowLeft className="size-3.5" />} onClick={() => setPreviewLog(null)}>
-                                        返回本次
-                                    </Button>
-                                ) : null}
-                                {resultView === "history" ? (
-                                    <Button
-                                        size="small"
-                                        type="text"
-                                        icon={<ArrowLeft className="size-3.5" />}
-                                        onClick={() => {
-                                            setPreviewLog(null);
-                                            setResultView("results");
-                                        }}
-                                    >
-                                        返回生成结果
-                                    </Button>
-                                ) : (
-                                    <Button size="small" icon={<Archive className="size-3.5" />} onClick={() => setResultView("history")}>
-                                        太古遗迹
-                                    </Button>
-                                )}
-                                <Tooltip title="开始新作">
-                                    <Button aria-label="开始新作" size="small" type="text" icon={<Plus className="size-4" />} onClick={createSession} />
-                                </Tooltip>
-                            </div>
-                        </div>
-                        {resultView === "history" ? (
-                            <LogPanel
-                                logs={logs}
-                                selectedLogIds={selectedLogIds}
-                                activeLogId={previewLog?.id}
-                                onSelectedLogIdsChange={setSelectedLogIds}
-                                onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                                onPreviewLog={previewGenerationLog}
-                                onContinueLog={continueFromGenerationLog}
-                            />
-                        ) : results.length ? (
-                            <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
-                                {results.map((result, index) =>
-                                    result.status === "success" && result.image ? (
-                                        <ResultImageCard
-                                            key={result.id}
-                                            image={result.image}
-                                            index={index}
-                                            savingAsset={savingAssetIds.includes(result.image.id)}
-                                            onEdit={addResultToReferences}
-                                            onDownload={downloadImage}
-                                            onSaveAsset={saveResultToAssets}
-                                        />
-                                    ) : result.status === "failed" ? (
-                                        <FailedImageCard key={result.id} id={result.id} error={result.error} isDouEmperor={isDouEmperor} onRetry={() => retryResult(index)} />
+                    <section className="relative min-h-0 overflow-hidden rounded-lg border border-stone-200 bg-card shadow-sm dark:border-stone-800 lg:h-full">
+                        <div className="thin-scrollbar relative min-h-0 overflow-y-auto p-4 lg:h-full lg:p-5">
+                            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="flex min-w-0 items-center gap-2">
+                                    <h2 className="text-xl font-semibold">{resultView === "results" ? "生成结果" : "太古遗迹"}</h2>
+                                    {resultView === "results" && previewLog ? <Tag className="m-0">遗迹预览</Tag> : null}
+                                    {resultView === "history" ? <Tag className="m-0">{logs.length}</Tag> : null}
+                                    {running ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
+                                </div>
+                                <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 sm:justify-end">
+                                    {resultView === "results" && previewLog ? (
+                                        <Button size="small" type="text" icon={<ArrowLeft className="size-3.5" />} onClick={() => setPreviewLog(null)}>
+                                            返回本次
+                                        </Button>
+                                    ) : null}
+                                    {resultView === "history" ? (
+                                        <Button
+                                            size="small"
+                                            type="text"
+                                            icon={<ArrowLeft className="size-3.5" />}
+                                            onClick={() => {
+                                                setPreviewLog(null);
+                                                setResultView("results");
+                                            }}
+                                        >
+                                            返回生成结果
+                                        </Button>
                                     ) : (
-                                        <PendingImageCard key={result.id} />
-                                    ),
-                                )}
-                            </div>
-                        ) : (
-                            <div className="flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[calc(100%_-_3rem)]">
-                                <div className="empty-state !p-8">
-                                    <span className="empty-state-icon">
-                                        <ImagePlus className="size-5" />
-                                    </span>
-                                    <span className="empty-state-title">{running ? "正在准备生成结果" : "万象未生"}</span>
-                                    <span className="empty-state-desc">{running ? "结果生成后会保留在这里" : "暂无生成结果，从左侧提示词落下第一笔。"}</span>
+                                        <Button size="small" icon={<Archive className="size-3.5" />} onClick={() => setResultView("history")}>
+                                            太古遗迹
+                                        </Button>
+                                    )}
+                                    <Tooltip title="开始新作">
+                                        <Button aria-label="开始新作" size="small" type="text" icon={<Plus className="size-4" />} onClick={createSession} />
+                                    </Tooltip>
                                 </div>
                             </div>
-                        )}
+                            {resultView === "history" ? (
+                                <LogPanel
+                                    logs={logs}
+                                    selectedLogIds={selectedLogIds}
+                                    activeLogId={previewLog?.id}
+                                    onSelectedLogIdsChange={setSelectedLogIds}
+                                    onDeleteSelected={() => setDeleteConfirmOpen(true)}
+                                    onPreviewLog={previewGenerationLog}
+                                    onContinueLog={continueFromGenerationLog}
+                                />
+                            ) : results.length ? (
+                                <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                                    {results.map((result, index) =>
+                                        result.status === "success" && result.image ? (
+                                            <ResultImageCard
+                                                key={result.id}
+                                                image={result.image}
+                                                index={index}
+                                                savingAsset={savingAssetIds.includes(result.image.id)}
+                                                onEdit={addResultToReferences}
+                                                onDownload={downloadImage}
+                                                onSaveAsset={saveResultToAssets}
+                                            />
+                                        ) : result.status === "failed" ? (
+                                            <FailedImageCard key={result.id} id={result.id} error={result.error} isDouEmperor={isDouEmperor} onRetry={() => retryResult(index)} />
+                                        ) : (
+                                            <PendingImageCard key={result.id} />
+                                        ),
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="relative flex min-h-56 flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-white/20 bg-[#080912] text-center lg:min-h-[calc(100%_-_3rem)] [&_.empty-state-desc]:!text-[#d7d3ca] [&_.empty-state-title]:!text-white">
+                                    <img
+                                        src="/images/ref/danqing-results-cosmos.webp"
+                                        alt=""
+                                        aria-hidden="true"
+                                        className="pointer-events-none absolute inset-0 size-full object-cover object-center opacity-90"
+                                        loading="eager"
+                                        decoding="async"
+                                        fetchPriority="high"
+                                    />
+                                    <div className="pointer-events-none absolute inset-0 bg-[#080912]/30" aria-hidden="true" />
+                                    <div className="empty-state relative z-10 !p-8 [text-shadow:0_2px_14px_rgba(0,0,0,0.95)]">
+                                        <span className="empty-state-icon">
+                                            <ImagePlus className="size-5" />
+                                        </span>
+                                        <span className="empty-state-title">{running ? "正在准备生成结果" : "万象未生"}</span>
+                                        <span className="empty-state-desc">{running ? "结果生成后会保留在这里" : "暂无生成结果，从左侧提示词落下第一笔。"}</span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </section>
                 </section>
             </main>
