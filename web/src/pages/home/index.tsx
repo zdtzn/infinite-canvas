@@ -8,6 +8,7 @@ import { useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationStageLabel, quotaText } from "@/features/cultivation/utils";
 import { promptImageCandidates, promptOriginalUrl, promptServerThumbnailUrl, PromptCover } from "@/components/prompts/prompt-cover";
+import { SpecularButton } from "@/components/ui/specular-button";
 import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
 import { cn } from "@/lib/utils";
 
@@ -105,14 +106,25 @@ export default function IndexPage() {
                     ) : null}
 
                     <motion.div variants={heroRise} className="mt-14 flex flex-wrap items-center justify-center gap-4">
-                        <button
-                            type="button"
+                        <SpecularButton
                             onClick={() => navigate("/canvas?mode=new")}
-                            className="shj-cta-glow group inline-flex items-center gap-3 rounded-md bg-[#d8402a] px-10 py-4 text-base font-medium tracking-[0.2em] text-[#fff7ee] transition-colors duration-300 hover:bg-[#ee5038]"
+                            radius={8}
+                            tint="#d8402a"
+                            tintOpacity={0.96}
+                            blur={4}
+                            textColor="#fff7ee"
+                            lineColor="#ffe7b3"
+                            baseColor="#8f2a20"
+                            intensity={1.15}
+                            shineSize={9}
+                            shineFade={38}
+                            thickness={1}
+                            proximity={220}
+                            className="group tracking-[0.2em]"
                         >
                             起笔 · 新建画布
                             <ArrowRight className="size-5 transition-transform duration-300 group-hover:translate-x-0.5" />
-                        </button>
+                        </SpecularButton>
                         <button type="button" onClick={() => navigate("/canvas?mode=recent")} className="shj-btn-ghost">
                             继续最近项目
                         </button>
