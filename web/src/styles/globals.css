@@ -1125,78 +1125,187 @@
 
 @layer components {
     .cultivation-admin-page {
-        --cultivation-admin-accent: #38bdf8;
+        --cultivation-admin-accent: #c7aa72;
+        --cultivation-admin-sidebar: color-mix(in srgb, var(--background) 92%, #171717 8%);
+        --cultivation-admin-subtle: color-mix(in srgb, var(--card) 82%, var(--foreground) 3%);
+        --cultivation-admin-hover: color-mix(in srgb, var(--card) 88%, var(--foreground) 7%);
+        --cultivation-admin-border: color-mix(in srgb, var(--border) 82%, transparent);
+        color: var(--foreground);
+    }
+
+    .cultivation-admin-shell {
+        display: grid;
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        grid-template-columns: 13.5rem minmax(0, 1fr);
+    }
+
+    .cultivation-admin-sidebar {
+        display: flex;
+        min-height: 0;
+        flex-direction: column;
+        padding: 1.5rem 1rem 1rem;
+        border-right: 1px solid var(--cultivation-admin-border);
+        background: var(--cultivation-admin-sidebar);
+    }
+
+    .cultivation-admin-brand {
+        padding: 0 0.625rem 1.5rem;
+        border-bottom: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-brand p,
+    .cultivation-admin-breadcrumb {
+        margin: 0;
+        color: var(--muted-foreground);
+        font-size: 0.6875rem;
+        font-weight: 600;
+        line-height: 1rem;
+        letter-spacing: 0.08em;
+    }
+
+    .cultivation-admin-brand div {
+        margin-top: 0.5rem;
+        color: var(--foreground);
+        font-size: 1.75rem;
+        line-height: 2rem;
+    }
+
+    .cultivation-admin-nav {
+        display: grid;
+        gap: 0.25rem;
+        padding: 1rem 0;
+    }
+
+    .cultivation-admin-nav button {
+        display: flex;
+        width: 100%;
+        min-height: 2.5rem;
+        align-items: center;
+        gap: 0.625rem;
+        padding: 0.625rem 0.75rem;
+        border: 1px solid transparent;
+        border-radius: 0.375rem;
+        color: var(--muted-foreground);
+        background: transparent;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        text-align: left;
+        cursor: pointer;
+        touch-action: manipulation;
+        transition:
+            color 160ms ease,
+            border-color 160ms ease,
+            background-color 160ms ease;
+    }
+
+    .cultivation-admin-nav button:hover {
+        color: var(--foreground);
+        background: var(--cultivation-admin-hover);
+    }
+
+    .cultivation-admin-nav button.is-active {
+        border-color: color-mix(in srgb, var(--cultivation-admin-accent) 28%, var(--cultivation-admin-border));
+        color: var(--foreground);
+        background: color-mix(in srgb, var(--cultivation-admin-accent) 9%, var(--cultivation-admin-subtle));
+    }
+
+    .cultivation-admin-nav button.is-active > svg:first-child {
+        color: var(--cultivation-admin-accent);
+    }
+
+    .cultivation-admin-back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: auto;
+        padding: 0.75rem;
+        border-top: 1px solid var(--cultivation-admin-border);
+        color: var(--muted-foreground) !important;
+        font-size: 0.8125rem;
+        text-decoration: none;
+        transition: color 160ms ease;
+    }
+
+    .cultivation-admin-back-link:hover {
+        color: var(--foreground) !important;
+    }
+
+    .cultivation-admin-workspace {
+        min-width: 0;
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
     }
 
     .cultivation-admin-header {
-        display: flex;
-        align-items: flex-end;
-        justify-content: space-between;
-        gap: 1rem;
-        margin-bottom: 1.5rem;
-        padding-bottom: 1.5rem;
-        border-bottom: 1px solid var(--border);
+        position: sticky;
+        z-index: 4;
+        top: 0;
+        padding: 1.5rem 2rem 1.25rem;
+        border-bottom: 1px solid var(--cultivation-admin-border);
+        background: color-mix(in srgb, var(--background) 93%, transparent);
+        backdrop-filter: blur(16px);
     }
 
-    .cultivation-admin-tabs > .ant-tabs-nav {
-        margin-bottom: 1.5rem;
-    }
-
-    .cultivation-admin-tabs > .ant-tabs-nav::before {
-        border-bottom-color: var(--border);
-    }
-
-    .cultivation-admin-tabs .ant-tabs-tab {
-        padding: 0.625rem 0;
-        color: var(--muted-foreground);
-        font-size: 0.875rem;
-    }
-
-    .cultivation-admin-tabs .ant-tabs-tab + .ant-tabs-tab {
-        margin-left: 1.5rem;
-    }
-
-    .cultivation-admin-tabs .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+    .cultivation-admin-header h1 {
+        margin: 0.375rem 0 0;
         color: var(--foreground);
-        font-weight: 600;
+        font-size: 1.5rem;
+        font-weight: 650;
+        line-height: 2rem;
+        text-wrap: balance;
     }
 
-    .cultivation-admin-tabs .ant-tabs-ink-bar {
-        height: 2px;
-        background: var(--foreground);
-    }
-
-    .cultivation-admin-subtabs > .ant-tabs-nav,
-    .cultivation-admin-log-tabs > .ant-tabs-nav {
-        margin-bottom: 1.25rem;
-    }
-
-    .cultivation-admin-subtabs .ant-tabs-tab,
-    .cultivation-admin-log-tabs .ant-tabs-tab {
+    .cultivation-admin-header > div > p:last-child {
+        max-width: 48rem;
+        margin: 0.25rem 0 0;
+        color: var(--muted-foreground);
         font-size: 0.8125rem;
+        line-height: 1.35rem;
+        text-wrap: pretty;
+    }
+
+    .cultivation-admin-mobile-nav {
+        display: none;
+        margin-bottom: 1rem;
+    }
+
+    .cultivation-admin-mobile-nav .ant-select {
+        width: min(100%, 20rem);
+    }
+
+    .cultivation-admin-content {
+        width: 100%;
+        max-width: 100rem;
+        margin: 0 auto;
+        padding: 1.75rem 2rem 3rem;
     }
 
     .cultivation-admin-panel {
         min-width: 0;
     }
 
-    .cultivation-admin-log-panel {
-        padding-top: 0.25rem;
-    }
-
     .cultivation-admin-panel-header,
-    .cultivation-admin-section-heading,
-    .cultivation-admin-scope {
+    .cultivation-admin-section-heading {
         display: flex;
-        align-items: flex-end;
+        align-items: center;
         justify-content: space-between;
         gap: 1rem;
-        margin-bottom: 1rem;
+        margin-bottom: 1.125rem;
+    }
+
+    .cultivation-admin-toolbar {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 0.5rem;
     }
 
     .cultivation-admin-panel-header h2,
-    .cultivation-admin-section-heading h3,
-    .cultivation-admin-scope h3 {
+    .cultivation-admin-section-heading h2,
+    .cultivation-admin-section-heading h3 {
         margin: 0;
         color: var(--foreground);
         font-size: 1rem;
@@ -1206,7 +1315,6 @@
 
     .cultivation-admin-panel-header p,
     .cultivation-admin-section-heading p,
-    .cultivation-admin-scope p,
     .cultivation-drawer-intro {
         margin: 0.25rem 0 0;
         color: var(--muted-foreground);
@@ -1215,8 +1323,156 @@
     }
 
     .cultivation-admin-section {
-        padding-top: 1.75rem;
-        border-top: 1px solid var(--border);
+        min-width: 0;
+        padding-top: 2rem;
+        border-top: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-loading {
+        padding: 4rem 1rem;
+        color: var(--muted-foreground);
+        font-size: 0.875rem;
+        text-align: center;
+    }
+
+    .cultivation-admin-metric-strip {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        border-top: 1px solid var(--cultivation-admin-border);
+        border-bottom: 1px solid var(--cultivation-admin-border);
+        background: var(--cultivation-admin-subtle);
+    }
+
+    .cultivation-overview-metrics {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+
+    .cultivation-admin-metric {
+        min-width: 0;
+        padding: 1rem 1.125rem;
+    }
+
+    .cultivation-admin-metric + .cultivation-admin-metric {
+        border-left: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-metric span {
+        display: block;
+        overflow: hidden;
+        color: var(--muted-foreground);
+        font-size: 0.6875rem;
+        line-height: 1rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .cultivation-admin-metric strong {
+        display: block;
+        min-width: 0;
+        overflow: hidden;
+        margin-top: 0.375rem;
+        color: var(--foreground);
+        font-size: 1.125rem;
+        font-variant-numeric: tabular-nums;
+        font-weight: 650;
+        line-height: 1.5rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .cultivation-admin-metric.is-active strong {
+        color: #60a5fa;
+    }
+
+    .cultivation-admin-metric.is-warning strong {
+        color: #d6a447;
+    }
+
+    .cultivation-admin-metric.is-danger strong {
+        color: #ef6f6c;
+    }
+
+    .cultivation-overview-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 3rem;
+    }
+
+    .cultivation-overview-grid > section,
+    .cultivation-maintenance-list {
+        padding-top: 1.25rem;
+        border-top: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-attention-list,
+    .cultivation-audit-list,
+    .cultivation-maintenance-list {
+        display: grid;
+    }
+
+    .cultivation-attention-list > div,
+    .cultivation-audit-list > div,
+    .cultivation-maintenance-list > div {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 0.75rem;
+        min-height: 3.75rem;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-attention-list > div:last-child,
+    .cultivation-audit-list > div:last-child,
+    .cultivation-maintenance-list > div:last-child {
+        border-bottom: 0;
+    }
+
+    .cultivation-attention-indicator {
+        width: 0.375rem;
+        height: 0.375rem;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--muted-foreground);
+    }
+
+    .cultivation-attention-indicator.is-warning {
+        background: #d6a447;
+        box-shadow: 0 0 0 4px rgb(214 164 71 / 10%);
+    }
+
+    .cultivation-attention-indicator.is-danger {
+        background: #ef6f6c;
+        box-shadow: 0 0 0 4px rgb(239 111 108 / 10%);
+    }
+
+    .cultivation-audit-icon,
+    .cultivation-maintenance-icon {
+        display: grid;
+        width: 2rem;
+        height: 2rem;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid var(--cultivation-admin-border);
+        border-radius: 0.375rem;
+        color: var(--muted-foreground);
+        background: var(--cultivation-admin-subtle);
+    }
+
+    .cultivation-maintenance-list p {
+        margin: 0.25rem 0 0;
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+        line-height: 1.25rem;
+    }
+
+    .cultivation-admin-empty-line {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-height: 4rem;
+        color: var(--muted-foreground);
+        font-size: 0.8125rem;
     }
 
     .cultivation-admin-table .ant-table {
@@ -1224,8 +1480,8 @@
     }
 
     .cultivation-admin-table .ant-table-container {
-        border-top: 1px solid var(--border);
-        border-bottom: 1px solid var(--border);
+        border-top: 1px solid var(--cultivation-admin-border);
+        border-bottom: 1px solid var(--cultivation-admin-border);
     }
 
     .cultivation-admin-table .ant-table-thead > tr > th {
@@ -1233,7 +1489,7 @@
         padding-bottom: 0.6875rem;
         color: var(--muted-foreground);
         background: transparent;
-        border-bottom-color: var(--border);
+        border-bottom-color: var(--cultivation-admin-border);
         font-size: 0.75rem;
         font-weight: 600;
     }
@@ -1241,8 +1497,9 @@
     .cultivation-admin-table .ant-table-tbody > tr > td {
         padding-top: 0.8125rem;
         padding-bottom: 0.8125rem;
-        border-bottom-color: var(--border);
+        border-bottom-color: var(--cultivation-admin-border);
         background: transparent;
+        font-size: 0.8125rem;
     }
 
     .cultivation-admin-table .ant-table-tbody > tr:last-child > td {
@@ -1251,11 +1508,24 @@
 
     .cultivation-admin-table .ant-table-tbody > tr.ant-table-row:hover > td,
     .cultivation-admin-table .ant-table-cell-fix-right {
-        background: color-mix(in srgb, var(--card) 94%, var(--foreground) 6%);
+        background: var(--cultivation-admin-hover);
     }
 
     .cultivation-admin-table .ant-pagination {
         margin-top: 1rem;
+    }
+
+    .cultivation-admin-clickable-row {
+        cursor: pointer;
+    }
+
+    .cultivation-admin-clickable-row:focus-visible > td {
+        outline: 2px solid color-mix(in srgb, var(--cultivation-admin-accent) 72%, white 12%);
+        outline-offset: -2px;
+    }
+
+    .cultivation-count {
+        font-variant-numeric: tabular-nums;
     }
 
     .cultivation-user-identity {
@@ -1315,15 +1585,127 @@
         height: 2rem;
         flex: 0 0 auto;
         place-items: center;
-        border: 1px solid color-mix(in srgb, var(--cultivation-admin-accent) 42%, transparent);
+        border: 1px solid color-mix(in srgb, var(--cultivation-admin-accent) 36%, transparent);
         border-radius: 0.375rem;
         color: var(--cultivation-admin-accent);
         background: color-mix(in srgb, var(--cultivation-admin-accent) 8%, transparent);
     }
 
-    .cultivation-admin-scope {
+    .cultivation-progress-cell {
+        min-width: 8rem;
+    }
+
+    .cultivation-progress-track {
+        position: relative;
+        height: 0.1875rem;
+        overflow: hidden;
+        margin-top: 0.5rem;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--muted-foreground) 16%, transparent);
+    }
+
+    .cultivation-progress-track > span {
+        position: absolute;
+        inset: 0;
+        transform-origin: left center;
+        border-radius: inherit;
+        background: var(--cultivation-admin-accent);
+        transition: transform 180ms ease;
+    }
+
+    .cultivation-rules-layout {
+        display: grid;
+        min-height: 38rem;
+        overflow: hidden;
+        grid-template-columns: 15rem minmax(0, 1fr);
+        border-top: 1px solid var(--cultivation-admin-border);
+        border-bottom: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-realm-list {
+        min-width: 0;
+        padding: 1rem;
+        border-right: 1px solid var(--cultivation-admin-border);
+        background: color-mix(in srgb, var(--cultivation-admin-sidebar) 72%, transparent);
+    }
+
+    .cultivation-realm-list-heading {
+        display: flex;
         align-items: center;
-        padding: 0.25rem 0 1rem;
+        justify-content: space-between;
+        padding: 0 0.5rem 0.75rem;
+        color: var(--muted-foreground);
+        font-size: 0.6875rem;
+        font-weight: 600;
+    }
+
+    .cultivation-realm-list-heading span:last-child {
+        font-variant-numeric: tabular-nums;
+    }
+
+    .cultivation-realm-list-items {
+        display: grid;
+        gap: 0.25rem;
+    }
+
+    .cultivation-realm-list-items button {
+        display: flex;
+        width: 100%;
+        min-width: 0;
+        align-items: center;
+        gap: 0.625rem;
+        padding: 0.625rem;
+        border: 1px solid transparent;
+        border-radius: 0.375rem;
+        color: var(--muted-foreground);
+        background: transparent;
+        font-size: 0.8125rem;
+        text-align: left;
+        cursor: pointer;
+        transition:
+            color 160ms ease,
+            border-color 160ms ease,
+            background-color 160ms ease;
+    }
+
+    .cultivation-realm-list-items button:hover,
+    .cultivation-realm-list-items button.is-active {
+        color: var(--foreground);
+        background: var(--cultivation-admin-hover);
+    }
+
+    .cultivation-realm-list-items button.is-active {
+        border-color: color-mix(in srgb, var(--cultivation-admin-accent) 32%, var(--cultivation-admin-border));
+    }
+
+    .cultivation-realm-state {
+        width: 0.375rem;
+        height: 0.375rem;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--muted-foreground);
+    }
+
+    .cultivation-realm-state.is-enabled {
+        background: #52a67a;
+    }
+
+    .cultivation-rule-workspace {
+        min-width: 0;
+        padding: 1.5rem;
+    }
+
+    .cultivation-rule-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+    }
+
+    .cultivation-rule-metrics {
+        margin-bottom: 2rem;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
     .cultivation-drawer-identity {
@@ -1331,20 +1713,24 @@
         align-items: center;
         justify-content: space-between;
         gap: 1rem;
-        padding: 0 0 1.25rem;
-        border-bottom: 1px solid var(--border);
+        padding: 0;
     }
 
-    .cultivation-drawer-tabs {
+    .cultivation-drawer-user-summary {
+        padding-bottom: 1.25rem;
+        border-bottom: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-drawer-metrics {
+        display: grid;
         margin-top: 1rem;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        border-top: 1px solid var(--cultivation-admin-border);
+        border-bottom: 1px solid var(--cultivation-admin-border);
     }
 
-    .cultivation-drawer-tabs > .ant-tabs-nav {
-        margin-bottom: 0.75rem;
-    }
-
-    .cultivation-drawer-tabs .ant-tabs-tab + .ant-tabs-tab {
-        margin-left: 1.25rem;
+    .cultivation-drawer-metrics .cultivation-admin-metric {
+        padding: 0.75rem;
     }
 
     .cultivation-drawer-footer {
@@ -1354,6 +1740,34 @@
         gap: 1rem;
         color: var(--muted-foreground);
         font-size: 0.75rem;
+    }
+
+    .cultivation-form-section {
+        padding: 1.5rem 0;
+        border-bottom: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-form-section:last-child {
+        border-bottom: 0;
+    }
+
+    .cultivation-form-section-heading {
+        margin-bottom: 1rem;
+    }
+
+    .cultivation-form-section-heading h3 {
+        margin: 0;
+        color: var(--foreground);
+        font-size: 0.875rem;
+        font-weight: 650;
+        line-height: 1.25rem;
+    }
+
+    .cultivation-form-section-heading p {
+        margin: 0.25rem 0 0;
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+        line-height: 1.25rem;
     }
 
     .cultivation-realm-preview {
@@ -1372,7 +1786,7 @@
 
     .cultivation-capability-group + .cultivation-capability-group {
         padding-top: 1.5rem;
-        border-top: 1px solid var(--border);
+        border-top: 1px solid var(--cultivation-admin-border);
     }
 
     .cultivation-capability-group h4 {
@@ -1390,7 +1804,46 @@
         justify-content: space-between;
         gap: 1rem;
         padding: 0.875rem 0;
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-records-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1.75rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-records-segmented {
+        min-width: 0;
+        overflow-x: auto;
+        padding-bottom: 0.125rem;
+    }
+
+    .cultivation-records-segmented .ant-segmented {
+        min-width: max-content;
+    }
+
+    .cultivation-records-heading {
+        margin-bottom: 0.75rem;
+    }
+
+    .cultivation-admin-log-table .ant-table-tbody > tr > td {
+        cursor: pointer;
+    }
+
+    .cultivation-record-details .ant-descriptions-item-label {
+        width: 8.5rem;
+        color: var(--muted-foreground);
+        font-size: 0.75rem;
+    }
+
+    .cultivation-record-details .ant-descriptions-item-content {
+        color: var(--foreground);
+        font-size: 0.8125rem;
     }
 
     .cultivation-log-user {
@@ -1426,23 +1879,126 @@
         box-shadow: none;
     }
 
+    .cultivation-admin-nav button:focus-visible,
+    .cultivation-realm-list-items button:focus-visible,
+    .cultivation-admin-back-link:focus-visible {
+        outline: 2px solid color-mix(in srgb, var(--cultivation-admin-accent) 72%, white 10%);
+        outline-offset: 2px;
+    }
+
+    .cultivation-admin-drawer .ant-drawer-body {
+        overscroll-behavior: contain;
+    }
+
+    @media (max-width: 1024px) {
+        .cultivation-admin-shell {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .cultivation-admin-sidebar {
+            display: none;
+        }
+
+        .cultivation-admin-mobile-nav {
+            display: block;
+        }
+
+        .cultivation-rules-layout {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .cultivation-realm-list {
+            overflow-x: auto;
+            padding: 0.75rem;
+            border-right: 0;
+            border-bottom: 1px solid var(--cultivation-admin-border);
+        }
+
+        .cultivation-realm-list-heading {
+            display: none;
+        }
+
+        .cultivation-realm-list-items {
+            display: flex;
+            width: max-content;
+        }
+
+        .cultivation-realm-list-items button {
+            width: 12rem;
+        }
+    }
+
     @media (max-width: 640px) {
-        .cultivation-admin-header,
         .cultivation-admin-panel-header,
         .cultivation-admin-section-heading,
-        .cultivation-admin-scope,
+        .cultivation-rule-heading,
+        .cultivation-records-toolbar,
         .cultivation-drawer-footer {
             align-items: flex-start;
             flex-direction: column;
         }
 
-        .cultivation-admin-header > .ant-btn,
+        .cultivation-admin-header {
+            padding: 1rem;
+        }
+
+        .cultivation-admin-header h1 {
+            font-size: 1.25rem;
+            line-height: 1.75rem;
+        }
+
+        .cultivation-admin-content {
+            padding: 1.25rem 1rem 2.5rem;
+        }
+
         .cultivation-admin-panel-header .ant-input-search {
             width: 100%;
         }
 
-        .cultivation-admin-tabs .ant-tabs-tab + .ant-tabs-tab {
-            margin-left: 1rem;
+        .cultivation-admin-toolbar {
+            width: 100%;
+            flex-wrap: wrap;
+        }
+
+        .cultivation-overview-grid {
+            grid-template-columns: minmax(0, 1fr);
+            gap: 2rem;
+        }
+
+        .cultivation-admin-metric-strip,
+        .cultivation-overview-metrics,
+        .cultivation-rule-metrics {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .cultivation-admin-metric:nth-child(odd) {
+            border-left: 0;
+        }
+
+        .cultivation-admin-metric:nth-child(n + 3) {
+            border-top: 1px solid var(--cultivation-admin-border);
+        }
+
+        .cultivation-rule-workspace {
+            padding: 1rem;
+        }
+
+        .cultivation-rule-heading > div:last-child,
+        .cultivation-rule-heading .ant-btn {
+            width: 100%;
+        }
+
+        .cultivation-records-toolbar .ant-select {
+            width: 100% !important;
+        }
+
+        .cultivation-drawer-metrics {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .cultivation-drawer-metrics .cultivation-admin-metric + .cultivation-admin-metric {
+            border-top: 1px solid var(--cultivation-admin-border);
+            border-left: 0;
         }
 
         .cultivation-drawer-footer > div {
@@ -1462,6 +2018,7 @@
         .cultivation-admin-page *,
         .cultivation-admin-drawer * {
             scroll-behavior: auto !important;
+            transition-duration: 0.01ms !important;
         }
     }
 }
