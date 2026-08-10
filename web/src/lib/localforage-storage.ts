@@ -6,13 +6,28 @@ localforage.config({
     storeName: "app_state",
 });
 
+const getLocalStorage = (): Storage | null => {
+    if (typeof window === "undefined") return null;
+    try {
+        return window.localStorage || null;
+    } catch {
+        return null;
+    }
+};
+
 export const localForageStorage: StateStorage = {
     getItem: async (name) => {
         if (typeof window === "undefined") return null;
         try {
             return (await localforage.getItem<string>(name)) || null;
         } catch {
-            return window.localStorage.getItem(name);
+            const storage = getLocalStorage();
+            if (!storage) return null;
+            try {
+                return storage.getItem(name);
+            } catch {
+                return null;
+            }
         }
     },
     setItem: async (name, value) => {
@@ -20,7 +35,13 @@ export const localForageStorage: StateStorage = {
         try {
             await localforage.setItem(name, value);
         } catch {
-            window.localStorage.setItem(name, value);
+            const storage = getLocalStorage();
+            if (!storage) return;
+            try {
+                storage.setItem(name, value);
+            } catch {
+                return;
+            }
         }
     },
     removeItem: async (name) => {
@@ -28,7 +49,13 @@ export const localForageStorage: StateStorage = {
         try {
             await localforage.removeItem(name);
         } catch {
-            window.localStorage.removeItem(name);
+            const storage = getLocalStorage();
+            if (!storage) return;
+            try {
+                storage.removeItem(name);
+            } catch {
+                return;
+            }
         }
     },
 };
