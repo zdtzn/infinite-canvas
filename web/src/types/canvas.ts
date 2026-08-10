@@ -30,6 +30,7 @@ export type CanvasNodeMetadata = {
     composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
+    generationStartedAt?: number;
     uploading?: boolean;
     errorDetails?: string;
     jobId?: string;

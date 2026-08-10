@@ -2038,6 +2038,7 @@ function InfiniteCanvasPage() {
             const childId = nanoid();
             const source = { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey };
             const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [source]);
+            const generationStartedAt = Date.now();
             setMaskEditNodeId(null);
             setRunningNodeId(childId);
             setNodes((prev) => [
@@ -2049,7 +2050,7 @@ function InfiniteCanvasPage() {
                     position: { x: node.position.x + node.width + 96, y: node.position.y },
                     width: node.width,
                     height: node.height,
-                    metadata: { prompt, status: NODE_STATUS_LOADING, ...generationMetadata },
+                    metadata: { prompt, status: NODE_STATUS_LOADING, generationStartedAt, ...generationMetadata },
                 },
             ]);
             setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
@@ -2126,6 +2127,7 @@ function InfiniteCanvasPage() {
             const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [
                 { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey },
             ]);
+            const generationStartedAt = Date.now();
             setAngleNodeId(null);
             setRunningNodeId(childId);
             setNodes((prev) => [
@@ -2137,7 +2139,7 @@ function InfiniteCanvasPage() {
                     position: { x: node.position.x + node.width + 96, y: node.position.y },
                     width: imageConfig.width,
                     height: imageConfig.height,
-                    metadata: { prompt, status: NODE_STATUS_LOADING, ...generationMetadata },
+                    metadata: { prompt, status: NODE_STATUS_LOADING, generationStartedAt, ...generationMetadata },
                 },
             ]);
             setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
@@ -2350,7 +2352,11 @@ function InfiniteCanvasPage() {
                 if (!scene) return;
                 setRunningNodeId(nodeId);
                 const controller = startGenerationRequest(nodeId, nodeId, nodeId);
-                setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt: scene, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
+                setNodes((prev) =>
+                    prev.map((node) =>
+                        node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt: scene, status: NODE_STATUS_LOADING, generationStartedAt: Date.now(), errorDetails: undefined } } : node,
+                    ),
+                );
                 try {
                     const fullPrompt = (builtinPanel.promptPrefix || "") + scene;
                     // 上游图片节点作为参考图(图生图);无上游则纯文生图
@@ -2422,6 +2428,7 @@ function InfiniteCanvasPage() {
                     if (referenceImages.length > maxReferences) throw new Error(`当前模型最多支持 ${maxReferences} 张参考图，请移除多余连线后重试`);
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
+                    const generationStartedAt = Date.now();
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                     const parentPosition = sourceNode?.position || { x: 0, y: 0 };
@@ -2444,6 +2451,7 @@ function InfiniteCanvasPage() {
                         metadata: {
                             prompt: effectivePrompt,
                             status: NODE_STATUS_LOADING,
+                            generationStartedAt,
                             isBatchRoot: count > 1,
                             batchChildIds: count > 1 ? childIds : undefined,
                             batchUsesReferenceImages: referenceImages.length > 0,
@@ -2461,7 +2469,7 @@ function InfiniteCanvasPage() {
                         },
                         width: imageConfig.width,
                         height: imageConfig.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata },
+                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, generationStartedAt, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata },
                     }));
                     const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
 
@@ -2807,7 +2815,21 @@ function InfiniteCanvasPage() {
             const retryImages = retryReferenceImages || [];
 
             setRunningNodeId(node.id);
-            setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
+            setNodes((prev) =>
+                prev.map((item) =>
+                    item.id === node.id
+                        ? {
+                              ...item,
+                              metadata: {
+                                  ...item.metadata,
+                                  status: NODE_STATUS_LOADING,
+                                  ...(item.type === CanvasNodeType.Image ? { generationStartedAt: Date.now() } : {}),
+                                  errorDetails: undefined,
+                              },
+                          }
+                        : item,
+                ),
+            );
             const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
 
             try {

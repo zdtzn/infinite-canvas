@@ -4,6 +4,7 @@ import { ChevronRight, Group, Image as ImageIcon, LoaderCircle, Music2, Puzzle, 
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
+import { formatCanvasGenerationElapsed } from "@/lib/canvas/canvas-generation-time";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { generationFailureFeedback } from "@/features/cultivation/generation-messages";
@@ -461,7 +462,7 @@ export const CanvasNode = React.memo(function CanvasNode({
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
+    if (props.node.metadata?.status === "loading") return <LoadingContent node={props.node} theme={props.theme} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} isDouEmperor={props.isDouEmperor} />;
 
     const Renderer = nodeContentRenderers[props.node.type as CanvasNodeType];
@@ -502,11 +503,30 @@ function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererP
     );
 }
 
-function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+function LoadingContent({ node, theme }: Pick<NodeContentRendererProps, "node" | "theme">) {
+    const fallbackStartedAtRef = useRef(Date.now());
+    const recordedStartedAt = Number(node.metadata?.generationStartedAt);
+    const startedAt = Number.isFinite(recordedStartedAt) && recordedStartedAt > 0 ? recordedStartedAt : fallbackStartedAtRef.current;
+    const showElapsed = node.type === CanvasNodeType.Image || Boolean(node.metadata?.generationStartedAt);
+    const [now, setNow] = useState(() => Date.now());
+
+    useEffect(() => {
+        if (!showElapsed) return;
+        const update = () => setNow(Date.now());
+        update();
+        const timer = window.setInterval(update, 1_000);
+        return () => window.clearInterval(timer);
+    }, [showElapsed, startedAt]);
+
+    const elapsedLabel = formatCanvasGenerationElapsed(startedAt, now);
+
     return (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }} role="status" aria-label={showElapsed ? `图片生成中，${elapsedLabel}` : "生成中"}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
-            <span className="text-[10px] tracking-[0.2em]">生成中</span>
+            <div className="flex flex-col items-center gap-1">
+                <span className="text-[10px] tracking-[0.2em]">生成中</span>
+                {showElapsed ? <span className="text-[11px] tabular-nums opacity-60">{elapsedLabel}</span> : null}
+            </div>
         </div>
     );
 }
@@ -605,7 +625,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
     if (!props.node.metadata?.content && props.isBatchRoot) {
         const content =
             props.node.metadata?.status === "loading" ? (
-                <LoadingContent theme={props.theme} />
+                <LoadingContent node={props.node} theme={props.theme} />
             ) : props.node.metadata?.status === "error" ? (
                 <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} isDouEmperor={props.isDouEmperor} />
             ) : (
