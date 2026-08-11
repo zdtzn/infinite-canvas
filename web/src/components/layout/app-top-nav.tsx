@@ -73,7 +73,15 @@ export function AppTopNav() {
                                 <Menu className="size-5" />
                             </button>
 
-                            <Link to="/" className="group flex h-14 shrink-0 items-center gap-2.5 pr-4" aria-label="山门(首页)">
+                            <Link
+                                to="/"
+                                className="group flex h-14 shrink-0 items-center gap-2.5 pr-4"
+                                aria-label="山门(首页)"
+                                onPointerEnter={() => void preloadRoute("/")}
+                                onFocus={() => void preloadRoute("/")}
+                                onPointerDown={() => void preloadRoute("/")}
+                                onTouchStart={() => void preloadRoute("/")}
+                            >
                                 <span
                                     className="app-logo-mark size-6 shrink-0 bg-stone-700 transition-colors group-hover:bg-stone-950 dark:bg-[#c9c4b9] dark:group-hover:bg-[#f7f4ea]"
                                     style={{
@@ -95,6 +103,7 @@ export function AppTopNav() {
                                             onPointerEnter={() => void preloadRoute(`/${tool.slug}`)}
                                             onFocus={() => void preloadRoute(`/${tool.slug}`)}
                                             onPointerDown={() => void preloadRoute(`/${tool.slug}`)}
+                                            onTouchStart={() => void preloadRoute(`/${tool.slug}`)}
                                             title={tool.label}
                                             className={cn(
                                                 "relative flex h-14 shrink-0 items-center gap-2 px-3 text-sm font-medium tracking-normal transition-colors after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors",
@@ -119,12 +128,17 @@ export function AppTopNav() {
                                                         onPointerEnter={() => void preloadRoute(`/${tool.slug}`)}
                                                         onFocus={() => void preloadRoute(`/${tool.slug}`)}
                                                         onPointerDown={() => void preloadRoute(`/${tool.slug}`)}
+                                                        onTouchStart={() => void preloadRoute(`/${tool.slug}`)}
                                                     >
                                                         <span>{tool.label}</span>
                                                         <span className="text-xs text-stone-400">{navigationSceneNames[tool.slug]}</span>
                                                     </span>
                                                 ),
-                                                onClick: () => navigate(`/${tool.slug}`),
+                                                onMouseEnter: () => void preloadRoute(`/${tool.slug}`),
+                                                onClick: () => {
+                                                    void preloadRoute(`/${tool.slug}`);
+                                                    navigate(`/${tool.slug}`);
+                                                },
                                             };
                                         }),
                                     }}

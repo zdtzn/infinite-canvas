@@ -1,9 +1,11 @@
-import { Suspense, type ReactNode } from "react";
+import { Suspense, useEffect, type ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 
 import { AppTopNav } from "@/components/layout/app-top-nav";
 import { CultivationBreakthroughOverlay } from "@/features/cultivation/breakthrough-overlay";
 import { ImperialWelcome, useImperialMode } from "@/features/cultivation/imperial-mode";
 import { lazyRoute } from "@/lib/lazy-route";
+import { warmupRoutesWhenIdle } from "@/lib/route-loaders";
 import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/use-agent-store";
 
@@ -12,6 +14,9 @@ const AgentPanel = lazyRoute(() => import("@/components/agent/agent-panel").then
 export default function UserLayout({ children }: { children: ReactNode }) {
     const agentPanelOpen = useAgentStore((state) => state.panelOpen);
     const { isImperialMode } = useImperialMode();
+    const { pathname } = useLocation();
+
+    useEffect(() => warmupRoutesWhenIdle(pathname), [pathname]);
 
     return (
         <div className={cn("imperial-app-shell flex h-dvh overflow-hidden bg-background text-foreground", isImperialMode && "is-imperial")}>

@@ -26,6 +26,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                             onPointerEnter={() => void preloadRoute(`/${tool.slug}`)}
                             onFocus={() => void preloadRoute(`/${tool.slug}`)}
                             onPointerDown={() => void preloadRoute(`/${tool.slug}`)}
+                            onTouchStart={() => void preloadRoute(`/${tool.slug}`)}
                             className={cn(
                                 "flex items-center gap-3 rounded-lg px-3 py-3 text-base transition",
                                 active
