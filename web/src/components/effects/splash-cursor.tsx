@@ -668,14 +668,13 @@ export function SplashCursor({
 
             const render = () => {
                 if (!dye) return;
-                gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-                gl.enable(gl.BLEND);
+                gl.disable(gl.BLEND);
                 displayProgram.bind();
                 if (SHADING) gl.uniform2f(displayProgram.uniforms.texelSize, 1 / gl.drawingBufferWidth, 1 / gl.drawingBufferHeight);
                 gl.uniform1i(displayProgram.uniforms.uTexture, dye.read.attach(0));
                 gl.uniform3f(displayProgram.uniforms.backColor, BACK_COLOR.r, BACK_COLOR.g, BACK_COLOR.b);
                 gl.uniform1f(displayProgram.uniforms.transparentMode, TRANSPARENT ? 1 : 0);
-                blit(null);
+                blit(null, true);
             };
 
             const clearDisplay = () => {
