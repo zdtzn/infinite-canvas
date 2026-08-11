@@ -2,7 +2,7 @@ import { ImageOff, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 
 import { runWithConcurrency } from "@/lib/async-pool";
-import { distributeDriftWallItems, driftWallColumnFactor, driftWallCopyCount } from "./drift-wall-layout";
+import { distributeDriftWallItems, driftWallColumnFactor, driftWallCopyCount, resolveDriftWallHoverId } from "./drift-wall-layout";
 import "./drift-wall.css";
 
 export type DriftWallItem = {
@@ -125,6 +125,7 @@ export function DriftWall({
     const dampedPointerRef = useRef({ x: 0, y: 0 });
     const lastTimestampRef = useRef<number | null>(null);
     const activeIdRef = useRef<string | null>(null);
+    const activeBoundsRef = useRef<{ left: number; right: number; top: number; bottom: number } | null>(null);
     const imageStatusesRef = useRef<Record<string, DriftWallImageStatus>>({});
     const imageRequestTokensRef = useRef(new Map<string, symbol>());
 
@@ -306,8 +307,12 @@ export function DriftWall({
         };
     }, [applyPlaneTransform, baseVelocities, columnMeta, isInView, isPageVisible, parallax, pauseOnHover, reducedMotion]);
 
-    const activate = useCallback((id: string, columnIndex: number) => {
+    const activate = useCallback((id: string, columnIndex: number, element?: HTMLElement) => {
         activeIdRef.current = id;
+        if (element) {
+            const bounds = element.getBoundingClientRect();
+            activeBoundsRef.current = { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom };
+        }
         hoveredColumnRef.current = columnIndex;
         velocitiesRef.current[columnIndex] = 0;
         setActiveId(id);
@@ -316,20 +321,41 @@ export function DriftWall({
     const release = useCallback((id?: string) => {
         if (id && activeIdRef.current !== id) return;
         activeIdRef.current = null;
+        activeBoundsRef.current = null;
         hoveredColumnRef.current = -1;
         setActiveId(null);
     }, []);
 
     const handlePointerMove = useCallback(
         (event: ReactPointerEvent<HTMLDivElement>) => {
-            if (parallax <= 0 || reducedMotion || event.pointerType !== "mouse") return;
+            if (event.pointerType !== "mouse") return;
+
+            const candidateElement = event.target instanceof Element ? event.target.closest<HTMLElement>(".drift-wall__tile") : null;
+            const candidateId = candidateElement?.dataset.driftTileId || null;
+            const nextActiveId = resolveDriftWallHoverId({
+                activeId: activeIdRef.current,
+                candidateId,
+                point: { x: event.clientX, y: event.clientY },
+                activeBounds: activeBoundsRef.current,
+            });
+
+            if (nextActiveId !== activeIdRef.current) {
+                const columnIndex = Number(candidateElement?.dataset.driftColumnIndex);
+                if (nextActiveId && candidateElement && candidateId === nextActiveId && Number.isInteger(columnIndex)) {
+                    activate(nextActiveId, columnIndex, candidateElement);
+                } else if (!nextActiveId) {
+                    release();
+                }
+            }
+
+            if (parallax <= 0 || reducedMotion) return;
             const rect = event.currentTarget.getBoundingClientRect();
             pointerRef.current = {
                 x: (event.clientX - rect.left) / rect.width - 0.5,
                 y: (event.clientY - rect.top) / rect.height - 0.5,
             };
         },
-        [parallax, reducedMotion],
+        [activate, parallax, reducedMotion, release],
     );
 
     const handlePointerLeaveWall = useCallback(() => {
@@ -395,16 +421,16 @@ export function DriftWall({
                                             <div
                                                 key={tileId}
                                                 className={`drift-wall__tile${activeId === tileId ? " is-active" : ""}`}
+                                                data-drift-tile-id={tileId}
+                                                data-drift-column-index={columnIndex}
                                                 role="button"
                                                 tabIndex={copyIndex === 0 ? 0 : -1}
                                                 aria-label={`预览功法：${item.title}`}
                                                 aria-hidden={copyIndex === 0 ? undefined : true}
                                                 onClick={() => onItemClick?.(item, item.originalIndex)}
                                                 onKeyDown={(event) => handleTileKeyDown(event, item)}
-                                                onFocus={() => activate(tileId, columnIndex)}
+                                                onFocus={(event) => activate(tileId, columnIndex, event.currentTarget)}
                                                 onBlur={() => release(tileId)}
-                                                onPointerEnter={() => activate(tileId, columnIndex)}
-                                                onPointerLeave={() => release(tileId)}
                                             >
                                                 <div className="drift-wall__inner">
                                                     {imageStatus?.state === "loaded" && imageStatus.url ? (

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { distributeDriftWallItems, driftWallColumnFactor, driftWallCopyCount } from "./drift-wall-layout";
+import { distributeDriftWallItems, driftWallColumnFactor, driftWallCopyCount, resolveDriftWallHoverId } from "./drift-wall-layout";
 
 test("distributes wall items across columns without changing their identity", () => {
     const items = Array.from({ length: 8 }, (_, index) => index);
@@ -24,4 +24,26 @@ test("keeps column variance within the requested range", () => {
     const factor = driftWallColumnFactor(4, 0.32);
     expect(factor).toBeGreaterThanOrEqual(0.68);
     expect(factor).toBeLessThanOrEqual(1.32);
+});
+
+test("keeps the active tile while the pointer remains inside its stable hover bounds", () => {
+    expect(
+        resolveDriftWallHoverId({
+            activeId: "current",
+            candidateId: "overlapping-neighbor",
+            point: { x: 200, y: 422 },
+            activeBounds: { left: 107, right: 321, top: 420, bottom: 584 },
+        }),
+    ).toBe("current");
+});
+
+test("allows the neighboring tile to activate after the pointer truly leaves the current tile", () => {
+    expect(
+        resolveDriftWallHoverId({
+            activeId: "current",
+            candidateId: "overlapping-neighbor",
+            point: { x: 200, y: 409 },
+            activeBounds: { left: 107, right: 321, top: 420, bottom: 584 },
+        }),
+    ).toBe("overlapping-neighbor");
 });

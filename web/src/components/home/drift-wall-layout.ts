@@ -25,3 +25,27 @@ export function driftWallColumnFactor(index: number, variance: number) {
     const pseudo = ((index * 0.6180339887 + 0.35) % 1) * 2 - 1;
     return 1 + normalizedVariance * pseudo;
 }
+
+type DriftWallPoint = { x: number; y: number };
+type DriftWallBounds = { left: number; right: number; top: number; bottom: number };
+
+export function resolveDriftWallHoverId({
+    activeId,
+    candidateId,
+    point,
+    activeBounds,
+    margin = 8,
+}: {
+    activeId: string | null;
+    candidateId: string | null;
+    point: DriftWallPoint;
+    activeBounds: DriftWallBounds | null;
+    margin?: number;
+}) {
+    if (activeId && activeBounds) {
+        const insideStableBounds = point.x >= activeBounds.left - margin && point.x <= activeBounds.right + margin && point.y >= activeBounds.top - margin && point.y <= activeBounds.bottom + margin;
+        if (insideStableBounds) return activeId;
+    }
+
+    return candidateId;
+}

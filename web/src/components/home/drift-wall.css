@@ -161,6 +161,7 @@
         0 26px 58px -18px rgb(0 0 0 / 0.76),
         0 0 30px rgb(201 168 106 / 0.09);
     opacity: 1;
+    pointer-events: auto;
     transform: translateZ(var(--dw-lift));
 }
 
