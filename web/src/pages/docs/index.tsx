@@ -8,6 +8,7 @@ import {
     FileText,
     ImagePlus,
     Images,
+    LayoutDashboard,
     ListChecks,
     Maximize2,
     PackageSearch,
@@ -40,6 +41,7 @@ const sectionIcons: Record<string, LucideIcon> = {
     assets: Images,
     cultivation: TrendingUp,
     configuration: Settings2,
+    "admin-console": LayoutDashboard,
     "task-center": ListChecks,
     "canvas-agent": Bot,
     "data-and-account": ShieldCheck,
@@ -66,7 +68,7 @@ export default function DocsPage() {
                         Infinite Canvas 帮助中心
                     </div>
                     <h1 className="mt-3 text-3xl font-semibold tracking-normal text-stone-950 sm:text-4xl dark:text-[#f2efe6]">网站使用说明</h1>
-                    <p className="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base dark:text-stone-400">从第一次生成到画布编排、商品创作、资产保存和账号同步，这里说明每个入口该在什么时候使用，以及遇到问题时应先检查什么。</p>
+                    <p className="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base dark:text-stone-400">当前指南覆盖丹青台、洞天、灵彩、商品幻境、功法楼、藏卷阁、命宫、Canvas Agent 与掌教殿，并说明模型能力、任务恢复和账号数据的边界。</p>
 
                     <div className="relative mt-7 max-w-2xl">
                         <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
