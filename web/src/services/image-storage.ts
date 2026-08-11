@@ -60,9 +60,7 @@ export async function uploadImage(input: string | Blob, options?: UploadImageOpt
 
     const blob = await convertImageOutput(input, options?.outputFormat, expectedUserId);
     const suppliedMeta = options?.imageMeta || options?.dimensions;
-    const meta: ImageUploadMeta = validDimensions(suppliedMeta)
-        ? { ...suppliedMeta, mimeType: options?.imageMeta?.mimeType || blob.type }
-        : await readBlobMeta(blob);
+    const meta: ImageUploadMeta = validDimensions(suppliedMeta) ? { ...suppliedMeta, mimeType: options?.imageMeta?.mimeType || blob.type } : await readBlobMeta(blob);
     const mimeType = blob.type || meta.mimeType || "image/png";
     assertImageUploadAllowed({ bytes: blob.size, mimeType, width: meta.width, height: meta.height });
     const thumbnail = options?.createThumbnail === false ? null : await createThumbnail(blob, meta.width, meta.height, options?.thumbnailMaxEdge);
@@ -226,7 +224,7 @@ function matches(bytes: Uint8Array, expected: number[], offset = 0) {
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
-    if (PUBLIC_MODE) return `/api/assets/${encodeURIComponent(storageKey)}`;
+    if (PUBLIC_MODE) return publicImageAssetUrl(storageKey, fallback);
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
     const blob = await store.getItem<Blob>(storageKey);
@@ -234,6 +232,18 @@ export async function resolveImageUrl(storageKey?: string, fallback = "") {
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
+}
+
+export function publicImageAssetUrl(storageKey: string, fallback = "") {
+    const expectedPath = `/api/assets/${encodeURIComponent(storageKey)}`;
+    try {
+        const candidate = new URL(fallback, "https://canvas.invalid");
+        const version = candidate.searchParams.get("v");
+        if (candidate.origin === "https://canvas.invalid" && candidate.pathname === expectedPath && version && /^\d+$/.test(version)) return `${expectedPath}?v=${version}`;
+    } catch {
+        // Fall through to the stable authenticated asset route.
+    }
+    return expectedPath;
 }
 
 export async function getImageBlob(storageKey: string, expectedUserId = useUserStore.getState().user?.id || "") {

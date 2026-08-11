@@ -5,6 +5,7 @@ import { ChevronRight, Group, Image as ImageIcon, LoaderCircle, Music2, Puzzle, 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { formatCanvasGenerationElapsed } from "@/lib/canvas/canvas-generation-time";
+import { canvasImageDisplaySource, canvasImageLoadingAttributes } from "@/lib/canvas/canvas-image-loading";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { generationFailureFeedback } from "@/features/cultivation/generation-messages";
@@ -55,11 +56,13 @@ type CanvasNodeProps = {
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData) => void;
+    onImageLoad?: (node: CanvasNodeData, image: HTMLImageElement) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
 };
 
 type NodeContentRendererProps = {
     node: CanvasNodeData;
+    isSelected: boolean;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     isEditingContent: boolean;
     textareaRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -75,6 +78,7 @@ type NodeContentRendererProps = {
     mentionReferences: CanvasResourceReference[];
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
+    onImageLoad?: (node: CanvasNodeData, image: HTMLImageElement) => void;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
     groupChildCount: number;
@@ -118,6 +122,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onRetry,
     onGenerateImage,
     onViewImage,
+    onImageLoad,
     onContextMenu,
 }: CanvasNodeProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -415,6 +420,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 >
                     <NodeContent
                         node={data}
+                        isSelected={isSelected}
                         theme={theme}
                         isEditingContent={isEditingContent}
                         textareaRef={textareaRef}
@@ -431,6 +437,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onStopEditing={() => setIsEditingContent(false)}
                         onRetry={onRetry}
                         onGenerateImage={onGenerateImage}
+                        onImageLoad={onImageLoad}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         onSetBatchPrimary={() => onSetBatchPrimary?.(data)}
                         groupChildCount={groupChildCount}
@@ -642,6 +649,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
     return (
         <ImageContent
             node={props.node}
+            isSelected={props.isSelected}
             isBatchRoot={props.isBatchRoot}
             batchCount={props.batchCount}
             batchExpanded={props.batchExpanded}
@@ -649,6 +657,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             batchRecovering={props.batchRecovering}
             onToggleBatch={props.onToggleBatch}
             onSetBatchPrimary={props.onSetBatchPrimary}
+            onImageLoad={props.onImageLoad}
         />
     );
 }
@@ -703,6 +712,7 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
 
 function ImageContent({
     node,
+    isSelected,
     isBatchRoot,
     batchCount,
     batchExpanded,
@@ -710,8 +720,10 @@ function ImageContent({
     batchRecovering,
     onToggleBatch,
     onSetBatchPrimary,
+    onImageLoad,
 }: {
     node: CanvasNodeData;
+    isSelected: boolean;
     isBatchRoot: boolean;
     batchCount: number;
     batchExpanded: boolean;
@@ -719,18 +731,24 @@ function ImageContent({
     batchRecovering: boolean;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
+    onImageLoad?: (node: CanvasNodeData, image: HTMLImageElement) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
+    const imageSource = canvasImageDisplaySource(node.metadata, isSelected);
+    const loadingAttributes = canvasImageLoadingAttributes(isSelected);
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="h-full w-full overflow-hidden rounded-3xl">
                 <img
-                    src={node.metadata!.content!}
+                    src={imageSource}
                     alt={node.title}
                     draggable={false}
                     decoding="async"
+                    loading={loadingAttributes.loading}
+                    fetchPriority={loadingAttributes.fetchPriority}
+                    onLoad={(event) => onImageLoad?.(node, event.currentTarget)}
                     onDragStart={(event) => event.preventDefault()}
                     className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                 />

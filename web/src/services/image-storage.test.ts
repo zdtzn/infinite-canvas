@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { canPromoteServerJobImage, collectImageStorageKeysFromHistory, convertImageOutput, createThumbnailFromImageElement, fitImageWithinEdge, readImageBlob } from "./image-storage";
+import { canPromoteServerJobImage, collectImageStorageKeysFromHistory, convertImageOutput, createThumbnailFromImageElement, fitImageWithinEdge, publicImageAssetUrl, readImageBlob } from "./image-storage";
 
 const originalFetch = globalThis.fetch;
 const originalCreateImageBitmap = globalThis.createImageBitmap;
@@ -49,6 +49,12 @@ test("promotes server job images only when no local format conversion is needed"
     expect(canPromoteServerJobImage(png, "jpeg")).toBe(false);
     expect(canPromoteServerJobImage("/api/assets/image.png", "png")).toBe(false);
     expect(canPromoteServerJobImage("https://example.com/image.png", "png")).toBe(false);
+});
+
+test("keeps an immutable versioned asset URL while hydrating a stored image", () => {
+    expect(publicImageAssetUrl("image:original", "/api/assets/image%3Aoriginal?v=123")).toBe("/api/assets/image%3Aoriginal?v=123");
+    expect(publicImageAssetUrl("image:original", "/api/job-files/job/image.png")).toBe("/api/assets/image%3Aoriginal");
+    expect(publicImageAssetUrl("image:original", "/api/assets/image%3Aother?v=123")).toBe("/api/assets/image%3Aoriginal");
 });
 
 test("keeps local images referenced by generation history during cleanup", () => {

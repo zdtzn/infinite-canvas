@@ -9,7 +9,7 @@ import { requestEdit, requestGeneration, requestImageQuestion } from "@/services
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { deleteStoredImages, uploadImage } from "@/services/image-storage";
+import { createThumbnailFromImageElement, deleteStoredImages, fitImageWithinEdge, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -19,6 +19,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { buildSplitLayout, cropImageBlob, IMAGE_SPLIT_CONCURRENCY, splitImageBlobs, upscaleImageBlob } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
+import { CANVAS_THUMBNAIL_MAX_EDGE, needsCanvasImageThumbnail } from "@/lib/canvas/canvas-image-loading";
 import { App, Button, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
@@ -102,6 +103,8 @@ import { useCanvasProjectLock } from "@/pages/canvas/hooks/use-canvas-project-lo
 // 内置节点注册到统一注册表(模块加载时执行一次)
 registerBuiltinNodes();
 
+const canvasThumbnailBackfills = new Set<string>();
+
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
@@ -131,6 +134,17 @@ type PendingImageUpload = {
     canceled: boolean;
     previousNode?: CanvasNodeData;
 };
+
+function waitForCanvasThumbnailIdle() {
+    return new Promise<void>((resolve) => {
+        const requestIdle = (window as Window & { requestIdleCallback?: Window["requestIdleCallback"] }).requestIdleCallback;
+        if (requestIdle) {
+            requestIdle.call(window, () => resolve(), { timeout: 1_500 });
+            return;
+        }
+        globalThis.setTimeout(resolve, 200);
+    });
+}
 
 const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
@@ -1456,11 +1470,11 @@ function InfiniteCanvasPage() {
 
             const image = await uploadImage(file, {
                 imageMeta: { width: meta.width, height: meta.height, mimeType: file.type || meta.mimeType },
-                createThumbnail: false,
+                thumbnailMaxEdge: CANVAS_THUMBNAIL_MAX_EDGE,
                 previewUrl: pending.previewUrl,
             });
             if (pending.canceled || pendingImageUploadsRef.current.get(nodeId) !== pending) {
-                await deleteStoredImages([image.storageKey]);
+                await deleteStoredImages([image.storageKey, image.thumbnailKey].filter((key): key is string => Boolean(key)));
                 return false;
             }
 
@@ -1984,7 +1998,7 @@ function InfiniteCanvasPage() {
                         try {
                             const image = await uploadImage(piece.blob, {
                                 imageMeta: { width: piece.width, height: piece.height },
-                                createThumbnail: false,
+                                thumbnailMaxEdge: CANVAS_THUMBNAIL_MAX_EDGE,
                                 previewUrl: previewUrls[index],
                             });
                             return { image };
@@ -1995,7 +2009,7 @@ function InfiniteCanvasPage() {
                     const failedUpload = uploadResults.find((result) => "error" in result);
                     const successfulImages = uploadResults.flatMap((result) => ("image" in result && result.image ? [result.image] : []));
                     if (failedUpload && "error" in failedUpload) {
-                        await deleteStoredImages(successfulImages.map((image) => image.storageKey));
+                        await deleteStoredImages(successfulImages.flatMap((image) => [image.storageKey, image.thumbnailKey].filter((key): key is string => Boolean(key))));
                         previewUrls.forEach((url) => URL.revokeObjectURL(url));
                         setNodes((prev) => prev.filter((item) => !childIds.has(item.id)));
                         setConnections((prev) => prev.filter((connection) => !childIds.has(connection.fromNodeId) && !childIds.has(connection.toNodeId)));
@@ -2028,6 +2042,36 @@ function InfiniteCanvasPage() {
             }
         },
         [message],
+    );
+
+    const handleCanvasImageLoad = useCallback(
+        (node: CanvasNodeData, image: HTMLImageElement) => {
+            if (!needsCanvasImageThumbnail(node)) return;
+            const storageKey = node.metadata!.storageKey!;
+            const backfillKey = `${projectId}:${storageKey}`;
+            if (canvasThumbnailBackfills.has(backfillKey)) return;
+            canvasThumbnailBackfills.add(backfillKey);
+
+            void (async () => {
+                await waitForCanvasThumbnailIdle();
+                if (!image.complete || !image.naturalWidth || !image.naturalHeight) return;
+                if (!nodesRef.current.some((item) => item.metadata?.storageKey === storageKey && needsCanvasImageThumbnail(item))) return;
+
+                const thumbnail = await createThumbnailFromImageElement(image, CANVAS_THUMBNAIL_MAX_EDGE);
+                if (!thumbnail) return;
+                const dimensions = fitImageWithinEdge(image.naturalWidth, image.naturalHeight, CANVAS_THUMBNAIL_MAX_EDGE);
+                const stored = await uploadImage(thumbnail, { createThumbnail: false, dimensions });
+                if (!nodesRef.current.some((item) => item.metadata?.storageKey === storageKey && needsCanvasImageThumbnail(item))) {
+                    await deleteStoredImages([stored.storageKey]);
+                    return;
+                }
+
+                setNodes((current) => current.map((item) => (item.metadata?.storageKey === storageKey && needsCanvasImageThumbnail(item) ? { ...item, metadata: { ...item.metadata, thumbnailKey: stored.storageKey, thumbnailUrl: stored.url } } : item)));
+            })()
+                .catch(() => undefined)
+                .finally(() => canvasThumbnailBackfills.delete(backfillKey));
+        },
+        [projectId],
     );
 
     const maskEditImageNode = useCallback(
@@ -3244,6 +3288,7 @@ function InfiniteCanvasPage() {
                             onRetry={handleNodeRetry}
                             onGenerateImage={generateImageFromTextNode}
                             onViewImage={handleNodeViewImage}
+                            onImageLoad={handleCanvasImageLoad}
                             onContextMenu={handleNodeContextMenu}
                         />
                     ))}
