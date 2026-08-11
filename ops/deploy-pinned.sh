@@ -155,9 +155,11 @@ fi
 case "$BIND_ADDRESS" in
   127.0.0.1|::1) ;;
   *)
-    if [ "$REQUIRE_HTTPS" != "1" ]; then
-      echo "WARNING: application port ${HOST_PORT} remains bound to ${BIND_ADDRESS}. Keep the cloud firewall closed except for intentional direct-IP testing." >&2
+    if [ "$REQUIRE_HTTPS" = "1" ]; then
+      echo "REQUIRE_HTTPS=1 requires BIND_ADDRESS=127.0.0.1 or ::1; refusing to expose application port ${HOST_PORT}." >&2
+      exit 1
     fi
+    echo "WARNING: application port ${HOST_PORT} remains bound to ${BIND_ADDRESS}. Keep the cloud firewall closed except for intentional direct-IP testing." >&2
     ;;
 esac
 
