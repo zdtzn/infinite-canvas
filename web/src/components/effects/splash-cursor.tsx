@@ -71,6 +71,25 @@ type ProgramBundle = {
     bind: () => void;
 };
 
+type ReusableFluidContext = {
+    FRAMEBUFFER: number;
+    COLOR_BUFFER_BIT: number;
+    isContextLost: () => boolean;
+    bindFramebuffer: (target: number, framebuffer: WebGLFramebuffer | null) => void;
+    viewport: (x: number, y: number, width: number, height: number) => void;
+    clearColor: (red: number, green: number, blue: number, alpha: number) => void;
+    clear: (mask: number) => void;
+};
+
+export function clearFluidContextForReuse(gl: ReusableFluidContext, width: number, height: number) {
+    if (gl.isContextLost()) return false;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, width, height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    return true;
+}
+
 const BASE_VERTEX_SHADER = `
 precision highp float;
 attribute vec2 aPosition;
@@ -367,7 +386,9 @@ export function SplashCursor({
 }: SplashCursorProps) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const animationFrameRef = useRef<number | null>(null);
+    const contextRecoveryCountRef = useRef(0);
     const [environmentEnabled, setEnvironmentEnabled] = useState(false);
+    const [canvasEpoch, setCanvasEpoch] = useState(0);
 
     useEffect(() => {
         if (typeof window.matchMedia !== "function") return;
@@ -392,6 +413,7 @@ export function SplashCursor({
         if (!context) return;
         const { gl, halfFloatTexType, supportLinearFiltering, formatRGBA, formatRG, formatR } = context;
         let active = true;
+        let contextRecoveryTimer: number | null = null;
         let pageVisible = document.visibilityState !== "hidden";
         let running = false;
         let lastUpdateTime = performance.now();
@@ -437,6 +459,19 @@ export function SplashCursor({
         pointer.color = generateColor();
 
         let removeListeners: (() => void) | undefined;
+
+        canvas.style.visibility = "";
+        const handleContextLost = (event: Event) => {
+            event.preventDefault();
+            canvas.style.visibility = "hidden";
+            if (!active || contextRecoveryTimer !== null || contextRecoveryCountRef.current >= 2) return;
+            contextRecoveryCountRef.current += 1;
+            contextRecoveryTimer = window.setTimeout(() => {
+                contextRecoveryTimer = null;
+                if (active) setCanvasEpoch((epoch) => epoch + 1);
+            }, 50);
+        };
+        canvas.addEventListener("webglcontextlost", handleContextLost);
 
         try {
             const baseVertexShader = compileShader(gl, gl.VERTEX_SHADER, BASE_VERTEX_SHADER);
@@ -678,10 +713,7 @@ export function SplashCursor({
             };
 
             const clearDisplay = () => {
-                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-                gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-                gl.clearColor(0, 0, 0, 0);
-                gl.clear(gl.COLOR_BUFFER_BIT);
+                clearFluidContextForReuse(gl, gl.drawingBufferWidth, gl.drawingBufferHeight);
             };
 
             const updateFrame = (time: number) => {
@@ -782,15 +814,24 @@ export function SplashCursor({
             };
         } catch (error) {
             console.warn("SplashCursor disabled because WebGL initialization failed", error);
+            active = false;
+            removeListeners?.();
+            canvas.removeEventListener("webglcontextlost", handleContextLost);
+            if (contextRecoveryTimer !== null) window.clearTimeout(contextRecoveryTimer);
+            if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = null;
+            if (!clearFluidContextForReuse(gl, gl.drawingBufferWidth, gl.drawingBufferHeight)) canvas.style.visibility = "hidden";
             return;
         }
 
         return () => {
             active = false;
             removeListeners?.();
+            canvas.removeEventListener("webglcontextlost", handleContextLost);
+            if (contextRecoveryTimer !== null) window.clearTimeout(contextRecoveryTimer);
             if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
             animationFrameRef.current = null;
-            gl.getExtension("WEBGL_lose_context")?.loseContext();
+            clearFluidContextForReuse(gl, gl.drawingBufferWidth, gl.drawingBufferHeight);
         };
     }, [
         BACK_COLOR.b,
@@ -813,13 +854,14 @@ export function SplashCursor({
         SPLAT_RADIUS,
         TRANSPARENT,
         VELOCITY_DISSIPATION,
+        canvasEpoch,
         enabled,
         environmentEnabled,
     ]);
 
     return (
         <div className={cn("splash-cursor-layer", className)} aria-hidden="true">
-            <canvas ref={canvasRef} />
+            <canvas key={canvasEpoch} ref={canvasRef} />
         </div>
     );
 }
