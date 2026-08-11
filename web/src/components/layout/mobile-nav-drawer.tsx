@@ -2,6 +2,7 @@ import { Drawer } from "antd";
 import { Link } from "react-router-dom";
 
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
+import { preloadRoute } from "@/lib/route-loaders";
 import { cn } from "@/lib/utils";
 
 type MobileNavDrawerProps = {
@@ -22,6 +23,9 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                             key={tool.slug}
                             to={`/${tool.slug}`}
                             onClick={onClose}
+                            onPointerEnter={() => void preloadRoute(`/${tool.slug}`)}
+                            onFocus={() => void preloadRoute(`/${tool.slug}`)}
+                            onPointerDown={() => void preloadRoute(`/${tool.slug}`)}
                             className={cn(
                                 "flex items-center gap-3 rounded-lg px-3 py-3 text-base transition",
                                 active

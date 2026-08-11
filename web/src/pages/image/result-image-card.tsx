@@ -25,6 +25,7 @@ export function ResultImageCard({
     const [previewStatus, setPreviewStatus] = useState<"loading" | "loaded" | "error">("loading");
     const [previewAttempt, setPreviewAttempt] = useState(0);
     const recoveryPending = image.persisted === false;
+    const previewImageUrl = image.thumbnailUrl || image.dataUrl;
 
     useEffect(() => {
         setPreviewStatus("loading");
@@ -59,7 +60,7 @@ export function ResultImageCard({
                 ) : null}
                 <Image
                     key={`${image.id}:${previewAttempt}`}
-                    src={retryImageUrl(image.dataUrl, previewAttempt)}
+                    src={retryImageUrl(previewImageUrl, previewAttempt)}
                     alt={`生成结果 ${index + 1}`}
                     rootClassName="block size-full"
                     className={`size-full object-contain transition-opacity duration-200 ${previewStatus === "loaded" ? "opacity-100" : "opacity-0"}`}
@@ -67,7 +68,7 @@ export function ResultImageCard({
                     loading="eager"
                     decoding="async"
                     fetchPriority={index === 0 ? "high" : "auto"}
-                    preview={previewStatus === "loaded"}
+                    preview={previewStatus === "loaded" ? { src: image.dataUrl } : false}
                     onLoad={() => setPreviewStatus("loaded")}
                     onError={() => setPreviewStatus("error")}
                 />

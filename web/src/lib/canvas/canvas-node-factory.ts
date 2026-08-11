@@ -36,7 +36,17 @@ export function createPendingImageUploadNode(file: Pick<File, "name" | "size" | 
 }
 
 export function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
-    return { content: image.url, storageKey: image.storageKey, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType };
+    return {
+        content: image.url,
+        storageKey: image.storageKey,
+        ...(image.thumbnailKey ? { thumbnailKey: image.thumbnailKey } : {}),
+        ...(image.thumbnailUrl ? { thumbnailUrl: image.thumbnailUrl } : {}),
+        status: "success",
+        naturalWidth: image.width,
+        naturalHeight: image.height,
+        bytes: image.bytes,
+        mimeType: image.mimeType,
+    };
 }
 
 export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {

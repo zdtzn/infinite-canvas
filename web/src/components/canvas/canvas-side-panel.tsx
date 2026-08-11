@@ -325,7 +325,22 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
             for (const file of files) {
                 if (file.type.startsWith("image/")) {
                     const image = await uploadImage(file);
-                    addAsset({ kind: "image", title: file.name || "图片", coverUrl: image.url, tags: [], data: { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType } });
+                    addAsset({
+                        kind: "image",
+                        title: file.name || "图片",
+                        coverUrl: image.thumbnailUrl || image.url,
+                        tags: [],
+                        data: {
+                            dataUrl: image.url,
+                            storageKey: image.storageKey,
+                            thumbnailKey: image.thumbnailKey,
+                            thumbnailUrl: image.thumbnailUrl,
+                            width: image.width,
+                            height: image.height,
+                            bytes: image.bytes,
+                            mimeType: image.mimeType,
+                        },
+                    });
                     added += 1;
                 } else if (file.type.startsWith("video/")) {
                     const media = await uploadMediaFile(file, "video");

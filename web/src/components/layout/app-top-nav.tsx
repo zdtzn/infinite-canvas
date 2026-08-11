@@ -9,6 +9,7 @@ import { TaskCenter } from "@/components/layout/task-center";
 import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 import { CultivationStatusPill } from "@/features/cultivation/status-pill";
 import { lazyRoute } from "@/lib/lazy-route";
+import { preloadRoute } from "@/lib/route-loaders";
 import { cn } from "@/lib/utils";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useAgentStore } from "@/stores/use-agent-store";
@@ -91,6 +92,9 @@ export function AppTopNav() {
                                         <Link
                                             key={tool.slug}
                                             to={`/${tool.slug}`}
+                                            onPointerEnter={() => void preloadRoute(`/${tool.slug}`)}
+                                            onFocus={() => void preloadRoute(`/${tool.slug}`)}
+                                            onPointerDown={() => void preloadRoute(`/${tool.slug}`)}
                                             title={tool.label}
                                             className={cn(
                                                 "relative flex h-14 shrink-0 items-center gap-2 px-3 text-sm font-medium tracking-normal transition-colors after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors",
@@ -110,7 +114,12 @@ export function AppTopNav() {
                                                 key: tool.slug,
                                                 icon: <Icon className="size-4" />,
                                                 label: (
-                                                    <span className="inline-flex min-w-32 items-baseline justify-between gap-3">
+                                                    <span
+                                                        className="inline-flex min-w-32 items-baseline justify-between gap-3"
+                                                        onPointerEnter={() => void preloadRoute(`/${tool.slug}`)}
+                                                        onFocus={() => void preloadRoute(`/${tool.slug}`)}
+                                                        onPointerDown={() => void preloadRoute(`/${tool.slug}`)}
+                                                    >
                                                         <span>{tool.label}</span>
                                                         <span className="text-xs text-stone-400">{navigationSceneNames[tool.slug]}</span>
                                                     </span>

@@ -338,7 +338,24 @@ async function addAsset(input: SiteToolInput) {
         } catch {
             throw new Error("无法读取该图片地址，请改用 dataURL 或可跨域访问的图片链接");
         }
-        const id = store.addAsset({ kind: "image", title, coverUrl: stored.url, tags, source, note, data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType } });
+        const id = store.addAsset({
+            kind: "image",
+            title,
+            coverUrl: stored.thumbnailUrl || stored.url,
+            tags,
+            source,
+            note,
+            data: {
+                dataUrl: stored.url,
+                storageKey: stored.storageKey,
+                thumbnailKey: stored.thumbnailKey,
+                thumbnailUrl: stored.thumbnailUrl,
+                width: stored.width,
+                height: stored.height,
+                bytes: stored.bytes,
+                mimeType: stored.mimeType,
+            },
+        });
         return { ok: true, id, kind: "image" };
     }
     throw new Error("assets_add 仅支持 kind=text 或 kind=image");

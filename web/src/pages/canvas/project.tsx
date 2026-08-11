@@ -1841,12 +1841,14 @@ function InfiniteCanvasPage() {
             addAsset({
                 kind: "image",
                 title: node.metadata?.prompt?.slice(0, 24) || "画布图片",
-                coverUrl: node.metadata.content,
+                coverUrl: node.metadata.thumbnailUrl || node.metadata.content,
                 tags: [],
                 source: "Canvas",
                 data: {
                     dataUrl,
                     storageKey: node.metadata.storageKey,
+                    thumbnailKey: node.metadata.thumbnailKey,
+                    thumbnailUrl: node.metadata.thumbnailUrl,
                     width: node.metadata.naturalWidth || node.width,
                     height: node.metadata.naturalHeight || node.height,
                     bytes: node.metadata.bytes || getDataUrlByteSize(dataUrl),
