@@ -15,21 +15,21 @@
 }
 
 .homepage-light-rays {
-    opacity: 0.68;
+    opacity: 0.88;
     mix-blend-mode: screen;
-    filter: saturate(0.86) contrast(1.06);
+    filter: saturate(1.18) contrast(1.14) brightness(1.08);
     -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 66%, transparent 100%);
     mask-image: linear-gradient(to bottom, #000 0%, #000 66%, transparent 100%);
 }
 
 .homepage-light-rays.is-imperial {
-    opacity: 0.8;
-    filter: saturate(0.96) contrast(1.08);
+    opacity: 0.94;
+    filter: saturate(1.12) contrast(1.16) brightness(1.1);
 }
 
 @media (max-width: 640px) {
     .homepage-light-rays {
-        opacity: 0.52;
+        opacity: 0.72;
         -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 58%, transparent 94%);
         mask-image: linear-gradient(to bottom, #000 0%, #000 58%, transparent 94%);
     }
@@ -37,6 +37,6 @@
 
 @media (prefers-reduced-motion: reduce) {
     .homepage-light-rays {
-        opacity: 0.42;
+        opacity: 0.62;
     }
 }

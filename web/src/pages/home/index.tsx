@@ -88,16 +88,16 @@ export default function IndexPage() {
                 <div className="shj-hero-mist" aria-hidden />
                 <LightRays
                     raysOrigin="top-center"
-                    raysColor={isImperialMode ? "#e2c16f" : "#9fcddd"}
+                    raysColor={isImperialMode ? "#ffd166" : "#59d3ff"}
                     raysSpeed={0.72}
-                    lightSpread={0.82}
-                    rayLength={1.55}
+                    lightSpread={0.74}
+                    rayLength={1.68}
                     pulsating
-                    fadeDistance={1.12}
-                    saturation={0.78}
+                    fadeDistance={1.2}
+                    saturation={1.16}
                     followMouse
                     mouseInfluence={0.08}
-                    noiseAmount={0.065}
+                    noiseAmount={0.045}
                     distortion={0.045}
                     className={cn("homepage-light-rays", isImperialMode && "is-imperial")}
                 />
