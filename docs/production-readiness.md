@@ -50,16 +50,17 @@ REQUIRE_HTTPS=1 sh ops/deploy-latest.sh
 
 That preflight rejects a missing or non-HTTPS `PUBLIC_BASE_URL`, disabled proxy trust, insecure cookies, and a missing or placeholder `APP_ENCRYPTION_KEY` before the running container is stopped. The recreated container also uses `no-new-privileges`, drops Linux capabilities, limits process count, and rotates JSON logs. Optional `MEMORY_LIMIT` and `MEMORY_SWAP_LIMIT` values can be supplied to `deploy-pinned.sh` after observing normal production memory usage.
 
-From a Windows development machine with the dedicated deployment key installed, use the remote helper. It waits until GHCR publishes the requested commit, deploys its immutable digest, and verifies the public health endpoint:
+From a Windows development machine with the dedicated deployment key installed, use the remote helper. It verifies that the checked-out deployment scripts belong to the requested commit, normalizes them to UTF-8 LF, uploads them directly over SCP, waits for GHCR's full commit tag, deploys its immutable digest, and verifies the public health endpoint. The server no longer downloads scripts from GitHub Raw or waits for a moving `latest` tag:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File ops/deploy-remote.ps1 `
   -HostName 118.190.159.129 `
   -Commit (git rev-parse HEAD) `
-  -Mode safe
+  -Mode safe `
+  -HealthUrl https://your-domain.example/health
 ```
 
-Use `-Mode fast` only for UI, copy, and style changes. The default `safe` mode remains required for server code, authentication, permissions, provider configuration, storage, SQLite, migrations, and releases.
+An HTTPS health URL automatically enables the production HTTPS preflight before the old container is stopped. Keep `-Mode fast` for UI, copy, and styling-only changes; use `safe` whenever persisted data, server behavior, authentication, permissions, providers, or storage can change.
 
 The deployment script stops the app briefly, creates and verifies a full-volume backup, starts the new image by digest, checks `/health` and the source revision, and restores the previous container automatically on failure. For a specific release, bypass tag resolution and provide both immutable values explicitly:
 
