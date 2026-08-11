@@ -193,7 +193,7 @@ export function LightRays({
     const smoothMouseRef = useRef({ x: 0.5, y: 0.5 });
     const [isVisible, setIsVisible] = useState(() => typeof IntersectionObserver === "undefined");
     const [isPageVisible, setIsPageVisible] = useState(() => typeof document === "undefined" || document.visibilityState !== "hidden");
-    const [reduceMotion, setReduceMotion] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    const [reduceMotion, setReduceMotion] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
     useEffect(() => {
         const container = containerRef.current;
@@ -210,10 +210,15 @@ export function LightRays({
     }, []);
 
     useEffect(() => {
+        if (typeof window.matchMedia !== "function") return;
         const media = window.matchMedia("(prefers-reduced-motion: reduce)");
         const handleChange = () => setReduceMotion(media.matches);
-        media.addEventListener("change", handleChange);
-        return () => media.removeEventListener("change", handleChange);
+        if (typeof media.addEventListener === "function") {
+            media.addEventListener("change", handleChange);
+            return () => media.removeEventListener("change", handleChange);
+        }
+        media.addListener(handleChange);
+        return () => media.removeListener(handleChange);
     }, []);
 
     useEffect(() => {

@@ -17,3 +17,15 @@ test("light rays render as a non-interactive homepage environment layer", () => 
     assert.match(html, /light-rays-container homepage-light-rays/);
     assert.match(html, /aria-hidden="true"/);
 });
+
+test("light rays render when a browser-like window does not provide matchMedia", () => {
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "window", { configurable: true, value: {} });
+
+    try {
+        assert.doesNotThrow(() => renderToStaticMarkup(createElement(LightRays)));
+    } finally {
+        if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+        else Reflect.deleteProperty(globalThis, "window");
+    }
+});
