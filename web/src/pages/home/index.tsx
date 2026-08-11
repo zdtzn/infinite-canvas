@@ -9,12 +9,13 @@ import { LightRays } from "@/components/home/light-rays";
 import { useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationStageLabel, quotaText } from "@/features/cultivation/utils";
-import { promptImageCandidates, promptOriginalUrl, promptServerThumbnailUrl } from "@/components/prompts/prompt-cover";
+import { promptImageCandidates, promptOriginalUrl } from "@/components/prompts/prompt-cover";
 import { SpecularButton } from "@/components/ui/specular-button";
-import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
+import { fetchAllPrompts, type Prompt } from "@/services/api/prompts";
 import { cn } from "@/lib/utils";
+import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 
-import { HOMEPAGE_PROMPT_SOURCE_ID, selectHomepagePromptShowcase } from "./showcase";
+import { HOMEPAGE_PROMPT_ROTATION_MS, HOMEPAGE_PROMPT_WINDOW_SIZE, promptIdentity, selectHomepagePromptShowcase, selectHomepagePromptWindow } from "./showcase";
 
 /**
  * 山门 · 首页(方案B「山海境」开场版)
@@ -59,26 +60,48 @@ export default function IndexPage() {
     const { message } = App.useApp();
     const navigate = useNavigate();
     const [promptShowcase, setPromptShowcase] = useState<Prompt[]>([]);
+    const [showcaseOffset, setShowcaseOffset] = useState(0);
+    const [showcaseHovered, setShowcaseHovered] = useState(false);
     const [previewIndex, setPreviewIndex] = useState(0);
     const [previewOpen, setPreviewOpen] = useState(false);
     const { data: cultivation } = useCultivationProfile();
     const { isImperialMode } = useImperialMode();
+    const promptSourcesRevision = usePromptSourceStore((state) => state.sources.map((source) => [source.id, source.name, source.githubUrl, source.enabled ? "1" : "0", source.script].join("\n")).join("\n---\n"));
+    const visiblePromptShowcase = useMemo(() => selectHomepagePromptWindow(promptShowcase, showcaseOffset), [promptShowcase, showcaseOffset]);
+    const promptIndexes = useMemo(() => new Map(promptShowcase.map((item, index) => [promptIdentity(item), index])), [promptShowcase]);
     const driftWallItems = useMemo(
         () =>
-            promptShowcase.map((item, originalIndex) => ({
-                id: item.id,
+            visiblePromptShowcase.map((item) => ({
+                id: promptIdentity(item),
                 title: item.title,
                 imageSources: promptImageCandidates(item.coverUrl, 760),
-                originalIndex,
+                originalIndex: promptIndexes.get(promptIdentity(item)) ?? 0,
             })),
-        [promptShowcase],
+        [promptIndexes, visiblePromptShowcase],
     );
+    const previewItems = useMemo(() => promptShowcase.map((item) => ({ src: promptOriginalUrl(item.coverUrl), alt: item.title, decoding: "async" as const, referrerPolicy: "no-referrer" as const })), [promptShowcase]);
 
     useEffect(() => {
-        void fetchSourcePrompts(HOMEPAGE_PROMPT_SOURCE_ID)
-            .then((items) => setPromptShowcase(selectHomepagePromptShowcase(items)))
+        let active = true;
+        void fetchAllPrompts()
+            .then((items) => {
+                if (!active) return;
+                setPromptShowcase(selectHomepagePromptShowcase(items));
+                setShowcaseOffset(0);
+            })
             .catch((error) => message.error(error instanceof Error ? error.message : "获取提示词失败"));
-    }, [message]);
+        return () => {
+            active = false;
+        };
+    }, [message, promptSourcesRevision]);
+
+    useEffect(() => {
+        if (showcaseHovered || promptShowcase.length <= HOMEPAGE_PROMPT_WINDOW_SIZE) return;
+        const timer = window.setInterval(() => {
+            setShowcaseOffset((current) => (current + HOMEPAGE_PROMPT_WINDOW_SIZE) % promptShowcase.length);
+        }, HOMEPAGE_PROMPT_ROTATION_MS);
+        return () => window.clearInterval(timer);
+    }, [promptShowcase.length, showcaseHovered]);
 
     return (
         <main className="h-full overflow-y-auto bg-background text-foreground">
@@ -200,6 +223,7 @@ export default function IndexPage() {
                     {driftWallItems.length > 0 ? (
                         <DriftWall
                             items={driftWallItems}
+                            onHoverChange={setShowcaseHovered}
                             onItemClick={(_, originalIndex) => {
                                 setPreviewIndex(originalIndex);
                                 setPreviewOpen(true);
@@ -214,19 +238,14 @@ export default function IndexPage() {
             </section>
 
             <Image.PreviewGroup
+                items={previewItems}
                 preview={{
                     open: previewOpen,
                     current: previewIndex,
                     onOpenChange: setPreviewOpen,
                     onChange: setPreviewIndex,
                 }}
-            >
-                <div className="hidden">
-                    {promptShowcase.map((item) => (
-                        <Image key={item.id} src={promptServerThumbnailUrl(item.coverUrl, 1600)} fallback={promptOriginalUrl(item.coverUrl)} alt={item.title} />
-                    ))}
-                </div>
-            </Image.PreviewGroup>
+            />
         </main>
     );
 }

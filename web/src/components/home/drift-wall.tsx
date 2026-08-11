@@ -1,6 +1,7 @@
 import { ImageOff, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 
+import { runWithConcurrency } from "@/lib/async-pool";
 import { distributeDriftWallItems, driftWallColumnFactor, driftWallCopyCount } from "./drift-wall-layout";
 import "./drift-wall.css";
 
@@ -14,6 +15,7 @@ export type DriftWallItem = {
 type DriftWallProps = {
     items: DriftWallItem[];
     onItemClick?: (item: DriftWallItem, originalIndex: number) => void;
+    onHoverChange?: (hovered: boolean) => void;
     columns?: number;
     tileWidth?: number;
     tileHeight?: number;
@@ -86,6 +88,7 @@ async function resolveDriftWallImageSource(sources: string[]) {
 export function DriftWall({
     items,
     onItemClick,
+    onHoverChange,
     columns = 5,
     tileWidth = 210,
     tileHeight = 148,
@@ -159,8 +162,9 @@ export function DriftWall({
     useEffect(
         () => () => {
             imageRequestTokensRef.current.clear();
+            onHoverChange?.(false);
         },
-        [],
+        [onHoverChange],
     );
 
     useLayoutEffect(() => {
@@ -208,7 +212,7 @@ export function DriftWall({
 
     useEffect(() => {
         if (!isInView) return;
-        items.forEach((item) => void loadItemImage(item));
+        void runWithConcurrency(items, 8, async (item) => loadItemImage(item)).catch(() => undefined);
     }, [isInView, items, loadItemImage]);
 
     const responsiveScale = containerSize.width < 560 ? 0.76 : containerSize.width < 900 ? 0.88 : 1;
@@ -269,8 +273,9 @@ export function DriftWall({
             lastTimestampRef.current = timestamp;
 
             const maxPointerTilt = parallax * 7;
-            const targetX = pointerRef.current.x * maxPointerTilt;
-            const targetY = -pointerRef.current.y * maxPointerTilt;
+            const tileActive = activeIdRef.current !== null;
+            const targetX = tileActive ? dampedPointerRef.current.x : pointerRef.current.x * maxPointerTilt;
+            const targetY = tileActive ? dampedPointerRef.current.y : -pointerRef.current.y * maxPointerTilt;
             const pointerEase = 1 - Math.exp(-deltaSeconds / 0.12);
             dampedPointerRef.current.x += (targetX - dampedPointerRef.current.x) * pointerEase;
             dampedPointerRef.current.y += (targetY - dampedPointerRef.current.y) * pointerEase;
@@ -304,6 +309,7 @@ export function DriftWall({
     const activate = useCallback((id: string, columnIndex: number) => {
         activeIdRef.current = id;
         hoveredColumnRef.current = columnIndex;
+        velocitiesRef.current[columnIndex] = 0;
         setActiveId(id);
     }, []);
 
@@ -330,7 +336,13 @@ export function DriftWall({
         wallHoveredRef.current = false;
         pointerRef.current = { x: 0, y: 0 };
         release();
-    }, [release]);
+        onHoverChange?.(false);
+    }, [onHoverChange, release]);
+
+    const handlePointerEnterWall = useCallback(() => {
+        wallHoveredRef.current = true;
+        onHoverChange?.(true);
+    }, [onHoverChange]);
 
     const handleTileKeyDown = useCallback(
         (event: ReactKeyboardEvent<HTMLDivElement>, item: DriftWallItem) => {
@@ -361,18 +373,7 @@ export function DriftWall({
     const rootClassName = ["drift-wall", reducedMotion ? "drift-wall--reduced" : "", className].filter(Boolean).join(" ");
 
     return (
-        <div
-            ref={containerRef}
-            className={rootClassName}
-            style={cssVariables}
-            onPointerMove={handlePointerMove}
-            onPointerEnter={() => {
-                wallHoveredRef.current = true;
-            }}
-            onPointerLeave={handlePointerLeaveWall}
-            role="group"
-            aria-label={ariaLabel}
-        >
+        <div ref={containerRef} className={rootClassName} style={cssVariables} onPointerMove={handlePointerMove} onPointerEnter={handlePointerEnterWall} onPointerLeave={handlePointerLeaveWall} role="group" aria-label={ariaLabel}>
             <div ref={planeRef} className="drift-wall__plane">
                 {columnItems.map((column, columnIndex) => {
                     const meta = columnMeta[columnIndex];

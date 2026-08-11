@@ -1,6 +1,7 @@
 import type { Prompt } from "@/services/api/prompts";
 
-export const HOMEPAGE_PROMPT_SOURCE_ID = "freestylefly-awesome-gpt-image-2";
+export const HOMEPAGE_PROMPT_WINDOW_SIZE = 50;
+export const HOMEPAGE_PROMPT_ROTATION_MS = 90_000;
 
 const EXAMPLE_TITLE_PREFIX = /^例\s*\d+\s*[：:]\s*/;
 
@@ -19,21 +20,62 @@ const curatedTitles = [
     "零食品牌技术分解图",
 ] as const;
 
-export function selectHomepagePromptShowcase(items: Prompt[], limit = curatedTitles.length) {
-    const available = items.filter((item) => item.coverUrl);
+export function selectHomepagePromptShowcase(items: Prompt[], limit = Number.POSITIVE_INFINITY) {
+    const maxItems = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : Number.POSITIVE_INFINITY;
+    const seen = new Set<string>();
+    const available = items.filter((item) => {
+        if (!item.coverUrl) return false;
+        const key = promptIdentity(item);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
     const byTitle = new Map(available.map((item) => [item.title.replace(EXAMPLE_TITLE_PREFIX, "").trim(), item]));
     const selected = curatedTitles.flatMap((title) => {
         const item = byTitle.get(title);
         return item ? [item] : [];
     });
-    const selectedIds = new Set(selected.map((item) => item.id));
+    const selectedIds = new Set(selected.map(promptIdentity));
 
-    for (const item of available) {
-        if (selected.length >= limit) break;
-        if (selectedIds.has(item.id)) continue;
+    const remaining = interleaveByCategory(available.filter((item) => !selectedIds.has(promptIdentity(item))));
+    for (const item of remaining) {
+        if (selected.length >= maxItems) break;
         selected.push(item);
-        selectedIds.add(item.id);
+        selectedIds.add(promptIdentity(item));
     }
 
-    return selected.slice(0, limit);
+    return selected.slice(0, maxItems);
+}
+
+export function selectHomepagePromptWindow(items: Prompt[], offset: number, size = HOMEPAGE_PROMPT_WINDOW_SIZE) {
+    const windowSize = Math.max(1, Math.floor(size));
+    if (items.length <= windowSize) return items;
+    const start = positiveModulo(Math.floor(offset), items.length);
+    return Array.from({ length: windowSize }, (_, index) => items[(start + index) % items.length]);
+}
+
+export function promptIdentity(item: Pick<Prompt, "category" | "id">) {
+    return `${item.category}\n${item.id}`;
+}
+
+function interleaveByCategory(items: Prompt[]) {
+    const grouped = new Map<string, Prompt[]>();
+    for (const item of items) {
+        const group = grouped.get(item.category) || [];
+        group.push(item);
+        grouped.set(item.category, group);
+    }
+
+    const groups = Array.from(grouped.values());
+    const interleaved: Prompt[] = [];
+    for (let row = 0; interleaved.length < items.length; row += 1) {
+        for (const group of groups) {
+            if (group[row]) interleaved.push(group[row]);
+        }
+    }
+    return interleaved;
+}
+
+function positiveModulo(value: number, modulus: number) {
+    return ((value % modulus) + modulus) % modulus;
 }

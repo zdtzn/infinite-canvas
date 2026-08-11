@@ -147,7 +147,7 @@ async function getAllPrompts(): Promise<Prompt[]> {
 }
 
 export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
-    const items = (await getAllPrompts()).map(withPromptTaxonomy);
+    const items = await fetchAllPrompts();
     const normalizedKeyword = keyword.trim().toLowerCase();
     const normalizedPage = Math.max(1, page);
     const normalizedPageSize = Math.max(1, Math.min(100, pageSize));
@@ -160,6 +160,11 @@ export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROM
         categories: enabledSources().map((source) => source.name),
         total: filtered.length,
     };
+}
+
+/** Load the complete prompt library across every enabled source. */
+export async function fetchAllPrompts(): Promise<Prompt[]> {
+    return (await getAllPrompts()).map(withPromptTaxonomy);
 }
 
 /** Load a single source's prompts (used by the source content table). Throws so the caller can show the error. */
