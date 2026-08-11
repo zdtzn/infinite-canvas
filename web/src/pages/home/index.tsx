@@ -5,7 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { motion, type Variants } from "motion/react";
 
 import { DriftWall } from "@/components/home/drift-wall";
-import { SideRays } from "@/components/home/side-rays";
+import { LightRays } from "@/components/home/light-rays";
 import { useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationStageLabel, quotaText } from "@/features/cultivation/utils";
@@ -86,16 +86,20 @@ export default function IndexPage() {
             <motion.section className={cn("shj-hero relative flex min-h-[calc(100dvh-3.5rem)] flex-col items-center justify-center overflow-hidden", isImperialMode && "shj-hero--imperial")} initial="hidden" animate="show" variants={heroStagger}>
                 <div className="shj-hero-stars" aria-hidden />
                 <div className="shj-hero-mist" aria-hidden />
-                <SideRays
-                    speed={0.88}
-                    rayColor1="#e3c77d"
-                    rayColor2="#9db8cb"
-                    intensity={isImperialMode ? 1.08 : 0.95}
-                    spread={1.14}
-                    origin="top-right"
-                    tilt={-4}
-                    opacity={isImperialMode ? 0.82 : 0.62}
-                    className={isImperialMode ? "is-imperial" : undefined}
+                <LightRays
+                    raysOrigin="top-center"
+                    raysColor={isImperialMode ? "#e2c16f" : "#9fcddd"}
+                    raysSpeed={0.72}
+                    lightSpread={0.82}
+                    rayLength={1.55}
+                    pulsating
+                    fadeDistance={1.12}
+                    saturation={0.78}
+                    followMouse
+                    mouseInfluence={0.08}
+                    noiseAmount={0.065}
+                    distortion={0.045}
+                    className={cn("homepage-light-rays", isImperialMode && "is-imperial")}
                 />
                 <div className="shj-hero-motes" aria-hidden />
                 <div className="shj-grain" aria-hidden />
