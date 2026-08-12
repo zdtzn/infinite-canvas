@@ -1,5 +1,5 @@
-import { App, Button, Empty, Input, Popconfirm, Skeleton, Tag, Tooltip } from "antd";
-import { ImagePlus, LoaderCircle, MessageCircle, Plus, Send, Trash2, X } from "lucide-react";
+import { App, Button, Dropdown, Empty, Input, Popconfirm, Skeleton, Tag, Tooltip } from "antd";
+import { ChevronDown, ImagePlus, LoaderCircle, MessageCircle, Plus, Send, Sparkles, Trash2, X } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { useEffect, useRef, useState } from "react";
 
@@ -239,39 +239,6 @@ export default function ChatPage() {
                         </div>
                     </div>
 
-                    <div className="mb-3 shrink-0 rounded-xl border border-stone-200/80 bg-white/60 px-3 py-3 shadow-sm dark:border-white/10 dark:bg-white/[0.035]">
-                        <div className="flex items-center justify-between gap-3">
-                            <div>
-                                <div className="text-xs font-semibold tracking-[0.18em] text-stone-600 dark:text-stone-300">角色预设</div>
-                                <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">{activePreset.hint}</div>
-                            </div>
-                        </div>
-                        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                            {chatPresetOptions.map((preset) => {
-                                const active = preset.id === presetId;
-                                return (
-                                    <button
-                                        key={preset.id}
-                                        type="button"
-                                        title={preset.description}
-                                        aria-pressed={active}
-                                        disabled={sending}
-                                        className={cn(
-                                            "min-w-[126px] rounded-lg border px-3 py-2 text-left text-xs transition disabled:cursor-not-allowed disabled:opacity-60",
-                                            active
-                                                ? "border-amber-400/70 bg-amber-50 text-amber-900 shadow-sm dark:border-amber-300/35 dark:bg-amber-300/10 dark:text-amber-100"
-                                                : "border-stone-200/80 bg-white/65 text-stone-600 hover:border-amber-300/70 hover:bg-amber-50/50 dark:border-white/10 dark:bg-white/[0.035] dark:text-stone-300 dark:hover:border-amber-300/25 dark:hover:bg-amber-300/10",
-                                        )}
-                                        onClick={() => setPresetId(preset.id)}
-                                    >
-                                        <span className="block font-medium">{preset.label}</span>
-                                        <span className="mt-1 block truncate text-[11px] opacity-70">{preset.description}</span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-
                     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-stone-200/80 bg-white/55 p-4 dark:border-white/10 dark:bg-black/10">
                         {detailLoading ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
                         {!detailLoading && !messages.length ? <WelcomeEmpty /> : null}
@@ -299,6 +266,37 @@ export default function ChatPage() {
                             <Tooltip title="上传图片提问">
                                 <Button type="text" className="!h-10 !w-10 !min-w-10" icon={uploading ? <LoaderCircle className="size-4 animate-spin" /> : <ImagePlus className="size-4" />} onClick={() => fileInputRef.current?.click()} disabled={sending || uploading} />
                             </Tooltip>
+                            <Dropdown
+                                trigger={["click"]}
+                                placement="topLeft"
+                                disabled={sending}
+                                menu={{
+                                    selectedKeys: [presetId],
+                                    onClick: ({ key }) => setPresetId(key as ChatPresetId),
+                                    items: chatPresetOptions.map((preset) => ({
+                                        key: preset.id,
+                                        label: (
+                                            <div className="min-w-[180px] py-0.5">
+                                                <div className="text-sm font-medium">{preset.label}</div>
+                                                <div className="mt-0.5 max-w-[240px] truncate text-xs text-stone-500">{preset.description}</div>
+                                            </div>
+                                        ),
+                                    })),
+                                }}
+                            >
+                                <Button
+                                    type="text"
+                                    className="!h-10 shrink-0 !px-2.5 text-stone-600 dark:text-stone-200"
+                                    icon={<Sparkles className="size-4 text-amber-600" />}
+                                    disabled={sending}
+                                    title={activePreset.hint}
+                                >
+                                    <span className="inline-flex max-w-[92px] items-center gap-1 truncate text-xs">
+                                        <span className="truncate">{activePreset.label}</span>
+                                        <ChevronDown className="size-3 shrink-0" />
+                                    </span>
+                                </Button>
+                            </Dropdown>
                             <Input.TextArea
                                 value={draft}
                                 onChange={(event) => setDraft(event.target.value)}

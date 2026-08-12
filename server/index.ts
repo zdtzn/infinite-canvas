@@ -1231,10 +1231,8 @@ function requireChat() {
 }
 
 function defaultChatTextModel() {
-    for (const channel of listPlatformChannels(state)) {
-        const model = channel.models.find((item) => item.capability === "text");
-        if (model) return { channelId: channel.id, model: model.name };
-    }
+    const target = resolvePromptOptimizationTarget(listPlatformChannels(state), promptOptimizationPreferredTarget());
+    if (target) return target;
     throw new HttpError(503, "管理员尚未配置可用的问道台文本模型");
 }
 

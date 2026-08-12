@@ -43,7 +43,7 @@ export function PromptOptimizerAdminSetting({ config }: { config: AiConfig }) {
                 if (active) setConfiguration(result);
             })
             .catch((error) => {
-                if (active) message.error(error instanceof Error ? error.message : "提示词优化模型读取失败");
+                if (active) message.error(error instanceof Error ? error.message : "文本模型配置读取失败");
             })
             .finally(() => {
                 if (active) setLoading(false);
@@ -65,16 +65,16 @@ export function PromptOptimizerAdminSetting({ config }: { config: AiConfig }) {
         if (saving || configuration?.lockedByEnvironment) return;
         const target = promptOptimizerTargetFromSelection(value);
         if (target === undefined) {
-            message.error("提示词优化模型无效");
+            message.error("文本模型配置无效");
             return;
         }
         setSaving(true);
         try {
             const result = await updatePromptOptimizerAdminConfiguration(target);
             setConfiguration(result);
-            message.success(target ? "提示词优化模型已保存" : "已恢复自动选择文本模型");
+            message.success(target ? "文本模型已保存" : "已恢复自动选择文本模型");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "提示词优化模型保存失败");
+            message.error(error instanceof Error ? error.message : "文本模型保存失败");
         } finally {
             setSaving(false);
         }
@@ -86,9 +86,9 @@ export function PromptOptimizerAdminSetting({ config }: { config: AiConfig }) {
                 <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold">
                         <Sparkles className="size-4" />
-                        提示词优化模型
+                        全站文本模型
                     </div>
-                    <div className="mt-1 text-xs text-stone-500">仅管理员配置。普通用户不会看到或选择该模型，提示词优化也不消耗修炼额度。</div>
+                    <div className="mt-1 text-xs text-stone-500">仅管理员配置。问道台、提示词优化和商品分析都会优先使用这里选择的文本模型，普通用户不会看到或选择。</div>
                 </div>
                 <div className="w-full shrink-0 md:w-[320px]">
                     <Select
