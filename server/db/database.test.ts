@@ -164,7 +164,16 @@ describe("SQLite application database", () => {
         prompt_template: string;
       };
 
-      expect(Number(migration.version)).toBeGreaterThanOrEqual(10);
+      const chatTables = (
+        store.raw!
+          .query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'chat_%' ORDER BY name",
+          )
+          .all() as Array<{ name: string }>
+      ).map((item) => item.name);
+
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(11);
+      expect(chatTables).toEqual(["chat_conversations", "chat_messages"]);
       expect(universalTemplate).toMatchObject({
         name: "爆款撞色主图",
         output_kind: "main_image",

@@ -15,7 +15,7 @@ export type GuideSection = {
     blocks: GuideBlock[];
 };
 
-export const guideSections: GuideSection[] = [
+const guideSectionsSource: GuideSection[] = [
     {
         id: "getting-started",
         label: "快速开始",
@@ -114,6 +114,56 @@ export const guideSections: GuideSection[] = [
     },
     {
         id: "product-lab",
+        label: "商品幻境",
+        title: "把商品素材转化为电商视觉方案",
+        summary: "商品幻境会先识别商品，再自动规划主图与详情内容；确认一次后即可连续生成整套素材。",
+        keywords: ["商品", "电商", "主图", "详情页", "卖点", "场景图", "拼多多", "商品套图", "一键详情套装", "核心三图"],
+        path: "/product-lab",
+        actionLabel: "进入商品幻境",
+        blocks: [
+            {
+                title: "三步完成套图",
+                items: ["第一步上传主体完整、包装文字清楚的商品图片，系统会保存项目并自动识别名称、品类、卖点和真实使用场景。", "第二步核对识别结果并选择“先做一张主图”“核心三图”“一键详情套装”或“完整商品套图”；不填写补充字段也能继续。", "系统会依据商品事实自动安排每一页内容；风格与模板属于可选调整，不需要逐张编写提示词。", "第三步确认一次后连续生成所选页面，其中一键详情套装包含 1 张主图和最多 6 张核心详情页。"],
+            },
+            {
+                title: "能力与重试",
+                items: ["当前可生成的页面数量由境界、系统开放能力和模型能力共同决定，更高境界会自动扩展详情页数量。", "套图按页面独立生成，已经成功的页面会保留，失败页面可以单独重试。", "开始整套生成前先确认商品名称、包装结构和必须保留的文字，避免错误信息扩散到所有页面。"],
+            },
+            {
+                title: "效果不理想时",
+                items: ["白底图过多时，补充明确的使用场景、光线、材质和构图要求。", "商品外观被改变时，减少互相冲突的风格词，并强调主体结构、包装文字和品牌元素保持一致。", "文字类主图应控制卖点数量，优先使用两到三条短句。"],
+            },
+            {
+                title: "保存规则",
+                items: ["生成结果先保留在当前商品项目，不会自动进入藏卷阁。", "可以单张入藏，也可以在整套生成完成后批量入藏；确认可用后再收录，避免把测试图和失败方案混入资产库。"],
+            },
+        ],
+    },
+    {
+        id: "chat",
+        label: "问道台 · AI 对话",
+        title: "在站内完成图文问答与创作讨论",
+        summary: "问道台使用管理员开放的文本模型，适合咨询提示词、分析图片、讨论设计方向和处理日常创作问题。",
+        keywords: ["问道台", "聊天", "AI 对话", "图片提问", "文本模型", "提示词", "图文问答"],
+        path: "/chat",
+        actionLabel: "进入问道台",
+        blocks: [
+            {
+                title: "开始提问",
+                items: ["进入问道台后直接输入问题，默认使用洞府中配置的默认文本模型。", "需要分析图片时点击上传图片，再输入你想确认的问题，例如画面风格、构图问题、商品卖点或提示词建议。", "同一段问道会保留上下文，适合连续追问；新主题建议新建一段问道。"],
+            },
+            {
+                title: "模型与数据",
+                items: ["普通用户不需要填写 API Key，文本模型由管理员在后台统一配置。", "问道台只使用文本/多模态文本模型，不会修改丹青台、画布、生图任务或额度扣除逻辑。", "上传到问道台的图片仍归当前账号所有，其他用户无法读取。"],
+            },
+            {
+                title: "适合场景",
+                items: ["让模型帮你改写提示词、解释失败原因、分析参考图是否清晰。", "让模型根据图片给出商品主图、详情页或海报方向。", "讨论创作构思、标题、文案和布局，不必离开网站去其他聊天页面。"],
+            },
+        ],
+    },
+    {
+        id: "product-lab-legacy-anchor",
         label: "商品幻境",
         title: "把商品素材转化为电商视觉方案",
         summary: "商品幻境会先识别商品，再自动规划主图与详情内容；确认一次后即可连续生成整套素材。",
@@ -339,6 +389,8 @@ export const guideSections: GuideSection[] = [
         ],
     },
 ];
+
+export const guideSections = guideSectionsSource.filter((section) => section.id !== "product-lab-legacy-anchor");
 
 export function searchGuideSections(query: string, sections = guideSections) {
     const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);

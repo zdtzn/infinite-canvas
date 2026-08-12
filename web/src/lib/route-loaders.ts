@@ -2,6 +2,7 @@ export const routeLoaders = {
     "/": () => import("@/pages/home"),
     "/canvas": () => import("@/pages/canvas"),
     "/canvas/:id": () => import("@/pages/canvas/project"),
+    "/chat": () => import("@/pages/chat"),
     "/color-alchemy": () => import("@/pages/color-alchemy"),
     "/config": () => import("@/pages/config"),
     "/cultivation": () => import("@/pages/cultivation"),
@@ -17,7 +18,7 @@ export const routeLoaders = {
 const pendingRouteLoads = new Map<string, Promise<void>>();
 const loadedRouteKeys = new Set<string>();
 
-const routeWarmupOrder = ["/image", "/canvas", "/assets", "/color-alchemy", "/product-lab", "/prompts", "/video", "/cultivation", "/config", "/", "/docs", "/canvas/:id"] as const;
+const routeWarmupOrder = ["/image", "/chat", "/canvas", "/assets", "/color-alchemy", "/product-lab", "/prompts", "/video", "/cultivation", "/config", "/", "/docs", "/canvas/:id"] as const;
 
 export function preloadRoute(path: string) {
     const routeKey = routeKeyForPath(path);

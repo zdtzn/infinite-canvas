@@ -6,12 +6,19 @@ import { navigationSceneNames, navigationTools, primaryNavigationTools, secondar
 test("keeps the core creation workspaces available in the primary navigation", () => {
     assert.deepEqual(
         primaryNavigationTools.map((tool) => tool.slug),
-        ["canvas", "image", "product-lab", "assets", "color-alchemy"],
+        ["canvas", "image", "chat", "product-lab", "assets", "color-alchemy"],
     );
 });
 
 test("keeps secondary navigation separate from the core work routes", () => {
-    assert.ok(secondaryNavigationTools.every((tool) => !["canvas", "image", "product-lab", "assets", "color-alchemy"].includes(tool.slug)));
+    assert.ok(secondaryNavigationTools.every((tool) => !["canvas", "image", "chat", "product-lab", "assets", "color-alchemy"].includes(tool.slug)));
+});
+
+test("exposes Wen Dao Tai as a primary AI chat workspace", () => {
+    const chat = navigationTools.find((tool) => tool.slug === "chat");
+    assert.ok(chat);
+    assert.equal(chat.label, "问道台");
+    assert.equal((navigationSceneNames as Record<string, string>).chat, "问道台");
 });
 
 test("exposes Color Alchemy as an independent primary workspace", () => {

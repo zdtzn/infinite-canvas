@@ -10,6 +10,7 @@ import RouteErrorPage from "@/pages/route-error";
 const AssetsPage = lazyRoute(routeLoaders["/assets"]);
 const CanvasPage = lazyRoute(routeLoaders["/canvas"]);
 const CanvasProjectPage = lazyRoute(routeLoaders["/canvas/:id"]);
+const ChatPage = lazyRoute(routeLoaders["/chat"]);
 const ColorAlchemyPage = lazyRoute(routeLoaders["/color-alchemy"]);
 const ConfigPage = lazyRoute(routeLoaders["/config"]);
 const CultivationPage = lazyRoute(routeLoaders["/cultivation"]);
@@ -62,6 +63,14 @@ export const router = createBrowserRouter([
                 element: (
                     <RoutePage>
                         <ImagePage />
+                    </RoutePage>
+                ),
+            },
+            {
+                path: "/chat",
+                element: (
+                    <RoutePage>
+                        <ChatPage />
                     </RoutePage>
                 ),
             },

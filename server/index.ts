@@ -8,6 +8,17 @@ import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryIte
 import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
 import { AsyncSemaphore } from "./lib/async-semaphore";
 import { canAccessUserAvatar } from "./lib/avatar-access";
+import {
+    buildGeminiChatBody,
+    buildOpenAiChatCompletionBody,
+    buildOpenAiResponsesChatBody,
+    chatPayloadError,
+    chatPayloadText,
+    consumeChatStream,
+    type ChatProtocol,
+    type ChatProtocolMessage,
+    type ChatStreamState,
+} from "./lib/chat-protocol";
 import { decryptSecret, encryptSecret, normalizeEncryptionSecret } from "./lib/crypto-store";
 import { generationHistoryJobIdsForDeletion, GenerationHistoryInputError, normalizeGenerationHistory, normalizeGenerationHistoryDeletion, normalizeGenerationHistoryItem } from "./lib/generation-history";
 import { parseSingleByteRange } from "./lib/http-range";
@@ -64,6 +75,7 @@ import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
 import { openAppDatabase, persistReference } from "./db/database";
+import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
 import { createProductLabService, productOutputCapability, ProductLabError } from "./modules/product-lab/service";
 import type { ChannelModelRecord, ChannelRecord, GenerationHistoryKind, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
@@ -139,6 +151,13 @@ const MAX_PROMPT_OPTIMIZE_RESPONSE_BYTES = 512 * 1024;
 const MAX_PRODUCT_ANALYSIS_JSON_BYTES = 16 * 1024;
 const MAX_PRODUCT_ANALYSIS_RESPONSE_BYTES = 512 * 1024;
 const PRODUCT_ANALYSIS_RATE_LIMIT = Math.max(1, Math.min(30, positiveInt(process.env.PRODUCT_ANALYSIS_RATE_LIMIT, 6)));
+const MAX_CHAT_JSON_BYTES = 64 * 1024;
+const MAX_CHAT_UPSTREAM_ERROR_BYTES = 256 * 1024;
+const MAX_CHAT_ATTACHMENT_TOTAL_BYTES = Math.max(4 * 1024 * 1024, Math.min(64 * 1024 * 1024, positiveInt(process.env.MAX_CHAT_ATTACHMENT_TOTAL_BYTES, 24 * 1024 * 1024)));
+const CHAT_TIMEOUT_MS = Math.max(30_000, Math.min(10 * 60_000, positiveInt(process.env.CHAT_TIMEOUT_MS, 3 * 60_000)));
+const CHAT_RATE_LIMIT = Math.max(1, Math.min(60, positiveInt(process.env.CHAT_RATE_LIMIT, 12)));
+const CHAT_GLOBAL_CONCURRENCY = Math.max(1, Math.min(16, positiveInt(process.env.CHAT_GLOBAL_CONCURRENCY, 4)));
+const CHAT_USER_CONCURRENCY = Math.max(1, Math.min(4, positiveInt(process.env.CHAT_USER_CONCURRENCY, 2)));
 const PROMPT_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif", "image/svg+xml", "image/bmp", "image/tiff"]);
 const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL);
 const secureCookies = PUBLIC_BASE_URL.startsWith("https://") || process.env.FORCE_SECURE_COOKIES === "1";
@@ -182,6 +201,7 @@ for (const job of Object.values(state.jobs)) {
 }
 const cultivation = appDatabase.raw ? createCultivationService(appDatabase.raw) : null;
 const productLab = appDatabase.raw ? createProductLabService(appDatabase.raw) : null;
+const chat = appDatabase.raw ? createChatService(appDatabase.raw) : null;
 const mediaTasks = appDatabase.raw ? createMediaTaskStore(appDatabase.raw, MEDIA_TASK_RETENTION_MS, MEDIA_TASK_ACTIVE_TTL_MS) : null;
 mediaTasks?.prune();
 const backupManager = appDatabase.raw
@@ -206,6 +226,8 @@ const previousEncryptionSecrets = [
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 const activeMediaProxyRequests = new Map<string, number>();
 const activeMediaProxyUsageIds = new Set<string>();
+const activeChatRequestsByUser = new Map<string, number>();
+let activeChatRequests = 0;
 type ImageRecoveryResult = { recovered: number; remaining: number; lastError?: string };
 const imageRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const imageRecoveryRuns = new Map<string, Promise<ImageRecoveryResult>>();
@@ -388,6 +410,18 @@ async function route(request: Request, requestId: string) {
             enforceRateLimit(`${session.userId}:${clientIp(request)}:prompt-optimize`, PROMPT_OPTIMIZE_RATE_LIMIT);
             return promptOptimizeSemaphore.run(request.signal, () => optimizeImagePrompt(request, session, requestId));
         }
+        if (url.pathname === "/api/chat/conversations" && request.method === "GET") return listChatConversations(session);
+        if (url.pathname === "/api/chat/conversations" && request.method === "POST") return createChatConversation(request, session);
+        const chatMessagesMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages$/);
+        if (chatMessagesMatch && request.method === "POST") {
+            enforceRateLimit(`${session.userId}:${clientIp(request)}:chat`, CHAT_RATE_LIMIT);
+            return sendChatMessage(request, session, decodeRouteSegment(chatMessagesMatch[1], "对话 ID"), requestId);
+        }
+        const chatConversationMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)$/);
+        if (chatConversationMatch && request.method === "GET")
+            return getChatConversation(session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
+        if (chatConversationMatch && request.method === "DELETE")
+            return deleteChatConversation(session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
         if (url.pathname === "/api/product-lab/context" && request.method === "GET") return productLabContext(session);
         if (url.pathname === "/api/product-lab/projects" && request.method === "GET") return listProductProjects(session);
         if (url.pathname === "/api/product-lab/projects" && request.method === "POST") return createProductProject(request, session);
@@ -1185,6 +1219,269 @@ function promptOptimizationFailureMessage(status: number | undefined, error: unk
     return detail ? `提示词优化暂不可用：${detail}` : "提示词优化暂不可用，请稍后重试";
 }
 
+function requireChat() {
+    if (!chat) throw new HttpError(503, "SQLite 迁移尚未完成，问道台暂不可用");
+    return chat;
+}
+
+function listChatConversations(session: SessionPayload) {
+    return json({ items: requireChat().listConversations(session.userId) }, 200, { "Cache-Control": "no-store" });
+}
+
+async function createChatConversation(request: Request, session: SessionPayload) {
+    const input = await readJson<unknown>(request, 8 * 1024);
+    return json({ conversation: requireChat().createConversation(session.userId, input) }, 201, { "Cache-Control": "no-store" });
+}
+
+function getChatConversation(session: SessionPayload, conversationId: string) {
+    const detail = requireChat().getConversationWithMessages(session.userId, conversationId);
+    if (!detail) throw new HttpError(404, "对话不存在");
+    return json(
+        {
+            conversation: detail.conversation,
+            messages: detail.messages.map((message) => publicChatMessage(session.userId, message)),
+        },
+        200,
+        { "Cache-Control": "no-store" },
+    );
+}
+
+function deleteChatConversation(session: SessionPayload, conversationId: string) {
+    if (!requireChat().deleteConversation(session.userId, conversationId)) throw new HttpError(404, "对话不存在");
+    return new Response(null, { status: 204 });
+}
+
+async function sendChatMessage(request: Request, session: SessionPayload, conversationId: string, requestId: string) {
+    const source = await readJson<Record<string, unknown>>(request, MAX_CHAT_JSON_BYTES);
+    const content = String(source.content || "").trim();
+    const channelId = String(source.channelId || "").trim();
+    const model = String(source.model || "").trim();
+    const attachments = normalizeChatAttachmentInput(source.attachments);
+    const preparedAttachments = prepareChatAttachments(session.userId, attachments);
+    assertPlatformModelAllowed(channelId, model, "text");
+    reserveChatRequest(session.userId);
+
+    const abortController = new AbortController();
+    const signal = AbortSignal.any([request.signal, abortController.signal]);
+    let releasePending = true;
+    const release = () => {
+        if (!releasePending) return;
+        releasePending = false;
+        releaseChatRequest(session.userId);
+    };
+
+    let turn: ReturnType<ReturnType<typeof createChatService>["beginTurn"]> | undefined;
+    try {
+        turn = requireChat().beginTurn(session.userId, conversationId, {
+            content,
+            attachments: preparedAttachments.map(({ bytes: _bytes, base64: _base64, ...attachment }) => attachment),
+            channelId,
+            model,
+        });
+        const messages = chatProtocolMessages(requireChat().contextMessages(session.userId, conversationId), turn.userMessage.id, preparedAttachments);
+        const channel = platformChannel(channelId);
+        const apiKey = decryptChannelApiKey(channel);
+        const upstream = await openChatUpstream(channel, apiKey, model, messages, signal, requestId);
+        const publicUserMessage = publicChatMessage(session.userId, turn.userMessage);
+        const publicAssistantMessage = publicChatMessage(session.userId, turn.assistantMessage);
+
+        if (!upstream.stream) {
+            const completed = requireChat().completeAssistant(session.userId, turn.assistantMessage.id, upstream.text);
+            release();
+            return chatEventResponse([
+                ["started", { conversation: turn.conversation, userMessage: publicUserMessage, assistantMessage: publicAssistantMessage }],
+                ["delta", { messageId: turn.assistantMessage.id, delta: upstream.text }],
+                ["done", { conversation: turn.conversation, message: publicChatMessage(session.userId, completed) }],
+            ]);
+        }
+
+        const encoder = new TextEncoder();
+        let canceled = false;
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode(chatEvent("started", { conversation: turn!.conversation, userMessage: publicUserMessage, assistantMessage: publicAssistantMessage })));
+                void (async () => {
+                    const reader = upstream.response.body!.getReader();
+                    const decoder = new TextDecoder();
+                    const state: ChatStreamState = { buffer: "", text: "" };
+                    try {
+                        for (;;) {
+                            const next = await reader.read();
+                            if (next.done) break;
+                            consumeChatStream(upstream.protocol, state, decoder.decode(next.value, { stream: true }), (delta) => {
+                                if (!canceled) controller.enqueue(encoder.encode(chatEvent("delta", { messageId: turn!.assistantMessage.id, delta })));
+                            });
+                            if (state.error) throw new Error(state.error);
+                        }
+                        consumeChatStream(upstream.protocol, state, decoder.decode(), (delta) => {
+                            if (!canceled) controller.enqueue(encoder.encode(chatEvent("delta", { messageId: turn!.assistantMessage.id, delta })));
+                        }, true);
+                        if (state.error) throw new Error(state.error);
+                        if (!state.text.trim()) throw new Error("文本模型没有返回可用内容");
+                        const completed = requireChat().completeAssistant(session.userId, turn!.assistantMessage.id, state.text);
+                        if (!canceled) {
+                            controller.enqueue(encoder.encode(chatEvent("done", { conversation: turn!.conversation, message: publicChatMessage(session.userId, completed) })));
+                            controller.close();
+                        }
+                        console.info(JSON.stringify({ event: "chat_completed", requestId, userId: session.userId, conversationId, channelId, model, outputCharacters: state.text.length }));
+                    } catch (error) {
+                        const message = chatFailureMessage(upstream.response.status, error);
+                        requireChat().failAssistant(session.userId, turn!.assistantMessage.id, state.text, message);
+                        if (!canceled) {
+                            controller.enqueue(encoder.encode(chatEvent("error", { message, messageId: turn!.assistantMessage.id })));
+                            controller.close();
+                        }
+                    } finally {
+                        try {
+                            reader.releaseLock();
+                        } catch {}
+                        release();
+                    }
+                })();
+            },
+            cancel(reason) {
+                canceled = true;
+                abortController.abort(reason instanceof Error ? reason : new DOMException("回答已停止", "AbortError"));
+            },
+        });
+        return new Response(stream, { headers: chatStreamHeaders() });
+    } catch (error) {
+        if (turn) requireChat().failAssistant(session.userId, turn.assistantMessage.id, "", chatFailureMessage(undefined, error));
+        release();
+        throw error;
+    }
+}
+
+function normalizeChatAttachmentInput(value: unknown): ChatAttachment[] {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => {
+        const source = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : {};
+        return { assetKey: String(source.assetKey || "").trim(), mimeType: String(source.mimeType || "").trim(), name: String(source.name || "").trim() };
+    });
+}
+
+function prepareChatAttachments(userId: string, attachments: ChatAttachment[]) {
+    if (attachments.length > 4) throw new HttpError(400, "每次最多上传 4 张图片");
+    let totalBytes = 0;
+    return attachments.map((attachment) => {
+        const asset = ownedAsset(userId, attachment.assetKey);
+        if (!isAllowedImageMimeType(asset.mimeType)) throw new HttpError(400, "问道台附件只支持图片");
+        const path = existingAssetPath(userId, asset.key);
+        if (!path) throw new HttpError(404, "图片附件文件不存在");
+        const bytes = readFileSync(path);
+        totalBytes += bytes.byteLength;
+        if (totalBytes > MAX_CHAT_ATTACHMENT_TOTAL_BYTES) throw new HttpError(413, `图片附件总量不能超过 ${Math.floor(MAX_CHAT_ATTACHMENT_TOTAL_BYTES / 1024 / 1024)} MB`);
+        return { assetKey: asset.key, mimeType: asset.mimeType, name: attachment.name.slice(0, 160), bytes: bytes.byteLength, base64: bytes.toString("base64") };
+    });
+}
+
+function chatProtocolMessages(messages: ChatMessage[], latestUserMessageId: string, attachments: ReturnType<typeof prepareChatAttachments>): ChatProtocolMessage[] {
+    return messages.map((message) => ({
+        role: message.role,
+        content: message.content,
+        images:
+            message.id === latestUserMessageId
+                ? attachments.map((attachment) => ({ mimeType: attachment.mimeType, base64: attachment.base64 }))
+                : [],
+    }));
+}
+
+async function openChatUpstream(channel: ChannelRecord, apiKey: string, model: string, messages: ChatProtocolMessage[], signal: AbortSignal, requestId: string) {
+    const system = "你是 Infinite Canvas 的问道台，一名专业、清晰、可靠的 AI 助手。直接回答用户问题；当用户上传图片时，结合画面内容作答。不要虚构你未看见的信息。默认使用用户当前语言回复，并用简洁结构提升可读性。";
+    if (channel.apiFormat === "gemini") {
+        const response = await upstreamFetch(
+            buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(model.replace(/^models\//, ""))}:streamGenerateContent`) + "?alt=sse",
+            { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey, "Idempotency-Key": upstreamIdempotencyKey(requestId), Accept: "text/event-stream" }, body: JSON.stringify(buildGeminiChatBody(system, messages)), signal },
+            false,
+            CHAT_TIMEOUT_MS,
+        );
+        return readChatUpstream(response, "gemini");
+    }
+
+    let response = await upstreamFetch(
+        buildUpstreamUrl(channel.baseUrl, "openai", "/responses"),
+        { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, "Idempotency-Key": upstreamIdempotencyKey(requestId), Accept: "text/event-stream" }, body: JSON.stringify(buildOpenAiResponsesChatBody(model, system, messages)), signal },
+        false,
+        CHAT_TIMEOUT_MS,
+    );
+    let protocol: ChatProtocol = "responses";
+    if ([404, 405, 501].includes(response.status)) {
+        await response.body?.cancel();
+        protocol = "chat-completions";
+        response = await upstreamFetch(
+            buildUpstreamUrl(channel.baseUrl, "openai", "/chat/completions"),
+            { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, "Idempotency-Key": upstreamIdempotencyKey(requestId, 1), Accept: "text/event-stream" }, body: JSON.stringify(buildOpenAiChatCompletionBody(model, system, messages)), signal },
+            false,
+            CHAT_TIMEOUT_MS,
+        );
+    }
+    return readChatUpstream(response, protocol);
+}
+
+async function readChatUpstream(response: Response, protocol: ChatProtocol) {
+    if (!response.ok) {
+        const text = new TextDecoder().decode(await readResponseBytes(response, MAX_CHAT_UPSTREAM_ERROR_BYTES, "问道台上游错误响应过大"));
+        let payload: unknown = {};
+        try {
+            payload = text ? JSON.parse(text) : {};
+        } catch {}
+        throw new HttpError(502, chatFailureMessage(response.status, new Error(chatPayloadError(payload) || readUpstreamNonJsonError(response.status, text))));
+    }
+    const contentType = response.headers.get("content-type") || "";
+    if (response.body && contentType.includes("text/event-stream")) return { stream: true as const, response, protocol };
+    const payload = await parseUpstreamJson(response, { maxBytes: 2 * 1024 * 1024, tooLargeMessage: "问道台响应过大" });
+    const text = chatPayloadText(protocol, payload).trim();
+    if (!text) throw new HttpError(502, "文本模型没有返回可用内容");
+    return { stream: false as const, response, protocol, text };
+}
+
+function reserveChatRequest(userId: string) {
+    if (activeChatRequests >= CHAT_GLOBAL_CONCURRENCY) throw new HttpError(429, "问道台当前较为繁忙，请稍后再问");
+    const userActive = activeChatRequestsByUser.get(userId) || 0;
+    if (userActive >= CHAT_USER_CONCURRENCY) throw new HttpError(429, "请等待当前回答完成后再发起新的提问");
+    activeChatRequests += 1;
+    activeChatRequestsByUser.set(userId, userActive + 1);
+}
+
+function releaseChatRequest(userId: string) {
+    activeChatRequests = Math.max(0, activeChatRequests - 1);
+    const remaining = Math.max(0, (activeChatRequestsByUser.get(userId) || 0) - 1);
+    if (remaining) activeChatRequestsByUser.set(userId, remaining);
+    else activeChatRequestsByUser.delete(userId);
+}
+
+function publicChatMessage(userId: string, message: ChatMessage) {
+    return {
+        ...message,
+        attachments: message.attachments.map((attachment) => {
+            const asset = state.assets[assetKey(userId, attachment.assetKey)];
+            return { ...attachment, url: asset ? assetUrl(asset.key, asset.createdAt) : "" };
+        }),
+    };
+}
+
+function chatEventResponse(events: Array<[string, unknown]>) {
+    return new Response(events.map(([event, payload]) => chatEvent(event, payload)).join(""), { headers: chatStreamHeaders() });
+}
+
+function chatEvent(event: string, payload: unknown) {
+    return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
+function chatStreamHeaders() {
+    return { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" };
+}
+
+function chatFailureMessage(status: number | undefined, error: unknown) {
+    if (error instanceof DOMException && error.name === "AbortError") return "本次回答已停止";
+    if (status === 400 || status === 422) return "当前文本模型无法理解本次请求，请调整问题或图片后重试";
+    if (status === 401 || status === 403) return "问道台渠道鉴权失败，请联系管理员检查文本模型配置";
+    if (status === 429) return "问道台上游繁忙或额度不足，请稍后再试";
+    if (status && status >= 500) return `问道台上游服务暂不可用（${status}），请稍后再试`;
+    const detail = error instanceof Error ? error.message.replace(/\s+/g, " ").trim().slice(0, 240) : "";
+    return detail || "此次问道未能得到回应，请稍后再试";
+}
+
 function requireProductLab() {
     if (!productLab) throw new HttpError(503, "SQLite 迁移尚未完成，商品幻境暂不可用");
     return productLab;
@@ -1801,6 +2098,7 @@ function collectLiveAssetReferences() {
             ...appDatabase.loadGenerationHistory(userId, "image").map((item) => item.payload),
             ...appDatabase.loadGenerationHistory(userId, "video").map((item) => item.payload),
             ...(productLab?.assetReferenceRoots(userId) || []),
+            ...(chat?.assetReferenceRoots(userId) || []),
         ];
         const avatarKey = state.assets[assetKey(userId, AVATAR_ASSET_KEY)] ? AVATAR_ASSET_KEY : undefined;
         for (const id of collectReferencedAssetIds(userId, roots, avatarKey)) referenced.add(id);
@@ -3250,7 +3548,7 @@ function withSecurityHeaders(response: Response, requestId: string, request: Req
 
 function errorResponse(error: unknown, requestId: string) {
     const status =
-        error instanceof HttpError || error instanceof CultivationError || error instanceof ProductLabError
+        error instanceof HttpError || error instanceof CultivationError || error instanceof ProductLabError || error instanceof ChatError
             ? error.status
             : error instanceof AssetLibraryInputError || error instanceof GenerationHistoryInputError || error instanceof ProductAnalysisInputError
               ? 400
@@ -3261,6 +3559,7 @@ function errorResponse(error: unknown, requestId: string) {
         error instanceof HttpError ||
         error instanceof CultivationError ||
         error instanceof ProductLabError ||
+        error instanceof ChatError ||
         error instanceof AssetLibraryInputError ||
         error instanceof GenerationHistoryInputError ||
         error instanceof ProductAnalysisInputError ||

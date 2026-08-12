@@ -518,6 +518,49 @@ function runMigrations(database: Database) {
         )
         .run(timestamp);
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 11").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS chat_conversations (
+          user_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          channel_id TEXT NOT NULL DEFAULT '',
+          model TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, conversation_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS chat_messages (
+          user_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+          content TEXT NOT NULL DEFAULT '',
+          attachments_json TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL CHECK (status IN ('streaming', 'completed', 'failed')),
+          error TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, message_id),
+          FOREIGN KEY (user_id, conversation_id)
+            REFERENCES chat_conversations(user_id, conversation_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_conversations_user_updated
+          ON chat_conversations(user_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_user_conversation_created
+          ON chat_messages(user_id, conversation_id, created_at ASC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (11, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(
