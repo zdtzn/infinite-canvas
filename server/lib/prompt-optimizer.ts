@@ -191,7 +191,7 @@ function stripPromptOptimizationWrapper(raw: string) {
 function stripPromptOptimizationLabel(value: string) {
     return value
         .replace(
-            /^(?:以下(?:是|为)?(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|优化提示词|最终(?:输出|提示词|结果)|输出如下|结果如下|here is the optimized prompt|optimized prompt|rewritten prompt)\s*(?:[:：。]|\r?\n)\s*/i,
+            /^(?:以下(?:是|为)?(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|优化提示词|最终(?:输出|提示词|结果)|现在生成提示词|输出如下|结果如下|here is the optimized prompt|optimized prompt|rewritten prompt)\s*(?:[:：。]|\r?\n)\s*/i,
             "",
         )
         .trim();
@@ -199,7 +199,7 @@ function stripPromptOptimizationLabel(value: string) {
 
 function textAfterLastFinalPromptMarker(value: string) {
     const markerPattern =
-        /(?:我们输出即可|最终(?:输出|提示词|结果)|(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|输出如下|结果如下|Here is the optimized prompt|Optimized prompt|Rewritten prompt)\s*(?:[:：。]|\r?\n)\s*/gi;
+        /(?:我们输出即可|最终(?:输出|提示词|结果)|现在生成提示词|(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|输出如下|结果如下|Here is the optimized prompt|Optimized prompt|Rewritten prompt)\s*(?:[:：。]|\r?\n)\s*/gi;
     let lastEnd = -1;
     for (const match of value.matchAll(markerPattern)) {
         lastEnd = (match.index || 0) + match[0].length;

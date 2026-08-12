@@ -184,6 +184,22 @@ describe("image prompt optimizer", () => {
         );
     });
 
+    test("removes format-analysis paragraphs before a final prompt", () => {
+        const raw = [
+            "注意格式：只输出提示词，不要其他。需要确保所有文字准确。",
+            "",
+            "另外，原文中“正文的中文内容：”后面有分行，我们要保留自然段落。可以按原样。",
+            "",
+            "注意“底部添加一张深色官方宣传风格海报”是在推文截图中排版，互动数据位于最下方。",
+            "",
+            "现在生成提示词。深色模式下 X 平台内容截图，仅显示一条推文，不包含其他界面元素。推文来自 @OpenAI 蓝勾认证账号，正文为中文：今天想推荐一位很棒的 AI Builder：Ailln AI。正文下方附带一张深色官方宣传风格海报，简洁黑客质感，海报文字准确显示：大字「Ailln AI」，副标题「A brilliant AI Builder worth following」。互动数据位于画面最下方：评论 8.9K、转发 42K、点赞 298K（亮起）、收藏 34K（亮起）、浏览 32.4M。",
+        ].join("\n");
+
+        expect(cleanOptimizedPrompt(raw)).toBe(
+            "深色模式下 X 平台内容截图，仅显示一条推文，不包含其他界面元素。推文来自 @OpenAI 蓝勾认证账号，正文为中文：今天想推荐一位很棒的 AI Builder：Ailln AI。正文下方附带一张深色官方宣传风格海报，简洁黑客质感，海报文字准确显示：大字「Ailln AI」，副标题「A brilliant AI Builder worth following」。互动数据位于画面最下方：评论 8.9K、转发 42K、点赞 298K（亮起）、收藏 34K（亮起）、浏览 32.4M。",
+        );
+    });
+
     test("expands template argument placeholders to their defaults", () => {
         expect(
             cleanOptimizedPrompt(
