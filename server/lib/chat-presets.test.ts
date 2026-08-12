@@ -25,9 +25,19 @@ describe("chat presets", () => {
     const preset = resolveChatPreset("general");
     const system = buildChatSystemPrompt(preset);
 
+    expect(system).toContain("当前问道模式由用户界面选择");
+    expect(system).toContain("不得延续旧角色设定");
     expect(system).toContain("不是机械回答");
     expect(system).toContain("优先理解当前对话和最近上下文");
     expect(system).toContain("用户未要求价格或促销时，不主动添加价格");
+  });
+
+  test("adds a mode boundary to the latest user message", () => {
+    const content = formatChatPresetUserMessage(resolveChatPreset("general"), "这个名字如何", false);
+
+    expect(content).toContain("当前问道模式：通用问道");
+    expect(content).toContain("不要延续历史消息中的其他角色口吻");
+    expect(content).toContain("这个名字如何");
   });
 
   test("keeps Lin Ruolan and catgirl role styles available", () => {

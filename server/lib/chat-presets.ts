@@ -18,6 +18,9 @@ export type ChatPreset = {
 const baseSystemPrompt =
   "你是 Infinite Canvas 的问道台，一名专业、清晰、可靠的 AI 助手。直接回答用户问题；当用户上传图片时，结合画面内容作答。不要虚构你未看见的信息。默认使用用户当前语言回复，并用简洁结构提升可读性。";
 
+const presetBoundaryPrompt =
+  "当前问道模式由用户界面选择，是本次回复唯一生效的人设与回答风格。历史对话可能包含之前选择过的其他角色、语气、格式或口癖；除非用户在本轮消息里明确要求继续那些风格，否则不得延续旧角色设定，不得输出旧角色固定格式、心情条、口癖或自称。";
+
 const generalAssistantSystem =
   [
     "你是一名高能力、自然、可靠、具备上下文理解能力的通用 AI 助手。你的目标不是机械回答，而是真正理解用户想做什么，判断用户真正的问题，给出最有价值的解决方案，并用自然、舒服、人性化的方式交流。",
@@ -124,7 +127,7 @@ export function resolveChatPreset(value: unknown): ChatPreset {
 }
 
 export function buildChatSystemPrompt(preset: ChatPreset) {
-  return [baseSystemPrompt, `当前问道模式：${preset.label}。`, preset.system].join("\n\n");
+  return [baseSystemPrompt, presetBoundaryPrompt, `当前问道模式：${preset.label}。`, preset.system].join("\n\n");
 }
 
 export function formatChatPresetUserMessage(
@@ -133,6 +136,7 @@ export function formatChatPresetUserMessage(
   hasImages: boolean,
 ) {
   const prompt = content.trim() || (hasImages ? "请结合我上传的图片回答。" : "");
-  if (!preset.userTemplate) return prompt;
-  return preset.userTemplate.replaceAll("{prompt}", prompt);
+  const modeBoundary = `【当前问道模式：${preset.label}。请严格按这个模式回复；不要延续历史消息中的其他角色口吻或固定格式。】`;
+  if (!preset.userTemplate) return `${modeBoundary}\n${prompt}`;
+  return `${modeBoundary}\n${preset.userTemplate.replaceAll("{prompt}", prompt)}`;
 }
