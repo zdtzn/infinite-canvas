@@ -274,9 +274,14 @@ function responseOutputText(value: unknown) {
     return value
         .flatMap((item) => {
             const output = asRecord(item);
+            if (output?.type && output.type !== "message") return [];
             return Array.isArray(output?.content) ? output.content : [];
         })
-        .map((item) => contentText(item))
+        .map((item) => {
+            const content = asRecord(item);
+            if (content?.type && content.type !== "output_text" && content.type !== "text") return "";
+            return contentText(item);
+        })
         .filter(Boolean)
         .join("");
 }

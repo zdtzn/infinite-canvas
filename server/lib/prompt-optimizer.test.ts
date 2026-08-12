@@ -168,6 +168,24 @@ describe("image prompt optimizer", () => {
         expect(cleanOptimizedPrompt("Here is the optimized prompt:\nminimal product photography")).toBe("minimal product photography");
     });
 
+    test("ignores Responses API reasoning blocks and extracts only final output text", () => {
+        expect(
+            extractPromptOptimizationText({
+                output: [
+                    {
+                        type: "reasoning",
+                        content: [{ type: "reasoning_text", text: "这里是模型内部分析，不应展示给用户。" }],
+                    },
+                    {
+                        type: "message",
+                        role: "assistant",
+                        content: [{ type: "output_text", text: "深色模式下的 X 平台内容截图，主体清晰，文字准确。" }],
+                    },
+                ],
+            }),
+        ).toBe("深色模式下的 X 平台内容截图，主体清晰，文字准确。");
+    });
+
     test("strips leaked reasoning and keeps only the finished image prompt", () => {
         const raw = [
             "这挺好。注意“直播摄像头视角”与“截图”一致。保留原意。",
