@@ -83,6 +83,7 @@ export function buildImagePromptOptimizationMessages(input: Pick<PromptOptimizat
 4. 界面中已选择的模型、比例、分辨率和质量参数始终优先。不要擅自改参数，不要追加 --ar、模型名、分辨率、权重语法或平台专属命令，除非原文已经明确使用并要求保留。
 5. 短提示词可以补足真正有帮助的画面信息；长提示词应重组、去重和消除冲突。不要堆砌“杰作、8K、超高质量”等空泛词。
 6. 只输出优化后的提示词正文，不要诊断、标题、解释、代码块、JSON 或“以下是优化结果”等前言。
+7. 严禁输出分析、推理、判断过程、注意事项、建议、参数冲突说明或自我确认。所有判断只能在内部完成，最终回复只能是一段可直接用于生图的成品提示词。
 
 请先在内部判断图像类型，再使用对应方法：
 - 摄影或写实需求：可以补充机位视角、真实光线、景深、材质和色彩分级；仅在确有帮助时使用焦段、光圈等术语，不强塞具体镜头，不主动添加摄影师姓名。
@@ -156,12 +157,95 @@ export function cleanOptimizedPrompt(raw: string) {
     const jsonValue = optimizedJsonValue(value);
     if (jsonValue) value = jsonValue;
 
-    value = value.replace(/^(?:以下(?:是|为)?(?:优化|改写|润色)后(?:的)?提示词|(?:优化|改写|润色)后(?:的)?提示词|优化提示词|here is the optimized prompt|optimized prompt|rewritten prompt)\s*(?:[:：]|\r?\n)\s*/i, "").trim();
+    value = stripPromptOptimizationWrapper(value);
+    value = expandTemplateArgumentDefaults(value);
 
     if (!value) throw new PromptOptimizationInputError("文本模型未返回可用的优化结果");
     if (hasUnsafeControl(value)) throw new PromptOptimizationInputError("优化结果包含无效字符");
     if (value.length > PROMPT_OPTIMIZER_OUTPUT_LIMIT) throw new PromptOptimizationInputError("优化结果过长，请缩短原提示词后重试");
     return value;
+}
+
+function stripPromptOptimizationWrapper(raw: string) {
+    let value = raw.trim();
+    value = stripPromptOptimizationLabel(value);
+
+    const marked = textAfterLastFinalPromptMarker(value);
+    if (marked) return stripPromptOptimizationLabel(marked).trim();
+
+    if (!looksLikeLeakedReasoning(value)) return value;
+
+    const paragraphs = value
+        .split(/\r?\n\s*\r?\n/)
+        .map((paragraph) => stripPromptOptimizationLabel(paragraph).trim())
+        .filter(Boolean);
+    const promptParagraph = [...paragraphs].reverse().find((paragraph) => {
+        return !looksLikeReasoningParagraph(paragraph) && looksLikePromptParagraph(paragraph);
+    });
+    if (promptParagraph) return promptParagraph;
+
+    const promptLead = textFromLastPromptLead(value);
+    return promptLead || value;
+}
+
+function stripPromptOptimizationLabel(value: string) {
+    return value
+        .replace(
+            /^(?:以下(?:是|为)?(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|优化提示词|最终(?:输出|提示词|结果)|输出如下|结果如下|here is the optimized prompt|optimized prompt|rewritten prompt)\s*(?:[:：。]|\r?\n)\s*/i,
+            "",
+        )
+        .trim();
+}
+
+function textAfterLastFinalPromptMarker(value: string) {
+    const markerPattern =
+        /(?:我们输出即可|最终(?:输出|提示词|结果)|(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|输出如下|结果如下|Here is the optimized prompt|Optimized prompt|Rewritten prompt)\s*(?:[:：。]|\r?\n)\s*/gi;
+    let lastEnd = -1;
+    for (const match of value.matchAll(markerPattern)) {
+        lastEnd = (match.index || 0) + match[0].length;
+    }
+    return lastEnd >= 0 ? value.slice(lastEnd).trim() : "";
+}
+
+function looksLikeLeakedReasoning(value: string) {
+    const hits = [
+        /(^|\n)\s*(这挺好|注意|需要|可能|我们|建议|可以|不过|另外|所以|因此|结论|原始|系统|用户|上下文|按照规则|最终应|需要考虑)/,
+        /系统指令|界面参数优先|不可信输入|无需?提及|不要输出|保留原意|需要确保/,
+        /\b(final answer|analysis|reasoning|we should|need to|make sure)\b/i,
+    ].filter((pattern) => pattern.test(value)).length;
+    return hits >= 2 || /我们输出即可/.test(value);
+}
+
+function looksLikeReasoningParagraph(value: string) {
+    return /^(这挺好|注意|需要|可能|我们|建议|可以|不过|另外|所以|因此|结论|原始|系统|用户|上下文|分析|最终应|需要考虑|按照规则|这里|不应|应该|保留|另一个版本|最终输出应该)/.test(
+        value,
+    );
+}
+
+function looksLikePromptParagraph(value: string) {
+    return /^(生成|请生成|一张|画面|主体|以|Create|Generate|A\s|An\s)/i.test(value) || /画面|主体|构图|背景|光线|色彩|氛围|牌子上|清晰写着|product|composition|lighting/i.test(value);
+}
+
+function textFromLastPromptLead(value: string) {
+    const leadPattern = /(?:^|[。！？.!?]\s*)((?:生成一张|请生成|一张|画面(?:以|中|为)|主体(?:是|为))[\s\S]*)/g;
+    let candidate = "";
+    for (const match of value.matchAll(leadPattern)) {
+        candidate = (match[1] || "").trim();
+    }
+    return candidate;
+}
+
+function expandTemplateArgumentDefaults(value: string) {
+    return value.replace(/\{argument\s+([^{}]*)\}/g, (match, attributes: string) => {
+        const fallback = templateArgumentAttribute(attributes, "default") || templateArgumentAttribute(attributes, "value");
+        return fallback || match;
+    });
+}
+
+function templateArgumentAttribute(attributes: string, name: string) {
+    const pattern = new RegExp(name + "\\s*=\\s*([\"'])((?:\\\\.|(?!\\1)[\\s\\S])*?)\\1");
+    const match = attributes.match(pattern);
+    return match ? match[2].replace(/\\([\"'\\])/g, "$1").trim() : "";
 }
 
 function optimizedJsonValue(value: string) {

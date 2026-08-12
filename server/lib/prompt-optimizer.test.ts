@@ -167,4 +167,28 @@ describe("image prompt optimizer", () => {
         expect(cleanOptimizedPrompt('```json\n{"optimized":"雨夜人像摄影"}\n```')).toBe("雨夜人像摄影");
         expect(cleanOptimizedPrompt("Here is the optimized prompt:\nminimal product photography")).toBe("minimal product photography");
     });
+
+    test("strips leaked reasoning and keeps only the finished image prompt", () => {
+        const raw = [
+            "这挺好。注意“直播摄像头视角”与“截图”一致。保留原意。",
+            "",
+            "需要确保没有添加“--ar”等。没有。",
+            "",
+            "可能还需要考虑品牌：B站直播的界面风格，比如右上角“直播”字样，但我们不写文案，因为只有牌子文字需要保留。可以提及“带有哔哩哔哩直播界面元素”，但可能没必要。",
+            "",
+            "我们输出即可。生成一张哔哩哔哩直播的截图：主播户晨风正在直播，表情开心，手里举着一块牌子，牌子上清晰写着“Austin总太性情了，大家给Austin总点点关注。”画面以直播摄像头视角呈现，主体是户晨风和牌子，背景为简单的直播间墙面，光线均匀柔和，整体接近真实直播画面。",
+        ].join("\n");
+
+        expect(cleanOptimizedPrompt(raw)).toBe(
+            "生成一张哔哩哔哩直播的截图：主播户晨风正在直播，表情开心，手里举着一块牌子，牌子上清晰写着“Austin总太性情了，大家给Austin总点点关注。”画面以直播摄像头视角呈现，主体是户晨风和牌子，背景为简单的直播间墙面，光线均匀柔和，整体接近真实直播画面。",
+        );
+    });
+
+    test("expands template argument placeholders to their defaults", () => {
+        expect(
+            cleanOptimizedPrompt(
+                'A cozy winter street portrait of {argument name="subject" default="young woman"}, wearing {argument name="outfit" default="soft oversized blush-pink knitted sweater"}.',
+            ),
+        ).toBe("A cozy winter street portrait of young woman, wearing soft oversized blush-pink knitted sweater.");
+    });
 });
