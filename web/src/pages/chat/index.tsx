@@ -1,13 +1,12 @@
 import { App, Button, Empty, Input, Popconfirm, Skeleton, Tag, Tooltip } from "antd";
 import { ImagePlus, LoaderCircle, MessageCircle, Plus, Send, Trash2, X } from "lucide-react";
 import { Streamdown } from "streamdown";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { ModelPicker } from "@/components/model-picker";
 import { cn } from "@/lib/utils";
 import { createChatConversation, deleteChatConversation, fetchChatConversation, fetchChatConversations, sendChatMessage, uploadChatImage, type ChatAttachment, type ChatConversation, type ChatMessage } from "@/services/chat-api";
-import { decodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId } from "./chat-presets";
 
 const welcomeLines = [
     "把疑问交给此方天地。",
@@ -21,10 +20,6 @@ export default function ChatPage() {
     const scrollRef = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
     const userId = useUserStore((state) => state.user?.id || "");
-    const config = useEffectiveConfig();
-    const updateConfig = useConfigStore((state) => state.updateConfig);
-    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
-    const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
 
     const [conversations, setConversations] = useState<ChatConversation[]>([]);
     const [activeConversationId, setActiveConversationId] = useState("");
@@ -36,11 +31,10 @@ export default function ChatPage() {
     const [uploading, setUploading] = useState(false);
     const [draft, setDraft] = useState("");
     const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+    const [presetId, setPresetId] = useState<ChatPresetId>(defaultChatPresetId);
 
-    const model = config.textModel || config.model;
-    const decodedModel = decodeChannelModel(model);
     const activeConversation = conversations.find((item) => item.id === activeConversationId) || null;
-    const ready = decodedModel && isAiConfigReady(config, model);
+    const activePreset = chatPresetOption(presetId);
 
     useEffect(() => {
         if (!userId) return;
@@ -83,14 +77,13 @@ export default function ChatPage() {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: sending ? "smooth" : "auto" });
     }, [messages, sending]);
 
-    const canSend = Boolean((draft.trim() || attachments.length) && activeConversationId && ready && !sending && !uploading);
-    const modelName = useMemo(() => modelOptionName(model || ""), [model]);
+    const canSend = Boolean((draft.trim() || attachments.length) && activeConversationId && !sending && !uploading);
 
     async function handleNewConversation() {
         if (!userId || creating) return;
         setCreating(true);
         try {
-            const response = await createChatConversation({ channelId: decodedModel?.channelId, model: decodedModel?.model }, userId);
+            const response = await createChatConversation({}, userId);
             setConversations((current) => [response.conversation, ...current]);
             setActiveConversationId(response.conversation.id);
             setMessages([]);
@@ -103,7 +96,7 @@ export default function ChatPage() {
 
     async function ensureConversation() {
         if (activeConversationId) return activeConversationId;
-        const response = await createChatConversation({ channelId: decodedModel?.channelId, model: decodedModel?.model }, userId);
+        const response = await createChatConversation({}, userId);
         setConversations((current) => [response.conversation, ...current]);
         setActiveConversationId(response.conversation.id);
         return response.conversation.id;
@@ -142,11 +135,6 @@ export default function ChatPage() {
     }
 
     async function handleSend() {
-        if (!ready) {
-            openConfigDialog(false, "channels");
-            message.warning("请先在洞府里配置可用的文本模型");
-            return;
-        }
         const content = draft.trim();
         if (!content && !attachments.length) return;
         const conversationId = await ensureConversation();
@@ -159,9 +147,8 @@ export default function ChatPage() {
             await sendChatMessage({
                 conversationId,
                 content,
+                presetId,
                 attachments,
-                channelId: decodedModel!.channelId,
-                model: decodedModel!.model,
                 expectedUserId: userId,
                 signal: controller.signal,
                 onStarted: ({ conversation, userMessage, assistantMessage }) => {
@@ -226,7 +213,7 @@ export default function ChatPage() {
                                 <MessageCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
                                 <span className="min-w-0 flex-1">
                                     <span className="block truncate text-sm font-medium">{conversation.title}</span>
-                                    <span className="mt-0.5 block truncate text-xs text-stone-500 dark:text-stone-400">{conversation.lastMessage || conversation.model || "新的问道"}</span>
+                                    <span className="mt-0.5 block truncate text-xs text-stone-500 dark:text-stone-400">{conversation.lastMessage || "新的问道"}</span>
                                 </span>
                                 <Popconfirm title="删除这段问道？" okText="删除" cancelText="取消" onConfirm={(event) => { event?.stopPropagation(); void handleDeleteConversation(conversation.id); }}>
                                     <span className="rounded p-1 text-stone-400 opacity-0 transition hover:bg-stone-100 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-white/10" onClick={(event) => event.stopPropagation()}>
@@ -243,13 +230,45 @@ export default function ChatPage() {
                         <div className="min-w-0">
                             <div className="flex items-center gap-2">
                                 <span className="text-base font-semibold tracking-[0.12em]">问道台</span>
-                                <Tag color="gold" bordered={false}>图文问答</Tag>
+                                <Tag color="gold" bordered={false}>{activePreset.label}</Tag>
                             </div>
-                            <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{activeConversation?.title || "把疑问交给此方天地"}</div>
+                            <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{activeConversation?.title || activePreset.description}</div>
                         </div>
                         <div className="flex min-w-0 items-center gap-2">
-                            <ModelPicker config={config} value={model} onChange={(value) => updateConfig("textModel", value)} capability="text" fullWidth className="!h-9 max-w-[320px]" onMissingConfig={() => openConfigDialog(false, "channels")} />
                             <Button className="lg:hidden" icon={<Plus className="size-4" />} onClick={handleNewConversation} loading={creating}>新建</Button>
+                        </div>
+                    </div>
+
+                    <div className="mb-3 shrink-0 rounded-xl border border-stone-200/80 bg-white/60 px-3 py-3 shadow-sm dark:border-white/10 dark:bg-white/[0.035]">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <div className="text-xs font-semibold tracking-[0.18em] text-stone-600 dark:text-stone-300">角色预设</div>
+                                <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">{activePreset.hint}</div>
+                            </div>
+                        </div>
+                        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                            {chatPresetOptions.map((preset) => {
+                                const active = preset.id === presetId;
+                                return (
+                                    <button
+                                        key={preset.id}
+                                        type="button"
+                                        title={preset.description}
+                                        aria-pressed={active}
+                                        disabled={sending}
+                                        className={cn(
+                                            "min-w-[126px] rounded-lg border px-3 py-2 text-left text-xs transition disabled:cursor-not-allowed disabled:opacity-60",
+                                            active
+                                                ? "border-amber-400/70 bg-amber-50 text-amber-900 shadow-sm dark:border-amber-300/35 dark:bg-amber-300/10 dark:text-amber-100"
+                                                : "border-stone-200/80 bg-white/65 text-stone-600 hover:border-amber-300/70 hover:bg-amber-50/50 dark:border-white/10 dark:bg-white/[0.035] dark:text-stone-300 dark:hover:border-amber-300/25 dark:hover:bg-amber-300/10",
+                                        )}
+                                        onClick={() => setPresetId(preset.id)}
+                                    >
+                                        <span className="block font-medium">{preset.label}</span>
+                                        <span className="mt-1 block truncate text-[11px] opacity-70">{preset.description}</span>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 
@@ -285,7 +304,7 @@ export default function ChatPage() {
                                 onChange={(event) => setDraft(event.target.value)}
                                 autoSize={{ minRows: 1, maxRows: 6 }}
                                 maxLength={20_000}
-                                placeholder={ready ? `向 ${modelName || "文本模型"} 提问...` : "请先在洞府配置文本模型"}
+                                placeholder={`以「${activePreset.label}」向问道台提问...`}
                                 onPressEnter={(event) => {
                                     if (event.shiftKey) return;
                                     event.preventDefault();

@@ -49,8 +49,7 @@ export type ChatDoneEvent = {
 export type SendChatMessageInput = {
     conversationId: string;
     content: string;
-    channelId: string;
-    model: string;
+    presetId?: string;
     attachments: ChatAttachment[];
     expectedUserId?: string;
     signal?: AbortSignal;
@@ -64,7 +63,7 @@ export function fetchChatConversations(expectedUserId?: string) {
     return serverRequest<{ items: ChatConversation[] }>("/api/chat/conversations", { timeoutMs: 12_000, expectedUserId });
 }
 
-export function createChatConversation(input: { title?: string; channelId?: string; model?: string } = {}, expectedUserId?: string) {
+export function createChatConversation(input: { title?: string } = {}, expectedUserId?: string) {
     return serverRequest<{ conversation: ChatConversation }>("/api/chat/conversations", { method: "POST", body: input, expectedUserId });
 }
 
@@ -89,8 +88,7 @@ export async function sendChatMessage(input: SendChatMessageInput) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 content: input.content,
-                channelId: input.channelId,
-                model: input.model,
+                presetId: input.presetId,
                 attachments: input.attachments.map(({ assetKey, mimeType, name }) => ({ assetKey, mimeType, name })),
             }),
             signal: input.signal,

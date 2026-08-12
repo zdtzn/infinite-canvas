@@ -29,7 +29,7 @@ import {
 
 type ModelGroup = {
     capability: ModelCapability;
-    modelKey: "imageModel" | "videoModel" | "textModel" | "audioModel";
+    modelKey: "imageModel" | "videoModel" | "audioModel";
     defaultLabel: string;
 };
 
@@ -44,7 +44,6 @@ type WebdavDomainProgress = {
 const modelGroups: ModelGroup[] = [
     { capability: "image", modelKey: "imageModel", defaultLabel: "默认生图模型" },
     { capability: "video", modelKey: "videoModel", defaultLabel: "默认视频模型" },
-    { capability: "text", modelKey: "textModel", defaultLabel: "默认文本模型" },
     { capability: "audio", modelKey: "audioModel", defaultLabel: "默认音频模型" },
 ];
 
@@ -264,7 +263,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         children: (
                             <Form layout="vertical" requiredMark={false}>
                                 <div className="mb-2 text-sm font-semibold">默认模型</div>
-                                <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                                <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                                     {modelGroups.map((group) => (
                                         <Form.Item key={group.modelKey} label={group.defaultLabel} className="mb-0">
                                             <ModelPicker config={config} value={config[group.modelKey]} onChange={(model) => updateConfig(group.modelKey, model)} capability={group.capability} fullWidth />

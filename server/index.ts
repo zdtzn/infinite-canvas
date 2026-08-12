@@ -9,6 +9,12 @@ import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets }
 import { AsyncSemaphore } from "./lib/async-semaphore";
 import { canAccessUserAvatar } from "./lib/avatar-access";
 import {
+    buildChatSystemPrompt,
+    formatChatPresetUserMessage,
+    resolveChatPreset,
+    type ChatPreset,
+} from "./lib/chat-presets";
+import {
     buildGeminiChatBody,
     buildOpenAiChatCompletionBody,
     buildOpenAiResponsesChatBody,
@@ -1224,13 +1230,21 @@ function requireChat() {
     return chat;
 }
 
+function defaultChatTextModel() {
+    for (const channel of listPlatformChannels(state)) {
+        const model = channel.models.find((item) => item.capability === "text");
+        if (model) return { channelId: channel.id, model: model.name };
+    }
+    throw new HttpError(503, "管理员尚未配置可用的问道台文本模型");
+}
+
 function listChatConversations(session: SessionPayload) {
     return json({ items: requireChat().listConversations(session.userId) }, 200, { "Cache-Control": "no-store" });
 }
 
 async function createChatConversation(request: Request, session: SessionPayload) {
-    const input = await readJson<unknown>(request, 8 * 1024);
-    return json({ conversation: requireChat().createConversation(session.userId, input) }, 201, { "Cache-Control": "no-store" });
+    const input = await readJson<{ title?: unknown }>(request, 8 * 1024);
+    return json({ conversation: requireChat().createConversation(session.userId, { title: input.title }) }, 201, { "Cache-Control": "no-store" });
 }
 
 function getChatConversation(session: SessionPayload, conversationId: string) {
@@ -1254,8 +1268,8 @@ function deleteChatConversation(session: SessionPayload, conversationId: string)
 async function sendChatMessage(request: Request, session: SessionPayload, conversationId: string, requestId: string) {
     const source = await readJson<Record<string, unknown>>(request, MAX_CHAT_JSON_BYTES);
     const content = String(source.content || "").trim();
-    const channelId = String(source.channelId || "").trim();
-    const model = String(source.model || "").trim();
+    const { channelId, model } = defaultChatTextModel();
+    const preset = resolveChatPreset(source.presetId);
     const attachments = normalizeChatAttachmentInput(source.attachments);
     const preparedAttachments = prepareChatAttachments(session.userId, attachments);
     assertPlatformModelAllowed(channelId, model, "text");
@@ -1278,10 +1292,10 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
             channelId,
             model,
         });
-        const messages = chatProtocolMessages(requireChat().contextMessages(session.userId, conversationId), turn.userMessage.id, preparedAttachments);
+        const messages = chatProtocolMessages(requireChat().contextMessages(session.userId, conversationId), turn.userMessage.id, preparedAttachments, preset);
         const channel = platformChannel(channelId);
         const apiKey = decryptChannelApiKey(channel);
-        const upstream = await openChatUpstream(channel, apiKey, model, messages, signal, requestId);
+        const upstream = await openChatUpstream(channel, apiKey, model, messages, signal, requestId, preset);
         const publicUserMessage = publicChatMessage(session.userId, turn.userMessage);
         const publicAssistantMessage = publicChatMessage(session.userId, turn.assistantMessage);
 
@@ -1375,10 +1389,13 @@ function prepareChatAttachments(userId: string, attachments: ChatAttachment[]) {
     });
 }
 
-function chatProtocolMessages(messages: ChatMessage[], latestUserMessageId: string, attachments: ReturnType<typeof prepareChatAttachments>): ChatProtocolMessage[] {
+function chatProtocolMessages(messages: ChatMessage[], latestUserMessageId: string, attachments: ReturnType<typeof prepareChatAttachments>, preset: ChatPreset): ChatProtocolMessage[] {
     return messages.map((message) => ({
         role: message.role,
-        content: message.content,
+        content:
+            message.id === latestUserMessageId
+                ? formatChatPresetUserMessage(preset, message.content, attachments.length > 0)
+                : message.content,
         images:
             message.id === latestUserMessageId
                 ? attachments.map((attachment) => ({ mimeType: attachment.mimeType, base64: attachment.base64 }))
@@ -1386,8 +1403,8 @@ function chatProtocolMessages(messages: ChatMessage[], latestUserMessageId: stri
     }));
 }
 
-async function openChatUpstream(channel: ChannelRecord, apiKey: string, model: string, messages: ChatProtocolMessage[], signal: AbortSignal, requestId: string) {
-    const system = "你是 Infinite Canvas 的问道台，一名专业、清晰、可靠的 AI 助手。直接回答用户问题；当用户上传图片时，结合画面内容作答。不要虚构你未看见的信息。默认使用用户当前语言回复，并用简洁结构提升可读性。";
+async function openChatUpstream(channel: ChannelRecord, apiKey: string, model: string, messages: ChatProtocolMessage[], signal: AbortSignal, requestId: string, preset: ChatPreset) {
+    const system = buildChatSystemPrompt(preset);
     if (channel.apiFormat === "gemini") {
         const response = await upstreamFetch(
             buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(model.replace(/^models\//, ""))}:streamGenerateContent`) + "?alt=sse",
