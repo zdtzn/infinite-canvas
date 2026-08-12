@@ -200,6 +200,22 @@ describe("image prompt optimizer", () => {
         );
     });
 
+    test("removes English reasoning before a Chinese final prompt", () => {
+        const raw = [
+            "The user wants me to rewrite an image generation prompt. The original prompt is in Chinese, asking to generate a 1980s propaganda poster with the slogan.",
+            "",
+            "I need to preserve the people: Sam Altman, Dario Amodei, Elon Musk, and Dario Amodei wearing a red scarf.",
+            "",
+            "Let me craft this as a Chinese poster/painting style prompt.",
+            "",
+            "Final output should be just the prompt text, no preamble.1980年代中国宣传画风格的画面，标题文字“热烈庆祝GPT-Image-2全量开放”以醒目的红色立体美术字置于画面上方。居中构图，三位人物并排站立：Sam Altman、Dario Amodei、Elon Musk，面带笑容、姿态昂扬，身着八十年代风格服装，Dario Amodei 胸前佩戴红领巾。背景为蓝天、红旗与放射状光芒线，色调以鲜红、暖黄为主，带有社会主义现实主义宣传画的笔触、印刷网点与纸面肌理，整体气氛热烈庄重。",
+        ].join("\n");
+
+        expect(cleanOptimizedPrompt(raw)).toBe(
+            "1980年代中国宣传画风格的画面，标题文字“热烈庆祝GPT-Image-2全量开放”以醒目的红色立体美术字置于画面上方。居中构图，三位人物并排站立：Sam Altman、Dario Amodei、Elon Musk，面带笑容、姿态昂扬，身着八十年代风格服装，Dario Amodei 胸前佩戴红领巾。背景为蓝天、红旗与放射状光芒线，色调以鲜红、暖黄为主，带有社会主义现实主义宣传画的笔触、印刷网点与纸面肌理，整体气氛热烈庄重。",
+        );
+    });
+
     test("expands template argument placeholders to their defaults", () => {
         expect(
             cleanOptimizedPrompt(

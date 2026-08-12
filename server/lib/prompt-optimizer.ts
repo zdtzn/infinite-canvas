@@ -191,7 +191,7 @@ function stripPromptOptimizationWrapper(raw: string) {
 function stripPromptOptimizationLabel(value: string) {
     return value
         .replace(
-            /^(?:以下(?:是|为)?(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|优化提示词|最终(?:输出|提示词|结果)|现在生成提示词|输出如下|结果如下|here is the optimized prompt|optimized prompt|rewritten prompt)\s*(?:[:：。]|\r?\n)\s*/i,
+            /^(?:以下(?:是|为)?(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|优化提示词|最终(?:输出|提示词|结果)|现在生成提示词|输出如下|结果如下|here is the optimized prompt|optimized prompt|rewritten prompt|final prompt|final output should be just the prompt text,?\s*no preamble)\s*(?:[:：。.]|\r?\n)\s*/i,
             "",
         )
         .trim();
@@ -199,7 +199,7 @@ function stripPromptOptimizationLabel(value: string) {
 
 function textAfterLastFinalPromptMarker(value: string) {
     const markerPattern =
-        /(?:我们输出即可|最终(?:输出|提示词|结果)|现在生成提示词|(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|输出如下|结果如下|Here is the optimized prompt|Optimized prompt|Rewritten prompt)\s*(?:[:：。]|\r?\n)\s*/gi;
+        /(?:我们输出即可|最终(?:输出|提示词|结果)|现在生成提示词|(?:优化|改写|润色)后(?:的)?(?:画面)?提示词|输出如下|结果如下|Here is the optimized prompt|Optimized prompt|Rewritten prompt|Final prompt|Final output should be just the prompt text,?\s*no preamble)\s*(?:[:：。.]|\r?\n)\s*/gi;
     let lastEnd = -1;
     for (const match of value.matchAll(markerPattern)) {
         lastEnd = (match.index || 0) + match[0].length;
@@ -211,19 +211,19 @@ function looksLikeLeakedReasoning(value: string) {
     const hits = [
         /(^|\n)\s*(这挺好|注意|需要|可能|我们|建议|可以|不过|另外|所以|因此|结论|原始|系统|用户|上下文|按照规则|最终应|需要考虑)/,
         /系统指令|界面参数优先|不可信输入|无需?提及|不要输出|保留原意|需要确保/,
-        /\b(final answer|analysis|reasoning|we should|need to|make sure)\b/i,
+        /\b(final answer|analysis|reasoning|we should|i should|i need to|let me|make sure|the user wants me|original prompt|preserve)\b/i,
     ].filter((pattern) => pattern.test(value)).length;
     return hits >= 2 || /我们输出即可/.test(value);
 }
 
 function looksLikeReasoningParagraph(value: string) {
-    return /^(这挺好|注意|需要|可能|我们|建议|可以|不过|另外|所以|因此|结论|原始|系统|用户|上下文|分析|最终应|需要考虑|按照规则|这里|不应|应该|保留|另一个版本|最终输出应该)/.test(
+    return /^(这挺好|注意|需要|可能|我们|建议|可以|不过|另外|所以|因此|结论|原始|系统|用户|上下文|分析|最终应|需要考虑|按照规则|这里|不应|应该|保留|另一个版本|最终输出应该|The user wants|I need to|I should|Let me|This is|Something like|That seems|Final output should|Original prompt|I will)/i.test(
         value,
     );
 }
 
 function looksLikePromptParagraph(value: string) {
-    return /^(生成|请生成|一张|画面|主体|以|Create|Generate|A\s|An\s)/i.test(value) || /画面|主体|构图|背景|光线|色彩|氛围|牌子上|清晰写着|product|composition|lighting/i.test(value);
+    return /^(生成|请生成|一张|画面|主体|以|\d{2,4}\s*年代|Create|Generate|A\s|An\s)/i.test(value) || /画面|主体|构图|背景|光线|色彩|氛围|牌子上|清晰写着|product|composition|lighting/i.test(value);
 }
 
 function textFromLastPromptLead(value: string) {
