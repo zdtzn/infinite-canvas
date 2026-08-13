@@ -671,6 +671,66 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 17").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS douqi_life_sessions (
+          user_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('active', 'ended')),
+          state_json TEXT NOT NULL,
+          last_narrative TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, session_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS douqi_life_messages (
+          user_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('player', 'world')),
+          kind TEXT NOT NULL CHECK (kind IN ('action', 'narrative', 'system')),
+          content TEXT NOT NULL DEFAULT '',
+          metadata_json TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL CHECK (status IN ('streaming', 'completed', 'failed')),
+          error TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, message_id),
+          FOREIGN KEY (user_id, session_id)
+            REFERENCES douqi_life_sessions(user_id, session_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS douqi_life_saves (
+          user_id TEXT NOT NULL,
+          save_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          snapshot_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, save_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+          FOREIGN KEY (user_id, session_id)
+            REFERENCES douqi_life_sessions(user_id, session_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_douqi_life_sessions_user_updated
+          ON douqi_life_sessions(user_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_douqi_life_messages_user_session_created
+          ON douqi_life_messages(user_id, session_id, created_at ASC);
+        CREATE INDEX IF NOT EXISTS idx_douqi_life_saves_user_updated
+          ON douqi_life_saves(user_id, updated_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (17, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(

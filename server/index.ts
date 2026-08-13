@@ -86,6 +86,8 @@ import { createChatService, ChatError, type ChatAttachment, type ChatMessage } f
 import { createColorAlchemyService, ColorAlchemyError } from "./modules/color-alchemy/service";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
 import { createProductLabService, productOutputCapability, ProductLabError } from "./modules/product-lab/service";
+import { createDouQiLifeService, DouQiLifeError } from "./modules/dou-qi-life/service";
+import { buildDouQiLifeTurnPrompt, DOU_QI_LIFE_SYSTEM_PROMPT, parseDouQiLifeTurnResult } from "./modules/dou-qi-life/prompt";
 import type { ChannelModelRecord, ChannelRecord, GenerationHistoryKind, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
 
 const PORT = positiveInt(process.env.PORT, 3000);
@@ -218,6 +220,7 @@ const chat = appDatabase.raw
           getDailyLimit: (userId) => (state.users[userId]?.admin ? null : CHAT_DAILY_LIMIT),
       })
     : null;
+const douQiLife = appDatabase.raw ? createDouQiLifeService(appDatabase.raw) : null;
 const colorAlchemy = appDatabase.raw ? createColorAlchemyService(appDatabase.raw) : null;
 const mediaTasks = appDatabase.raw ? createMediaTaskStore(appDatabase.raw, MEDIA_TASK_RETENTION_MS, MEDIA_TASK_ACTIVE_TTL_MS) : null;
 mediaTasks?.prune();
@@ -444,6 +447,21 @@ async function route(request: Request, requestId: string) {
             return getChatConversation(session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
         if (chatConversationMatch && request.method === "DELETE")
             return deleteChatConversation(session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
+        if (url.pathname === "/api/dou-qi-life/sessions" && request.method === "GET") return listDouQiLifeSessions(session);
+        if (url.pathname === "/api/dou-qi-life/sessions" && request.method === "POST") return createDouQiLifeSession(request, session);
+        const douQiSessionTurnMatch = url.pathname.match(/^\/api\/dou-qi-life\/sessions\/([^/]+)\/turn$/);
+        if (douQiSessionTurnMatch && request.method === "POST") {
+            enforceRateLimit(`${session.userId}:${clientIp(request)}:dou-qi-life`, 30);
+            return sendDouQiLifeTurn(request, session, decodeRouteSegment(douQiSessionTurnMatch[1], "人生 ID"), requestId);
+        }
+        const douQiSessionMatch = url.pathname.match(/^\/api\/dou-qi-life\/sessions\/([^/]+)$/);
+        if (douQiSessionMatch && request.method === "GET") return getDouQiLifeSession(session, decodeRouteSegment(douQiSessionMatch[1], "人生 ID"));
+        if (douQiSessionMatch && request.method === "DELETE") return deleteDouQiLifeSession(session, decodeRouteSegment(douQiSessionMatch[1], "人生 ID"));
+        if (url.pathname === "/api/dou-qi-life/saves" && request.method === "GET") return listDouQiLifeSaves(url, session);
+        if (url.pathname === "/api/dou-qi-life/saves" && request.method === "POST") return saveDouQiLifeSession(request, session);
+        const douQiSaveMatch = url.pathname.match(/^\/api\/dou-qi-life\/saves\/([^/]+)$/);
+        if (douQiSaveMatch && request.method === "POST") return restoreDouQiLifeSave(session, decodeRouteSegment(douQiSaveMatch[1], "存档 ID"));
+        if (douQiSaveMatch && request.method === "DELETE") return deleteDouQiLifeSave(session, decodeRouteSegment(douQiSaveMatch[1], "存档 ID"));
         if (url.pathname === "/api/color-alchemy/documents" && request.method === "GET") return listColorAlchemyDocuments(session);
         const colorAlchemyDocumentMatch = url.pathname.match(/^\/api\/color-alchemy\/documents\/([^/]+)$/);
         if (colorAlchemyDocumentMatch && request.method === "PUT")
@@ -1260,6 +1278,181 @@ function defaultChatTextModel() {
 
 function listChatConversations(session: SessionPayload) {
     return json({ items: requireChat().listConversations(session.userId) }, 200, { "Cache-Control": "no-store" });
+}
+
+function requireDouQiLife() {
+    if (!douQiLife) throw new HttpError(503, "SQLite 迁移尚未完成，斗气人生暂不可用");
+    return douQiLife;
+}
+
+function listDouQiLifeSessions(session: SessionPayload) {
+    return json({ items: requireDouQiLife().listSessions(session.userId) }, 200, { "Cache-Control": "no-store" });
+}
+
+async function createDouQiLifeSession(request: Request, session: SessionPayload) {
+    const input = await readJson<Record<string, unknown>>(request, 16 * 1024);
+    return json({ session: requireDouQiLife().createSession(session.userId, input) }, 201, { "Cache-Control": "no-store" });
+}
+
+function getDouQiLifeSession(session: SessionPayload, sessionId: string) {
+    const detail = requireDouQiLife().getSessionWithHistory(session.userId, sessionId);
+    if (!detail) throw new HttpError(404, "人生不存在");
+    return json(detail, 200, { "Cache-Control": "no-store" });
+}
+
+function deleteDouQiLifeSession(session: SessionPayload, sessionId: string) {
+    if (!requireDouQiLife().deleteSession(session.userId, sessionId)) throw new HttpError(404, "人生不存在");
+    return new Response(null, { status: 204 });
+}
+
+function listDouQiLifeSaves(url: URL, session: SessionPayload) {
+    return json({ items: requireDouQiLife().listSaves(session.userId, url.searchParams.get("sessionId") || undefined) }, 200, { "Cache-Control": "no-store" });
+}
+
+async function saveDouQiLifeSession(request: Request, session: SessionPayload) {
+    const input = await readJson<{ sessionId?: unknown; title?: unknown }>(request, 8 * 1024);
+    return json({ save: requireDouQiLife().saveSession(session.userId, String(input.sessionId || ""), input.title) }, 201, { "Cache-Control": "no-store" });
+}
+
+function restoreDouQiLifeSave(session: SessionPayload, saveId: string) {
+    return json({ session: requireDouQiLife().restoreSave(session.userId, saveId) }, 201, { "Cache-Control": "no-store" });
+}
+
+function deleteDouQiLifeSave(session: SessionPayload, saveId: string) {
+    if (!requireDouQiLife().deleteSave(session.userId, saveId)) throw new HttpError(404, "存档不存在");
+    return new Response(null, { status: 204 });
+}
+
+async function sendDouQiLifeTurn(request: Request, session: SessionPayload, sessionId: string, requestId: string) {
+    const input = await readJson<{ action?: unknown }>(request, 12 * 1024);
+    const service = requireDouQiLife();
+    const action = String(input.action || "").trim();
+    const started = service.beginTurn(session.userId, sessionId, action);
+    try {
+        const target = defaultChatTextModel();
+        assertPlatformModelAllowed(target.channelId, target.model, "text");
+        const channel = platformChannel(target.channelId);
+        const apiKey = decryptChannelApiKey(channel);
+        const context = service.context(session.userId, sessionId);
+        const messages: ChatProtocolMessage[] = [{
+            role: "user",
+            content: buildDouQiLifeTurnPrompt(context.state, context.messages, action),
+            images: [],
+        }];
+        const controller = new AbortController();
+        const signal = AbortSignal.any([request.signal, controller.signal]);
+        const upstream = await openDouQiLifeUpstream(channel, apiKey, target.model, messages, signal, requestId);
+        if (!upstream.stream) {
+            const result = parseDouQiLifeTurnResult(upstream.text);
+            const completed = service.completeTurn(session.userId, sessionId, started.worldMessage.id, result, action);
+            return douQiLifeEventResponse([
+                ["started", { session: started.session, playerMessage: started.playerMessage, worldMessage: started.worldMessage }],
+                ["delta", { messageId: started.worldMessage.id, delta: result.narrative }],
+                ["done", publicDouQiLifeTurn(completed)],
+            ]);
+        }
+        return streamDouQiLifeTurn(upstream, service, session, sessionId, started, action, requestId);
+    } catch (error) {
+        service.failTurn(session.userId, sessionId, started.worldMessage.id, error instanceof Error ? error.message : "世界回应暂未完成");
+        throw error;
+    }
+}
+
+async function openDouQiLifeUpstream(channel: ChannelRecord, apiKey: string, model: string, messages: ChatProtocolMessage[], signal: AbortSignal, requestId: string) {
+    if (channel.apiFormat === "gemini") {
+        const response = await upstreamFetch(
+            buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(model.replace(/^models\//, ""))}:streamGenerateContent`) + "?alt=sse",
+            { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey, "Idempotency-Key": upstreamIdempotencyKey(requestId), Accept: "text/event-stream" }, body: JSON.stringify(buildGeminiChatBody(DOU_QI_LIFE_SYSTEM_PROMPT, messages)), signal },
+            false,
+            CHAT_TIMEOUT_MS,
+        );
+        return readChatUpstream(response, "gemini");
+    }
+    let response = await upstreamFetch(
+        buildUpstreamUrl(channel.baseUrl, "openai", "/responses"),
+        { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, "Idempotency-Key": upstreamIdempotencyKey(requestId), Accept: "text/event-stream" }, body: JSON.stringify(buildOpenAiResponsesChatBody(model, DOU_QI_LIFE_SYSTEM_PROMPT, messages)), signal },
+        false,
+        CHAT_TIMEOUT_MS,
+    );
+    let protocol: ChatProtocol = "responses";
+    if ([404, 405, 501].includes(response.status)) {
+        await response.body?.cancel();
+        protocol = "chat-completions";
+        response = await upstreamFetch(
+            buildUpstreamUrl(channel.baseUrl, "openai", "/chat/completions"),
+            { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, "Idempotency-Key": upstreamIdempotencyKey(requestId, 1), Accept: "text/event-stream" }, body: JSON.stringify(buildOpenAiChatCompletionBody(model, DOU_QI_LIFE_SYSTEM_PROMPT, messages)), signal },
+            false,
+            CHAT_TIMEOUT_MS,
+        );
+    }
+    return readChatUpstream(response, protocol);
+}
+
+function streamDouQiLifeTurn(
+    upstream: { stream: true; response: Response; protocol: ChatProtocol },
+    service: ReturnType<typeof createDouQiLifeService>,
+    session: SessionPayload,
+    sessionId: string,
+    started: ReturnType<ReturnType<typeof createDouQiLifeService>["beginTurn"]>,
+    action: string,
+    requestId: string,
+) {
+    const encoder = new TextEncoder();
+    let canceled = false;
+    const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+            controller.enqueue(encoder.encode(douQiLifeEvent("started", { session: started.session, playerMessage: started.playerMessage, worldMessage: started.worldMessage })));
+            void (async () => {
+                const reader = upstream.response.body!.getReader();
+                const decoder = new TextDecoder();
+                const streamState: ChatStreamState = { buffer: "", text: "", completed: false };
+                try {
+                    for (;;) {
+                        const next = await reader.read();
+                        if (next.done) break;
+                        consumeChatStream(upstream.protocol, streamState, decoder.decode(next.value, { stream: true }));
+                        if (streamState.error) throw new Error(streamState.error);
+                    }
+                    consumeChatStream(upstream.protocol, streamState, decoder.decode(), undefined, true);
+                    if (streamState.error) throw new Error(streamState.error);
+                    if (!streamState.completed) throw new Error("世界回应中途断开，请重试");
+                    const result = parseDouQiLifeTurnResult(streamState.text);
+                    const completed = service.completeTurn(session.userId, sessionId, started.worldMessage.id, result, action);
+                    if (!canceled) {
+                        controller.enqueue(encoder.encode(douQiLifeEvent("delta", { messageId: started.worldMessage.id, delta: result.narrative })));
+                        controller.enqueue(encoder.encode(douQiLifeEvent("done", publicDouQiLifeTurn(completed))));
+                        controller.close();
+                    }
+                    console.info(JSON.stringify({ event: "douqi_life_completed", requestId, userId: session.userId, sessionId }));
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : "世界回应暂未完成";
+                    service.failTurn(session.userId, sessionId, started.worldMessage.id, message);
+                    if (!canceled) {
+                        controller.enqueue(encoder.encode(douQiLifeEvent("error", { message, messageId: started.worldMessage.id })));
+                        controller.close();
+                    }
+                } finally {
+                    try { reader.releaseLock(); } catch {}
+                }
+            })();
+        },
+        cancel() {
+            canceled = true;
+        },
+    });
+    return new Response(stream, { headers: chatStreamHeaders() });
+}
+
+function publicDouQiLifeTurn(value: ReturnType<ReturnType<typeof createDouQiLifeService>["completeTurn"]>) {
+    return { session: value.session, worldMessage: value.worldMessage, suggestions: value.suggestions, notice: value.notice };
+}
+
+function douQiLifeEventResponse(events: Array<[string, unknown]>) {
+    return new Response(events.map(([event, payload]) => douQiLifeEvent(event, payload)).join(""), { headers: chatStreamHeaders() });
+}
+
+function douQiLifeEvent(event: string, payload: unknown) {
+    return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
 function chatUsage(session: SessionPayload) {
@@ -3755,7 +3948,7 @@ function withSecurityHeaders(response: Response, requestId: string, request: Req
 
 function errorResponse(error: unknown, requestId: string) {
     const status =
-        error instanceof HttpError || error instanceof CultivationError || error instanceof ProductLabError || error instanceof ChatError || error instanceof ColorAlchemyError
+        error instanceof HttpError || error instanceof CultivationError || error instanceof ProductLabError || error instanceof ChatError || error instanceof ColorAlchemyError || error instanceof DouQiLifeError
             ? error.status
             : error instanceof AssetLibraryInputError || error instanceof GenerationHistoryInputError || error instanceof ProductAnalysisInputError
               ? 400
@@ -3768,6 +3961,7 @@ function errorResponse(error: unknown, requestId: string) {
         error instanceof ProductLabError ||
         error instanceof ChatError ||
         error instanceof ColorAlchemyError ||
+        error instanceof DouQiLifeError ||
         error instanceof AssetLibraryInputError ||
         error instanceof GenerationHistoryInputError ||
         error instanceof ProductAnalysisInputError ||

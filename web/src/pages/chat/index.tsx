@@ -1,4 +1,4 @@
-import { App, Button, Dropdown, Empty, Input, Popconfirm, Skeleton, Tag, Tooltip } from "antd";
+import { App, Button, Dropdown, Empty, Input, Popconfirm, Segmented, Skeleton, Tag, Tooltip } from "antd";
 import { ChevronDown, Copy, ImagePlus, LoaderCircle, MessageCircle, Plus, RotateCcw, Send, Sparkles, Trash2, X } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { useEffect, useRef, useState } from "react";
@@ -9,6 +9,7 @@ import { createChatConversation, deleteChatConversation, fetchChatConversation, 
 import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId } from "./chat-presets";
+import DouQiLifeView from "./dou-qi-life-view";
 
 const welcomeLines = ["把疑问交给此方天地。", "可上传图片，让模型结合画面回答。", "这里适合聊创意、提示词、商品图、画面结构和日常问题。"];
 
@@ -28,6 +29,8 @@ type PendingChatTurn = {
     retryAssistantMessageId?: string;
 };
 
+type ChatMode = "chat" | "douqi";
+
 export default function ChatPage() {
     const { message, modal } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -42,6 +45,7 @@ export default function ChatPage() {
     const [detailLoading, setDetailLoading] = useState(false);
     const [creating, setCreating] = useState(false);
     const [sending, setSending] = useState(false);
+    const [mode, setMode] = useState<ChatMode>("chat");
     const [uploading, setUploading] = useState(false);
     const [draft, setDraft] = useState("");
     const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
@@ -466,6 +470,8 @@ export default function ChatPage() {
             });
     }
 
+    if (mode === "douqi") return <DouQiLifeView onExit={() => setMode("chat")} />;
+
     return (
         <div className="h-full overflow-hidden bg-[#f7f5ef] text-stone-900 dark:bg-[#11100e] dark:text-[#f5efe3]">
             <div className="mx-auto grid h-full max-w-[1480px] grid-cols-[280px_minmax(0,1fr)] gap-0 px-4 py-4 max-lg:grid-cols-1 max-lg:px-3">
@@ -529,6 +535,12 @@ export default function ChatPage() {
                             <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{activeConversation?.title || activePreset.description}</div>
                         </div>
                         <div className="flex min-w-0 items-center gap-2">
+                            <Segmented
+                                size="small"
+                                value={mode}
+                                options={[{ label: "普通问道", value: "chat" }, { label: "斗气人生", value: "douqi" }]}
+                                onChange={(value) => setMode(value as ChatMode)}
+                            />
                             <Button className="lg:hidden" icon={<Plus className="size-4" />} onClick={handleNewConversation} loading={creating}>
                                 新建
                             </Button>

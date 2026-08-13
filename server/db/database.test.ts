@@ -130,7 +130,7 @@ describe("SQLite application database", () => {
     }
   });
 
-  test("creates the product, chat and color alchemy tables in the latest migration", () => {
+  test("creates the product, chat, color alchemy and dou qi life tables in the latest migration", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
     const store = openAppDatabase({ dataDir });
@@ -208,6 +208,30 @@ describe("SQLite application database", () => {
       expect(userPreferenceTables).toEqual(["user_preferences"]);
       expect(userPreferenceIndex?.name).toBe("idx_user_preferences_user_updated");
       expect(chatTables).toEqual(["chat_conversations", "chat_messages", "chat_usage"]);
+      const douQiTables = (
+        store.raw!
+          .query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'douqi_life_%' ORDER BY name",
+          )
+          .all() as Array<{ name: string }>
+      ).map((item) => item.name);
+      expect(douQiTables).toEqual([
+        "douqi_life_messages",
+        "douqi_life_saves",
+        "douqi_life_sessions",
+      ]);
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(17);
+      for (const index of [
+        "idx_douqi_life_sessions_user_updated",
+        "idx_douqi_life_messages_user_session_created",
+        "idx_douqi_life_saves_user_updated",
+      ]) {
+        expect(
+          store.raw!
+            .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+            .get(index),
+        ).toEqual({ name: index });
+      }
       const chatConversationPresetColumn = (
         store.raw!
           .query("PRAGMA table_info(chat_conversations)")
