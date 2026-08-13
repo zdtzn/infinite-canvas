@@ -25,6 +25,7 @@ export function AccountSessionController() {
             queryClient.clear();
             resetWorkbenchAgentSession();
             useConfigStore.getState().clearSensitiveSession();
+            useConfigStore.getState().clearAccountScopedPreferences();
         }
 
         prepareImageGenerationRuntimeForUser(userId);

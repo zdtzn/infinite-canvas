@@ -1,24 +1,32 @@
 import type { ReactNode } from "react";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { App } from "antd";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useProjectServerSync } from "@/hooks/use-project-server-sync";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
-import { fetchServerChannels, fetchServerPromptSources, saveServerChannel, saveServerPromptSource, type ServerChannel } from "@/services/server-api";
+import { fetchServerChannels, fetchServerPromptSources, fetchServerUserPreferences, saveServerChannel, saveServerPromptSource, saveServerUserPreferences, type ServerChannel } from "@/services/server-api";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { isBuiltInPromptSource, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import { createModelChannel, normalizeChannelModels, useConfigStore, type ModelChannel } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
+
+const SYSTEM_PROMPT_OWNER_KEY = "infinite-canvas:system-prompt-owner";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
     const handledConfigParams = useRef(false);
     const syncedChannelUser = useRef("");
     const syncedPromptSourceUser = useRef("");
+    const syncedUserPreferencesUser = useRef("");
+    const userPreferencesReady = useRef("");
+    const [userPreferencesReadyUser, setUserPreferencesReadyUser] = useState("");
+    const lastSyncedSystemPrompt = useRef<string | null>(null);
+    const systemPromptSaveTimer = useRef<number | null>(null);
     const user = useUserStore((state) => state.user);
     const config = useConfigStore((state) => state.config);
     const updateConfig = useConfigStore((state) => state.updateConfig);
+    const replaceSystemPrompt = useConfigStore((state) => state.replaceSystemPrompt);
     const setPlatformChannels = useConfigStore((state) => state.setPlatformChannels);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const localAssetsHydrated = useAssetStore((state) => state.hydrated);
@@ -30,6 +38,102 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
 
     usePromptSourceScheduler();
     useProjectServerSync(user?.id);
+
+    useEffect(() => {
+        if (!user?.id) {
+            syncedUserPreferencesUser.current = "";
+            userPreferencesReady.current = "";
+            setUserPreferencesReadyUser("");
+            lastSyncedSystemPrompt.current = null;
+            if (systemPromptSaveTimer.current !== null) window.clearTimeout(systemPromptSaveTimer.current);
+            systemPromptSaveTimer.current = null;
+            return;
+        }
+        if (!PUBLIC_MODE || syncedUserPreferencesUser.current === user.id) return;
+        let active = true;
+        const initialSystemPrompt = useConfigStore.getState().config.systemPrompt;
+        syncedUserPreferencesUser.current = user.id;
+        setUserPreferencesReadyUser("");
+
+        void fetchServerUserPreferences()
+            .then(async (preferences) => {
+                if (!active) return;
+                const currentSystemPrompt = useConfigStore.getState().config.systemPrompt;
+                const ownedBy = readSystemPromptOwner();
+                const changedDuringSync = currentSystemPrompt !== initialSystemPrompt;
+                let syncedSystemPrompt = currentSystemPrompt;
+                let shouldSave = changedDuringSync;
+
+                if (preferences.systemPromptConfigured && !changedDuringSync) {
+                    replaceSystemPrompt(preferences.systemPrompt);
+                    syncedSystemPrompt = preferences.systemPrompt;
+                } else if (!preferences.systemPromptConfigured && !changedDuringSync && ownedBy && ownedBy !== user.id) {
+                    replaceSystemPrompt("");
+                    syncedSystemPrompt = "";
+                } else if (!preferences.systemPromptConfigured && !currentSystemPrompt.trim()) {
+                    syncedSystemPrompt = "";
+                    shouldSave = changedDuringSync;
+                } else if (!preferences.systemPromptConfigured) {
+                    shouldSave = true;
+                }
+
+                if (shouldSave) {
+                    const systemPromptToSave = currentSystemPrompt;
+                    const saved = await saveServerUserPreferences({ systemPrompt: systemPromptToSave });
+                    if (!active) return;
+                    if (useConfigStore.getState().config.systemPrompt === systemPromptToSave) {
+                        replaceSystemPrompt(saved.systemPrompt);
+                        syncedSystemPrompt = saved.systemPrompt;
+                    } else {
+                        // The user edited while the first save was in flight. Keep the
+                        // last server value here; the ready-state effect will persist the
+                        // newer local value after initialization completes.
+                        syncedSystemPrompt = saved.systemPrompt;
+                    }
+                }
+                lastSyncedSystemPrompt.current = syncedSystemPrompt;
+                writeSystemPromptOwner(user.id);
+                userPreferencesReady.current = user.id;
+                setUserPreferencesReadyUser(user.id);
+            })
+            .catch((error) => {
+                if (!active) return;
+                syncedUserPreferencesUser.current = "";
+                userPreferencesReady.current = "";
+                setUserPreferencesReadyUser("");
+                message.error(error instanceof Error ? error.message : "用户偏好同步失败");
+            });
+
+        return () => {
+            active = false;
+        };
+    }, [message, replaceSystemPrompt, user?.id]);
+
+    useEffect(() => {
+        if (!PUBLIC_MODE || !user?.id || userPreferencesReadyUser !== user.id || userPreferencesReady.current !== user.id || lastSyncedSystemPrompt.current === config.systemPrompt) return;
+        if (systemPromptSaveTimer.current !== null) window.clearTimeout(systemPromptSaveTimer.current);
+        let active = true;
+        systemPromptSaveTimer.current = window.setTimeout(() => {
+            systemPromptSaveTimer.current = null;
+            const userId = user.id;
+            const value = config.systemPrompt;
+            void saveServerUserPreferences({ systemPrompt: value })
+                .then((saved) => {
+                    if (!active || userPreferencesReady.current !== userId || useUserStore.getState().user?.id !== userId) return;
+                    lastSyncedSystemPrompt.current = saved.systemPrompt;
+                    if (useConfigStore.getState().config.systemPrompt === value) replaceSystemPrompt(saved.systemPrompt);
+                    writeSystemPromptOwner(userId);
+                })
+                .catch((error) => {
+                    if (userPreferencesReady.current === userId) message.error(error instanceof Error ? error.message : "系统提示词保存失败");
+                });
+        }, 700);
+        return () => {
+            active = false;
+            if (systemPromptSaveTimer.current !== null) window.clearTimeout(systemPromptSaveTimer.current);
+            systemPromptSaveTimer.current = null;
+        };
+    }, [config.systemPrompt, message, replaceSystemPrompt, user?.id, userPreferencesReadyUser]);
 
     useEffect(() => {
         if (!user?.id) {
@@ -186,4 +290,20 @@ function sameChannelModels(left: ModelChannel, right: ModelChannel) {
         const other = right.models[index];
         return model.name === other?.name && model.capability === other.capability && JSON.stringify(model.imageCapabilities || null) === JSON.stringify(other.imageCapabilities || null);
     });
+}
+
+function readSystemPromptOwner() {
+    try {
+        return window.localStorage.getItem(SYSTEM_PROMPT_OWNER_KEY) || "";
+    } catch {
+        return "";
+    }
+}
+
+function writeSystemPromptOwner(userId: string) {
+    try {
+        window.localStorage.setItem(SYSTEM_PROMPT_OWNER_KEY, userId);
+    } catch {
+        // A blocked localStorage must not prevent server preference sync.
+    }
 }

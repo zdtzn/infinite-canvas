@@ -32,6 +32,8 @@ export type AppDatabase = {
   saveState(state: ServerState): void;
   loadSetting(key: string): unknown | null;
   saveSetting(key: string, value: unknown): void;
+  loadUserPreference(userId: string, key: string): unknown | null;
+  saveUserPreference(userId: string, key: string, value: unknown): void;
   saveAsset(asset: StoredAsset): void;
   deleteAsset(userId: string, assetKey: string): void;
   loadAssetLibrary(userId: string): {
@@ -607,6 +609,29 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 14").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS user_preferences (
+          user_id TEXT NOT NULL,
+          preference_key TEXT NOT NULL,
+          value_json TEXT NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, preference_key),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_preferences_user_updated
+          ON user_preferences(user_id, updated_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (14, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(
@@ -725,6 +750,26 @@ function sqliteStore(database: Database): AppDatabase {
           "INSERT INTO cultivation_settings(setting_key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(setting_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at",
         )
         .run(key, JSON.stringify(value ?? null), Date.now());
+    },
+    loadUserPreference: (userId, key) => {
+      const row = database
+        .query(
+          "SELECT value_json FROM user_preferences WHERE user_id = ? AND preference_key = ?",
+        )
+        .get(userId, key) as { value_json?: string } | null;
+      if (!row?.value_json) return null;
+      try {
+        return JSON.parse(row.value_json);
+      } catch {
+        return null;
+      }
+    },
+    saveUserPreference: (userId, key, value) => {
+      database
+        .query(
+          "INSERT INTO user_preferences(user_id, preference_key, value_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, preference_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at",
+        )
+        .run(userId, key, JSON.stringify(value ?? null), Date.now());
     },
     saveAsset: (asset) =>
       database

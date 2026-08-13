@@ -140,10 +140,12 @@ type ConfigStore = {
     setPlatformChannels: (channels: ModelChannel[]) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
     clearSensitiveSession: () => void;
+    clearAccountScopedPreferences: () => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean, tab?: ConfigTabKey) => void;
     setConfigDialogOpen: (isOpen: boolean) => void;
     clearPromptContinue: () => void;
+    replaceSystemPrompt: (value: string) => void;
 };
 
 const VIDEO_KEYWORDS = ["seedance", "video", "sora", "veo", "kling", "wan", "hailuo"];
@@ -235,10 +237,18 @@ export const useConfigStore = create<ConfigStore>()(
                     },
                     webdav: { ...state.webdav, password: "" },
                 })),
+            clearAccountScopedPreferences: () =>
+                set((state) => ({
+                    config: { ...state.config, systemPrompt: "" },
+                })),
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
             openConfigDialog: (shouldPromptContinue = false, configTab = "channels") => set({ isConfigOpen: true, shouldPromptContinue, configTab }),
             setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
             clearPromptContinue: () => set({ shouldPromptContinue: false }),
+            replaceSystemPrompt: (value) =>
+                set((state) => ({
+                    config: { ...state.config, systemPrompt: value },
+                })),
         }),
         {
             name: CONFIG_STORE_KEY,

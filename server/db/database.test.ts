@@ -194,6 +194,19 @@ describe("SQLite application database", () => {
         .get() as { name: string } | null;
 
       expect(Number(migration.version)).toBeGreaterThanOrEqual(13);
+      const userPreferenceTables = (
+        store.raw!
+          .query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'user_preferences'",
+          )
+          .all() as Array<{ name: string }>
+      ).map((item) => item.name);
+      const userPreferenceIndex = store.raw!
+        .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_user_preferences_user_updated'")
+        .get() as { name: string } | null;
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(14);
+      expect(userPreferenceTables).toEqual(["user_preferences"]);
+      expect(userPreferenceIndex?.name).toBe("idx_user_preferences_user_updated");
       expect(chatTables).toEqual(["chat_conversations", "chat_messages"]);
       expect(colorAlchemyTables).toEqual(["color_alchemy_documents"]);
       expect(colorAlchemyIndex?.name).toBe("idx_color_alchemy_documents_user_updated");
@@ -207,6 +220,23 @@ describe("SQLite application database", () => {
       });
       expect(universalTemplate.prompt_template).toContain("【{{productName}}】");
       expect(universalTemplate.prompt_template).toContain("不得添加价格");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("isolates user preferences by account", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      store.raw!.query("INSERT INTO users(user_id, display_name, created_at) VALUES (?, ?, ?), (?, ?, ?)").run("alice", "Alice", 1, "bob", "Bob", 2);
+      store.saveUserPreference("alice", "system-prompt", "Alice prompt");
+      store.saveUserPreference("bob", "system-prompt", "Bob prompt");
+
+      expect(store.loadUserPreference("alice", "system-prompt")).toBe("Alice prompt");
+      expect(store.loadUserPreference("bob", "system-prompt")).toBe("Bob prompt");
+      expect(store.loadUserPreference("alice", "missing")).toBeNull();
     } finally {
       store.close();
     }

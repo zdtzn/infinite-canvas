@@ -171,6 +171,19 @@ export async function logoutAccess() {
     await serverRequest("/api/auth/logout", { method: "POST" });
 }
 
+export type ServerUserPreferences = {
+    systemPrompt: string;
+    systemPromptConfigured?: boolean;
+};
+
+export async function fetchServerUserPreferences() {
+    return serverRequest<ServerUserPreferences>("/api/preferences", { timeoutMs: 12_000 });
+}
+
+export async function saveServerUserPreferences(preferences: Partial<ServerUserPreferences>) {
+    return serverRequest<ServerUserPreferences>("/api/preferences", { method: "PUT", body: preferences, timeoutMs: 12_000 });
+}
+
 export async function fetchServerChannels() {
     return serverRequest<{ items: ServerChannel[] }>("/api/channels", { timeoutMs: 12_000 });
 }

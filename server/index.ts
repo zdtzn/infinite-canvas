@@ -80,6 +80,7 @@ import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstrea
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
+import { normalizeUserSystemPrompt, readStoredUserSystemPrompt, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
 import { createColorAlchemyService, ColorAlchemyError } from "./modules/color-alchemy/service";
@@ -408,6 +409,8 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/cultivation/login-logs" && request.method === "GET") return adminCultivationLoginLogs(url, session);
         if (url.pathname === "/api/admin/cultivation/breakthroughs" && request.method === "GET") return adminCultivationBreakthroughs(url, session);
         if (url.pathname === "/api/channels" && request.method === "GET") return listChannels(session);
+        if (url.pathname === "/api/preferences" && request.method === "GET") return userPreferences(session);
+        if (url.pathname === "/api/preferences" && request.method === "PUT") return updateUserPreferences(request, session);
         if (url.pathname === "/api/channels/order" && request.method === "PUT") return reorderChannels(request, session);
         const channelTestMatch = url.pathname.match(/^\/api\/channels\/([^/]+)\/test$/);
         if (channelTestMatch && request.method === "POST") return testChannel(request, session, decodeRouteSegment(channelTestMatch[1], "渠道 ID"));
@@ -1269,6 +1272,30 @@ function getChatConversation(session: SessionPayload, conversationId: string) {
 function deleteChatConversation(session: SessionPayload, conversationId: string) {
     if (!requireChat().deleteConversation(session.userId, conversationId)) throw new HttpError(404, "对话不存在");
     return new Response(null, { status: 204 });
+}
+
+function userPreferences(session: SessionPayload) {
+    const stored = appDatabase.loadUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY);
+    return json(
+        {
+            systemPrompt: readStoredUserSystemPrompt(stored) || "",
+            systemPromptConfigured: typeof stored === "string",
+        },
+        200,
+        { "Cache-Control": "no-store" },
+    );
+}
+
+async function updateUserPreferences(request: Request, session: SessionPayload) {
+    const body = await readJson<{ systemPrompt?: unknown }>(request, 64 * 1024);
+    let systemPrompt: string;
+    try {
+        systemPrompt = normalizeUserSystemPrompt(body.systemPrompt);
+    } catch (error) {
+        throw new HttpError(400, error instanceof Error ? error.message : "用户偏好无效");
+    }
+    appDatabase.saveUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY, systemPrompt);
+    return json({ systemPrompt }, 200, { "Cache-Control": "no-store" });
 }
 
 function requireColorAlchemy() {
