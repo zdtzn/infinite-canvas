@@ -113,10 +113,43 @@ export type DouQiBattleState = {
   status: string;
 };
 
+export type DouQiWorldEventType =
+  | "sect_recruitment"
+  | "beast_attack"
+  | "ruins"
+  | "auction"
+  | "conflict"
+  | "mercenary"
+  | "death"
+  | "resource"
+  | "disaster"
+  | "faction_change"
+  | "other";
+
+export type DouQiWorldEventStatus =
+  | "open"
+  | "participating"
+  | "investigating"
+  | "ignored"
+  | "resolved"
+  | "escaped";
+
+export type DouQiWorldEvent = {
+  id: string;
+  type: DouQiWorldEventType;
+  title: string;
+  location: string;
+  occurredAt: string;
+  known: boolean;
+  status: DouQiWorldEventStatus;
+  description: string;
+};
+
 export type DouQiMemoryState = {
   recentEvents: string[];
   longTermFacts: string[];
   choices: string[];
+  worldEvents: DouQiWorldEvent[];
 };
 
 export type DouQiLifeState = {
@@ -185,6 +218,7 @@ export type DouQiLifeSave = {
   id: string;
   sessionId: string;
   title: string;
+  kind: "auto" | "manual";
   createdAt: number;
   updatedAt: number;
 };

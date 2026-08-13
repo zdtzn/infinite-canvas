@@ -220,7 +220,7 @@ describe("SQLite application database", () => {
         "douqi_life_saves",
         "douqi_life_sessions",
       ]);
-      expect(Number(migration.version)).toBeGreaterThanOrEqual(17);
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(18);
       for (const index of [
         "idx_douqi_life_sessions_user_updated",
         "idx_douqi_life_messages_user_session_created",
@@ -238,6 +238,17 @@ describe("SQLite application database", () => {
           .all() as Array<{ name: string; dflt_value: string | null }>
       ).find((column) => column.name === "preset_id");
       expect(chatConversationPresetColumn?.dflt_value).toBe("'general'");
+      const douQiSaveKindColumn = (
+        store.raw!
+          .query("PRAGMA table_info(douqi_life_saves)")
+          .all() as Array<{ name: string; dflt_value: string | null }>
+      ).find((column) => column.name === "save_kind");
+      expect(douQiSaveKindColumn?.dflt_value).toBe("'manual'");
+      expect(
+        store.raw!
+          .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_douqi_life_saves_auto'")
+          .get(),
+      ).toEqual({ name: "idx_douqi_life_saves_auto" });
       expect(colorAlchemyTables).toEqual(["color_alchemy_documents"]);
       expect(colorAlchemyIndex?.name).toBe("idx_color_alchemy_documents_user_updated");
       expect(colorAlchemyTombstoneTables).toEqual(["color_alchemy_document_tombstones"]);

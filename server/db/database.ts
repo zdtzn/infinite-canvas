@@ -731,6 +731,25 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 18").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        ALTER TABLE douqi_life_saves
+          ADD COLUMN save_kind TEXT NOT NULL DEFAULT 'manual'
+          CHECK (save_kind IN ('auto', 'manual'));
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_douqi_life_saves_auto
+          ON douqi_life_saves(user_id, session_id)
+          WHERE save_kind = 'auto';
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (18, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(
