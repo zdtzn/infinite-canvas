@@ -55,7 +55,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         syncedUserPreferencesUser.current = user.id;
         setUserPreferencesReadyUser("");
 
-        void fetchServerUserPreferences()
+        void fetchServerUserPreferences(user.id)
             .then(async (preferences) => {
                 if (!active) return;
                 const currentSystemPrompt = useConfigStore.getState().config.systemPrompt;
@@ -79,7 +79,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
 
                 if (shouldSave) {
                     const systemPromptToSave = currentSystemPrompt;
-                    const saved = await saveServerUserPreferences({ systemPrompt: systemPromptToSave });
+                    const saved = await saveServerUserPreferences({ systemPrompt: systemPromptToSave }, user.id);
                     if (!active) return;
                     if (useConfigStore.getState().config.systemPrompt === systemPromptToSave) {
                         replaceSystemPrompt(saved.systemPrompt);
@@ -117,7 +117,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             systemPromptSaveTimer.current = null;
             const userId = user.id;
             const value = config.systemPrompt;
-            void saveServerUserPreferences({ systemPrompt: value })
+            void saveServerUserPreferences({ systemPrompt: value }, userId)
                 .then((saved) => {
                     if (!active || userPreferencesReady.current !== userId || useUserStore.getState().user?.id !== userId) return;
                     lastSyncedSystemPrompt.current = saved.systemPrompt;

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { createChatConversation, deleteChatConversation, fetchChatConversation, fetchChatConversations, sendChatMessage, uploadChatImage, type ChatAttachment, type ChatConversation, type ChatMessage } from "@/services/chat-api";
+import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId } from "./chat-presets";
 
@@ -13,6 +14,8 @@ const welcomeLines = [
     "可上传图片，让模型结合画面回答。",
     "这里适合聊创意、提示词、商品图、画面结构和日常问题。",
 ];
+
+const CHAT_PRESET_STORAGE_KEY = "infinite-canvas:chat-preset:";
 
 export default function ChatPage() {
     const { message } = App.useApp();
@@ -31,10 +34,46 @@ export default function ChatPage() {
     const [uploading, setUploading] = useState(false);
     const [draft, setDraft] = useState("");
     const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
-    const [presetId, setPresetId] = useState<ChatPresetId>(defaultChatPresetId);
+    const [presetId, setPresetId] = useState<ChatPresetId>(() => readLocalChatPreset(userId));
+    const [presetReadyUser, setPresetReadyUser] = useState("");
+    const presetIdRef = useRef<ChatPresetId>(defaultChatPresetId);
+    const presetEditedDuringHydration = useRef(false);
+    const presetSaveQueue = useRef(Promise.resolve());
 
     const activeConversation = conversations.find((item) => item.id === activeConversationId) || null;
     const activePreset = chatPresetOption(presetId);
+
+    useEffect(() => {
+        let canceled = false;
+        presetEditedDuringHydration.current = false;
+        const localPresetId = readLocalChatPreset(userId);
+        presetIdRef.current = localPresetId;
+        setPresetId(localPresetId);
+        setPresetReadyUser("");
+        if (!userId) return () => { canceled = true; };
+
+        void fetchServerUserPreferences(userId)
+            .then((preferences) => {
+                if (canceled) return;
+                const serverPresetId = chatPresetOptions.some((preset) => preset.id === preferences.chatPresetId) ? preferences.chatPresetId as ChatPresetId : defaultChatPresetId;
+                const nextPresetId = presetEditedDuringHydration.current ? presetIdRef.current : serverPresetId;
+                presetIdRef.current = nextPresetId;
+                setPresetId(nextPresetId);
+                writeLocalChatPreset(userId, nextPresetId);
+                setPresetReadyUser(userId);
+                if (presetEditedDuringHydration.current) {
+                    enqueuePresetSave(nextPresetId, userId, () => !canceled);
+                }
+            })
+            .catch((error) => {
+                if (canceled) return;
+                setPresetReadyUser(userId);
+                message.error(error instanceof Error ? error.message : "问道角色加载失败");
+            });
+        return () => {
+            canceled = true;
+        };
+    }, [message, userId]);
 
     useEffect(() => {
         if (!userId) return;
@@ -182,6 +221,30 @@ export default function ChatPage() {
         setSending(false);
     }
 
+    function handlePresetChange(nextPresetId: ChatPresetId) {
+        presetIdRef.current = nextPresetId;
+        presetEditedDuringHydration.current = true;
+        setPresetId(nextPresetId);
+        writeLocalChatPreset(userId, nextPresetId);
+        if (presetReadyUser !== userId || !userId) return;
+        enqueuePresetSave(nextPresetId, userId);
+    }
+
+    function enqueuePresetSave(nextPresetId: ChatPresetId, expectedUserId: string, isActive = () => true) {
+        presetSaveQueue.current = presetSaveQueue.current
+            .catch(() => undefined)
+            .then(async () => {
+                if (!isActive() || useUserStore.getState().user?.id !== expectedUserId) return;
+                try {
+                    await saveServerUserPreferences({ chatPresetId: nextPresetId }, expectedUserId);
+                } catch (error) {
+                    if (isActive() && useUserStore.getState().user?.id === expectedUserId) {
+                        message.error(error instanceof Error ? error.message : "问道角色保存失败");
+                    }
+                }
+            });
+    }
+
     return (
         <div className="h-full overflow-hidden bg-[#f7f5ef] text-stone-900 dark:bg-[#11100e] dark:text-[#f5efe3]">
             <div className="mx-auto grid h-full max-w-[1480px] grid-cols-[280px_minmax(0,1fr)] gap-0 px-4 py-4 max-lg:grid-cols-1 max-lg:px-3">
@@ -272,7 +335,7 @@ export default function ChatPage() {
                                 disabled={sending}
                                 menu={{
                                     selectedKeys: [presetId],
-                                    onClick: ({ key }) => setPresetId(key as ChatPresetId),
+                                    onClick: ({ key }) => handlePresetChange(key as ChatPresetId),
                                     items: chatPresetOptions.map((preset) => ({
                                         key: preset.id,
                                         label: (
@@ -358,6 +421,25 @@ function ChatBubble({ item }: { item: ChatMessage }) {
             </div>
         </div>
     );
+}
+
+function readLocalChatPreset(userId: string): ChatPresetId {
+    if (!userId) return defaultChatPresetId;
+    try {
+        const value = window.localStorage.getItem(`${CHAT_PRESET_STORAGE_KEY}${encodeURIComponent(userId)}`);
+        return chatPresetOptions.some((preset) => preset.id === value) ? (value as ChatPresetId) : defaultChatPresetId;
+    } catch {
+        return defaultChatPresetId;
+    }
+}
+
+function writeLocalChatPreset(userId: string, presetId: ChatPresetId) {
+    if (!userId) return;
+    try {
+        window.localStorage.setItem(`${CHAT_PRESET_STORAGE_KEY}${encodeURIComponent(userId)}`, presetId);
+    } catch {
+        // A blocked localStorage must not prevent server preference persistence.
+    }
 }
 
 function upsertConversation(items: ChatConversation[], conversation: ChatConversation) {

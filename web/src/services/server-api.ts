@@ -174,14 +174,16 @@ export async function logoutAccess() {
 export type ServerUserPreferences = {
     systemPrompt: string;
     systemPromptConfigured?: boolean;
+    chatPresetId: string;
+    chatPresetConfigured?: boolean;
 };
 
-export async function fetchServerUserPreferences() {
-    return serverRequest<ServerUserPreferences>("/api/preferences", { timeoutMs: 12_000 });
+export async function fetchServerUserPreferences(expectedUserId?: string) {
+    return serverRequest<ServerUserPreferences>("/api/preferences", { timeoutMs: 12_000, expectedUserId });
 }
 
-export async function saveServerUserPreferences(preferences: Partial<ServerUserPreferences>) {
-    return serverRequest<ServerUserPreferences>("/api/preferences", { method: "PUT", body: preferences, timeoutMs: 12_000 });
+export async function saveServerUserPreferences(preferences: Partial<ServerUserPreferences>, expectedUserId?: string) {
+    return serverRequest<ServerUserPreferences>("/api/preferences", { method: "PUT", body: preferences, timeoutMs: 12_000, expectedUserId });
 }
 
 export async function fetchServerChannels() {

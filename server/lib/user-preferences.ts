@@ -1,5 +1,10 @@
+import { chatPresets, defaultChatPresetId, type ChatPresetId } from "./chat-presets";
+
 export const USER_SYSTEM_PROMPT_KEY = "system-prompt";
+export const USER_CHAT_PRESET_KEY = "chat-preset-id";
 export const MAX_USER_SYSTEM_PROMPT_CHARS = 20_000;
+
+const chatPresetIds = new Set(chatPresets.map((preset) => preset.id));
 
 export function normalizeUserSystemPrompt(value: unknown) {
   if (value === undefined || value === null) return "";
@@ -11,4 +16,21 @@ export function normalizeUserSystemPrompt(value: unknown) {
 
 export function readStoredUserSystemPrompt(value: unknown) {
   return typeof value === "string" ? value : null;
+}
+
+export function normalizeUserChatPresetId(value: unknown): ChatPresetId {
+  if (typeof value !== "string") throw new Error("问道角色预设无效");
+  const id = value.trim() as ChatPresetId;
+  if (!chatPresetIds.has(id)) throw new Error("问道角色预设不存在");
+  return id;
+}
+
+export function readStoredUserChatPresetId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const id = value.trim() as ChatPresetId;
+  return chatPresetIds.has(id) ? id : null;
+}
+
+export function defaultUserChatPresetId() {
+  return defaultChatPresetId;
 }

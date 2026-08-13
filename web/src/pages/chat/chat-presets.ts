@@ -1,4 +1,4 @@
-export type ChatPresetId = "general" | "prompt-smith" | "image-reader" | "product-strategist" | "copy-polisher" | "tech-helper" | "linruolan" | "catgirl";
+export type ChatPresetId = "general" | "prompt-smith" | "image-reader" | "product-strategist" | "copy-polisher" | "tech-helper" | "linruolan" | "catgirl" | "moxuan";
 
 export type ChatPresetOption = {
     id: ChatPresetId;
@@ -57,6 +57,12 @@ export const chatPresetOptions: readonly ChatPresetOption[] = [
         label: "猫娘",
         description: "可爱猫娘语气陪聊与轻松问答",
         hint: "每句带喵，适合轻松一点的聊天",
+    },
+    {
+        id: "moxuan",
+        label: "太虚古尊·墨玄",
+        description: "沉稳睿智的太古前辈，兼顾判断与实用建议",
+        hint: "现代中文为主，克制古雅，偶尔使用低频口头语",
     },
 ] as const;
 

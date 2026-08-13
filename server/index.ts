@@ -80,7 +80,7 @@ import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstrea
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
-import { normalizeUserSystemPrompt, readStoredUserSystemPrompt, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
+import { defaultUserChatPresetId, normalizeUserChatPresetId, normalizeUserSystemPrompt, readStoredUserChatPresetId, readStoredUserSystemPrompt, USER_CHAT_PRESET_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
 import { createColorAlchemyService, ColorAlchemyError } from "./modules/color-alchemy/service";
@@ -1275,11 +1275,15 @@ function deleteChatConversation(session: SessionPayload, conversationId: string)
 }
 
 function userPreferences(session: SessionPayload) {
-    const stored = appDatabase.loadUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY);
+    const storedSystemPrompt = appDatabase.loadUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY);
+    const storedChatPresetId = appDatabase.loadUserPreference(session.userId, USER_CHAT_PRESET_KEY);
+    const chatPresetId = readStoredUserChatPresetId(storedChatPresetId);
     return json(
         {
-            systemPrompt: readStoredUserSystemPrompt(stored) || "",
-            systemPromptConfigured: typeof stored === "string",
+            systemPrompt: readStoredUserSystemPrompt(storedSystemPrompt) || "",
+            systemPromptConfigured: typeof storedSystemPrompt === "string",
+            chatPresetId: chatPresetId || defaultUserChatPresetId(),
+            chatPresetConfigured: Boolean(chatPresetId),
         },
         200,
         { "Cache-Control": "no-store" },
@@ -1287,15 +1291,34 @@ function userPreferences(session: SessionPayload) {
 }
 
 async function updateUserPreferences(request: Request, session: SessionPayload) {
-    const body = await readJson<{ systemPrompt?: unknown }>(request, 64 * 1024);
-    let systemPrompt: string;
+    const body = await readJson<{ systemPrompt?: unknown; chatPresetId?: unknown }>(request, 64 * 1024);
+    const source = body && typeof body === "object" ? body : {};
+    const hasSystemPrompt = Object.prototype.hasOwnProperty.call(source, "systemPrompt");
+    const hasChatPresetId = Object.prototype.hasOwnProperty.call(source, "chatPresetId");
+    const storedSystemPrompt = appDatabase.loadUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY);
+    const storedChatPresetId = appDatabase.loadUserPreference(session.userId, USER_CHAT_PRESET_KEY);
+    let systemPrompt = readStoredUserSystemPrompt(storedSystemPrompt) || "";
+    let chatPresetId = readStoredUserChatPresetId(storedChatPresetId) || defaultUserChatPresetId();
+
     try {
-        systemPrompt = normalizeUserSystemPrompt(body.systemPrompt);
+        if (hasSystemPrompt) systemPrompt = normalizeUserSystemPrompt(source.systemPrompt);
+        if (hasChatPresetId) chatPresetId = normalizeUserChatPresetId(source.chatPresetId);
     } catch (error) {
         throw new HttpError(400, error instanceof Error ? error.message : "用户偏好无效");
     }
-    appDatabase.saveUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY, systemPrompt);
-    return json({ systemPrompt }, 200, { "Cache-Control": "no-store" });
+
+    if (hasSystemPrompt) appDatabase.saveUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY, systemPrompt);
+    if (hasChatPresetId) appDatabase.saveUserPreference(session.userId, USER_CHAT_PRESET_KEY, chatPresetId);
+    return json(
+        {
+            systemPrompt,
+            systemPromptConfigured: hasSystemPrompt || typeof storedSystemPrompt === "string",
+            chatPresetId,
+            chatPresetConfigured: hasChatPresetId || Boolean(readStoredUserChatPresetId(storedChatPresetId)),
+        },
+        200,
+        { "Cache-Control": "no-store" },
+    );
 }
 
 function requireColorAlchemy() {
