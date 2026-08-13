@@ -10,13 +10,20 @@ import { fetchServerUserPreferences, saveServerUserPreferences } from "@/service
 import { useUserStore } from "@/stores/use-user-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId } from "./chat-presets";
 
-const welcomeLines = [
-    "把疑问交给此方天地。",
-    "可上传图片，让模型结合画面回答。",
-    "这里适合聊创意、提示词、商品图、画面结构和日常问题。",
-];
+const welcomeLines = ["把疑问交给此方天地。", "可上传图片，让模型结合画面回答。", "这里适合聊创意、提示词、商品图、画面结构和日常问题。"];
 
 const CHAT_PRESET_STORAGE_KEY = "infinite-canvas:chat-preset:";
+
+type PendingChatTurn = {
+    conversationId: string;
+    optimisticUserId: string;
+    optimisticAssistantId: string;
+    createdAt: number;
+    started: boolean;
+    stopped: boolean;
+    userMessageId?: string;
+    assistantMessageId?: string;
+};
 
 export default function ChatPage() {
     const { message } = App.useApp();
@@ -40,9 +47,15 @@ export default function ChatPage() {
     const presetIdRef = useRef<ChatPresetId>(defaultChatPresetId);
     const presetEditedDuringHydration = useRef(false);
     const presetSaveQueue = useRef(Promise.resolve());
+    const activeConversationIdRef = useRef("");
+    const pendingTurnRef = useRef<PendingChatTurn | null>(null);
 
     const activeConversation = conversations.find((item) => item.id === activeConversationId) || null;
     const activePreset = chatPresetOption(presetId);
+
+    useEffect(() => {
+        activeConversationIdRef.current = activeConversationId;
+    }, [activeConversationId]);
 
     useEffect(() => {
         let canceled = false;
@@ -51,12 +64,15 @@ export default function ChatPage() {
         presetIdRef.current = localPresetId;
         setPresetId(localPresetId);
         setPresetReadyUser("");
-        if (!userId) return () => { canceled = true; };
+        if (!userId)
+            return () => {
+                canceled = true;
+            };
 
         void fetchServerUserPreferences(userId)
             .then((preferences) => {
                 if (canceled) return;
-                const serverPresetId = chatPresetOptions.some((preset) => preset.id === preferences.chatPresetId) ? preferences.chatPresetId as ChatPresetId : defaultChatPresetId;
+                const serverPresetId = chatPresetOptions.some((preset) => preset.id === preferences.chatPresetId) ? (preferences.chatPresetId as ChatPresetId) : defaultChatPresetId;
                 const nextPresetId = presetEditedDuringHydration.current ? presetIdRef.current : serverPresetId;
                 presetIdRef.current = nextPresetId;
                 setPresetId(nextPresetId);
@@ -84,7 +100,11 @@ export default function ChatPage() {
             .then((response) => {
                 if (canceled) return;
                 setConversations(response.items);
-                setActiveConversationId((current) => (response.items.some((item) => item.id === current) ? current : response.items[0]?.id || ""));
+                setActiveConversationId((current) => {
+                    const next = response.items.some((item) => item.id === current) ? current : response.items[0]?.id || "";
+                    activeConversationIdRef.current = next;
+                    return next;
+                });
             })
             .catch((error) => !canceled && message.error(error instanceof Error ? error.message : "问道记录加载失败"))
             .finally(() => !canceled && setLoading(false));
@@ -103,7 +123,13 @@ export default function ChatPage() {
         void fetchChatConversation(activeConversationId, userId)
             .then((detail) => {
                 if (canceled) return;
-                setMessages(detail.messages);
+                setMessages((current) => {
+                    const pending = pendingTurnRef.current;
+                    if (pending?.conversationId !== activeConversationId) return detail.messages;
+                    const transientIds = new Set([pending.optimisticUserId, pending.optimisticAssistantId, pending.userMessageId, pending.assistantMessageId].filter((id): id is string => Boolean(id)));
+                    const transientMessages = current.filter((item) => transientIds.has(item.id) && !detail.messages.some((message) => message.id === item.id));
+                    return [...detail.messages, ...transientMessages].sort((left, right) => left.createdAt - right.createdAt);
+                });
                 setConversations((current) => upsertConversation(current, detail.conversation));
             })
             .catch((error) => !canceled && message.error(error instanceof Error ? error.message : "对话加载失败"))
@@ -125,6 +151,7 @@ export default function ChatPage() {
         try {
             const response = await createChatConversation({}, userId);
             setConversations((current) => [response.conversation, ...current]);
+            activeConversationIdRef.current = response.conversation.id;
             setActiveConversationId(response.conversation.id);
             setMessages([]);
         } catch (error) {
@@ -138,6 +165,7 @@ export default function ChatPage() {
         if (activeConversationId) return activeConversationId;
         const response = await createChatConversation({}, userId);
         setConversations((current) => [response.conversation, ...current]);
+        activeConversationIdRef.current = response.conversation.id;
         setActiveConversationId(response.conversation.id);
         return response.conversation.id;
     }
@@ -178,11 +206,22 @@ export default function ChatPage() {
         const content = draft.trim();
         if (!content && !attachments.length) return;
         const conversationId = await ensureConversation();
+        const createdAt = Date.now();
+        const pending: PendingChatTurn = {
+            conversationId,
+            optimisticUserId: `optimistic-user-${createdAt}`,
+            optimisticAssistantId: `optimistic-assistant-${createdAt}`,
+            createdAt,
+            started: false,
+            stopped: false,
+        };
+        pendingTurnRef.current = pending;
         const controller = new AbortController();
         abortRef.current = controller;
         setSending(true);
         setDraft("");
         setAttachments([]);
+        setMessages((current) => [...current, createOptimisticUserMessage(pending, content, attachments)]);
         try {
             await sendChatMessage({
                 conversationId,
@@ -192,32 +231,67 @@ export default function ChatPage() {
                 expectedUserId: userId,
                 signal: controller.signal,
                 onStarted: ({ conversation, userMessage, assistantMessage }) => {
+                    pending.started = true;
+                    pending.userMessageId = userMessage.id;
+                    pending.assistantMessageId = assistantMessage.id;
                     setConversations((current) => upsertConversation(current, conversation));
-                    setMessages((current) => [...current, userMessage, assistantMessage]);
+                    if (activeConversationIdRef.current !== conversationId) return;
+                    setMessages((current) => [
+                        ...current.filter((item) => ![pending.optimisticUserId, pending.optimisticAssistantId, userMessage.id, assistantMessage.id].includes(item.id)),
+                        userMessage,
+                        pending.stopped ? { ...assistantMessage, status: "failed", error: "本次回答已停止" } : assistantMessage,
+                    ]);
                 },
                 onDelta: ({ messageId, delta }) => {
+                    if (pending.stopped || activeConversationIdRef.current !== conversationId) return;
                     setMessages((current) => current.map((item) => (item.id === messageId ? { ...item, content: item.content + delta } : item)));
                 },
                 onDone: ({ conversation, message: doneMessage }) => {
                     setConversations((current) => upsertConversation(current, conversation));
-                    setMessages((current) => current.map((item) => (item.id === doneMessage.id ? doneMessage : item)));
+                    if (pending.stopped || activeConversationIdRef.current !== conversationId) return;
+                    setMessages((current) => (current.some((item) => item.id === doneMessage.id) ? current.map((item) => (item.id === doneMessage.id ? doneMessage : item)) : [...current, doneMessage]));
                 },
                 onError: ({ message: errorMessage, messageId }) => {
-                    setMessages((current) => current.map((item) => (item.id === messageId ? { ...item, status: "failed", error: errorMessage } : item)));
-                    message.error(errorMessage);
+                    if (activeConversationIdRef.current === conversationId) {
+                        const failedMessageId = messageId || pending.assistantMessageId || pending.optimisticAssistantId;
+                        setMessages((current) => {
+                            if (current.some((item) => item.id === failedMessageId)) {
+                                return current.map((item) => (item.id === failedMessageId ? { ...item, status: "failed", error: pending.stopped ? "本次回答已停止" : errorMessage } : item));
+                            }
+                            return [...current, createOptimisticAssistantMessage(pending, pending.stopped ? "本次回答已停止" : errorMessage)];
+                        });
+                    }
+                    if (!pending.stopped) message.error(errorMessage);
                 },
             });
         } catch (error) {
-            if (error instanceof DOMException && error.name === "AbortError") return;
+            const aborted = error instanceof DOMException && error.name === "AbortError";
+            if (aborted && !pending.stopped) return;
             const errorMessage = error instanceof Error ? error.message : "问道台暂未回应";
-            message.error(errorMessage);
+            if (activeConversationIdRef.current === conversationId) {
+                setMessages((current) => {
+                    if (pending.started && pending.assistantMessageId) {
+                        return current.map((item) => (item.id === pending.assistantMessageId ? { ...item, status: "failed", error: aborted ? "本次回答已停止" : errorMessage } : item));
+                    }
+                    return [...current, createOptimisticAssistantMessage(pending, aborted ? "本次回答已停止" : errorMessage)];
+                });
+            }
+            if (!aborted) message.error(errorMessage);
         } finally {
             setSending(false);
             abortRef.current = null;
+            if (pendingTurnRef.current === pending) pendingTurnRef.current = null;
         }
     }
 
     function handleStop() {
+        const pending = pendingTurnRef.current;
+        if (pending) {
+            pending.stopped = true;
+            if (pending.assistantMessageId && activeConversationIdRef.current === pending.conversationId) {
+                setMessages((current) => current.map((item) => (item.id === pending.assistantMessageId ? { ...item, status: "failed", error: "本次回答已停止" } : item)));
+            }
+        }
         abortRef.current?.abort();
         setSending(false);
     }
@@ -279,7 +353,15 @@ export default function ChatPage() {
                                     <span className="block truncate text-sm font-medium">{conversation.title}</span>
                                     <span className="mt-0.5 block truncate text-xs text-stone-500 dark:text-stone-400">{conversation.lastMessage || "新的问道"}</span>
                                 </span>
-                                <Popconfirm title="删除这段问道？" okText="删除" cancelText="取消" onConfirm={(event) => { event?.stopPropagation(); void handleDeleteConversation(conversation.id); }}>
+                                <Popconfirm
+                                    title="删除这段问道？"
+                                    okText="删除"
+                                    cancelText="取消"
+                                    onConfirm={(event) => {
+                                        event?.stopPropagation();
+                                        void handleDeleteConversation(conversation.id);
+                                    }}
+                                >
                                     <span className="rounded p-1 text-stone-400 opacity-0 transition hover:bg-stone-100 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-white/10" onClick={(event) => event.stopPropagation()}>
                                         <Trash2 className="size-3.5" />
                                     </span>
@@ -294,12 +376,16 @@ export default function ChatPage() {
                         <div className="min-w-0">
                             <div className="flex items-center gap-2">
                                 <span className="text-base font-semibold tracking-[0.12em]">问道台</span>
-                                <Tag color="gold" bordered={false}>{activePreset.label}</Tag>
+                                <Tag color="gold" bordered={false}>
+                                    {activePreset.label}
+                                </Tag>
                             </div>
                             <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{activeConversation?.title || activePreset.description}</div>
                         </div>
                         <div className="flex min-w-0 items-center gap-2">
-                            <Button className="lg:hidden" icon={<Plus className="size-4" />} onClick={handleNewConversation} loading={creating}>新建</Button>
+                            <Button className="lg:hidden" icon={<Plus className="size-4" />} onClick={handleNewConversation} loading={creating}>
+                                新建
+                            </Button>
                         </div>
                     </div>
 
@@ -307,8 +393,15 @@ export default function ChatPage() {
                         {detailLoading ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
                         {!detailLoading && !messages.length ? <WelcomeEmpty /> : null}
                         <div className="space-y-5">
-                            {messages.map((item) => <ChatBubble key={item.id} item={item} />)}
-                            {sending ? <div className="flex items-center gap-2 text-xs text-stone-500"><LoaderCircle className="size-3.5 animate-spin" />天地法则正在回应...</div> : null}
+                            {messages.map((item) => (
+                                <ChatBubble key={item.id} item={item} />
+                            ))}
+                            {sending ? (
+                                <div className="flex items-center gap-2 text-xs text-stone-500">
+                                    <LoaderCircle className="size-3.5 animate-spin" />
+                                    天地法则正在回应...
+                                </div>
+                            ) : null}
                         </div>
                     </div>
 
@@ -318,7 +411,12 @@ export default function ChatPage() {
                                 {attachments.map((attachment) => (
                                     <div key={attachment.assetKey} className="group relative h-16 w-16 overflow-hidden rounded-lg border border-stone-200 bg-stone-50 dark:border-white/10 dark:bg-white/5">
                                         {attachment.url ? <img src={attachment.url} alt={attachment.name} className="h-full w-full object-cover" /> : null}
-                                        <button type="button" className="absolute right-1 top-1 rounded-full bg-black/55 p-0.5 text-white opacity-0 transition group-hover:opacity-100" onClick={() => setAttachments((current) => current.filter((item) => item.assetKey !== attachment.assetKey))} aria-label="移除图片">
+                                        <button
+                                            type="button"
+                                            className="absolute right-1 top-1 rounded-full bg-black/55 p-0.5 text-white opacity-0 transition group-hover:opacity-100"
+                                            onClick={() => setAttachments((current) => current.filter((item) => item.assetKey !== attachment.assetKey))}
+                                            aria-label="移除图片"
+                                        >
                                             <X className="size-3" />
                                         </button>
                                     </div>
@@ -328,7 +426,13 @@ export default function ChatPage() {
                         <div className="flex items-end gap-2">
                             <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(event) => void handleUpload(event.target.files)} />
                             <Tooltip title="上传图片提问">
-                                <Button type="text" className="!h-10 !w-10 !min-w-10" icon={uploading ? <LoaderCircle className="size-4 animate-spin" /> : <ImagePlus className="size-4" />} onClick={() => fileInputRef.current?.click()} disabled={sending || uploading} />
+                                <Button
+                                    type="text"
+                                    className="!h-10 !w-10 !min-w-10"
+                                    icon={uploading ? <LoaderCircle className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={sending || uploading}
+                                />
                             </Tooltip>
                             <Dropdown
                                 trigger={["click"]}
@@ -348,13 +452,7 @@ export default function ChatPage() {
                                     })),
                                 }}
                             >
-                                <Button
-                                    type="text"
-                                    className="!h-10 shrink-0 !px-2.5 text-stone-600 dark:text-stone-200"
-                                    icon={<Sparkles className="size-4 text-amber-600" />}
-                                    disabled={sending}
-                                    title={activePreset.hint}
-                                >
+                                <Button type="text" className="!h-10 shrink-0 !px-2.5 text-stone-600 dark:text-stone-200" icon={<Sparkles className="size-4 text-amber-600" />} disabled={sending} title={activePreset.hint}>
                                     <span className="inline-flex max-w-[92px] items-center gap-1 truncate text-xs">
                                         <span className="truncate">{activePreset.label}</span>
                                         <ChevronDown className="size-3 shrink-0" />
@@ -375,9 +473,13 @@ export default function ChatPage() {
                                 disabled={sending}
                             />
                             {sending ? (
-                                <Button className="!h-10" onClick={handleStop}>停止</Button>
+                                <Button className="!h-10" onClick={handleStop}>
+                                    停止
+                                </Button>
                             ) : (
-                                <Button type="primary" className="!h-10" icon={<Send className="size-4" />} disabled={!canSend} onClick={() => void handleSend()}>发送</Button>
+                                <Button type="primary" className="!h-10" icon={<Send className="size-4" />} disabled={!canSend} onClick={() => void handleSend()}>
+                                    发送
+                                </Button>
                             )}
                         </div>
                     </div>
@@ -396,11 +498,41 @@ function WelcomeEmpty() {
                 </div>
                 <h1 className="mt-5 text-2xl font-semibold tracking-[0.18em]">问道台</h1>
                 <div className="mt-3 space-y-1 text-sm leading-6 text-stone-500 dark:text-stone-400">
-                    {welcomeLines.map((line) => <div key={line}>{line}</div>)}
+                    {welcomeLines.map((line) => (
+                        <div key={line}>{line}</div>
+                    ))}
                 </div>
             </div>
         </div>
     );
+}
+
+function createOptimisticUserMessage(pending: PendingChatTurn, content: string, attachments: ChatAttachment[]): ChatMessage {
+    return {
+        id: pending.optimisticUserId,
+        conversationId: pending.conversationId,
+        role: "user",
+        content,
+        attachments,
+        status: "completed",
+        error: "",
+        createdAt: pending.createdAt,
+        updatedAt: pending.createdAt,
+    };
+}
+
+function createOptimisticAssistantMessage(pending: PendingChatTurn, error: string): ChatMessage {
+    return {
+        id: pending.optimisticAssistantId,
+        conversationId: pending.conversationId,
+        role: "assistant",
+        content: "",
+        attachments: [],
+        status: "failed",
+        error,
+        createdAt: pending.createdAt + 1,
+        updatedAt: pending.createdAt + 1,
+    };
 }
 
 function ChatBubble({ item }: { item: ChatMessage }) {
@@ -409,7 +541,12 @@ function ChatBubble({ item }: { item: ChatMessage }) {
     const copyValue = item.status === "streaming" ? "" : item.content.trim() || (item.status === "failed" ? item.error?.trim() || "" : "");
     return (
         <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
-            <div className={cn("min-w-0 max-w-[82%] rounded-xl px-4 py-3 text-sm leading-6 shadow-sm", isUser ? "bg-stone-900 text-white dark:bg-[#f2dfb0] dark:text-stone-950" : "border border-stone-200 bg-white text-stone-800 dark:border-white/10 dark:bg-white/[0.04] dark:text-[#f5efe3]")}> 
+            <div
+                className={cn(
+                    "min-w-0 max-w-[82%] rounded-xl px-4 py-3 text-sm leading-6 shadow-sm",
+                    isUser ? "bg-stone-900 text-white dark:bg-[#f2dfb0] dark:text-stone-950" : "border border-stone-200 bg-white text-stone-800 dark:border-white/10 dark:bg-white/[0.04] dark:text-[#f5efe3]",
+                )}
+            >
                 {item.attachments.length ? (
                     <div className="mb-2 flex flex-wrap gap-2">
                         {item.attachments.map((attachment) => (
