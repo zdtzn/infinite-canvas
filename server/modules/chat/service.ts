@@ -177,7 +177,7 @@ export function createChatService(
     const messages = (
       database
         .query(
-          "SELECT * FROM chat_messages WHERE user_id = ? AND conversation_id = ? ORDER BY created_at ASC, rowid ASC LIMIT 1000",
+          "SELECT * FROM chat_messages WHERE user_id = ? AND conversation_id = ? ORDER BY rowid ASC LIMIT 1000",
         )
         .all(userId, conversation.id) as ChatMessageRow[]
     ).map(messageFromRow);
@@ -321,7 +321,7 @@ export function createChatService(
          WHERE user_id = ? AND conversation_id = ?
            AND status = 'completed'
            AND (content <> '' OR attachments_json <> '[]')
-         ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+         ORDER BY rowid DESC LIMIT ?`,
       )
       .all(userId, validId(conversationId, "对话 ID"), messageLimit) as ChatMessageRow[];
     const messages = rows.reverse().map(messageFromRow);

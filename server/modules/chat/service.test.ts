@@ -99,7 +99,7 @@ describe("chat service", () => {
   });
 
   test("applies the context character budget by dropping older turns", () => {
-    const { store, service } = setup();
+    const { store, service } = setup({ now: () => 1_000 });
     try {
       const conversation = service.createConversation("user-a");
       const first = service.beginTurn("user-a", conversation.id, {
@@ -191,7 +191,7 @@ describe("chat service", () => {
   });
 });
 
-function setup(options: { dailyLimit?: number | null } = {}) {
+function setup(options: { dailyLimit?: number | null; now?: () => number } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), "canvas-chat-"));
   directories.push(dataDir);
   const store = openAppDatabase({ dataDir });
