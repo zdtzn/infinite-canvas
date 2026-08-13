@@ -166,6 +166,9 @@ const CHAT_TIMEOUT_MS = Math.max(30_000, Math.min(10 * 60_000, positiveInt(proce
 const CHAT_RATE_LIMIT = Math.max(1, Math.min(60, positiveInt(process.env.CHAT_RATE_LIMIT, 12)));
 const CHAT_GLOBAL_CONCURRENCY = Math.max(1, Math.min(16, positiveInt(process.env.CHAT_GLOBAL_CONCURRENCY, 4)));
 const CHAT_USER_CONCURRENCY = Math.max(1, Math.min(4, positiveInt(process.env.CHAT_USER_CONCURRENCY, 2)));
+const CHAT_DAILY_LIMIT = parseChatDailyLimit(process.env.CHAT_DAILY_LIMIT, 30);
+const MAX_CHAT_CONTEXT_CHARACTERS = Math.max(12_000, Math.min(120_000, positiveInt(process.env.MAX_CHAT_CONTEXT_CHARACTERS, 60_000)));
+const MAX_CHAT_CONTEXT_ATTACHMENT_BYTES = Math.max(4 * 1024 * 1024, Math.min(24 * 1024 * 1024, positiveInt(process.env.MAX_CHAT_CONTEXT_ATTACHMENT_BYTES, 8 * 1024 * 1024)));
 const PROMPT_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif", "image/svg+xml", "image/bmp", "image/tiff"]);
 const PUBLIC_BASE_URL = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL);
 const secureCookies = PUBLIC_BASE_URL.startsWith("https://") || process.env.FORCE_SECURE_COOKIES === "1";
@@ -209,7 +212,12 @@ for (const job of Object.values(state.jobs)) {
 }
 const cultivation = appDatabase.raw ? createCultivationService(appDatabase.raw) : null;
 const productLab = appDatabase.raw ? createProductLabService(appDatabase.raw) : null;
-const chat = appDatabase.raw ? createChatService(appDatabase.raw) : null;
+const chat = appDatabase.raw
+    ? createChatService(appDatabase.raw, {
+          dailyLimit: CHAT_DAILY_LIMIT,
+          getDailyLimit: (userId) => (state.users[userId]?.admin ? null : CHAT_DAILY_LIMIT),
+      })
+    : null;
 const colorAlchemy = appDatabase.raw ? createColorAlchemyService(appDatabase.raw) : null;
 const mediaTasks = appDatabase.raw ? createMediaTaskStore(appDatabase.raw, MEDIA_TASK_RETENTION_MS, MEDIA_TASK_ACTIVE_TTL_MS) : null;
 mediaTasks?.prune();
@@ -423,12 +431,15 @@ async function route(request: Request, requestId: string) {
         }
         if (url.pathname === "/api/chat/conversations" && request.method === "GET") return listChatConversations(session);
         if (url.pathname === "/api/chat/conversations" && request.method === "POST") return createChatConversation(request, session);
+        if (url.pathname === "/api/chat/usage" && request.method === "GET") return chatUsage(session);
         const chatMessagesMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages$/);
         if (chatMessagesMatch && request.method === "POST") {
             enforceRateLimit(`${session.userId}:${clientIp(request)}:chat`, CHAT_RATE_LIMIT);
             return sendChatMessage(request, session, decodeRouteSegment(chatMessagesMatch[1], "对话 ID"), requestId);
         }
         const chatConversationMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)$/);
+        if (chatConversationMatch && request.method === "PATCH")
+            return updateChatConversation(request, session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
         if (chatConversationMatch && request.method === "GET")
             return getChatConversation(session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
         if (chatConversationMatch && request.method === "DELETE")
@@ -1251,9 +1262,22 @@ function listChatConversations(session: SessionPayload) {
     return json({ items: requireChat().listConversations(session.userId) }, 200, { "Cache-Control": "no-store" });
 }
 
+function chatUsage(session: SessionPayload) {
+    return json({ usage: requireChat().getChatUsage(session.userId) }, 200, { "Cache-Control": "no-store" });
+}
+
 async function createChatConversation(request: Request, session: SessionPayload) {
-    const input = await readJson<{ title?: unknown }>(request, 8 * 1024);
-    return json({ conversation: requireChat().createConversation(session.userId, { title: input.title }) }, 201, { "Cache-Control": "no-store" });
+    const input = await readJson<{ title?: unknown; presetId?: unknown }>(request, 8 * 1024);
+    return json({ conversation: requireChat().createConversation(session.userId, { title: input.title, presetId: input.presetId }) }, 201, { "Cache-Control": "no-store" });
+}
+
+async function updateChatConversation(request: Request, session: SessionPayload, conversationId: string) {
+    const input = await readJson<{ presetId?: unknown }>(request, 8 * 1024);
+    return json(
+        { conversation: requireChat().updateConversationPreset(session.userId, conversationId, input.presetId) },
+        200,
+        { "Cache-Control": "no-store" },
+    );
 }
 
 function getChatConversation(session: SessionPayload, conversationId: string) {
@@ -1380,10 +1404,10 @@ function publicColorAlchemyDocument(
 async function sendChatMessage(request: Request, session: SessionPayload, conversationId: string, requestId: string) {
     const source = await readJson<Record<string, unknown>>(request, MAX_CHAT_JSON_BYTES);
     const content = String(source.content || "").trim();
+    const retryAssistantMessageId = String(source.retryAssistantMessageId || "").trim();
     const { channelId, model } = defaultChatTextModel();
-    const preset = resolveChatPreset(source.presetId);
     const attachments = normalizeChatAttachmentInput(source.attachments);
-    const preparedAttachments = prepareChatAttachments(session.userId, attachments);
+    if (!retryAssistantMessageId) prepareChatAttachments(session.userId, attachments);
     assertPlatformModelAllowed(channelId, model, "text");
     reserveChatRequest(session.userId);
 
@@ -1400,11 +1424,20 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
     try {
         turn = requireChat().beginTurn(session.userId, conversationId, {
             content,
-            attachments: preparedAttachments.map(({ bytes: _bytes, base64: _base64, ...attachment }) => attachment),
+            attachments,
             channelId,
             model,
+            ...(retryAssistantMessageId ? { retryAssistantMessageId } : {}),
         });
-        const messages = chatProtocolMessages(requireChat().contextMessages(session.userId, conversationId), turn.userMessage.id, preparedAttachments, preset);
+        const preset = resolveChatPreset(turn.conversation.presetId);
+        const preparedAttachments = prepareChatAttachments(session.userId, turn.userMessage.attachments);
+        const messages = chatProtocolMessages(
+            session.userId,
+            requireChat().contextMessages(session.userId, conversationId, 24, MAX_CHAT_CONTEXT_CHARACTERS),
+            turn.userMessage.id,
+            preparedAttachments,
+            preset,
+        );
         const channel = platformChannel(channelId);
         const apiKey = decryptChannelApiKey(channel);
         const upstream = await openChatUpstream(channel, apiKey, model, messages, signal, requestId, preset);
@@ -1423,13 +1456,14 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
 
         const encoder = new TextEncoder();
         let canceled = false;
+        let completedMessage: ChatMessage | undefined;
         const stream = new ReadableStream<Uint8Array>({
             start(controller) {
                 controller.enqueue(encoder.encode(chatEvent("started", { conversation: turn!.conversation, userMessage: publicUserMessage, assistantMessage: publicAssistantMessage })));
                 void (async () => {
                     const reader = upstream.response.body!.getReader();
                     const decoder = new TextDecoder();
-                    const state: ChatStreamState = { buffer: "", text: "" };
+                    const state: ChatStreamState = { buffer: "", text: "", completed: false };
                     try {
                         for (;;) {
                             const next = await reader.read();
@@ -1443,8 +1477,10 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                             if (!canceled) controller.enqueue(encoder.encode(chatEvent("delta", { messageId: turn!.assistantMessage.id, delta })));
                         }, true);
                         if (state.error) throw new Error(state.error);
+                        if (!state.completed) throw new Error("上游流式回应提前中断，请重试");
                         if (!state.text.trim()) throw new Error("文本模型没有返回可用内容");
                         const completed = requireChat().completeAssistant(session.userId, turn!.assistantMessage.id, state.text);
+                        completedMessage = completed;
                         if (!canceled) {
                             controller.enqueue(encoder.encode(chatEvent("done", { conversation: turn!.conversation, message: publicChatMessage(session.userId, completed) })));
                             controller.close();
@@ -1452,10 +1488,18 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                         console.info(JSON.stringify({ event: "chat_completed", requestId, userId: session.userId, conversationId, channelId, model, outputCharacters: state.text.length }));
                     } catch (error) {
                         const message = chatFailureMessage(upstream.response.status, error);
-                        requireChat().failAssistant(session.userId, turn!.assistantMessage.id, state.text, message);
+                        const terminal = completedMessage || requireChat().failAssistant(session.userId, turn!.assistantMessage.id, state.text, message);
                         if (!canceled) {
-                            controller.enqueue(encoder.encode(chatEvent("error", { message, messageId: turn!.assistantMessage.id })));
-                            controller.close();
+                            try {
+                                if (terminal?.status === "completed") {
+                                    controller.enqueue(encoder.encode(chatEvent("done", { conversation: turn!.conversation, message: publicChatMessage(session.userId, terminal) })));
+                                } else {
+                                    controller.enqueue(encoder.encode(chatEvent("error", { message, messageId: turn!.assistantMessage.id })));
+                                }
+                                controller.close();
+                            } catch {
+                                // The browser may have closed the stream after the terminal database write.
+                            }
                         }
                     } finally {
                         try {
@@ -1472,6 +1516,19 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
         });
         return new Response(stream, { headers: chatStreamHeaders() });
     } catch (error) {
+        if (turn && !signal.aborted) {
+            const failureMessage = chatFailureMessage(undefined, error);
+            const failed = requireChat().failAssistant(session.userId, turn.assistantMessage.id, "", failureMessage);
+            release();
+            return chatEventResponse([
+                ["started", {
+                    conversation: turn.conversation,
+                    userMessage: publicChatMessage(session.userId, turn.userMessage),
+                    assistantMessage: publicChatMessage(session.userId, failed || turn.assistantMessage),
+                }],
+                ["error", { message: failureMessage, messageId: turn.assistantMessage.id }],
+            ]);
+        }
         if (turn) requireChat().failAssistant(session.userId, turn.assistantMessage.id, "", chatFailureMessage(undefined, error));
         release();
         throw error;
@@ -1486,7 +1543,7 @@ function normalizeChatAttachmentInput(value: unknown): ChatAttachment[] {
     });
 }
 
-function prepareChatAttachments(userId: string, attachments: ChatAttachment[]) {
+function prepareChatAttachments(userId: string, attachments: ChatAttachment[], maxBytes = MAX_CHAT_ATTACHMENT_TOTAL_BYTES) {
     if (attachments.length > 4) throw new HttpError(400, "每次最多上传 4 张图片");
     let totalBytes = 0;
     return attachments.map((attachment) => {
@@ -1496,12 +1553,32 @@ function prepareChatAttachments(userId: string, attachments: ChatAttachment[]) {
         if (!path) throw new HttpError(404, "图片附件文件不存在");
         const bytes = readFileSync(path);
         totalBytes += bytes.byteLength;
-        if (totalBytes > MAX_CHAT_ATTACHMENT_TOTAL_BYTES) throw new HttpError(413, `图片附件总量不能超过 ${Math.floor(MAX_CHAT_ATTACHMENT_TOTAL_BYTES / 1024 / 1024)} MB`);
+        if (totalBytes > maxBytes) throw new HttpError(413, `图片附件总量不能超过 ${Math.floor(maxBytes / 1024 / 1024)} MB`);
         return { assetKey: asset.key, mimeType: asset.mimeType, name: attachment.name.slice(0, 160), bytes: bytes.byteLength, base64: bytes.toString("base64") };
     });
 }
 
-function chatProtocolMessages(messages: ChatMessage[], latestUserMessageId: string, attachments: ReturnType<typeof prepareChatAttachments>, preset: ChatPreset): ChatProtocolMessage[] {
+function chatProtocolMessages(
+    userId: string,
+    messages: ChatMessage[],
+    latestUserMessageId: string,
+    attachments: ReturnType<typeof prepareChatAttachments>,
+    preset: ChatPreset,
+): ChatProtocolMessage[] {
+    let contextAttachmentBytes = attachments.reduce((total, attachment) => total + attachment.bytes, 0);
+    const historicalImages = new Map<string, Array<{ mimeType: string; base64: string }>>();
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message.id === latestUserMessageId || !message.attachments.length) continue;
+        if (contextAttachmentBytes >= MAX_CHAT_CONTEXT_ATTACHMENT_BYTES) break;
+        try {
+            const prepared = prepareChatAttachments(userId, message.attachments, MAX_CHAT_CONTEXT_ATTACHMENT_BYTES - contextAttachmentBytes);
+            historicalImages.set(message.id, prepared.map((attachment) => ({ mimeType: attachment.mimeType, base64: attachment.base64 })));
+            contextAttachmentBytes += prepared.reduce((total, attachment) => total + attachment.bytes, 0);
+        } catch {
+            // An old attachment that no longer exists or exceeds the context budget should not block text chat.
+        }
+    }
     return messages.map((message) => ({
         role: message.role,
         content:
@@ -1511,7 +1588,7 @@ function chatProtocolMessages(messages: ChatMessage[], latestUserMessageId: stri
         images:
             message.id === latestUserMessageId
                 ? attachments.map((attachment) => ({ mimeType: attachment.mimeType, base64: attachment.base64 }))
-                : [],
+                : historicalImages.get(message.id) || [],
     }));
 }
 
@@ -4340,6 +4417,13 @@ function contentType(path: string) {
 function positiveInt(value: string | undefined, fallback: number) {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function parseChatDailyLimit(value: string | undefined, fallback: number | null) {
+    if (value === undefined || value.trim() === "") return fallback;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return parsed === 0 ? null : Math.floor(parsed);
 }
 
 class HttpError extends Error {

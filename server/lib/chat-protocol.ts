@@ -14,6 +14,7 @@ export type ChatProtocolMessage = {
 export type ChatStreamState = {
   buffer: string;
   text: string;
+  completed: boolean;
   error?: string;
 };
 
@@ -147,7 +148,11 @@ function consumeBlock(
     .map((line) => line.slice(5).replace(/^ /, ""))
     .join("\n")
     .trim();
-  if (!data || data === "[DONE]") return;
+  if (!data) return;
+  if (data === "[DONE]") {
+    state.completed = true;
+    return;
+  }
 
   let payload: unknown;
   try {
@@ -166,6 +171,14 @@ function consumeBlock(
 
   let delta = "";
   if (protocol === "responses") {
+    if (root.type === "response.completed" || root.type === "response.output_text.done") {
+      state.completed = true;
+      if (root.type === "response.completed") return;
+    }
+    if (root.type === "response.failed" || root.type === "response.incomplete") {
+      state.error = chatPayloadError(root) || "上游未能完成本次回应";
+      return;
+    }
     if (root.type === "response.output_text.delta")
       delta = stringValue(root.delta);
     else if (root.type === "response.output_text.done" && !state.text)
@@ -174,8 +187,10 @@ function consumeBlock(
   } else if (protocol === "chat-completions") {
     delta = chatCompletionDelta(root);
     if (!delta && !state.text) delta = chatCompletionText(root);
+    if (Array.isArray(root.choices) && root.choices.some((item) => stringValue(record(item)?.finish_reason))) state.completed = true;
   } else {
     delta = geminiText(root);
+    if (Array.isArray(root.candidates) && root.candidates.some((item) => stringValue(record(item)?.finishReason))) state.completed = true;
   }
 
   if (!delta) return;

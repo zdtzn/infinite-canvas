@@ -632,6 +632,45 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 15").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS chat_usage (
+          user_id TEXT NOT NULL,
+          usage_date TEXT NOT NULL,
+          request_count INTEGER NOT NULL DEFAULT 0,
+          input_characters INTEGER NOT NULL DEFAULT 0,
+          output_characters INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (user_id, usage_date),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_usage_user_date
+          ON chat_usage(user_id, usage_date DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (15, ?)",
+        )
+        .run(Date.now());
+    })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 16").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        ALTER TABLE chat_conversations
+          ADD COLUMN preset_id TEXT NOT NULL DEFAULT 'general';
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (16, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(

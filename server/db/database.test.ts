@@ -204,10 +204,16 @@ describe("SQLite application database", () => {
       const userPreferenceIndex = store.raw!
         .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_user_preferences_user_updated'")
         .get() as { name: string } | null;
-      expect(Number(migration.version)).toBeGreaterThanOrEqual(14);
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(16);
       expect(userPreferenceTables).toEqual(["user_preferences"]);
       expect(userPreferenceIndex?.name).toBe("idx_user_preferences_user_updated");
-      expect(chatTables).toEqual(["chat_conversations", "chat_messages"]);
+      expect(chatTables).toEqual(["chat_conversations", "chat_messages", "chat_usage"]);
+      const chatConversationPresetColumn = (
+        store.raw!
+          .query("PRAGMA table_info(chat_conversations)")
+          .all() as Array<{ name: string; dflt_value: string | null }>
+      ).find((column) => column.name === "preset_id");
+      expect(chatConversationPresetColumn?.dflt_value).toBe("'general'");
       expect(colorAlchemyTables).toEqual(["color_alchemy_documents"]);
       expect(colorAlchemyIndex?.name).toBe("idx_color_alchemy_documents_user_updated");
       expect(colorAlchemyTombstoneTables).toEqual(["color_alchemy_document_tombstones"]);

@@ -23,6 +23,7 @@ export type ChatMessage = {
 export type ChatConversation = {
     id: string;
     title: string;
+    presetId: string;
     channelId: string;
     model: string;
     createdAt: number;
@@ -33,6 +34,15 @@ export type ChatConversation = {
 export type ChatConversationDetail = {
     conversation: ChatConversation;
     messages: ChatMessage[];
+};
+
+export type ChatUsage = {
+    usageDate: string;
+    dailyLimit: number | null;
+    usedToday: number;
+    remainingToday: number | null;
+    inputCharacters: number;
+    outputCharacters: number;
 };
 
 export type ChatStartedEvent = {
@@ -49,8 +59,8 @@ export type ChatDoneEvent = {
 export type SendChatMessageInput = {
     conversationId: string;
     content: string;
-    presetId?: string;
     attachments: ChatAttachment[];
+    retryAssistantMessageId?: string;
     expectedUserId?: string;
     signal?: AbortSignal;
     onStarted?: (event: ChatStartedEvent) => void;
@@ -63,8 +73,16 @@ export function fetchChatConversations(expectedUserId?: string) {
     return serverRequest<{ items: ChatConversation[] }>("/api/chat/conversations", { timeoutMs: 12_000, expectedUserId });
 }
 
-export function createChatConversation(input: { title?: string } = {}, expectedUserId?: string) {
+export function createChatConversation(input: { title?: string; presetId?: string } = {}, expectedUserId?: string) {
     return serverRequest<{ conversation: ChatConversation }>("/api/chat/conversations", { method: "POST", body: input, expectedUserId });
+}
+
+export function updateChatConversationPreset(id: string, presetId: string, expectedUserId?: string) {
+    return serverRequest<{ conversation: ChatConversation }>(`/api/chat/conversations/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: { presetId },
+        expectedUserId,
+    });
 }
 
 export function fetchChatConversation(id: string, expectedUserId?: string) {
@@ -73,6 +91,10 @@ export function fetchChatConversation(id: string, expectedUserId?: string) {
 
 export function deleteChatConversation(id: string, expectedUserId?: string) {
     return serverRequest(`/api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
+}
+
+export function fetchChatUsage(expectedUserId?: string) {
+    return serverRequest<{ usage: ChatUsage }>("/api/chat/usage", { timeoutMs: 12_000, expectedUserId });
 }
 
 export async function uploadChatImage(file: File, expectedUserId?: string) {
@@ -88,8 +110,8 @@ export async function sendChatMessage(input: SendChatMessageInput) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 content: input.content,
-                presetId: input.presetId,
                 attachments: input.attachments.map(({ assetKey, mimeType, name }) => ({ assetKey, mimeType, name })),
+                ...(input.retryAssistantMessageId ? { retryAssistantMessageId: input.retryAssistantMessageId } : {}),
             }),
             signal: input.signal,
         },
@@ -102,34 +124,43 @@ export async function sendChatMessage(input: SendChatMessageInput) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     const state = { buffer: "" };
+    const lifecycle = { started: false, terminal: false };
     try {
         for (;;) {
             const next = await reader.read();
             if (next.done) break;
-            consumeServerEvents(state, decoder.decode(next.value, { stream: true }), input);
+            consumeServerEvents(state, decoder.decode(next.value, { stream: true }), input, false, lifecycle);
         }
-        consumeServerEvents(state, decoder.decode(), input, true);
+        consumeServerEvents(state, decoder.decode(), input, true, lifecycle);
+        if (!lifecycle.started) throw new Error("问道台没有开始回应，请重试");
+        if (!lifecycle.terminal) throw new Error("问道台回应中途断开，请重试");
     } finally {
         reader.releaseLock();
     }
 }
 
-function consumeServerEvents(state: { buffer: string }, text: string, handlers: SendChatMessageInput, flush = false) {
+function consumeServerEvents(
+    state: { buffer: string },
+    text: string,
+    handlers: SendChatMessageInput,
+    flush = false,
+    lifecycle?: { started: boolean; terminal: boolean },
+) {
     state.buffer += text;
     for (;;) {
         const match = state.buffer.match(/\r?\n\r?\n/);
         if (!match) break;
         const index = match.index ?? 0;
-        consumeServerEventBlock(state.buffer.slice(0, index), handlers);
+        consumeServerEventBlock(state.buffer.slice(0, index), handlers, lifecycle);
         state.buffer = state.buffer.slice(index + match[0].length);
     }
     if (flush && state.buffer.trim()) {
-        consumeServerEventBlock(state.buffer, handlers);
+        consumeServerEventBlock(state.buffer, handlers, lifecycle);
         state.buffer = "";
     }
 }
 
-function consumeServerEventBlock(block: string, handlers: SendChatMessageInput) {
+function consumeServerEventBlock(block: string, handlers: SendChatMessageInput, lifecycle?: { started: boolean; terminal: boolean }) {
     const event = block
         .split(/\r?\n/)
         .find((line) => line.startsWith("event:"))
@@ -143,10 +174,17 @@ function consumeServerEventBlock(block: string, handlers: SendChatMessageInput) 
         .trim();
     if (!event || !data) return;
     const payload = safeJson(data) as Record<string, unknown>;
-    if (event === "started") handlers.onStarted?.(payload as ChatStartedEvent);
-    else if (event === "delta") handlers.onDelta?.({ messageId: String(payload.messageId || ""), delta: String(payload.delta || "") });
-    else if (event === "done") handlers.onDone?.(payload as ChatDoneEvent);
-    else if (event === "error") handlers.onError?.({ messageId: String(payload.messageId || ""), message: String(payload.message || "问道台暂未回应") });
+    if (event === "started") {
+        if (lifecycle) lifecycle.started = true;
+        handlers.onStarted?.(payload as ChatStartedEvent);
+    } else if (event === "delta") handlers.onDelta?.({ messageId: String(payload.messageId || ""), delta: String(payload.delta || "") });
+    else if (event === "done") {
+        if (lifecycle) lifecycle.terminal = true;
+        handlers.onDone?.(payload as ChatDoneEvent);
+    } else if (event === "error") {
+        if (lifecycle) lifecycle.terminal = true;
+        handlers.onError?.({ messageId: String(payload.messageId || ""), message: String(payload.message || "问道台暂未回应") });
+    }
 }
 
 async function readErrorResponse(response: Response) {

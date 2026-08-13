@@ -1,11 +1,11 @@
 import { App, Button, Dropdown, Empty, Input, Popconfirm, Skeleton, Tag, Tooltip } from "antd";
-import { ChevronDown, Copy, ImagePlus, LoaderCircle, MessageCircle, Plus, Send, Sparkles, Trash2, X } from "lucide-react";
+import { ChevronDown, Copy, ImagePlus, LoaderCircle, MessageCircle, Plus, RotateCcw, Send, Sparkles, Trash2, X } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { createChatConversation, deleteChatConversation, fetchChatConversation, fetchChatConversations, sendChatMessage, uploadChatImage, type ChatAttachment, type ChatConversation, type ChatMessage } from "@/services/chat-api";
+import { createChatConversation, deleteChatConversation, fetchChatConversation, fetchChatConversations, sendChatMessage, updateChatConversationPreset, uploadChatImage, type ChatAttachment, type ChatConversation, type ChatMessage } from "@/services/chat-api";
 import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId } from "./chat-presets";
@@ -21,12 +21,15 @@ type PendingChatTurn = {
     createdAt: number;
     started: boolean;
     stopped: boolean;
+    terminal: boolean;
+    completion: Promise<void>;
     userMessageId?: string;
     assistantMessageId?: string;
+    retryAssistantMessageId?: string;
 };
 
 export default function ChatPage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
@@ -49,9 +52,12 @@ export default function ChatPage() {
     const presetSaveQueue = useRef(Promise.resolve());
     const activeConversationIdRef = useRef("");
     const pendingTurnRef = useRef<PendingChatTurn | null>(null);
+    const sendingRef = useRef(false);
+    const sendStartingRef = useRef(false);
 
     const activeConversation = conversations.find((item) => item.id === activeConversationId) || null;
-    const activePreset = chatPresetOption(presetId);
+    const activePresetId = activeConversation?.presetId || presetId;
+    const activePreset = chatPresetOption(activePresetId as ChatPresetId);
 
     useEffect(() => {
         activeConversationIdRef.current = activeConversationId;
@@ -143,13 +149,70 @@ export default function ChatPage() {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: sending ? "smooth" : "auto" });
     }, [messages, sending]);
 
-    const canSend = Boolean((draft.trim() || attachments.length) && activeConversationId && !sending && !uploading);
+    useEffect(() => {
+        const abortOnLeave = () => {
+            const pending = pendingTurnRef.current;
+            if (!pending || pending.terminal) return;
+            pending.stopped = true;
+            abortRef.current?.abort();
+        };
+        window.addEventListener("pagehide", abortOnLeave);
+        return () => {
+            window.removeEventListener("pagehide", abortOnLeave);
+            abortOnLeave();
+        };
+    }, []);
+
+    const canSend = Boolean((draft.trim() || attachments.length) && !sending && !uploading);
+
+    function confirmPendingNavigation(action: string) {
+        if (!pendingTurnRef.current || pendingTurnRef.current.terminal) return Promise.resolve(true);
+        return new Promise<boolean>((resolve) => {
+            modal.confirm({
+                title: "回答正在进行",
+                content: `${action}会停止当前回答，已经收到的内容会保留。是否继续？`,
+                okText: `停止并${action}`,
+                cancelText: "继续等待",
+                onOk: () => stopActiveTurn().then(() => resolve(true)).catch(() => resolve(false)),
+                onCancel: () => resolve(false),
+            });
+        });
+    }
+
+    async function stopActiveTurn() {
+        const pending = pendingTurnRef.current;
+        if (!pending) return;
+        if (!pending.terminal) {
+            pending.stopped = true;
+            const stoppedMessage = "本次回答已停止";
+            if (activeConversationIdRef.current === pending.conversationId) {
+                setMessages((current) => {
+                    const assistantId = pending.retryAssistantMessageId || pending.assistantMessageId || pending.optimisticAssistantId;
+                    if (current.some((item) => item.id === assistantId)) {
+                        return current.map((item) => (item.id === assistantId ? { ...item, status: "failed", error: stoppedMessage } : item));
+                    }
+                    return [...current, createOptimisticAssistantMessage(pending, stoppedMessage)];
+                });
+            }
+            abortRef.current?.abort();
+        }
+        await pending.completion;
+    }
+
+    async function selectConversation(id: string) {
+        if (id === activeConversationIdRef.current) return;
+        if (!(await confirmPendingNavigation("切换"))) return;
+        activeConversationIdRef.current = id;
+        setActiveConversationId(id);
+        setMessages([]);
+    }
 
     async function handleNewConversation() {
         if (!userId || creating) return;
+        if (!(await confirmPendingNavigation("新建"))) return;
         setCreating(true);
         try {
-            const response = await createChatConversation({}, userId);
+            const response = await createChatConversation({ presetId }, userId);
             setConversations((current) => [response.conversation, ...current]);
             activeConversationIdRef.current = response.conversation.id;
             setActiveConversationId(response.conversation.id);
@@ -162,8 +225,8 @@ export default function ChatPage() {
     }
 
     async function ensureConversation() {
-        if (activeConversationId) return activeConversationId;
-        const response = await createChatConversation({}, userId);
+        if (activeConversationIdRef.current) return activeConversationIdRef.current;
+        const response = await createChatConversation({ presetId }, userId);
         setConversations((current) => [response.conversation, ...current]);
         activeConversationIdRef.current = response.conversation.id;
         setActiveConversationId(response.conversation.id);
@@ -171,13 +234,18 @@ export default function ChatPage() {
     }
 
     async function handleDeleteConversation(id: string) {
+        const deletingActiveTurn = pendingTurnRef.current?.conversationId === id;
+        if (deletingActiveTurn) await stopActiveTurn();
         try {
             await deleteChatConversation(id, userId);
-            setConversations((current) => {
-                const next = current.filter((item) => item.id !== id);
-                if (activeConversationId === id) setActiveConversationId(next[0]?.id || "");
-                return next;
-            });
+            const next = conversations.filter((item) => item.id !== id);
+            setConversations(next);
+            if (activeConversationIdRef.current === id) {
+                const nextId = next[0]?.id || "";
+                activeConversationIdRef.current = nextId;
+                setActiveConversationId(nextId);
+                setMessages([]);
+            }
         } catch (error) {
             message.error(error instanceof Error ? error.message : "删除失败");
         }
@@ -202,32 +270,48 @@ export default function ChatPage() {
         }
     }
 
-    async function handleSend() {
-        const content = draft.trim();
-        if (!content && !attachments.length) return;
-        const conversationId = await ensureConversation();
+    async function runChatTurn(input: {
+        conversationId: string;
+        content: string;
+        attachments: ChatAttachment[];
+        retryAssistantMessageId?: string;
+        showOptimisticUser: boolean;
+    }) {
+        if (sendingRef.current || pendingTurnRef.current) return;
+        sendingRef.current = true;
         const createdAt = Date.now();
+        let resolveCompletion = () => {};
+        const completion = new Promise<void>((resolve) => {
+            resolveCompletion = resolve;
+        });
         const pending: PendingChatTurn = {
-            conversationId,
+            conversationId: input.conversationId,
             optimisticUserId: `optimistic-user-${createdAt}`,
             optimisticAssistantId: `optimistic-assistant-${createdAt}`,
             createdAt,
             started: false,
             stopped: false,
+            terminal: false,
+            completion,
+            retryAssistantMessageId: input.retryAssistantMessageId,
         };
         pendingTurnRef.current = pending;
         const controller = new AbortController();
         abortRef.current = controller;
         setSending(true);
-        setDraft("");
-        setAttachments([]);
-        setMessages((current) => [...current, createOptimisticUserMessage(pending, content, attachments)]);
+        if (input.showOptimisticUser) {
+            setDraft("");
+            setAttachments([]);
+            setMessages((current) => [...current, createOptimisticUserMessage(pending, input.content, input.attachments)]);
+        } else if (input.retryAssistantMessageId && activeConversationIdRef.current === input.conversationId) {
+            setMessages((current) => current.map((item) => (item.id === input.retryAssistantMessageId ? { ...item, content: "", status: "streaming", error: "" } : item)));
+        }
         try {
             await sendChatMessage({
-                conversationId,
-                content,
-                presetId,
-                attachments,
+                conversationId: input.conversationId,
+                content: input.content,
+                attachments: input.attachments,
+                ...(input.retryAssistantMessageId ? { retryAssistantMessageId: input.retryAssistantMessageId } : {}),
                 expectedUserId: userId,
                 signal: controller.signal,
                 onStarted: ({ conversation, userMessage, assistantMessage }) => {
@@ -235,24 +319,36 @@ export default function ChatPage() {
                     pending.userMessageId = userMessage.id;
                     pending.assistantMessageId = assistantMessage.id;
                     setConversations((current) => upsertConversation(current, conversation));
-                    if (activeConversationIdRef.current !== conversationId) return;
-                    setMessages((current) => [
-                        ...current.filter((item) => ![pending.optimisticUserId, pending.optimisticAssistantId, userMessage.id, assistantMessage.id].includes(item.id)),
-                        userMessage,
-                        pending.stopped ? { ...assistantMessage, status: "failed", error: "本次回答已停止" } : assistantMessage,
-                    ]);
+                    if (activeConversationIdRef.current !== input.conversationId) return;
+                    setMessages((current) => {
+                        const replaceUserMessage = input.showOptimisticUser;
+                        const hasUserMessage = current.some((item) => item.id === userMessage.id);
+                        const replaceIds = new Set([
+                            pending.optimisticUserId,
+                            pending.optimisticAssistantId,
+                            assistantMessage.id,
+                            ...(replaceUserMessage ? [userMessage.id] : []),
+                        ]);
+                        return [
+                            ...current.filter((item) => !replaceIds.has(item.id)),
+                            ...(hasUserMessage ? [] : [userMessage]),
+                            pending.stopped ? { ...assistantMessage, status: "failed", error: "本次回答已停止" } : assistantMessage,
+                        ];
+                    });
                 },
                 onDelta: ({ messageId, delta }) => {
-                    if (pending.stopped || activeConversationIdRef.current !== conversationId) return;
+                    if (pending.stopped || activeConversationIdRef.current !== input.conversationId) return;
                     setMessages((current) => current.map((item) => (item.id === messageId ? { ...item, content: item.content + delta } : item)));
                 },
                 onDone: ({ conversation, message: doneMessage }) => {
+                    pending.terminal = true;
                     setConversations((current) => upsertConversation(current, conversation));
-                    if (pending.stopped || activeConversationIdRef.current !== conversationId) return;
+                    if (activeConversationIdRef.current !== input.conversationId) return;
                     setMessages((current) => (current.some((item) => item.id === doneMessage.id) ? current.map((item) => (item.id === doneMessage.id ? doneMessage : item)) : [...current, doneMessage]));
                 },
                 onError: ({ message: errorMessage, messageId }) => {
-                    if (activeConversationIdRef.current === conversationId) {
+                    pending.terminal = true;
+                    if (activeConversationIdRef.current === input.conversationId) {
                         const failedMessageId = messageId || pending.assistantMessageId || pending.optimisticAssistantId;
                         setMessages((current) => {
                             if (current.some((item) => item.id === failedMessageId)) {
@@ -268,10 +364,11 @@ export default function ChatPage() {
             const aborted = error instanceof DOMException && error.name === "AbortError";
             if (aborted && !pending.stopped) return;
             const errorMessage = error instanceof Error ? error.message : "问道台暂未回应";
-            if (activeConversationIdRef.current === conversationId) {
+            if (activeConversationIdRef.current === input.conversationId) {
                 setMessages((current) => {
-                    if (pending.started && pending.assistantMessageId) {
-                        return current.map((item) => (item.id === pending.assistantMessageId ? { ...item, status: "failed", error: aborted ? "本次回答已停止" : errorMessage } : item));
+                    const failedMessageId = pending.retryAssistantMessageId || pending.assistantMessageId;
+                    if (failedMessageId) {
+                        return current.map((item) => (item.id === failedMessageId ? { ...item, status: "failed", error: aborted ? "本次回答已停止" : errorMessage } : item));
                     }
                     return [...current, createOptimisticAssistantMessage(pending, aborted ? "本次回答已停止" : errorMessage)];
                 });
@@ -281,22 +378,71 @@ export default function ChatPage() {
             setSending(false);
             abortRef.current = null;
             if (pendingTurnRef.current === pending) pendingTurnRef.current = null;
+            sendingRef.current = false;
+            resolveCompletion();
         }
+    }
+
+    async function handleSend() {
+        const content = draft.trim();
+        if ((!content && !attachments.length) || sendingRef.current || sendStartingRef.current) return;
+        sendStartingRef.current = true;
+        try {
+            const conversationId = await ensureConversation();
+            await runChatTurn({ conversationId, content, attachments, showOptimisticUser: true });
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "问道台暂未回应");
+        } finally {
+            sendStartingRef.current = false;
+        }
+    }
+
+    async function handleRetry(item: ChatMessage) {
+        if (item.role !== "assistant" || item.status !== "failed" || item.id.startsWith("optimistic-")) return;
+        if (pendingTurnRef.current) {
+            message.info("请等待当前回答结束");
+            return;
+        }
+        await runChatTurn({
+            conversationId: item.conversationId,
+            content: "",
+            attachments: [],
+            retryAssistantMessageId: item.id,
+            showOptimisticUser: false,
+        });
     }
 
     function handleStop() {
-        const pending = pendingTurnRef.current;
-        if (pending) {
-            pending.stopped = true;
-            if (pending.assistantMessageId && activeConversationIdRef.current === pending.conversationId) {
-                setMessages((current) => current.map((item) => (item.id === pending.assistantMessageId ? { ...item, status: "failed", error: "本次回答已停止" } : item)));
-            }
-        }
-        abortRef.current?.abort();
-        setSending(false);
+        void stopActiveTurn();
     }
 
-    function handlePresetChange(nextPresetId: ChatPresetId) {
+    async function handlePresetChange(nextPresetId: ChatPresetId) {
+        if (nextPresetId === activePresetId) return;
+        if (activeConversation) {
+            const confirmed = await new Promise<boolean>((resolve) => {
+                modal.confirm({
+                    title: "切换问道角色",
+                    content: "新角色只对后续消息生效，历史回答不会改写。是否切换？",
+                    okText: "确认切换",
+                    cancelText: "暂不切换",
+                    onOk: () => resolve(true),
+                    onCancel: () => resolve(false),
+                });
+            });
+            if (!confirmed) return;
+            try {
+                const response = await updateChatConversationPreset(activeConversation.id, nextPresetId, userId);
+                setConversations((current) => upsertConversation(current, response.conversation));
+                setPresetDefault(nextPresetId);
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "问道角色切换失败");
+            }
+            return;
+        }
+        setPresetDefault(nextPresetId);
+    }
+
+    function setPresetDefault(nextPresetId: ChatPresetId) {
         presetIdRef.current = nextPresetId;
         presetEditedDuringHydration.current = true;
         setPresetId(nextPresetId);
@@ -346,7 +492,7 @@ export default function ChatPage() {
                                         ? "border-amber-400/70 bg-amber-50/80 text-stone-950 dark:border-amber-300/35 dark:bg-amber-300/10 dark:text-[#fff8e8]"
                                         : "border-transparent bg-white/45 hover:border-stone-200 hover:bg-white/80 dark:bg-white/[0.03] dark:hover:border-white/10 dark:hover:bg-white/[0.06]",
                                 )}
-                                onClick={() => setActiveConversationId(conversation.id)}
+                                onClick={() => void selectConversation(conversation.id)}
                             >
                                 <MessageCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
                                 <span className="min-w-0 flex-1">
@@ -394,7 +540,7 @@ export default function ChatPage() {
                         {!detailLoading && !messages.length ? <WelcomeEmpty /> : null}
                         <div className="space-y-5">
                             {messages.map((item) => (
-                                <ChatBubble key={item.id} item={item} />
+                                <ChatBubble key={item.id} item={item} onRetry={handleRetry} />
                             ))}
                             {sending ? (
                                 <div className="flex items-center gap-2 text-xs text-stone-500">
@@ -439,8 +585,8 @@ export default function ChatPage() {
                                 placement="topLeft"
                                 disabled={sending}
                                 menu={{
-                                    selectedKeys: [presetId],
-                                    onClick: ({ key }) => handlePresetChange(key as ChatPresetId),
+                                    selectedKeys: [activePresetId],
+                                    onClick: ({ key }) => void handlePresetChange(key as ChatPresetId),
                                     items: chatPresetOptions.map((preset) => ({
                                         key: preset.id,
                                         label: (
@@ -535,7 +681,7 @@ function createOptimisticAssistantMessage(pending: PendingChatTurn, error: strin
     };
 }
 
-function ChatBubble({ item }: { item: ChatMessage }) {
+function ChatBubble({ item, onRetry }: { item: ChatMessage; onRetry: (item: ChatMessage) => void }) {
     const isUser = item.role === "user";
     const copyText = useCopyText();
     const copyValue = item.status === "streaming" ? "" : item.content.trim() || (item.status === "failed" ? item.error?.trim() || "" : "");
@@ -558,6 +704,17 @@ function ChatBubble({ item }: { item: ChatMessage }) {
                 ) : null}
                 {isUser ? <div className="whitespace-pre-wrap break-words">{item.content}</div> : <Streamdown className="agent-streamdown">{item.content || (item.status === "streaming" ? "正在推演..." : item.error || "未返回内容")}</Streamdown>}
                 {item.status === "failed" ? <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">{item.error || "本次问道未能完成"}</div> : null}
+                {item.role === "assistant" && item.status === "failed" && !item.id.startsWith("optimistic-") ? (
+                    <Button
+                        type="text"
+                        size="small"
+                        className="mt-2 !h-7 !px-1.5 !text-stone-500 hover:!bg-stone-100 hover:!text-stone-800 dark:!text-stone-400 dark:hover:!bg-white/10 dark:hover:!text-stone-100"
+                        icon={<RotateCcw className="size-3.5" />}
+                        onClick={() => onRetry(item)}
+                    >
+                        重试
+                    </Button>
+                ) : null}
                 {copyValue ? (
                     <div className={cn("mt-1.5 flex", isUser ? "justify-end" : "justify-start")}>
                         <Tooltip title="复制文字">

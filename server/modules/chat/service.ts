@@ -2,12 +2,15 @@ import { randomUUID } from "node:crypto";
 
 import type { Database } from "bun:sqlite";
 
+import { resolveChatPreset } from "../../lib/chat-presets";
+
 const MAX_CONVERSATIONS_PER_USER = 100;
 const MAX_TITLE_CHARACTERS = 80;
 const MAX_MESSAGE_CHARACTERS = 20_000;
 const MAX_ATTACHMENTS = 4;
 const ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 const ASSET_KEY_PATTERN = /^image:[A-Za-z0-9._:-]{1,180}$/;
+const DEFAULT_CONTEXT_CHARACTER_BUDGET = 60_000;
 
 export type ChatAttachment = {
   assetKey: string;
@@ -32,6 +35,7 @@ export type ChatMessage = {
 export type ChatConversation = {
   id: string;
   title: string;
+  presetId: string;
   channelId: string;
   model: string;
   createdAt: number;
@@ -51,9 +55,20 @@ export class ChatError extends Error {
 
 export function createChatService(
   database: Database,
-  options: { now?: () => number } = {},
+  options: {
+    now?: () => number;
+    timeZone?: string;
+    dailyLimit?: number | null;
+    getDailyLimit?: (userId: string) => number | null;
+  } = {},
 ) {
   const now = options.now || Date.now;
+  const timeZone = options.timeZone || "Asia/Shanghai";
+  const dailyLimit = options.dailyLimit == null
+    ? null
+    : Math.max(0, Math.floor(options.dailyLimit));
+  const limitForUser = (userId: string) =>
+    options.getDailyLimit ? normalizeDailyLimit(options.getDailyLimit(userId)) : dailyLimit;
 
   database
     .query(
@@ -106,6 +121,7 @@ export function createChatService(
     const conversation: ChatConversation = {
       id: randomUUID(),
       title: optionalText(source.title, MAX_TITLE_CHARACTERS) || "新对话",
+      presetId: resolveChatPreset(source.presetId).id,
       channelId: optionalIdentifier(source.channelId, 128),
       model: optionalText(source.model, 256),
       createdAt: timestamp,
@@ -113,12 +129,13 @@ export function createChatService(
     };
     database
       .query(
-        "INSERT INTO chat_conversations(user_id, conversation_id, title, channel_id, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO chat_conversations(user_id, conversation_id, title, preset_id, channel_id, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         userId,
         conversation.id,
         conversation.title,
+        conversation.presetId,
         conversation.channelId,
         conversation.model,
         timestamp,
@@ -136,6 +153,22 @@ export function createChatService(
       | ChatConversationRow
       | null;
     return row ? conversationFromRow(row) : null;
+  }
+
+  function updateConversationPreset(userId: string, conversationId: string, presetId: unknown) {
+    const conversation = requireConversation(userId, conversationId);
+    const nextPresetId = resolveChatPreset(presetId).id;
+    const timestamp = now();
+    database
+      .query(
+        "UPDATE chat_conversations SET preset_id = ?, updated_at = ? WHERE user_id = ? AND conversation_id = ?",
+      )
+      .run(nextPresetId, timestamp, userId, conversation.id);
+    return {
+      ...conversation,
+      presetId: nextPresetId,
+      updatedAt: timestamp,
+    };
   }
 
   function getConversationWithMessages(userId: string, conversationId: string) {
@@ -168,147 +201,208 @@ export function createChatService(
       attachments: ChatAttachment[];
       channelId: unknown;
       model: unknown;
+      retryAssistantMessageId?: unknown;
     },
   ) {
     const conversation = requireConversation(userId, conversationId);
-    const content = optionalText(input.content, MAX_MESSAGE_CHARACTERS);
-    const attachments = normalizeAttachments(input.attachments);
+    const retryAssistantMessageId = input.retryAssistantMessageId
+      ? validId(input.retryAssistantMessageId, "回答消息 ID")
+      : "";
+    const retryUserMessage = retryAssistantMessageId
+      ? getRetryUserMessage(userId, conversation.id, retryAssistantMessageId)
+      : null;
+    if (retryAssistantMessageId && !retryUserMessage)
+      throw new ChatError("这条回答已经不能重试", 409, "RETRY_NOT_AVAILABLE");
+    const content = retryUserMessage
+      ? retryUserMessage.content
+      : optionalText(input.content, MAX_MESSAGE_CHARACTERS);
+    const attachments = retryUserMessage
+      ? retryUserMessage.attachments
+      : normalizeAttachments(input.attachments);
     if (!content && !attachments.length)
       throw new ChatError("请输入问题或上传图片");
     const channelId = requiredIdentifier(input.channelId, 128, "文本模型渠道");
     const model = requiredText(input.model, 256, "文本模型");
     const timestamp = now();
-    const userMessage: ChatMessage = {
-      id: randomUUID(),
-      conversationId: conversation.id,
-      role: "user",
-      content,
-      attachments,
-      status: "completed",
-      error: "",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    const assistantMessage: ChatMessage = {
-      id: randomUUID(),
-      conversationId: conversation.id,
-      role: "assistant",
-      content: "",
-      attachments: [],
-      status: "streaming",
-      error: "",
-      createdAt: timestamp + 1,
-      updatedAt: timestamp + 1,
-    };
-    const title =
-      conversation.title === "新对话"
+    return database.transaction(() => {
+      const existingAssistant = retryAssistantMessageId
+        ? getMessage(userId, retryAssistantMessageId)
+        : null;
+      if (retryAssistantMessageId && !existingAssistant)
+        throw new ChatError("回答消息不存在", 404, "MESSAGE_NOT_FOUND");
+      if (existingAssistant && existingAssistant.status !== "failed")
+        throw new ChatError("这条回答当前不能重试", 409, "RETRY_NOT_AVAILABLE");
+      const usageDate = dateKey(new Date(timestamp), timeZone);
+      reserveChatUsage(database, userId, usageDate, content.length, limitForUser(userId));
+
+      const userMessage = retryUserMessage || {
+        id: randomUUID(),
+        conversationId: conversation.id,
+        role: "user" as const,
+        content,
+        attachments,
+        status: "completed" as const,
+        error: "",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      const assistantMessage = existingAssistant
+        ? { ...existingAssistant, content: "", status: "streaming" as const, error: "", updatedAt: timestamp }
+        : {
+            id: randomUUID(),
+            conversationId: conversation.id,
+            role: "assistant" as const,
+            content: "",
+            attachments: [],
+            status: "streaming" as const,
+            error: "",
+            createdAt: timestamp + 1,
+            updatedAt: timestamp + 1,
+          };
+      const title = conversation.title === "新对话"
         ? conversationTitle(content, attachments.length > 0)
         : conversation.title;
-
-    database.transaction(() => {
       const insert = database.query(
         "INSERT INTO chat_messages(user_id, message_id, conversation_id, role, content, attachments_json, status, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)",
       );
-      insert.run(
-        userId,
-        userMessage.id,
-        conversation.id,
-        userMessage.role,
-        userMessage.content,
-        JSON.stringify(userMessage.attachments),
-        userMessage.status,
-        userMessage.createdAt,
-        userMessage.updatedAt,
-      );
-      insert.run(
-        userId,
-        assistantMessage.id,
-        conversation.id,
-        assistantMessage.role,
-        "",
-        "[]",
-        assistantMessage.status,
-        assistantMessage.createdAt,
-        assistantMessage.updatedAt,
-      );
+      if (!existingAssistant) {
+        insert.run(
+          userId,
+          userMessage.id,
+          conversation.id,
+          userMessage.role,
+          userMessage.content,
+          JSON.stringify(userMessage.attachments),
+          userMessage.status,
+          userMessage.createdAt,
+          userMessage.updatedAt,
+        );
+        insert.run(
+          userId,
+          assistantMessage.id,
+          conversation.id,
+          assistantMessage.role,
+          "",
+          "[]",
+          assistantMessage.status,
+          assistantMessage.createdAt,
+          assistantMessage.updatedAt,
+        );
+      } else {
+        database
+          .query(
+            "UPDATE chat_messages SET content = '', status = 'streaming', error = '', updated_at = ? WHERE user_id = ? AND message_id = ? AND role = 'assistant' AND conversation_id = ?",
+          )
+          .run(timestamp, userId, assistantMessage.id, conversation.id);
+      }
       database
         .query(
           "UPDATE chat_conversations SET title = ?, channel_id = ?, model = ?, updated_at = ? WHERE user_id = ? AND conversation_id = ?",
         )
-        .run(
-          title,
-          channelId,
-          model,
-          assistantMessage.createdAt,
-          userId,
-          conversation.id,
-        );
+        .run(title, channelId, model, timestamp, userId, conversation.id);
+      return {
+        conversation: { ...conversation, title, channelId, model, updatedAt: timestamp },
+        userMessage,
+        assistantMessage,
+      };
     })();
-
-    return {
-      conversation: {
-        ...conversation,
-        title,
-        channelId,
-        model,
-        updatedAt: assistantMessage.createdAt,
-      },
-      userMessage,
-      assistantMessage,
-    };
   }
 
-  function contextMessages(userId: string, conversationId: string, limit = 24) {
+  function contextMessages(
+    userId: string,
+    conversationId: string,
+    limit = 24,
+    maxCharacters = DEFAULT_CONTEXT_CHARACTER_BUDGET,
+  ) {
+    const messageLimit = Math.max(1, Math.min(48, Math.floor(limit)));
     const rows = database
       .query(
         `SELECT * FROM chat_messages
          WHERE user_id = ? AND conversation_id = ?
-           AND status = 'completed' AND content <> ''
+           AND status = 'completed'
+           AND (content <> '' OR attachments_json <> '[]')
          ORDER BY created_at DESC, rowid DESC LIMIT ?`,
       )
-      .all(
-        userId,
-        validId(conversationId, "对话 ID"),
-        Math.max(1, Math.min(48, Math.floor(limit))),
-      ) as ChatMessageRow[];
-    return rows.reverse().map(messageFromRow);
+      .all(userId, validId(conversationId, "对话 ID"), messageLimit) as ChatMessageRow[];
+    const messages = rows.reverse().map(messageFromRow);
+    const selected: ChatMessage[] = [];
+    let characters = 0;
+    const budget = Math.max(1, Math.floor(maxCharacters));
+    for (let index = messages.length - 1; index >= 0; ) {
+      const current = messages[index];
+      const group = current.role === "assistant" && index > 0 && messages[index - 1].role === "user"
+        ? [messages[index - 1], current]
+        : [current];
+      const groupCharacters = group.reduce(
+        (total, message) => total + message.content.length + message.attachments.length * 4_000,
+        0,
+      );
+      if (
+        selected.length &&
+        (selected.length + group.length > messageLimit || characters + groupCharacters > budget)
+      ) break;
+      selected.unshift(...group);
+      characters += groupCharacters;
+      index -= group.length;
+    }
+    return selected;
   }
 
-  function completeAssistant(
-    userId: string,
-    messageId: string,
-    content: string,
-  ) {
+  function getRetryUserMessage(userId: string, conversationId: string, assistantMessageId: string) {
+    const assistant = database
+      .query(
+        "SELECT created_at FROM chat_messages WHERE user_id = ? AND message_id = ? AND conversation_id = ? AND role = 'assistant' AND status = 'failed'",
+      )
+      .get(userId, validId(assistantMessageId, "回答消息 ID"), validId(conversationId, "对话 ID")) as { created_at: number } | null;
+    if (!assistant) return null;
+    const row = database
+      .query(
+        "SELECT * FROM chat_messages WHERE user_id = ? AND conversation_id = ? AND role = 'user' AND created_at < ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      )
+      .get(userId, conversationId, assistant.created_at) as ChatMessageRow | null;
+    return row ? messageFromRow(row) : null;
+  }
+
+  function getChatUsage(userId: string, limit = limitForUser(userId)) {
+    const usageDate = dateKey(new Date(now()), timeZone);
+    const usage = database
+      .query(
+        "SELECT request_count, input_characters, output_characters FROM chat_usage WHERE user_id = ? AND usage_date = ?",
+      )
+      .get(userId, usageDate) as { request_count: number; input_characters: number; output_characters: number } | null;
+    const usedToday = Number(usage?.request_count || 0);
+    return {
+      usageDate,
+      dailyLimit: limit,
+      usedToday,
+      remainingToday: limit == null ? null : Math.max(0, limit - usedToday),
+      inputCharacters: Number(usage?.input_characters || 0),
+      outputCharacters: Number(usage?.output_characters || 0),
+    };
+  }
+
+  function completeAssistant(userId: string, messageId: string, content: string) {
     const text = requiredText(content, 100_000, "回答内容");
     const timestamp = now();
     const result = database
       .query(
-        "UPDATE chat_messages SET content = ?, status = 'completed', error = '', updated_at = ? WHERE user_id = ? AND message_id = ? AND role = 'assistant'",
+        "UPDATE chat_messages SET content = ?, status = 'completed', error = '', updated_at = ? WHERE user_id = ? AND message_id = ? AND role = 'assistant' AND status = 'streaming'",
       )
       .run(text, timestamp, userId, validId(messageId, "消息 ID"));
-    if (!Number(result.changes))
-      throw new ChatError("回答消息不存在", 404, "MESSAGE_NOT_FOUND");
+    if (!Number(result.changes)) throw new ChatError("回答消息不存在", 404, "MESSAGE_NOT_FOUND");
+    recordChatOutputUsage(database, userId, timestamp, text.length, timeZone);
     return getMessage(userId, messageId)!;
   }
 
-  function failAssistant(
-    userId: string,
-    messageId: string,
-    content: string,
-    error: string,
-  ) {
+  function failAssistant(userId: string, messageId: string, content: string, error: string) {
     const timestamp = now();
-    database
+    const text = optionalText(content, 100_000);
+    const result = database
       .query(
-        "UPDATE chat_messages SET content = ?, status = 'failed', error = ?, updated_at = ? WHERE user_id = ? AND message_id = ? AND role = 'assistant'",
+        "UPDATE chat_messages SET content = ?, status = 'failed', error = ?, updated_at = ? WHERE user_id = ? AND message_id = ? AND role = 'assistant' AND status = 'streaming'",
       )
-      .run(
-        optionalText(content, 100_000),
-        optionalText(error, 500),
-        timestamp,
-        userId,
-        validId(messageId, "消息 ID"),
-      );
+      .run(text, optionalText(error, 500), timestamp, userId, validId(messageId, "消息 ID"));
+    if (Number(result.changes)) recordChatOutputUsage(database, userId, timestamp, text.length, timeZone);
     return getMessage(userId, messageId);
   }
 
@@ -346,10 +440,12 @@ export function createChatService(
     listConversations,
     createConversation,
     getConversation,
+    updateConversationPreset,
     getConversationWithMessages,
     deleteConversation,
     beginTurn,
     contextMessages,
+    getChatUsage,
     completeAssistant,
     failAssistant,
     assetReferenceRoots,
@@ -359,6 +455,7 @@ export function createChatService(
 type ChatConversationRow = {
   conversation_id: string;
   title: string;
+  preset_id: string;
   channel_id: string;
   model: string;
   created_at: number;
@@ -381,6 +478,7 @@ function conversationFromRow(row: ChatConversationRow): ChatConversation {
   return {
     id: row.conversation_id,
     title: row.title,
+    presetId: resolveChatPreset(row.preset_id).id,
     channelId: row.channel_id,
     model: row.model,
     createdAt: Number(row.created_at),
@@ -433,6 +531,66 @@ function conversationTitle(content: string, hasImage: boolean) {
     0,
     MAX_TITLE_CHARACTERS,
   );
+}
+
+function reserveChatUsage(
+  database: Database,
+  userId: string,
+  usageDate: string,
+  inputCharacters: number,
+  dailyLimit: number | null,
+) {
+  const current = database
+    .query(
+      "SELECT request_count FROM chat_usage WHERE user_id = ? AND usage_date = ?",
+    )
+    .get(userId, usageDate) as { request_count: number } | null;
+  const requestCount = Number(current?.request_count || 0);
+  if (dailyLimit != null && requestCount >= dailyLimit)
+    throw new ChatError(
+      "今日问道次数已用尽，请明日再来",
+      429,
+      "CHAT_DAILY_LIMIT",
+    );
+  database
+    .query(
+      `INSERT INTO chat_usage(user_id, usage_date, request_count, input_characters)
+       VALUES (?, ?, 1, ?)
+       ON CONFLICT(user_id, usage_date) DO UPDATE SET
+         request_count = request_count + 1,
+         input_characters = input_characters + excluded.input_characters`,
+    )
+    .run(userId, usageDate, Math.max(0, Math.floor(inputCharacters)));
+}
+
+function recordChatOutputUsage(
+  database: Database,
+  userId: string,
+  createdAt: number,
+  outputCharacters: number,
+  timeZone: string,
+) {
+  const usageDate = dateKey(new Date(createdAt), timeZone);
+  database
+    .query(
+      "UPDATE chat_usage SET output_characters = output_characters + ? WHERE user_id = ? AND usage_date = ?",
+    )
+    .run(Math.max(0, Math.floor(outputCharacters)), userId, usageDate);
+}
+
+function normalizeDailyLimit(value: unknown) {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
+}
+
+function dateKey(date: Date, timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 function inputRecord(value: unknown): Record<string, unknown> {
