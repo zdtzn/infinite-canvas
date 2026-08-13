@@ -1,9 +1,10 @@
 import { App, Button, Dropdown, Empty, Input, Popconfirm, Skeleton, Tag, Tooltip } from "antd";
-import { ChevronDown, ImagePlus, LoaderCircle, MessageCircle, Plus, Send, Sparkles, Trash2, X } from "lucide-react";
+import { ChevronDown, Copy, ImagePlus, LoaderCircle, MessageCircle, Plus, Send, Sparkles, Trash2, X } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
+import { useCopyText } from "@/hooks/use-copy-text";
 import { createChatConversation, deleteChatConversation, fetchChatConversation, fetchChatConversations, sendChatMessage, uploadChatImage, type ChatAttachment, type ChatConversation, type ChatMessage } from "@/services/chat-api";
 import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
@@ -404,6 +405,8 @@ function WelcomeEmpty() {
 
 function ChatBubble({ item }: { item: ChatMessage }) {
     const isUser = item.role === "user";
+    const copyText = useCopyText();
+    const copyValue = item.status === "streaming" ? "" : item.content.trim() || (item.status === "failed" ? item.error?.trim() || "" : "");
     return (
         <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
             <div className={cn("min-w-0 max-w-[82%] rounded-xl px-4 py-3 text-sm leading-6 shadow-sm", isUser ? "bg-stone-900 text-white dark:bg-[#f2dfb0] dark:text-stone-950" : "border border-stone-200 bg-white text-stone-800 dark:border-white/10 dark:bg-white/[0.04] dark:text-[#f5efe3]")}> 
@@ -418,6 +421,25 @@ function ChatBubble({ item }: { item: ChatMessage }) {
                 ) : null}
                 {isUser ? <div className="whitespace-pre-wrap break-words">{item.content}</div> : <Streamdown className="agent-streamdown">{item.content || (item.status === "streaming" ? "正在推演..." : item.error || "未返回内容")}</Streamdown>}
                 {item.status === "failed" ? <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">{item.error || "本次问道未能完成"}</div> : null}
+                {copyValue ? (
+                    <div className={cn("mt-1.5 flex", isUser ? "justify-end" : "justify-start")}>
+                        <Tooltip title="复制文字">
+                            <Button
+                                type="text"
+                                size="small"
+                                className={cn(
+                                    "!h-7 !w-7 !min-w-7 !p-0",
+                                    isUser
+                                        ? "!text-white/65 hover:!bg-white/10 hover:!text-white dark:!text-stone-700/65 dark:hover:!bg-stone-900/10 dark:hover:!text-stone-900"
+                                        : "!text-stone-400 hover:!bg-stone-100 hover:!text-stone-700 dark:hover:!bg-white/10 dark:hover:!text-stone-200",
+                                )}
+                                aria-label="复制文字"
+                                icon={<Copy className="size-3.5" />}
+                                onClick={() => copyText(copyValue, isUser ? "问题已复制" : "回答已复制")}
+                            />
+                        </Tooltip>
+                    </div>
+                ) : null}
             </div>
         </div>
     );
