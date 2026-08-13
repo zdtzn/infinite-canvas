@@ -40,7 +40,7 @@ export function ColorControlPanel({
     const activePreset = COLOR_PRESETS.find((preset) => preset.id === settings.preset);
     const harmonies = useMemo(() => (analysis ? buildColorHarmonies(analysis.palette.primary) : []), [analysis]);
 
-    const patch = (value: Parameters<typeof mergeColorSettings>[1]) => onSettingsChange(mergeColorSettings(settings, value));
+    const patch = (value: Parameters<typeof mergeColorSettings>[1]) => onSettingsChange(mergeColorSettings(settings, { ...value, preset: null }));
     const copyColor = (color: AnalyzedColor) => {
         copyText(formatColorValue(color, colorValueFormat), `${colorValueFormat.toUpperCase()} 已复制`);
     };
@@ -172,22 +172,22 @@ export function ColorControlPanel({
                 <section>
                     <SectionTitle title="基础调整" />
                     <div className="space-y-4">
-                        <ControlSlider label="曝光" value={settings.exposure} onChange={(value) => patch({ exposure: value, preset: null })} onCommit={onCommit} />
-                        <ControlSlider label="亮度" value={settings.brightness} onChange={(value) => patch({ brightness: value, preset: null })} onCommit={onCommit} />
-                        <ControlSlider label="对比度" value={settings.contrast} onChange={(value) => patch({ contrast: value, preset: null })} onCommit={onCommit} />
-                        <ControlSlider label="高光" value={settings.highlights} onChange={(value) => patch({ highlights: value, preset: null })} onCommit={onCommit} />
-                        <ControlSlider label="阴影" value={settings.shadows} onChange={(value) => patch({ shadows: value, preset: null })} onCommit={onCommit} />
-                        <ControlSlider label="黑色" value={settings.blacks} onChange={(value) => patch({ blacks: value, preset: null })} onCommit={onCommit} />
+                        <ControlSlider label="曝光" value={settings.exposure} onChange={(value) => patch({ exposure: value })} onCommit={onCommit} />
+                        <ControlSlider label="亮度" value={settings.brightness} onChange={(value) => patch({ brightness: value })} onCommit={onCommit} />
+                        <ControlSlider label="对比度" value={settings.contrast} onChange={(value) => patch({ contrast: value })} onCommit={onCommit} />
+                        <ControlSlider label="高光" value={settings.highlights} onChange={(value) => patch({ highlights: value })} onCommit={onCommit} />
+                        <ControlSlider label="阴影" value={settings.shadows} onChange={(value) => patch({ shadows: value })} onCommit={onCommit} />
+                        <ControlSlider label="黑色" value={settings.blacks} onChange={(value) => patch({ blacks: value })} onCommit={onCommit} />
                     </div>
                 </section>
 
                 <section>
                     <SectionTitle title="色彩调整" />
                     <div className="space-y-4">
-                        <ControlSlider label="饱和度" value={settings.saturation} onChange={(value) => patch({ saturation: value, preset: null })} onCommit={onCommit} />
-                        <ControlSlider label="自然饱和" value={settings.vibrance} onChange={(value) => patch({ vibrance: value, preset: null })} onCommit={onCommit} />
-                        <ControlSlider label="色温" value={settings.temperature} onChange={(value) => patch({ temperature: value, preset: null })} onCommit={onCommit} color="linear-gradient(90deg,#6e9fd4,#ddd2bd,#d88b59)" />
-                        <ControlSlider label="色调" value={settings.tint} onChange={(value) => patch({ tint: value, preset: null })} onCommit={onCommit} color="linear-gradient(90deg,#6ba67a,#d8d2cb,#bd70a0)" />
+                        <ControlSlider label="饱和度" value={settings.saturation} onChange={(value) => patch({ saturation: value })} onCommit={onCommit} />
+                        <ControlSlider label="自然饱和" value={settings.vibrance} onChange={(value) => patch({ vibrance: value })} onCommit={onCommit} />
+                        <ControlSlider label="色温" value={settings.temperature} onChange={(value) => patch({ temperature: value })} onCommit={onCommit} color="linear-gradient(90deg,#6e9fd4,#ddd2bd,#d88b59)" />
+                        <ControlSlider label="色调" value={settings.tint} onChange={(value) => patch({ tint: value })} onCommit={onCommit} color="linear-gradient(90deg,#6ba67a,#d8d2cb,#bd70a0)" />
                     </div>
                 </section>
 

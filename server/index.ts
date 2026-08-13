@@ -82,6 +82,7 @@ import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCUR
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
+import { createColorAlchemyService, ColorAlchemyError } from "./modules/color-alchemy/service";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
 import { createProductLabService, productOutputCapability, ProductLabError } from "./modules/product-lab/service";
 import type { ChannelModelRecord, ChannelRecord, GenerationHistoryKind, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
@@ -208,6 +209,7 @@ for (const job of Object.values(state.jobs)) {
 const cultivation = appDatabase.raw ? createCultivationService(appDatabase.raw) : null;
 const productLab = appDatabase.raw ? createProductLabService(appDatabase.raw) : null;
 const chat = appDatabase.raw ? createChatService(appDatabase.raw) : null;
+const colorAlchemy = appDatabase.raw ? createColorAlchemyService(appDatabase.raw) : null;
 const mediaTasks = appDatabase.raw ? createMediaTaskStore(appDatabase.raw, MEDIA_TASK_RETENTION_MS, MEDIA_TASK_ACTIVE_TTL_MS) : null;
 mediaTasks?.prune();
 const backupManager = appDatabase.raw
@@ -428,6 +430,12 @@ async function route(request: Request, requestId: string) {
             return getChatConversation(session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
         if (chatConversationMatch && request.method === "DELETE")
             return deleteChatConversation(session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
+        if (url.pathname === "/api/color-alchemy/documents" && request.method === "GET") return listColorAlchemyDocuments(session);
+        const colorAlchemyDocumentMatch = url.pathname.match(/^\/api\/color-alchemy\/documents\/([^/]+)$/);
+        if (colorAlchemyDocumentMatch && request.method === "PUT")
+            return saveColorAlchemyDocument(request, session, decodeRouteSegment(colorAlchemyDocumentMatch[1], "灵彩草稿 ID"));
+        if (colorAlchemyDocumentMatch && request.method === "DELETE")
+            return deleteColorAlchemyDocument(session, decodeRouteSegment(colorAlchemyDocumentMatch[1], "灵彩草稿 ID"));
         if (url.pathname === "/api/product-lab/context" && request.method === "GET") return productLabContext(session);
         if (url.pathname === "/api/product-lab/projects" && request.method === "GET") return listProductProjects(session);
         if (url.pathname === "/api/product-lab/projects" && request.method === "POST") return createProductProject(request, session);
@@ -1261,6 +1269,62 @@ function getChatConversation(session: SessionPayload, conversationId: string) {
 function deleteChatConversation(session: SessionPayload, conversationId: string) {
     if (!requireChat().deleteConversation(session.userId, conversationId)) throw new HttpError(404, "对话不存在");
     return new Response(null, { status: 204 });
+}
+
+function requireColorAlchemy() {
+    if (!colorAlchemy) throw new HttpError(503, "SQLite 迁移尚未完成，灵彩暂不可用");
+    return colorAlchemy;
+}
+
+function listColorAlchemyDocuments(session: SessionPayload) {
+    const documents = requireColorAlchemy().listDocuments(session.userId);
+    return json(
+        { items: documents.items.map((document) => publicColorAlchemyDocument(session.userId, document)), deleted: documents.deleted.map(publicColorAlchemyTombstone) },
+        200,
+        { "Cache-Control": "no-store" },
+    );
+}
+
+async function saveColorAlchemyDocument(request: Request, session: SessionPayload, documentId: string) {
+    const body = await readJson<unknown>(request, 224 * 1024);
+    try {
+        const result = requireColorAlchemy().saveDocument(session.userId, documentId, body);
+        return json(
+            result.kind === "deleted"
+                ? { deleted: publicColorAlchemyTombstone(result.deleted) }
+                : { document: publicColorAlchemyDocument(session.userId, result.document) },
+            200,
+            { "Cache-Control": "no-store" },
+        );
+    } catch (error) {
+        if (error instanceof ColorAlchemyError) throw new HttpError(error.status, error.message);
+        throw error;
+    }
+}
+
+function deleteColorAlchemyDocument(session: SessionPayload, documentId: string) {
+    return json({ deleted: publicColorAlchemyTombstone(requireColorAlchemy().deleteDocument(session.userId, documentId)) }, 200, { "Cache-Control": "no-store" });
+}
+
+function publicColorAlchemyTombstone(tombstone: { id: string; deletedAt: number }) {
+    return { id: tombstone.id, deletedAt: new Date(tombstone.deletedAt).toISOString() };
+}
+
+function publicColorAlchemyDocument(
+    userId: string,
+    document: Extract<ReturnType<ReturnType<typeof createColorAlchemyService>["saveDocument"]>, { kind: "document" }>['document'],
+) {
+    const sourceAsset = state.assets[assetKey(userId, document.source.storageKey)];
+    const referenceAsset = document.reference ? state.assets[assetKey(userId, document.reference.storageKey)] : undefined;
+    return {
+        ...document,
+        createdAt: new Date(document.createdAt).toISOString(),
+        updatedAt: new Date(document.updatedAt).toISOString(),
+        source: { ...document.source, url: sourceAsset ? assetUrl(sourceAsset.key, sourceAsset.createdAt) : "" },
+        ...(document.reference
+            ? { reference: { ...document.reference, url: referenceAsset ? assetUrl(referenceAsset.key, referenceAsset.createdAt) : "" } }
+            : {}),
+    };
 }
 
 async function sendChatMessage(request: Request, session: SessionPayload, conversationId: string, requestId: string) {
@@ -2114,6 +2178,7 @@ function collectLiveAssetReferences() {
             ...appDatabase.loadGenerationHistory(userId, "video").map((item) => item.payload),
             ...(productLab?.assetReferenceRoots(userId) || []),
             ...(chat?.assetReferenceRoots(userId) || []),
+            ...(colorAlchemy?.assetReferenceRoots(userId) || []),
         ];
         const avatarKey = state.assets[assetKey(userId, AVATAR_ASSET_KEY)] ? AVATAR_ASSET_KEY : undefined;
         for (const id of collectReferencedAssetIds(userId, roots, avatarKey)) referenced.add(id);
@@ -3563,7 +3628,7 @@ function withSecurityHeaders(response: Response, requestId: string, request: Req
 
 function errorResponse(error: unknown, requestId: string) {
     const status =
-        error instanceof HttpError || error instanceof CultivationError || error instanceof ProductLabError || error instanceof ChatError
+        error instanceof HttpError || error instanceof CultivationError || error instanceof ProductLabError || error instanceof ChatError || error instanceof ColorAlchemyError
             ? error.status
             : error instanceof AssetLibraryInputError || error instanceof GenerationHistoryInputError || error instanceof ProductAnalysisInputError
               ? 400
@@ -3575,6 +3640,7 @@ function errorResponse(error: unknown, requestId: string) {
         error instanceof CultivationError ||
         error instanceof ProductLabError ||
         error instanceof ChatError ||
+        error instanceof ColorAlchemyError ||
         error instanceof AssetLibraryInputError ||
         error instanceof GenerationHistoryInputError ||
         error instanceof ProductAnalysisInputError ||

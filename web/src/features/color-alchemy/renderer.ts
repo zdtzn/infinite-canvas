@@ -66,12 +66,13 @@ export async function analyzeColorSource(source: ColorAlchemySource) {
     }
 }
 
-export async function renderColorBlob(source: ColorAlchemySource, settings: ColorSettings, format: ColorExportFormat, quality = 0.92) {
+export async function renderColorBlob(source: ColorAlchemySource, settings: ColorSettings, format: ColorExportFormat, quality = 0.92, maxEdge?: number) {
     const loaded = await loadColorImage(source);
     try {
+        const dimensions = maxEdge ? fitDimensions(loaded.width, loaded.height, maxEdge) : { width: loaded.width, height: loaded.height };
         const canvas = document.createElement("canvas");
-        canvas.width = loaded.width;
-        canvas.height = loaded.height;
+        canvas.width = dimensions.width;
+        canvas.height = dimensions.height;
         const mimeType = exportMimeType(format);
         const context = canvas.getContext("2d", { alpha: mimeType !== "image/jpeg", willReadFrequently: true });
         if (!context) throw new Error("当前浏览器无法导出调色结果");
@@ -103,13 +104,18 @@ function processCanvas(context: CanvasRenderingContext2D, width: number, height:
     }
 
     const tileSize = 768;
+    const halo = 1;
     for (let y = 0; y < height; y += tileSize) {
         for (let x = 0; x < width; x += tileSize) {
             const tileWidth = Math.min(tileSize, width - x);
             const tileHeight = Math.min(tileSize, height - y);
-            const imageData = context.getImageData(x, y, tileWidth, tileHeight);
-            applyColorSettingsToImageData(imageData, tileWidth, tileHeight, settings, x, y, width, height);
-            context.putImageData(imageData, x, y);
+            const readX = Math.max(0, x - halo);
+            const readY = Math.max(0, y - halo);
+            const readRight = Math.min(width, x + tileWidth + halo);
+            const readBottom = Math.min(height, y + tileHeight + halo);
+            const imageData = context.getImageData(readX, readY, readRight - readX, readBottom - readY);
+            applyColorSettingsToImageData(imageData, imageData.width, imageData.height, settings, readX, readY, width, height);
+            context.putImageData(imageData, x, y, x - readX, y - readY, tileWidth, tileHeight);
         }
     }
 }

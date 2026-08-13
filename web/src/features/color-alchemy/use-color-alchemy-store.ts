@@ -12,6 +12,8 @@ type ColorAlchemyStore = {
     activeDocumentId: string | null;
     documents: ColorAlchemyDocument[];
     prepareForUser: (userId: string) => void;
+    mergeDocuments: (documents: ColorAlchemyDocument[]) => void;
+    removeDocuments: (ids: string[]) => void;
     openSource: (source: ColorAlchemySource) => string;
     selectDocument: (id: string) => void;
     removeDocument: (id: string) => void;
@@ -54,16 +56,39 @@ export const useColorAlchemyStore = create<ColorAlchemyStore>()(
                 }
                 set({ ownerUserId: nextUserId, activeDocumentId: null, documents: [] });
             },
+            mergeDocuments: (documents) =>
+                set((state) => {
+                    const merged = new Map<string, ColorAlchemyDocument>();
+                    for (const document of state.documents) merged.set(document.id, document);
+                    for (const document of documents) {
+                        const normalized = normalizeDocument(document);
+                        if (!normalized) continue;
+                        const current = merged.get(normalized.id);
+                        if (!current || Date.parse(normalized.updatedAt) >= Date.parse(current.updatedAt)) merged.set(normalized.id, normalized);
+                    }
+                    const nextDocuments = Array.from(merged.values())
+                        .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+                        .slice(0, MAX_DOCUMENTS);
+                    return {
+                        documents: nextDocuments,
+                        activeDocumentId: nextDocuments.some((document) => document.id === state.activeDocumentId)
+                            ? state.activeDocumentId
+                            : nextDocuments[0]?.id || null,
+                    };
+                }),
+            removeDocuments: (ids) => {
+                const removed = new Set(ids);
+                if (!removed.size) return;
+                set((state) => {
+                    const documents = state.documents.filter((document) => !removed.has(document.id));
+                    return {
+                        documents,
+                        activeDocumentId: removed.has(state.activeDocumentId || "") ? documents[0]?.id || null : state.activeDocumentId,
+                    };
+                });
+            },
             openSource: (source) => {
                 const current = get();
-                const existing = current.documents.find((document) => document.source.key === source.key);
-                if (existing) {
-                    set({
-                        activeDocumentId: existing.id,
-                        documents: current.documents.map((document) => (document.id === existing.id ? { ...document, source: { ...document.source, ...source }, updatedAt: new Date().toISOString() } : document)),
-                    });
-                    return existing.id;
-                }
                 const now = new Date().toISOString();
                 const settings = createDefaultColorSettings();
                 const document: ColorAlchemyDocument = {
@@ -103,6 +128,8 @@ export const useColorAlchemyStore = create<ColorAlchemyStore>()(
                 }),
             undo: (id) =>
                 updateDocument(set, id, (document) => {
+                    const current = document.history[document.historyIndex];
+                    if (!colorSettingsEqual(current, document.settings)) return { ...document, settings: cloneColorSettings(current) };
                     const historyIndex = Math.max(0, document.historyIndex - 1);
                     return historyIndex === document.historyIndex ? document : { ...document, historyIndex, settings: cloneColorSettings(document.history[historyIndex]) };
                 }),
@@ -147,7 +174,11 @@ export function prepareColorAlchemyForUser(userId: string) {
 
 function updateDocument(set: (updater: (state: ColorAlchemyStore) => Partial<ColorAlchemyStore>) => void, id: string, transform: (document: ColorAlchemyDocument) => ColorAlchemyDocument) {
     set((state) => ({
-        documents: state.documents.map((document) => (document.id === id ? { ...transform(document), updatedAt: new Date().toISOString() } : document)),
+        documents: state.documents.map((document) => {
+            if (document.id !== id) return document;
+            const updatedAt = new Date(Math.max(Date.now(), Date.parse(document.updatedAt) + 1)).toISOString();
+            return { ...transform(document), updatedAt };
+        }),
     }));
 }
 

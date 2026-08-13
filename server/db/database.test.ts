@@ -130,7 +130,7 @@ describe("SQLite application database", () => {
     }
   });
 
-  test("creates the product lab tables in the latest migration", () => {
+  test("creates the product, chat and color alchemy tables in the latest migration", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
     const store = openAppDatabase({ dataDir });
@@ -172,8 +172,33 @@ describe("SQLite application database", () => {
           .all() as Array<{ name: string }>
       ).map((item) => item.name);
 
-      expect(Number(migration.version)).toBeGreaterThanOrEqual(11);
+      const colorAlchemyTables = (
+        store.raw!
+          .query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'color_alchemy_documents'",
+          )
+          .all() as Array<{ name: string }>
+      ).map((item) => item.name);
+      const colorAlchemyIndex = store.raw!
+        .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_color_alchemy_documents_user_updated'")
+        .get() as { name: string } | null;
+      const colorAlchemyTombstoneTables = (
+        store.raw!
+          .query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'color_alchemy_document_tombstones'",
+          )
+          .all() as Array<{ name: string }>
+      ).map((item) => item.name);
+      const colorAlchemyTombstoneIndex = store.raw!
+        .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_color_alchemy_document_tombstones_user_deleted'")
+        .get() as { name: string } | null;
+
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(13);
       expect(chatTables).toEqual(["chat_conversations", "chat_messages"]);
+      expect(colorAlchemyTables).toEqual(["color_alchemy_documents"]);
+      expect(colorAlchemyIndex?.name).toBe("idx_color_alchemy_documents_user_updated");
+      expect(colorAlchemyTombstoneTables).toEqual(["color_alchemy_document_tombstones"]);
+      expect(colorAlchemyTombstoneIndex?.name).toBe("idx_color_alchemy_document_tombstones_user_deleted");
       expect(universalTemplate).toMatchObject({
         name: "爆款撞色主图",
         output_kind: "main_image",

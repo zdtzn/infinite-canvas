@@ -42,6 +42,15 @@ describe("Color Alchemy engine", () => {
         expect(borrowed.exposure).toBeLessThanOrEqual(100);
     });
 
+    test("borrows the same color target when applied repeatedly", () => {
+        const source = extractColorAnalysis(imageData([40, 90, 180, 255, 40, 90, 180, 255]));
+        const reference = extractColorAnalysis(imageData([220, 120, 45, 255, 220, 120, 45, 255]));
+        const first = deriveBorrowedColorSettings(source, reference, createDefaultColorSettings());
+        const second = deriveBorrowedColorSettings(source, reference, first);
+
+        expect(second).toEqual(first);
+    });
+
     test("applies preset intensity as a bounded non-destructive settings object", () => {
         const preset = COLOR_PRESETS[0];
         const half = applyColorPreset(preset, 50);

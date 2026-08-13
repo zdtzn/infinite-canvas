@@ -39,6 +39,9 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis 
         let cancelled = false;
         setLoading(true);
         setError("");
+        setDimensions(null);
+        originalCanvasRef.current?.getContext("2d")?.clearRect(0, 0, originalCanvasRef.current.width, originalCanvasRef.current.height);
+        adjustedCanvasRef.current?.getContext("2d")?.clearRect(0, 0, adjustedCanvasRef.current.width, adjustedCanvasRef.current.height);
         setZoom(1);
         setPan({ x: 0, y: 0 });
         loadedRef.current?.dispose();

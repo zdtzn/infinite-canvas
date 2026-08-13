@@ -11,6 +11,7 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { CanvasNodeType } from "@/types/canvas";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { ColorControlPanel } from "@/features/color-alchemy/color-control-panel";
 import { ColorPreviewStage } from "@/features/color-alchemy/color-preview-stage";
 import { ColorSourceDialog } from "@/features/color-alchemy/color-source-dialog";
@@ -21,6 +22,7 @@ import { analyzeColorSource, colorExportExtension, renderColorBlob } from "@/fea
 import { normalizeColorSettings } from "@/features/color-alchemy/settings";
 import { prepareColorAlchemyForUser, useColorAlchemyStore } from "@/features/color-alchemy/use-color-alchemy-store";
 import type { ColorAlchemySource, ColorExportFormat, ColorPreset, ColorSettings } from "@/features/color-alchemy/types";
+import { deleteColorAlchemyDocument, fetchColorAlchemyDocuments, saveColorAlchemyDocument, type ColorAlchemyDocumentTombstone } from "@/services/color-alchemy-api";
 
 const SETTINGS_CLIPBOARD_KEY = "infinite-canvas:color-alchemy:clipboard";
 
@@ -31,6 +33,9 @@ export default function ColorAlchemyPage() {
     const hydrated = useColorAlchemyStore((state) => state.hydrated);
     const documents = useColorAlchemyStore((state) => state.documents);
     const activeDocumentId = useColorAlchemyStore((state) => state.activeDocumentId);
+    const mergeDocuments = useColorAlchemyStore((state) => state.mergeDocuments);
+    const removeDocuments = useColorAlchemyStore((state) => state.removeDocuments);
+    const removeDocument = useColorAlchemyStore((state) => state.removeDocument);
     const openSource = useColorAlchemyStore((state) => state.openSource);
     const selectDocument = useColorAlchemyStore((state) => state.selectDocument);
     const setAnalysis = useColorAlchemyStore((state) => state.setAnalysis);
@@ -53,9 +58,104 @@ export default function ColorAlchemyPage() {
     const [exportFormat, setExportFormat] = useState<ColorExportFormat>("png");
     const [exportQuality, setExportQuality] = useState(92);
     const [dragActive, setDragActive] = useState(false);
+    const [cloudReadyUserId, setCloudReadyUserId] = useState("");
+    const [syncTick, setSyncTick] = useState(0);
     const uploadInputRef = useRef<HTMLInputElement>(null);
+    const syncedVersionsRef = useRef(new Map<string, string>());
+    const syncTasksRef = useRef(new Map<string, Promise<void>>());
+    const deletedDocumentIdsRef = useRef(new Map<string, string>());
+    const syncRetryAfterRef = useRef(new Map<string, number>());
+    const syncRetryTimersRef = useRef(new Map<string, number>());
 
     useEffect(() => prepareColorAlchemyForUser(userId), [userId]);
+
+    useEffect(() => {
+        if (!userId) setCloudReadyUserId("");
+        syncedVersionsRef.current.clear();
+        syncTasksRef.current.clear();
+        deletedDocumentIdsRef.current.clear();
+        syncRetryAfterRef.current.clear();
+        for (const timer of syncRetryTimersRef.current.values()) window.clearTimeout(timer);
+        syncRetryTimersRef.current.clear();
+    }, [userId]);
+
+    useEffect(
+        () => () => {
+            for (const timer of syncRetryTimersRef.current.values()) window.clearTimeout(timer);
+            syncRetryTimersRef.current.clear();
+        },
+        [],
+    );
+
+    useEffect(() => {
+        if (!PUBLIC_MODE || !userId || !hydrated || cloudReadyUserId === userId) return;
+        let cancelled = false;
+        void fetchColorAlchemyDocuments(userId)
+            .then(({ items, deleted }) => {
+                if (cancelled) return;
+                mergeDocuments(items);
+                for (const item of items) syncedVersionsRef.current.set(item.id, item.updatedAt);
+                applyDeletedDocuments(deleted, removeDocuments, syncedVersionsRef, deletedDocumentIdsRef);
+            })
+            .catch((error) => {
+                if (!cancelled) message.warning(`灵彩草稿暂未同步：${error instanceof Error ? error.message : "请稍后重试"}`);
+            })
+            .finally(() => {
+                if (!cancelled) setCloudReadyUserId(userId);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [cloudReadyUserId, hydrated, mergeDocuments, message, userId]);
+
+    useEffect(() => {
+        if (!PUBLIC_MODE || !userId || !hydrated || cloudReadyUserId !== userId) return;
+        const persistable = documents.filter(
+            (item) =>
+                Boolean(item.source.storageKey) &&
+                !deletedDocumentIdsRef.current.has(item.id) &&
+                syncedVersionsRef.current.get(item.id) !== item.updatedAt &&
+                !syncTasksRef.current.has(item.id) &&
+                (syncRetryAfterRef.current.get(item.id) || 0) <= Date.now(),
+        );
+        if (!persistable.length) return;
+        const timer = window.setTimeout(() => {
+            for (const item of persistable) {
+                const syncedVersion = item.updatedAt;
+                let task: Promise<void>;
+                task = saveColorAlchemyDocument(item, userId)
+                    .then(({ document: saved, deleted }) => {
+                        if (deleted) {
+                            applyDeletedDocuments([deleted], removeDocuments, syncedVersionsRef, deletedDocumentIdsRef);
+                            return;
+                        }
+                        syncedVersionsRef.current.set(item.id, saved?.updatedAt || syncedVersion);
+                        syncRetryAfterRef.current.delete(item.id);
+                    })
+                    .catch((error) => {
+                        console.warn("color-alchemy document sync failed", error);
+                        const retryAfter = Date.now() + 10_000;
+                        syncRetryAfterRef.current.set(item.id, retryAfter);
+                        const previousTimer = syncRetryTimersRef.current.get(item.id);
+                        if (previousTimer) window.clearTimeout(previousTimer);
+                        syncRetryTimersRef.current.set(
+                            item.id,
+                            window.setTimeout(() => {
+                                syncRetryTimersRef.current.delete(item.id);
+                                setSyncTick((value) => value + 1);
+                            }, retryAfter - Date.now()),
+                        );
+                    })
+                    .finally(() => {
+                        if (syncTasksRef.current.get(item.id) !== task) return;
+                        syncTasksRef.current.delete(item.id);
+                        setSyncTick((value) => value + 1);
+                    });
+                syncTasksRef.current.set(item.id, task);
+            }
+        }, 800);
+        return () => window.clearTimeout(timer);
+    }, [cloudReadyUserId, documents, hydrated, removeDocuments, syncTick, userId]);
 
     const document = useMemo(() => documents.find((item) => item.id === activeDocumentId) || documents[0] || null, [activeDocumentId, documents]);
     const forceOriginal = originalPinned || originalHeld;
@@ -140,16 +240,17 @@ export default function ColorAlchemyPage() {
         message.success("已借取参考图的色彩关系，主体与构图保持不变");
     };
 
-    const createRenderedImage = async (format: ColorExportFormat = "png", quality = 0.92) => {
+    const createRenderedImage = async (format: ColorExportFormat = "webp", quality = 0.92, fitUploadLimit = false) => {
         if (!document) throw new Error("请先添加图片");
-        return renderColorBlob(document.source, document.settings, format, quality);
+        const rendered = await renderColorBlob(document.source, document.settings, format, quality);
+        return fitUploadLimit ? fitColorUploadBlob(document.source, document.settings, rendered) : { blob: rendered, compressed: false };
     };
 
     const saveToAssets = async () => {
         if (!document || saving) return;
         setSaving(true);
         try {
-            const blob = await createRenderedImage("png");
+            const { blob, compressed } = await createRenderedImage("webp", 0.92, true);
             const image = await uploadImage(blob, { createThumbnail: true });
             addAsset({
                 kind: "image",
@@ -160,7 +261,7 @@ export default function ColorAlchemyPage() {
                 data: { dataUrl: image.url, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey, thumbnailUrl: image.thumbnailUrl, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType },
                 metadata: { source: "color-alchemy", sourceKey: document.source.key, sourceStorageKey: document.source.storageKey, colorSettings: document.settings },
             });
-            message.success("调色作品已入藏卷阁");
+            message.success(compressed ? "调色作品已压缩并入藏卷阁" : "调色作品已入藏卷阁");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存失败，请重试");
         } finally {
@@ -172,7 +273,7 @@ export default function ColorAlchemyPage() {
         if (!document || exporting) return;
         setExporting(true);
         try {
-            const blob = await createRenderedImage(exportFormat, exportQuality / 100);
+            const { blob } = await createRenderedImage(exportFormat, exportQuality / 100);
             saveAs(blob, `${safeFileName(document.source.title)}-灵彩.${colorExportExtension(exportFormat)}`);
             setExportOpen(false);
             message.success("调色结果已导出");
@@ -189,9 +290,11 @@ export default function ColorAlchemyPage() {
         if (!project) return message.error("原画布已不存在");
         setReturning(true);
         try {
-            const blob = await createRenderedImage("png");
-            const image = await uploadImage(blob, { createThumbnail: false });
-            const sourceNode = project.nodes.find((node) => node.id === document.source.origin?.nodeId);
+            const { blob, compressed } = await createRenderedImage("webp", 0.92, true);
+            const image = await uploadImage(blob, { createThumbnail: true });
+            const latestProject = useCanvasStore.getState().openProject(document.source.origin.projectId);
+            if (!latestProject) throw new Error("原画布已不存在");
+            const sourceNode = latestProject.nodes.find((node) => node.id === document.source.origin?.nodeId);
             const size = fitNodeSize(image.width, image.height, 640, 640);
             const baseNode = createCanvasNode(CanvasNodeType.Image, { x: 0, y: 0 }, imageMetadata(image));
             const nextNode = {
@@ -202,13 +305,31 @@ export default function ColorAlchemyPage() {
                 position: sourceNode ? { x: sourceNode.position.x + sourceNode.width + 56, y: sourceNode.position.y } : { x: 120, y: 120 },
                 metadata: { ...baseNode.metadata, colorSettings: document.settings, colorAlchemySourceKey: document.source.key },
             };
-            useCanvasStore.getState().updateProject(project.id, { nodes: [...project.nodes, nextNode] });
-            message.success("已生成新的灵彩节点，原图保持不变");
+            useCanvasStore.getState().updateProject(latestProject.id, { nodes: [...latestProject.nodes, nextNode] });
+            message.success(compressed ? "已压缩并生成新的灵彩节点，原图保持不变" : "已生成新的灵彩节点，原图保持不变");
             navigate(document.source.origin.route || `/canvas/${project.id}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "返回画布失败");
         } finally {
             setReturning(false);
+        }
+    };
+
+    const discardDocument = async (id: string) => {
+        const discarded = documents.find((item) => item.id === id);
+        if (!discarded) return;
+        deletedDocumentIdsRef.current.set(id, new Date().toISOString());
+        removeDocument(id);
+        syncedVersionsRef.current.delete(id);
+        if (!PUBLIC_MODE || !userId) return;
+        try {
+            await syncTasksRef.current.get(id);
+            const { deleted } = await deleteColorAlchemyDocument(id, userId);
+            deletedDocumentIdsRef.current.set(id, deleted.deletedAt);
+        } catch (error) {
+            deletedDocumentIdsRef.current.delete(id);
+            mergeDocuments([discarded]);
+            message.warning(`草稿尚未删除，已恢复到列表：${error instanceof Error ? error.message : "请稍后重试"}`);
         }
     };
 
@@ -291,12 +412,14 @@ export default function ColorAlchemyPage() {
                                 </span>
                                 <button
                                     type="button"
-                                    className="ml-1 hidden h-8 items-center gap-1.5 rounded px-2 text-xs font-medium text-white/72 transition hover:bg-white/8 hover:text-white sm:flex"
+                                    className="ml-1 flex size-8 items-center justify-center gap-1.5 rounded text-xs font-medium text-white/72 transition hover:bg-white/8 hover:text-white sm:w-auto sm:px-2"
                                     disabled={saving}
                                     onClick={() => void saveToAssets()}
+                                    aria-label={saving ? "正在保存入藏卷阁" : "保存入藏卷阁"}
+                                    title={saving ? "正在保存入藏卷阁" : "保存入藏卷阁"}
                                 >
                                     <Save className="size-3.5" />
-                                    {saving ? "保存中" : "保存"}
+                                    <span className="hidden sm:inline">{saving ? "保存中" : "保存"}</span>
                                 </button>
                                 <button type="button" className="ml-1 flex h-8 items-center gap-1.5 rounded bg-[#d7b46a] px-2.5 text-xs font-semibold text-[#18140d] transition hover:bg-[#e5c783]" onClick={() => setExportOpen(true)}>
                                     <Download className="size-3.5" />
@@ -321,6 +444,7 @@ export default function ColorAlchemyPage() {
                                     onOpenCanvas={() => setSourceDialog("canvas")}
                                     onSelectSource={openSource}
                                     onApplyPreset={applyPreset}
+                                    onRemoveDocument={(id) => void discardDocument(id)}
                                 />
                             </div>
                             <ColorPreviewStage source={document.source} settings={document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} />
@@ -368,6 +492,7 @@ export default function ColorAlchemyPage() {
                                     setMobilePanel(null);
                                 }}
                                 onApplyPreset={applyPreset}
+                                onRemoveDocument={(id) => void discardDocument(id)}
                             />
                         </Drawer>
                         <Drawer title="专业调色" placement="right" size="min(340px, calc(100vw - 12px))" open={mobilePanel === "controls"} onClose={() => setMobilePanel(null)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
@@ -499,4 +624,29 @@ function stripExtension(name: string) {
 
 function safeFileName(name: string) {
     return (name || "color-alchemy").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 80);
+}
+
+function applyDeletedDocuments(
+    deleted: ColorAlchemyDocumentTombstone[],
+    removeDocuments: (ids: string[]) => void,
+    syncedVersions: React.MutableRefObject<Map<string, string>>,
+    locallyDeleted: React.MutableRefObject<Map<string, string>>,
+) {
+    const ids = deleted.map((item) => item.id);
+    if (!ids.length) return;
+    for (const item of deleted) {
+        syncedVersions.current.delete(item.id);
+        locallyDeleted.current.set(item.id, item.deletedAt);
+    }
+    removeDocuments(ids);
+}
+
+async function fitColorUploadBlob(source: ColorAlchemySource, settings: ColorSettings, initial: Blob) {
+    const maxBytes = 15 * 1024 * 1024;
+    if (initial.size <= maxBytes) return { blob: initial, compressed: false };
+    for (const maxEdge of [9_600, 7_200, 5_400, 4_000]) {
+        const candidate = await renderColorBlob(source, settings, "webp", 0.86, maxEdge);
+        if (candidate.size <= maxBytes) return { blob: candidate, compressed: true };
+    }
+    throw new Error("调色结果过大，已尝试压缩仍超过 16 MB，请先导出原尺寸或使用更小的图片");
 }

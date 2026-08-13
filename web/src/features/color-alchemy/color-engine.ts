@@ -241,11 +241,11 @@ export function recommendColorSettings(analysis: ColorAnalysis, current: ColorSe
 
 export function deriveBorrowedColorSettings(source: ColorAnalysis, reference: ColorAnalysis, current: ColorSettings) {
     const next = cloneColorSettings(current);
-    next.temperature = clamp(Math.round(next.temperature + (reference.temperature - source.temperature) * 72), -100, 100);
-    next.tint = clamp(Math.round(next.tint + (reference.tint - source.tint) * 66), -100, 100);
-    next.vibrance = clamp(Math.round(next.vibrance + (reference.saturation - source.saturation) * 54), -100, 100);
-    next.contrast = clamp(Math.round(next.contrast + (reference.contrast - source.contrast) * 90), -100, 100);
-    next.exposure = clamp(Math.round(next.exposure + (reference.luminance - source.luminance) * 38), -100, 100);
+    next.temperature = clamp(Math.round((reference.temperature - source.temperature) * 72), -100, 100);
+    next.tint = clamp(Math.round((reference.tint - source.tint) * 66), -100, 100);
+    next.vibrance = clamp(Math.round((reference.saturation - source.saturation) * 54), -100, 100);
+    next.contrast = clamp(Math.round((reference.contrast - source.contrast) * 90), -100, 100);
+    next.exposure = clamp(Math.round((reference.luminance - source.luminance) * 38), -100, 100);
     next.splitTone.shadowHue = reference.palette.secondary.hsl[0];
     next.splitTone.shadowSaturation = clamp(Math.round(reference.palette.secondary.hsl[1] * 24), 0, 34);
     next.splitTone.highlightHue = reference.palette.accent.hsl[0];

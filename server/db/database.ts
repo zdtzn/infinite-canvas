@@ -561,6 +561,52 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 12").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS color_alchemy_documents (
+          user_id TEXT NOT NULL,
+          document_id TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, document_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_color_alchemy_documents_user_updated
+          ON color_alchemy_documents(user_id, updated_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (12, ?)",
+        )
+        .run(Date.now());
+    })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 13").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS color_alchemy_document_tombstones (
+          user_id TEXT NOT NULL,
+          document_id TEXT NOT NULL,
+          deleted_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, document_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_color_alchemy_document_tombstones_user_deleted
+          ON color_alchemy_document_tombstones(user_id, deleted_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (13, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(

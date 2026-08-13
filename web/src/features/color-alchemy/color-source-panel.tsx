@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ImagePlus, Images, Layers3 } from "lucide-react";
+import { ImagePlus, Images, Layers3, Trash2 } from "lucide-react";
 import { Tabs, Tooltip } from "antd";
 
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -16,6 +16,7 @@ export function ColorSourcePanel({
     onOpenCanvas,
     onSelectSource,
     onApplyPreset,
+    onRemoveDocument,
 }: {
     document: ColorAlchemyDocument;
     documents: ColorAlchemyDocument[];
@@ -25,6 +26,7 @@ export function ColorSourcePanel({
     onOpenCanvas: () => void;
     onSelectSource: (source: ColorAlchemySource) => void;
     onApplyPreset: (preset: ColorPreset) => void;
+    onRemoveDocument: (id: string) => void;
 }) {
     const assets = useAssetStore((state) => state.assets);
     const [category, setCategory] = useState<ColorPresetCategory>("电影");
@@ -46,12 +48,17 @@ export function ColorSourcePanel({
                         children: (
                             <div className="thin-scrollbar h-[calc(100vh-150px)] space-y-5 overflow-y-auto pb-5">
                                 <PanelSection title="当前图片">
-                                    <button type="button" className="group block w-full overflow-hidden rounded-md border border-[#d7b46a]/40 bg-white/5 text-left" title={document.source.title}>
+                                    <div className="group relative overflow-hidden rounded-md border border-[#d7b46a]/40 bg-white/5" title={document.source.title}>
                                         <div className="aspect-[4/3] overflow-hidden bg-black/20">
                                             <ColorSourceImage source={document.source} alt={document.source.title} className="h-full w-full object-cover" />
                                         </div>
                                         <div className="truncate px-2.5 py-2 text-xs font-medium text-white/85">{document.source.title}</div>
-                                    </button>
+                                        <Tooltip title="移除当前草稿">
+                                            <button type="button" className="absolute right-1.5 top-1.5 grid size-7 place-items-center rounded bg-black/55 text-white/65 transition hover:bg-red-500/80 hover:text-white lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100" aria-label={`移除当前草稿 ${document.source.title}`} onClick={() => onRemoveDocument(document.id)}>
+                                                <Trash2 className="size-3.5" />
+                                            </button>
+                                        </Tooltip>
+                                    </div>
                                 </PanelSection>
 
                                 <div className="grid grid-cols-3 gap-2">
@@ -61,18 +68,22 @@ export function ColorSourcePanel({
                                 </div>
 
                                 {documents.length > 1 ? (
-                                    <PanelSection title="最近图片">
+                                    <PanelSection title={`草稿 (${documents.length}/12)`}>
                                         <div className="grid grid-cols-2 gap-2">
                                             {documents
                                                 .filter((item) => item.id !== document.id)
-                                                .slice(0, 6)
                                                 .map((item) => (
-                                                    <button key={item.id} type="button" className="group overflow-hidden rounded-md bg-white/4 text-left transition hover:bg-white/8" onClick={() => onSelectDocument(item.id)}>
-                                                        <div className="aspect-[4/3] overflow-hidden">
-                                                            <ColorSourceImage source={item.source} alt={item.source.title} loading="lazy" decoding="async" className="h-full w-full object-cover transition group-hover:scale-[1.03]" />
-                                                        </div>
-                                                        <div className="truncate px-2 py-1.5 text-[11px] text-white/65">{item.source.title}</div>
-                                                    </button>
+                                                    <div key={item.id} className="group relative overflow-hidden rounded-md bg-white/4 text-left transition hover:bg-white/8">
+                                                        <button type="button" className="block w-full" onClick={() => onSelectDocument(item.id)}>
+                                                            <div className="aspect-[4/3] overflow-hidden">
+                                                                <ColorSourceImage source={item.source} alt={item.source.title} loading="lazy" decoding="async" className="h-full w-full object-cover transition group-hover:scale-[1.03]" />
+                                                            </div>
+                                                            <div className="truncate px-2 py-1.5 text-[11px] text-white/65">{item.source.title}</div>
+                                                        </button>
+                                                        <button type="button" className="absolute right-1 top-1 grid size-6 place-items-center rounded bg-black/55 text-white/65 transition hover:bg-red-500/80 hover:text-white lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100" title="移除草稿" aria-label={`移除草稿 ${item.source.title}`} onClick={() => onRemoveDocument(item.id)}>
+                                                            <Trash2 className="size-3.5" />
+                                                        </button>
+                                                    </div>
                                                 ))}
                                         </div>
                                     </PanelSection>
