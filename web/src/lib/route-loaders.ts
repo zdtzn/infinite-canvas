@@ -17,12 +17,18 @@ export const routeLoaders = {
 
 const pendingRouteLoads = new Map<string, Promise<void>>();
 const loadedRouteKeys = new Set<string>();
+const activeWarmupStops = new Set<() => void>();
+
+type PreloadRouteOptions = {
+    fromWarmup?: boolean;
+};
 
 const routeWarmupOrder = ["/image", "/chat", "/canvas", "/assets", "/color-alchemy", "/product-lab", "/prompts", "/video", "/cultivation", "/config", "/", "/docs", "/canvas/:id"] as const;
 
-export function preloadRoute(path: string) {
+export function preloadRoute(path: string, options: PreloadRouteOptions = {}) {
     const routeKey = routeKeyForPath(path);
     if (!isRouteKey(routeKey)) return Promise.resolve();
+    if (!options.fromWarmup) stopActiveWarmups();
     const loader = routeLoaders[routeKey];
 
     if (loadedRouteKeys.has(routeKey)) return Promise.resolve();
@@ -65,9 +71,12 @@ export function warmupRoutesWhenIdle(currentPath: string) {
     };
 
     const scheduleNext = (initial = false) => {
-        if (stopped || index >= routes.length) return;
+        if (stopped || index >= routes.length) {
+            if (index >= routes.length) activeWarmupStops.delete(stopWarmup);
+            return;
+        }
         if (initial) {
-            timeoutHandle = window.setTimeout(runNext, 200);
+            timeoutHandle = window.setTimeout(runNext, 1_200);
             return;
         }
         if (idleWindow.requestIdleCallback) {
@@ -82,16 +91,25 @@ export function warmupRoutesWhenIdle(currentPath: string) {
         timeoutHandle = undefined;
         if (stopped || index >= routes.length) return;
         const route = routes[index++];
-        void preloadRoute(route).finally(scheduleNext);
+        void preloadRoute(route, { fromWarmup: true }).finally(scheduleNext);
     };
 
-    scheduleNext(true);
-
-    return () => {
+    function stopWarmup() {
+        if (stopped) return;
         stopped = true;
+        activeWarmupStops.delete(stopWarmup);
         if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle);
         if (timeoutHandle !== undefined) window.clearTimeout(timeoutHandle);
-    };
+    }
+
+    activeWarmupStops.add(stopWarmup);
+    scheduleNext(true);
+
+    return stopWarmup;
+}
+
+function stopActiveWarmups() {
+    [...activeWarmupStops].forEach((stop) => stop());
 }
 
 function routeKeyForPath(path: string) {

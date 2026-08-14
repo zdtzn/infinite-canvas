@@ -1,15 +1,17 @@
 import { App, Button, Drawer, Dropdown, Empty, Input, Popconfirm, Segmented, Skeleton, Tag, Tooltip } from "antd";
 import { BookOpen, ChevronDown, Copy, Download, FileUp, ImagePlus, LoaderCircle, MessageCircle, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import { Streamdown } from "streamdown";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
+import { lazyRoute } from "@/lib/lazy-route";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { createChatConversation, deleteChatConversation, fetchChatConversation, fetchChatConversations, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, uploadChatImage, type ChatAttachment, type ChatConversation, type ChatMessage } from "@/services/chat-api";
 import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId, type ChatPresetOption } from "./chat-presets";
-import DouQiLifeView from "./dou-qi-life-view";
+
+const DouQiLifeView = lazyRoute(() => import("./dou-qi-life-view"));
 
 const welcomeLines = ["把疑问交给此方天地。", "可上传图片，让模型结合画面回答。", "这里适合聊创意、提示词、商品图、画面结构和日常问题。"];
 
@@ -644,7 +646,22 @@ export default function ChatPage() {
         }
     }
 
-    if (mode === "douqi") return <DouQiLifeView onExit={() => setMode("chat")} />;
+    if (mode === "douqi") {
+        return (
+            <Suspense
+                fallback={
+                    <div className="grid h-full place-items-center bg-[#f7f5ef] text-sm text-stone-500 dark:bg-[#11100e] dark:text-stone-400">
+                        <span className="inline-flex items-center gap-2">
+                            <LoaderCircle className="size-4 animate-spin" />
+                            正在开启斗气人生...
+                        </span>
+                    </div>
+                }
+            >
+                <DouQiLifeView onExit={() => setMode("chat")} />
+            </Suspense>
+        );
+    }
 
     return (
         <div className="h-full overflow-hidden bg-[#f7f5ef] text-stone-900 dark:bg-[#11100e] dark:text-[#f5efe3]">
