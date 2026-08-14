@@ -1399,11 +1399,13 @@ function streamDouQiLifeTurn(
 ) {
     const encoder = new TextEncoder();
     let canceled = false;
+    let upstreamReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
             controller.enqueue(encoder.encode(douQiLifeEvent("started", { session: started.session, playerMessage: started.playerMessage, worldMessage: started.worldMessage })));
             void (async () => {
                 const reader = upstream.response.body!.getReader();
+                upstreamReader = reader;
                 const decoder = new TextDecoder();
                 const streamState: ChatStreamState = { buffer: "", text: "", completed: false };
                 try {
@@ -1432,12 +1434,15 @@ function streamDouQiLifeTurn(
                         controller.close();
                     }
                 } finally {
+                    if (upstreamReader === reader) upstreamReader = null;
                     try { reader.releaseLock(); } catch {}
                 }
             })();
         },
         cancel() {
             canceled = true;
+            if (upstreamReader) void upstreamReader.cancel().catch(() => undefined);
+            else if (upstream.response.body) void upstream.response.body.cancel().catch(() => undefined);
         },
     });
     return new Response(stream, { headers: chatStreamHeaders() });

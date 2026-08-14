@@ -181,6 +181,46 @@ describe("dou qi life service", () => {
     }
   });
 
+  test("continues the world clock after a visit and materializes it once", () => {
+    const { store, service, advanceHours } = setup();
+    try {
+      const session = service.createSession("alice", { name: "沈砚" });
+      advanceHours(24 * 31);
+
+      const first = service.getSessionWithHistory("alice", session.id)!;
+      expect(first.session.state.world.month).toBe(2);
+      expect(first.session.state.world.day).toBe(2);
+      expect(first.session.state.memory.worldEvents).toHaveLength(1);
+      expect(first.messages.filter((item) => item.kind === "system")).toHaveLength(1);
+
+      const autoSave = service.listSaves("alice", session.id).find((item) => item.kind === "auto");
+      expect(autoSave?.updatedAt).toBe(first.session.updatedAt);
+
+      const second = service.getSessionWithHistory("alice", session.id)!;
+      expect(second.session.state.world.month).toBe(first.session.state.world.month);
+      expect(second.session.state.world.day).toBe(first.session.state.world.day);
+      expect(second.messages.filter((item) => item.kind === "system")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("does not materialize offline time while a world response is streaming", () => {
+    const { store, service, advanceHours } = setup();
+    try {
+      const session = service.createSession("alice", { name: "沈砚" });
+      service.beginTurn("alice", session.id, "观察周围");
+      advanceHours(24 * 31);
+
+      const detail = service.getSessionWithHistory("alice", session.id)!;
+      expect(detail.session.state.world.month).toBe(1);
+      expect(detail.session.state.world.day).toBe(1);
+      expect(detail.messages.filter((item) => item.kind === "system")).toHaveLength(0);
+    } finally {
+      store.close();
+    }
+  });
+
   test("lets the program resolve battle actions instead of trusting enemy life patches", () => {
     const { store, service } = setup();
     try {
@@ -249,5 +289,6 @@ function setup() {
     dataDir,
     service: createDouQiLifeService(store.raw!, { now: () => timestamp }),
     advanceTime: () => { timestamp += 1_000; },
+    advanceHours: (hours: number) => { timestamp += hours * 3_600_000; },
   };
 }

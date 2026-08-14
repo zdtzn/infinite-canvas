@@ -63,6 +63,8 @@ export type DouQiWorldState = {
   location: string;
   weather: string;
   scene: string;
+  /** Real-world timestamp used to resume the world's clock after a visit ends. */
+  lastRealTimeAt?: number;
 };
 
 export type DouQiNpcState = {

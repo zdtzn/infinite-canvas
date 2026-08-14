@@ -37,7 +37,7 @@ export type DouQiLifeState = {
         mood: string;
         cultivationMethod: string;
     };
-    world: { year: number; season: string; month: number; day: number; period: string; location: string; weather: string; scene: string };
+    world: { year: number; season: string; month: number; day: number; period: string; location: string; weather: string; scene: string; lastRealTimeAt?: number };
     npcs: Array<{ id: string; name: string; identity: string; realm: string; faction: string; personality: string; goal: string; relationship: number; impression: string; history: string[]; secret: string; lastSeenAt: string }>;
     inventory: { gold: number; items: Array<{ id: string; name: string; category: string; quantity: number; description: string }> };
     techniques: Array<{ id: string; name: string; kind: string; grade: string; attribute: string; effect: string; proficiency: number; source: string }>;
