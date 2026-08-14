@@ -80,7 +80,7 @@ import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstrea
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
-import { defaultUserChatPresetId, normalizeUserChatPresetId, normalizeUserSystemPrompt, readStoredUserChatPresetId, readStoredUserSystemPrompt, USER_CHAT_PRESET_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
+import { defaultUserChatPresetId, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserSystemPrompt, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserSystemPrompt, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
 import { createColorAlchemyService, ColorAlchemyError } from "./modules/color-alchemy/service";
@@ -162,6 +162,7 @@ const MAX_PRODUCT_ANALYSIS_JSON_BYTES = 16 * 1024;
 const MAX_PRODUCT_ANALYSIS_RESPONSE_BYTES = 512 * 1024;
 const PRODUCT_ANALYSIS_RATE_LIMIT = Math.max(1, Math.min(30, positiveInt(process.env.PRODUCT_ANALYSIS_RATE_LIMIT, 6)));
 const MAX_CHAT_JSON_BYTES = 64 * 1024;
+const MAX_CHAT_IMPORT_JSON_BYTES = 512 * 1024;
 const MAX_CHAT_UPSTREAM_ERROR_BYTES = 256 * 1024;
 const MAX_CHAT_ATTACHMENT_TOTAL_BYTES = Math.max(4 * 1024 * 1024, Math.min(64 * 1024 * 1024, positiveInt(process.env.MAX_CHAT_ATTACHMENT_TOTAL_BYTES, 24 * 1024 * 1024)));
 const CHAT_TIMEOUT_MS = Math.max(30_000, Math.min(10 * 60_000, positiveInt(process.env.CHAT_TIMEOUT_MS, 3 * 60_000)));
@@ -434,7 +435,12 @@ async function route(request: Request, requestId: string) {
         }
         if (url.pathname === "/api/chat/conversations" && request.method === "GET") return listChatConversations(session);
         if (url.pathname === "/api/chat/conversations" && request.method === "POST") return createChatConversation(request, session);
+        if (url.pathname === "/api/chat/conversations/import" && request.method === "POST") return importChatConversation(request, session);
         if (url.pathname === "/api/chat/usage" && request.method === "GET") return chatUsage(session);
+        const chatMessageActionMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages\/([^/]+)\/truncate$/);
+        if (chatMessageActionMatch && request.method === "POST") {
+            return truncateChatMessages(session, decodeRouteSegment(chatMessageActionMatch[1], "对话 ID"), decodeRouteSegment(chatMessageActionMatch[2], "消息 ID"));
+        }
         const chatMessagesMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages$/);
         if (chatMessagesMatch && request.method === "POST") {
             enforceRateLimit(`${session.userId}:${clientIp(request)}:chat`, CHAT_RATE_LIMIT);
@@ -1469,6 +1475,20 @@ async function createChatConversation(request: Request, session: SessionPayload)
     return json({ conversation: requireChat().createConversation(session.userId, { title: input.title, presetId: input.presetId }) }, 201, { "Cache-Control": "no-store" });
 }
 
+async function importChatConversation(request: Request, session: SessionPayload) {
+    const input = await readJson<unknown>(request, MAX_CHAT_IMPORT_JSON_BYTES);
+    const imported = requireChat().importConversation(session.userId, input);
+    return json(
+        {
+            conversation: imported.conversation,
+            messages: imported.messages.map((message) => publicChatMessage(session.userId, message)),
+            skippedAttachmentCount: imported.skippedAttachmentCount,
+        },
+        201,
+        { "Cache-Control": "no-store" },
+    );
+}
+
 async function updateChatConversation(request: Request, session: SessionPayload, conversationId: string) {
     const input = await readJson<{ presetId?: unknown }>(request, 8 * 1024);
     return json(
@@ -1496,16 +1516,32 @@ function deleteChatConversation(session: SessionPayload, conversationId: string)
     return new Response(null, { status: 204 });
 }
 
+function truncateChatMessages(session: SessionPayload, conversationId: string, messageId: string) {
+    const detail = requireChat().deleteMessagesFrom(session.userId, conversationId, messageId);
+    return json(
+        {
+            conversation: detail.conversation,
+            messages: detail.messages.map((message) => publicChatMessage(session.userId, message)),
+        },
+        200,
+        { "Cache-Control": "no-store" },
+    );
+}
+
 function userPreferences(session: SessionPayload) {
     const storedSystemPrompt = appDatabase.loadUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY);
     const storedChatPresetId = appDatabase.loadUserPreference(session.userId, USER_CHAT_PRESET_KEY);
+    const storedChatPersona = appDatabase.loadUserPreference(session.userId, USER_CHAT_PERSONA_KEY);
     const chatPresetId = readStoredUserChatPresetId(storedChatPresetId);
+    const chatPersona = readStoredUserChatPersona(storedChatPersona) || "";
     return json(
         {
             systemPrompt: readStoredUserSystemPrompt(storedSystemPrompt) || "",
             systemPromptConfigured: typeof storedSystemPrompt === "string",
             chatPresetId: chatPresetId || defaultUserChatPresetId(),
             chatPresetConfigured: Boolean(chatPresetId),
+            chatPersona,
+            chatPersonaConfigured: typeof storedChatPersona === "string" && chatPersona.length > 0,
         },
         200,
         { "Cache-Control": "no-store" },
@@ -1513,30 +1549,37 @@ function userPreferences(session: SessionPayload) {
 }
 
 async function updateUserPreferences(request: Request, session: SessionPayload) {
-    const body = await readJson<{ systemPrompt?: unknown; chatPresetId?: unknown }>(request, 64 * 1024);
+    const body = await readJson<{ systemPrompt?: unknown; chatPresetId?: unknown; chatPersona?: unknown }>(request, 64 * 1024);
     const source = body && typeof body === "object" ? body : {};
     const hasSystemPrompt = Object.prototype.hasOwnProperty.call(source, "systemPrompt");
     const hasChatPresetId = Object.prototype.hasOwnProperty.call(source, "chatPresetId");
+    const hasChatPersona = Object.prototype.hasOwnProperty.call(source, "chatPersona");
     const storedSystemPrompt = appDatabase.loadUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY);
     const storedChatPresetId = appDatabase.loadUserPreference(session.userId, USER_CHAT_PRESET_KEY);
+    const storedChatPersona = appDatabase.loadUserPreference(session.userId, USER_CHAT_PERSONA_KEY);
     let systemPrompt = readStoredUserSystemPrompt(storedSystemPrompt) || "";
     let chatPresetId = readStoredUserChatPresetId(storedChatPresetId) || defaultUserChatPresetId();
+    let chatPersona = readStoredUserChatPersona(storedChatPersona) || "";
 
     try {
         if (hasSystemPrompt) systemPrompt = normalizeUserSystemPrompt(source.systemPrompt);
         if (hasChatPresetId) chatPresetId = normalizeUserChatPresetId(source.chatPresetId);
+        if (hasChatPersona) chatPersona = normalizeUserChatPersona(source.chatPersona);
     } catch (error) {
         throw new HttpError(400, error instanceof Error ? error.message : "用户偏好无效");
     }
 
     if (hasSystemPrompt) appDatabase.saveUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY, systemPrompt);
     if (hasChatPresetId) appDatabase.saveUserPreference(session.userId, USER_CHAT_PRESET_KEY, chatPresetId);
+    if (hasChatPersona) appDatabase.saveUserPreference(session.userId, USER_CHAT_PERSONA_KEY, chatPersona);
     return json(
         {
             systemPrompt,
             systemPromptConfigured: hasSystemPrompt || typeof storedSystemPrompt === "string",
             chatPresetId,
             chatPresetConfigured: hasChatPresetId || Boolean(readStoredUserChatPresetId(storedChatPresetId)),
+            chatPersona,
+            chatPersonaConfigured: hasChatPersona ? chatPersona.length > 0 : Boolean(readStoredUserChatPersona(storedChatPersona)),
         },
         200,
         { "Cache-Control": "no-store" },
@@ -1603,9 +1646,14 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
     const source = await readJson<Record<string, unknown>>(request, MAX_CHAT_JSON_BYTES);
     const content = String(source.content || "").trim();
     const retryAssistantMessageId = String(source.retryAssistantMessageId || "").trim();
+    const editUserMessageId = String(source.editUserMessageId || "").trim();
+    const continueAssistantMessageId = String(source.continueAssistantMessageId || "").trim();
+    if ((retryAssistantMessageId && editUserMessageId) || (continueAssistantMessageId && (retryAssistantMessageId || editUserMessageId))) {
+        throw new HttpError(400, "一次只能执行一种消息操作");
+    }
     const { channelId, model } = defaultChatTextModel();
     const attachments = normalizeChatAttachmentInput(source.attachments);
-    if (!retryAssistantMessageId) prepareChatAttachments(session.userId, attachments);
+    if (!continueAssistantMessageId) prepareChatAttachments(session.userId, attachments);
     assertPlatformModelAllowed(channelId, model, "text");
     reserveChatRequest(session.userId);
 
@@ -1618,32 +1666,44 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
         releaseChatRequest(session.userId);
     };
 
-    let turn: ReturnType<ReturnType<typeof createChatService>["beginTurn"]> | undefined;
+    let turn: ReturnType<ReturnType<typeof createChatService>["beginTurn"]> | ReturnType<ReturnType<typeof createChatService>["beginContinuation"]> | undefined;
+    let continuationPrefix = "";
     try {
-        turn = requireChat().beginTurn(session.userId, conversationId, {
-            content,
-            attachments,
-            channelId,
-            model,
-            ...(retryAssistantMessageId ? { retryAssistantMessageId } : {}),
-        });
+        turn = continueAssistantMessageId
+            ? requireChat().beginContinuation(session.userId, conversationId, continueAssistantMessageId, channelId, model)
+            : requireChat().beginTurn(session.userId, conversationId, {
+                content,
+                attachments,
+                channelId,
+                model,
+                ...(retryAssistantMessageId ? { retryAssistantMessageId } : {}),
+                ...(editUserMessageId ? { editUserMessageId } : {}),
+            });
+        continuationPrefix = "contextMessages" in turn ? turn.assistantMessage.content : "";
         const preset = resolveChatPreset(turn.conversation.presetId);
-        const preparedAttachments = prepareChatAttachments(session.userId, turn.userMessage.attachments);
+        const preparedAttachments = "contextMessages" in turn ? [] : prepareChatAttachments(session.userId, turn.userMessage.attachments);
+        const context = "contextMessages" in turn
+            ? (turn.contextMessages as ChatMessage[])
+            : requireChat().contextMessages(session.userId, conversationId, 24, MAX_CHAT_CONTEXT_CHARACTERS);
         const messages = chatProtocolMessages(
             session.userId,
-            requireChat().contextMessages(session.userId, conversationId, 24, MAX_CHAT_CONTEXT_CHARACTERS),
-            turn.userMessage.id,
+            context,
+            "contextMessages" in turn ? "" : turn.userMessage.id,
             preparedAttachments,
             preset,
         );
+        if ("contextMessages" in turn) {
+            messages.push({ role: "user", content: "请从上一条回答自然中断处继续，保留已有结论，不要重复已经说过的内容。", images: [] });
+        }
         const channel = platformChannel(channelId);
         const apiKey = decryptChannelApiKey(channel);
-        const upstream = await openChatUpstream(channel, apiKey, model, messages, signal, requestId, preset);
+        const chatPersona = readStoredUserChatPersona(appDatabase.loadUserPreference(session.userId, USER_CHAT_PERSONA_KEY)) || "";
+        const upstream = await openChatUpstream(channel, apiKey, model, messages, signal, requestId, preset, chatPersona);
         const publicUserMessage = publicChatMessage(session.userId, turn.userMessage);
         const publicAssistantMessage = publicChatMessage(session.userId, turn.assistantMessage);
 
         if (!upstream.stream) {
-            const completed = requireChat().completeAssistant(session.userId, turn.assistantMessage.id, upstream.text);
+            const completed = requireChat().completeAssistant(session.userId, turn.assistantMessage.id, `${continuationPrefix}${upstream.text}`, upstream.text.length);
             release();
             return chatEventResponse([
                 ["started", { conversation: turn.conversation, userMessage: publicUserMessage, assistantMessage: publicAssistantMessage }],
@@ -1677,7 +1737,7 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                         if (state.error) throw new Error(state.error);
                         if (!state.completed) throw new Error("上游流式回应提前中断，请重试");
                         if (!state.text.trim()) throw new Error("文本模型没有返回可用内容");
-                        const completed = requireChat().completeAssistant(session.userId, turn!.assistantMessage.id, state.text);
+                        const completed = requireChat().completeAssistant(session.userId, turn!.assistantMessage.id, `${continuationPrefix}${state.text}`, state.text.length);
                         completedMessage = completed;
                         if (!canceled) {
                             controller.enqueue(encoder.encode(chatEvent("done", { conversation: turn!.conversation, message: publicChatMessage(session.userId, completed) })));
@@ -1686,7 +1746,7 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                         console.info(JSON.stringify({ event: "chat_completed", requestId, userId: session.userId, conversationId, channelId, model, outputCharacters: state.text.length }));
                     } catch (error) {
                         const message = chatFailureMessage(upstream.response.status, error);
-                        const terminal = completedMessage || requireChat().failAssistant(session.userId, turn!.assistantMessage.id, state.text, message);
+                        const terminal = completedMessage || requireChat().failAssistant(session.userId, turn!.assistantMessage.id, `${continuationPrefix}${state.text}`, message, state.text.length);
                         if (!canceled) {
                             try {
                                 if (terminal?.status === "completed") {
@@ -1716,7 +1776,7 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
     } catch (error) {
         if (turn && !signal.aborted) {
             const failureMessage = chatFailureMessage(undefined, error);
-            const failed = requireChat().failAssistant(session.userId, turn.assistantMessage.id, "", failureMessage);
+            const failed = requireChat().failAssistant(session.userId, turn.assistantMessage.id, continuationPrefix, failureMessage, 0);
             release();
             return chatEventResponse([
                 ["started", {
@@ -1727,7 +1787,7 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                 ["error", { message: failureMessage, messageId: turn.assistantMessage.id }],
             ]);
         }
-        if (turn) requireChat().failAssistant(session.userId, turn.assistantMessage.id, "", chatFailureMessage(undefined, error));
+        if (turn) requireChat().failAssistant(session.userId, turn.assistantMessage.id, continuationPrefix, chatFailureMessage(undefined, error), 0);
         release();
         throw error;
     }
@@ -1790,8 +1850,8 @@ function chatProtocolMessages(
     }));
 }
 
-async function openChatUpstream(channel: ChannelRecord, apiKey: string, model: string, messages: ChatProtocolMessage[], signal: AbortSignal, requestId: string, preset: ChatPreset) {
-    const system = buildChatSystemPrompt(preset);
+async function openChatUpstream(channel: ChannelRecord, apiKey: string, model: string, messages: ChatProtocolMessage[], signal: AbortSignal, requestId: string, preset: ChatPreset, chatPersona = "") {
+    const system = buildChatSystemPrompt(preset, chatPersona);
     if (channel.apiFormat === "gemini") {
         const response = await upstreamFetch(
             buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(model.replace(/^models\//, ""))}:streamGenerateContent`) + "?alt=sse",

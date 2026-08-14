@@ -60,6 +60,47 @@ describe("chat service", () => {
     }
   });
 
+  test("imports a conversation into a new preset-bound record without trusting runtime settings", () => {
+    const { store, service } = setup();
+    try {
+      store.raw!
+        .query("INSERT INTO assets(asset_key, user_id, mime_type, bytes, created_at) VALUES (?, ?, 'image/png', 100, ?)")
+        .run("image:available", "user-a", Date.now());
+      const imported = service.importConversation("user-a", {
+        format: "infinite-canvas.chat",
+        version: 1,
+        conversation: {
+          title: "外部会话",
+          presetId: "catgirl",
+          channelId: "untrusted-channel",
+          model: "untrusted-model",
+        },
+        messages: [
+          {
+            role: "user",
+            content: "带图的问题",
+            attachments: [
+              { assetKey: "image:available", mimeType: "image/png", name: "available.png" },
+              { assetKey: "image:missing", mimeType: "image/png", name: "missing.png" },
+            ],
+            status: "completed",
+          },
+          { role: "assistant", content: "已恢复", attachments: [], status: "completed" },
+        ],
+      });
+
+      expect(imported.conversation.presetId).toBe("catgirl");
+      expect(imported.conversation.channelId).toBe("");
+      expect(imported.conversation.model).toBe("");
+      expect(imported.skippedAttachmentCount).toBe(1);
+      expect(imported.messages).toHaveLength(2);
+      expect(imported.messages[0].attachments).toEqual([{ assetKey: "image:available", mimeType: "image/png", name: "available.png" }]);
+      expect(service.getConversationWithMessages("user-a", imported.conversation.id)?.conversation.title).toBe("外部会话");
+    } finally {
+      store.close();
+    }
+  });
+
   test("marks interrupted streaming messages as failed when the service starts", () => {
     const { store, service } = setup();
     const conversation = service.createConversation("user-a");
@@ -185,6 +226,120 @@ describe("chat service", () => {
         }),
       ).toThrow(/已经不能重试/);
       expect(service.getChatUsage("user-a").usedToday).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("regenerates the latest completed answer without duplicating the question", () => {
+    const { store, service } = setup();
+    try {
+      const conversation = service.createConversation("user-a");
+      const first = service.beginTurn("user-a", conversation.id, {
+        content: "请给我一个方案",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+      });
+      service.completeAssistant("user-a", first.assistantMessage.id, "旧回答");
+
+      const regenerated = service.beginTurn("user-a", conversation.id, {
+        content: "这段内容不应覆盖原问题",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+        retryAssistantMessageId: first.assistantMessage.id,
+      });
+      expect(regenerated.userMessage.id).toBe(first.userMessage.id);
+      expect(regenerated.assistantMessage.id).toBe(first.assistantMessage.id);
+      expect(service.getConversationWithMessages("user-a", conversation.id)?.messages).toHaveLength(2);
+      expect(service.getChatUsage("user-a").usedToday).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("edits a question by truncating later context before creating a new answer", () => {
+    const { store, service } = setup();
+    try {
+      const conversation = service.createConversation("user-a");
+      const first = service.beginTurn("user-a", conversation.id, {
+        content: "第一版问题",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+      });
+      service.completeAssistant("user-a", first.assistantMessage.id, "第一版回答");
+      const later = service.beginTurn("user-a", conversation.id, {
+        content: "后续问题",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+      });
+      service.completeAssistant("user-a", later.assistantMessage.id, "后续回答");
+
+      const edited = service.beginTurn("user-a", conversation.id, {
+        content: "修正后的问题",
+        attachments: [{ assetKey: "image:edited", mimeType: "image/png", name: "edited.png" }],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+        editUserMessageId: first.userMessage.id,
+      });
+      const detail = service.getConversationWithMessages("user-a", conversation.id)!;
+      expect(edited.userMessage.id).toBe(first.userMessage.id);
+      expect(detail.messages).toHaveLength(2);
+      expect(detail.messages[0]).toMatchObject({ content: "修正后的问题", attachments: [{ assetKey: "image:edited" }] });
+      expect(detail.messages[1].status).toBe("streaming");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("deletes a message and everything after it as one context rollback", () => {
+    const { store, service } = setup();
+    try {
+      const conversation = service.createConversation("user-a");
+      const first = service.beginTurn("user-a", conversation.id, {
+        content: "保留的问题",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+      });
+      service.completeAssistant("user-a", first.assistantMessage.id, "保留的回答");
+      const second = service.beginTurn("user-a", conversation.id, {
+        content: "需要删除的问题",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+      });
+      service.completeAssistant("user-a", second.assistantMessage.id, "需要删除的回答");
+
+      const detail = service.deleteMessagesFrom("user-a", conversation.id, second.userMessage.id);
+      expect(detail.messages.map((message) => message.content)).toEqual(["保留的问题", "保留的回答"]);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("continues the latest answer while preserving its existing content", () => {
+    const { store, service } = setup();
+    try {
+      const conversation = service.createConversation("user-a");
+      const first = service.beginTurn("user-a", conversation.id, {
+        content: "请分两段回答",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+      });
+      service.completeAssistant("user-a", first.assistantMessage.id, "第一段");
+
+      const continued = service.beginContinuation("user-a", conversation.id, first.assistantMessage.id, "text-channel", "gpt-4o-mini");
+      expect(continued.userMessage.id).toBe(first.userMessage.id);
+      expect(continued.assistantMessage.content).toBe("第一段");
+      expect(continued.contextMessages.map((message) => message.content)).toEqual(["请分两段回答", "第一段"]);
+      const completed = service.completeAssistant("user-a", first.assistantMessage.id, "第一段第二段", 3);
+      expect(completed.content).toBe("第一段第二段");
+      expect(service.getChatUsage("user-a")).toMatchObject({ usedToday: 2, outputCharacters: 6 });
     } finally {
       store.close();
     }

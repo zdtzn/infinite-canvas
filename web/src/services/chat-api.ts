@@ -36,6 +36,12 @@ export type ChatConversationDetail = {
     messages: ChatMessage[];
 };
 
+export type ChatImportResult = {
+    conversation: ChatConversation;
+    messages: ChatMessage[];
+    skippedAttachmentCount: number;
+};
+
 export type ChatUsage = {
     usageDate: string;
     dailyLimit: number | null;
@@ -61,6 +67,8 @@ export type SendChatMessageInput = {
     content: string;
     attachments: ChatAttachment[];
     retryAssistantMessageId?: string;
+    editUserMessageId?: string;
+    continueAssistantMessageId?: string;
     expectedUserId?: string;
     signal?: AbortSignal;
     onStarted?: (event: ChatStartedEvent) => void;
@@ -77,6 +85,15 @@ export function createChatConversation(input: { title?: string; presetId?: strin
     return serverRequest<{ conversation: ChatConversation }>("/api/chat/conversations", { method: "POST", body: input, expectedUserId });
 }
 
+export function importChatConversation(payload: unknown, expectedUserId?: string) {
+    return serverRequest<ChatImportResult>("/api/chat/conversations/import", {
+        method: "POST",
+        body: payload,
+        timeoutMs: 30_000,
+        expectedUserId,
+    });
+}
+
 export function updateChatConversationPreset(id: string, presetId: string, expectedUserId?: string) {
     return serverRequest<{ conversation: ChatConversation }>(`/api/chat/conversations/${encodeURIComponent(id)}`, {
         method: "PATCH",
@@ -91,6 +108,13 @@ export function fetchChatConversation(id: string, expectedUserId?: string) {
 
 export function deleteChatConversation(id: string, expectedUserId?: string) {
     return serverRequest(`/api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
+}
+
+export function truncateChatMessages(conversationId: string, messageId: string, expectedUserId?: string) {
+    return serverRequest<ChatConversationDetail>(
+        `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/truncate`,
+        { method: "POST", expectedUserId },
+    );
 }
 
 export function fetchChatUsage(expectedUserId?: string) {
@@ -112,6 +136,8 @@ export async function sendChatMessage(input: SendChatMessageInput) {
                 content: input.content,
                 attachments: input.attachments.map(({ assetKey, mimeType, name }) => ({ assetKey, mimeType, name })),
                 ...(input.retryAssistantMessageId ? { retryAssistantMessageId: input.retryAssistantMessageId } : {}),
+                ...(input.editUserMessageId ? { editUserMessageId: input.editUserMessageId } : {}),
+                ...(input.continueAssistantMessageId ? { continueAssistantMessageId: input.continueAssistantMessageId } : {}),
             }),
             signal: input.signal,
         },

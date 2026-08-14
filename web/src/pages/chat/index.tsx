@@ -1,14 +1,14 @@
-import { App, Button, Dropdown, Empty, Input, Popconfirm, Segmented, Skeleton, Tag, Tooltip } from "antd";
-import { ChevronDown, Copy, ImagePlus, LoaderCircle, MessageCircle, Plus, RotateCcw, Send, Sparkles, Trash2, X } from "lucide-react";
+import { App, Button, Drawer, Dropdown, Empty, Input, Popconfirm, Segmented, Skeleton, Tag, Tooltip } from "antd";
+import { BookOpen, ChevronDown, Copy, Download, FileUp, ImagePlus, LoaderCircle, MessageCircle, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { createChatConversation, deleteChatConversation, fetchChatConversation, fetchChatConversations, sendChatMessage, updateChatConversationPreset, uploadChatImage, type ChatAttachment, type ChatConversation, type ChatMessage } from "@/services/chat-api";
+import { createChatConversation, deleteChatConversation, fetchChatConversation, fetchChatConversations, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, uploadChatImage, type ChatAttachment, type ChatConversation, type ChatMessage } from "@/services/chat-api";
 import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
-import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId } from "./chat-presets";
+import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId, type ChatPresetOption } from "./chat-presets";
 import DouQiLifeView from "./dou-qi-life-view";
 
 const welcomeLines = ["把疑问交给此方天地。", "可上传图片，让模型结合画面回答。", "这里适合聊创意、提示词、商品图、画面结构和日常问题。"];
@@ -27,6 +27,8 @@ type PendingChatTurn = {
     userMessageId?: string;
     assistantMessageId?: string;
     retryAssistantMessageId?: string;
+    editUserMessageId?: string;
+    continueAssistantMessageId?: string;
 };
 
 type ChatMode = "chat" | "douqi";
@@ -34,6 +36,7 @@ type ChatMode = "chat" | "douqi";
 export default function ChatPage() {
     const { message, modal } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const importInputRef = useRef<HTMLInputElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
     const userId = useUserStore((state) => state.user?.id || "");
@@ -44,13 +47,19 @@ export default function ChatPage() {
     const [loading, setLoading] = useState(true);
     const [detailLoading, setDetailLoading] = useState(false);
     const [creating, setCreating] = useState(false);
+    const [importing, setImporting] = useState(false);
     const [sending, setSending] = useState(false);
     const [mode, setMode] = useState<ChatMode>("chat");
     const [uploading, setUploading] = useState(false);
     const [draft, setDraft] = useState("");
     const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+    const [editingMessageId, setEditingMessageId] = useState("");
     const [presetId, setPresetId] = useState<ChatPresetId>(() => readLocalChatPreset(userId));
     const [presetReadyUser, setPresetReadyUser] = useState("");
+    const [chatPersona, setChatPersona] = useState("");
+    const [personaDraft, setPersonaDraft] = useState("");
+    const [personaSaving, setPersonaSaving] = useState(false);
+    const [profileOpen, setProfileOpen] = useState(false);
     const presetIdRef = useRef<ChatPresetId>(defaultChatPresetId);
     const presetEditedDuringHydration = useRef(false);
     const presetSaveQueue = useRef(Promise.resolve());
@@ -74,6 +83,8 @@ export default function ChatPage() {
         presetIdRef.current = localPresetId;
         setPresetId(localPresetId);
         setPresetReadyUser("");
+        setChatPersona("");
+        setPersonaDraft("");
         if (!userId)
             return () => {
                 canceled = true;
@@ -87,6 +98,9 @@ export default function ChatPage() {
                 presetIdRef.current = nextPresetId;
                 setPresetId(nextPresetId);
                 writeLocalChatPreset(userId, nextPresetId);
+                const nextPersona = preferences.chatPersona || "";
+                setChatPersona(nextPersona);
+                setPersonaDraft(nextPersona);
                 setPresetReadyUser(userId);
                 if (presetEditedDuringHydration.current) {
                     enqueuePresetSave(nextPresetId, userId, () => !canceled);
@@ -191,7 +205,7 @@ export default function ChatPage() {
             const stoppedMessage = "本次回答已停止";
             if (activeConversationIdRef.current === pending.conversationId) {
                 setMessages((current) => {
-                    const assistantId = pending.retryAssistantMessageId || pending.assistantMessageId || pending.optimisticAssistantId;
+                    const assistantId = pending.retryAssistantMessageId || pending.continueAssistantMessageId || pending.assistantMessageId || pending.optimisticAssistantId;
                     if (current.some((item) => item.id === assistantId)) {
                         return current.map((item) => (item.id === assistantId ? { ...item, status: "failed", error: stoppedMessage } : item));
                     }
@@ -209,6 +223,9 @@ export default function ChatPage() {
         activeConversationIdRef.current = id;
         setActiveConversationId(id);
         setMessages([]);
+        setEditingMessageId("");
+        setDraft("");
+        setAttachments([]);
     }
 
     async function handleNewConversation() {
@@ -221,10 +238,76 @@ export default function ChatPage() {
             activeConversationIdRef.current = response.conversation.id;
             setActiveConversationId(response.conversation.id);
             setMessages([]);
+            setEditingMessageId("");
+            setDraft("");
+            setAttachments([]);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "新建问道失败");
         } finally {
             setCreating(false);
+        }
+    }
+
+    function handleExportConversation() {
+        if (!activeConversation) {
+            message.info("请先打开一段问道");
+            return;
+        }
+        const payload = {
+            format: "infinite-canvas.chat",
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            conversation: {
+                title: activeConversation.title,
+                presetId: activeConversation.presetId,
+            },
+            messages: messages
+                .filter((item) => !item.id.startsWith("optimistic-") && item.status !== "streaming")
+                .map((item) => ({
+                    role: item.role,
+                    content: item.content,
+                    status: item.status,
+                    error: item.error,
+                    attachments: item.attachments.map(({ assetKey, mimeType, name }) => ({ assetKey, mimeType, name })),
+                })),
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `${safeChatFilename(activeConversation.title)}.json`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+        message.success("会话已导出");
+    }
+
+    async function handleImportFile(files: FileList | null) {
+        const file = files?.[0];
+        if (importInputRef.current) importInputRef.current.value = "";
+        if (!file) return;
+        if (file.size > 512 * 1024) {
+            message.error("会话文件过大，无法导入");
+            return;
+        }
+        if (!(await confirmPendingNavigation("导入会话"))) return;
+        setImporting(true);
+        try {
+            const payload = JSON.parse(await file.text()) as unknown;
+            const response = await importChatConversation(payload, userId);
+            setConversations((current) => [response.conversation, ...current.filter((item) => item.id !== response.conversation.id)]);
+            activeConversationIdRef.current = response.conversation.id;
+            setActiveConversationId(response.conversation.id);
+            setMessages(response.messages);
+            setEditingMessageId("");
+            setDraft("");
+            setAttachments([]);
+            message.success(response.skippedAttachmentCount ? `会话已导入，${response.skippedAttachmentCount} 张图片未恢复` : "会话已导入");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "会话文件导入失败");
+        } finally {
+            setImporting(false);
         }
     }
 
@@ -249,6 +332,9 @@ export default function ChatPage() {
                 activeConversationIdRef.current = nextId;
                 setActiveConversationId(nextId);
                 setMessages([]);
+                setEditingMessageId("");
+                setDraft("");
+                setAttachments([]);
             }
         } catch (error) {
             message.error(error instanceof Error ? error.message : "删除失败");
@@ -279,6 +365,8 @@ export default function ChatPage() {
         content: string;
         attachments: ChatAttachment[];
         retryAssistantMessageId?: string;
+        editUserMessageId?: string;
+        continueAssistantMessageId?: string;
         showOptimisticUser: boolean;
     }) {
         if (sendingRef.current || pendingTurnRef.current) return;
@@ -298,6 +386,8 @@ export default function ChatPage() {
             terminal: false,
             completion,
             retryAssistantMessageId: input.retryAssistantMessageId,
+            editUserMessageId: input.editUserMessageId,
+            continueAssistantMessageId: input.continueAssistantMessageId,
         };
         pendingTurnRef.current = pending;
         const controller = new AbortController();
@@ -307,6 +397,16 @@ export default function ChatPage() {
             setDraft("");
             setAttachments([]);
             setMessages((current) => [...current, createOptimisticUserMessage(pending, input.content, input.attachments)]);
+        } else if (input.editUserMessageId && activeConversationIdRef.current === input.conversationId) {
+            setDraft("");
+            setAttachments([]);
+            setMessages((current) => {
+                const index = current.findIndex((item) => item.id === input.editUserMessageId);
+                if (index < 0) return current;
+                return [...current.slice(0, index), { ...current[index], content: input.content, attachments: input.attachments, updatedAt: createdAt }];
+            });
+        } else if (input.continueAssistantMessageId && activeConversationIdRef.current === input.conversationId) {
+            setMessages((current) => current.map((item) => (item.id === input.continueAssistantMessageId ? { ...item, status: "streaming", error: "" } : item)));
         } else if (input.retryAssistantMessageId && activeConversationIdRef.current === input.conversationId) {
             setMessages((current) => current.map((item) => (item.id === input.retryAssistantMessageId ? { ...item, content: "", status: "streaming", error: "" } : item)));
         }
@@ -316,6 +416,8 @@ export default function ChatPage() {
                 content: input.content,
                 attachments: input.attachments,
                 ...(input.retryAssistantMessageId ? { retryAssistantMessageId: input.retryAssistantMessageId } : {}),
+                ...(input.editUserMessageId ? { editUserMessageId: input.editUserMessageId } : {}),
+                ...(input.continueAssistantMessageId ? { continueAssistantMessageId: input.continueAssistantMessageId } : {}),
                 expectedUserId: userId,
                 signal: controller.signal,
                 onStarted: ({ conversation, userMessage, assistantMessage }) => {
@@ -370,7 +472,7 @@ export default function ChatPage() {
             const errorMessage = error instanceof Error ? error.message : "问道台暂未回应";
             if (activeConversationIdRef.current === input.conversationId) {
                 setMessages((current) => {
-                    const failedMessageId = pending.retryAssistantMessageId || pending.assistantMessageId;
+                    const failedMessageId = pending.retryAssistantMessageId || pending.continueAssistantMessageId || pending.assistantMessageId;
                     if (failedMessageId) {
                         return current.map((item) => (item.id === failedMessageId ? { ...item, status: "failed", error: aborted ? "本次回答已停止" : errorMessage } : item));
                     }
@@ -383,6 +485,7 @@ export default function ChatPage() {
             abortRef.current = null;
             if (pendingTurnRef.current === pending) pendingTurnRef.current = null;
             sendingRef.current = false;
+            if (input.editUserMessageId) setEditingMessageId("");
             resolveCompletion();
         }
     }
@@ -393,7 +496,7 @@ export default function ChatPage() {
         sendStartingRef.current = true;
         try {
             const conversationId = await ensureConversation();
-            await runChatTurn({ conversationId, content, attachments, showOptimisticUser: true });
+            await runChatTurn({ conversationId, content, attachments, editUserMessageId: editingMessageId || undefined, showOptimisticUser: !editingMessageId });
         } catch (error) {
             message.error(error instanceof Error ? error.message : "问道台暂未回应");
         } finally {
@@ -402,7 +505,7 @@ export default function ChatPage() {
     }
 
     async function handleRetry(item: ChatMessage) {
-        if (item.role !== "assistant" || item.status !== "failed" || item.id.startsWith("optimistic-")) return;
+        if (item.role !== "assistant" || !["failed", "completed"].includes(item.status) || item.id.startsWith("optimistic-")) return;
         if (pendingTurnRef.current) {
             message.info("请等待当前回答结束");
             return;
@@ -414,6 +517,60 @@ export default function ChatPage() {
             retryAssistantMessageId: item.id,
             showOptimisticUser: false,
         });
+    }
+
+    async function handleContinue(item: ChatMessage) {
+        if (item.role !== "assistant" || item.status !== "completed" || item.id.startsWith("optimistic-")) return;
+        if (pendingTurnRef.current) {
+            message.info("请等待当前回答结束");
+            return;
+        }
+        await runChatTurn({
+            conversationId: item.conversationId,
+            content: "",
+            attachments: [],
+            continueAssistantMessageId: item.id,
+            showOptimisticUser: false,
+        });
+    }
+
+    function handleEdit(item: ChatMessage) {
+        if (item.role !== "user" || item.status !== "completed" || item.id.startsWith("optimistic-") || sendingRef.current) return;
+        setEditingMessageId(item.id);
+        setDraft(item.content);
+        setAttachments(item.attachments);
+    }
+
+    function cancelEdit() {
+        setEditingMessageId("");
+        setDraft("");
+        setAttachments([]);
+    }
+
+    async function handleDeleteMessage(item: ChatMessage) {
+        if (item.id.startsWith("optimistic-")) return;
+        if (pendingTurnRef.current?.conversationId === item.conversationId && !(await confirmPendingNavigation("删除"))) return;
+        const confirmed = await new Promise<boolean>((resolve) => {
+            modal.confirm({
+                title: "回退问道内容",
+                content: "将删除这条消息及其后的所有内容，已经生成的回答也会一起移除。是否继续？",
+                okText: "删除并回退",
+                cancelText: "暂不删除",
+                okButtonProps: { danger: true },
+                onOk: () => resolve(true),
+                onCancel: () => resolve(false),
+            });
+        });
+        if (!confirmed) return;
+        try {
+            const response = await truncateChatMessages(item.conversationId, item.id, userId);
+            const lastMessage = response.messages[response.messages.length - 1];
+            setConversations((current) => upsertConversation(current, { ...response.conversation, lastMessage: lastMessage?.content.slice(0, 120) || "" }));
+            if (activeConversationIdRef.current === item.conversationId) setMessages(response.messages);
+            if (editingMessageId && (editingMessageId === item.id || !response.messages.some((message) => message.id === editingMessageId))) cancelEdit();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "消息删除失败");
+        }
     }
 
     function handleStop() {
@@ -470,10 +627,28 @@ export default function ChatPage() {
             });
     }
 
+    async function handleSavePersona() {
+        if (!userId || personaSaving) return;
+        setPersonaSaving(true);
+        try {
+            const nextPersona = personaDraft.trim();
+            const response = await saveServerUserPreferences({ chatPersona: nextPersona }, userId);
+            const savedPersona = response.chatPersona || nextPersona;
+            setChatPersona(savedPersona);
+            setPersonaDraft(savedPersona);
+            message.success(savedPersona ? "用户身份已保存" : "用户身份已清除");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "用户身份保存失败");
+        } finally {
+            setPersonaSaving(false);
+        }
+    }
+
     if (mode === "douqi") return <DouQiLifeView onExit={() => setMode("chat")} />;
 
     return (
         <div className="h-full overflow-hidden bg-[#f7f5ef] text-stone-900 dark:bg-[#11100e] dark:text-[#f5efe3]">
+            <input ref={importInputRef} type="file" accept=".json,application/json" className="hidden" onChange={(event) => void handleImportFile(event.target.files)} />
             <div className="mx-auto grid h-full max-w-[1480px] grid-cols-[280px_minmax(0,1fr)] gap-0 px-4 py-4 max-lg:grid-cols-1 max-lg:px-3">
                 <aside className="min-h-0 border-r border-stone-200/80 pr-4 max-lg:hidden dark:border-white/10">
                     <div className="mb-4 flex items-center justify-between gap-2">
@@ -541,6 +716,35 @@ export default function ChatPage() {
                                 options={[{ label: "普通问道", value: "chat" }, { label: "斗气人生", value: "douqi" }]}
                                 onChange={(value) => setMode(value as ChatMode)}
                             />
+                            <Tooltip title="导出当前会话">
+                                <Button
+                                    type="text"
+                                    className="!h-8 !w-8 !min-w-8 !p-0"
+                                    icon={<Download className="size-4" />}
+                                    aria-label="导出当前会话"
+                                    disabled={!activeConversation || detailLoading || importing}
+                                    onClick={handleExportConversation}
+                                />
+                            </Tooltip>
+                            <Tooltip title="导入会话">
+                                <Button
+                                    type="text"
+                                    className="!h-8 !w-8 !min-w-8 !p-0"
+                                    icon={importing ? <LoaderCircle className="size-4 animate-spin" /> : <FileUp className="size-4" />}
+                                    aria-label="导入会话"
+                                    disabled={sending || importing}
+                                    onClick={() => importInputRef.current?.click()}
+                                />
+                            </Tooltip>
+                            <Tooltip title="查看角色卡与用户身份">
+                                <Button
+                                    type="text"
+                                    className="!h-8 !w-8 !min-w-8 !p-0"
+                                    icon={<BookOpen className="size-4" />}
+                                    aria-label="查看角色卡与用户身份"
+                                    onClick={() => setProfileOpen(true)}
+                                />
+                            </Tooltip>
                             <Button className="lg:hidden" icon={<Plus className="size-4" />} onClick={handleNewConversation} loading={creating}>
                                 新建
                             </Button>
@@ -549,10 +753,10 @@ export default function ChatPage() {
 
                     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-stone-200/80 bg-white/55 p-4 dark:border-white/10 dark:bg-black/10">
                         {detailLoading ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
-                        {!detailLoading && !messages.length ? <WelcomeEmpty /> : null}
+                        {!detailLoading && !messages.length ? <WelcomeEmpty preset={activePreset} /> : null}
                         <div className="space-y-5">
-                            {messages.map((item) => (
-                                <ChatBubble key={item.id} item={item} onRetry={handleRetry} />
+                            {messages.map((item, index) => (
+                                <ChatBubble key={item.id} item={item} isLatest={index === messages.length - 1} onRetry={handleRetry} onContinue={handleContinue} onEdit={handleEdit} onDelete={handleDeleteMessage} />
                             ))}
                             {sending ? (
                                 <div className="flex items-center gap-2 text-xs text-stone-500">
@@ -564,6 +768,17 @@ export default function ChatPage() {
                     </div>
 
                     <div className="mt-3 shrink-0 rounded-xl border border-stone-200/80 bg-white/85 p-3 shadow-sm dark:border-white/10 dark:bg-[#171512]">
+                        {editingMessageId ? (
+                            <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-800 dark:border-amber-300/15 dark:bg-amber-300/[0.06] dark:text-amber-100">
+                                <span className="inline-flex min-w-0 items-center gap-2 truncate">
+                                    <Pencil className="size-3.5 shrink-0" />
+                                    正在编辑这条问题，发送后会从这里重新生成回答
+                                </span>
+                                <Button type="text" size="small" className="shrink-0 !px-1.5" onClick={cancelEdit}>
+                                    取消编辑
+                                </Button>
+                            </div>
+                        ) : null}
                         {attachments.length ? (
                             <div className="mb-3 flex flex-wrap gap-2">
                                 {attachments.map((attachment) => (
@@ -636,18 +851,80 @@ export default function ChatPage() {
                                 </Button>
                             ) : (
                                 <Button type="primary" className="!h-10" icon={<Send className="size-4" />} disabled={!canSend} onClick={() => void handleSend()}>
-                                    发送
+                                    {editingMessageId ? "保存并重答" : "发送"}
                                 </Button>
                             )}
                         </div>
                     </div>
                 </main>
             </div>
+            <Drawer
+                title={
+                    <div className="flex items-center gap-2">
+                        <span>{activePreset.label}</span>
+                        <Tag color="gold" bordered={false}>
+                            角色卡
+                        </Tag>
+                    </div>
+                }
+                open={profileOpen}
+                width="min(420px, 100vw)"
+                onClose={() => setProfileOpen(false)}
+                styles={{ body: { padding: 20 } }}
+            >
+                <div className="space-y-5">
+                    <div className="flex items-start gap-3">
+                        <div className="grid size-12 shrink-0 place-items-center rounded-xl border border-amber-300/50 bg-amber-100/60 text-lg font-semibold text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-200">
+                            {activePreset.label.slice(0, 1)}
+                        </div>
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2 text-base font-semibold">
+                                <UserRound className="size-4 text-amber-600" />
+                                {activePreset.label}
+                            </div>
+                            <p className="mt-1 text-sm leading-6 text-stone-500 dark:text-stone-400">{activePreset.description}</p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-stone-500 dark:text-stone-400">角色标签</div>
+                        <div className="flex flex-wrap gap-2">
+                            {activePreset.tags.map((tag) => (
+                                <Tag key={tag}>{tag}</Tag>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 text-sm leading-6 text-stone-700 dark:border-amber-300/15 dark:bg-amber-300/[0.06] dark:text-stone-200">
+                        <div className="mb-1 text-xs font-medium text-amber-700 dark:text-amber-200">初次问候</div>
+                        {activePreset.greeting}
+                    </div>
+
+                    <div>
+                        <div className="mb-1 text-sm font-semibold">用户身份</div>
+                        <div className="mb-2 text-xs leading-5 text-stone-500 dark:text-stone-400">告诉问道台你的背景、偏好或长期目标。它只作为回答参考，不会覆盖角色设定与安全边界。</div>
+                        <Input.TextArea
+                            value={personaDraft}
+                            onChange={(event) => setPersonaDraft(event.target.value)}
+                            maxLength={2000}
+                            showCount
+                            autoSize={{ minRows: 5, maxRows: 10 }}
+                            placeholder="例如：我是独立产品设计师，偏好直接、具体、可执行的建议。"
+                        />
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                            <span className="text-xs text-stone-400">{chatPersona ? "已保存到当前账户" : "尚未设置"}</span>
+                            <Button type="primary" loading={personaSaving} onClick={() => void handleSavePersona()}>
+                                保存用户身份
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            </Drawer>
         </div>
     );
 }
 
-function WelcomeEmpty() {
+function WelcomeEmpty({ preset }: { preset: ChatPresetOption }) {
     return (
         <div className="grid min-h-[52vh] place-items-center text-center">
             <div className="max-w-md">
@@ -655,7 +932,13 @@ function WelcomeEmpty() {
                     <MessageCircle className="size-6" />
                 </div>
                 <h1 className="mt-5 text-2xl font-semibold tracking-[0.18em]">问道台</h1>
-                <div className="mt-3 space-y-1 text-sm leading-6 text-stone-500 dark:text-stone-400">
+                <div className="mt-3 text-sm leading-6 text-stone-700 dark:text-stone-200">{preset.greeting}</div>
+                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                    {preset.tags.map((tag) => (
+                        <Tag key={tag}>{tag}</Tag>
+                    ))}
+                </div>
+                <div className="mt-4 space-y-1 text-xs leading-6 text-stone-500 dark:text-stone-400">
                     {welcomeLines.map((line) => (
                         <div key={line}>{line}</div>
                     ))}
@@ -693,10 +976,17 @@ function createOptimisticAssistantMessage(pending: PendingChatTurn, error: strin
     };
 }
 
-function ChatBubble({ item, onRetry }: { item: ChatMessage; onRetry: (item: ChatMessage) => void }) {
+function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete }: { item: ChatMessage; isLatest: boolean; onRetry: (item: ChatMessage) => void; onContinue: (item: ChatMessage) => void; onEdit: (item: ChatMessage) => void; onDelete: (item: ChatMessage) => void }) {
     const isUser = item.role === "user";
     const copyText = useCopyText();
     const copyValue = item.status === "streaming" ? "" : item.content.trim() || (item.status === "failed" ? item.error?.trim() || "" : "");
+    const canDelete = !item.id.startsWith("optimistic-") && item.status !== "streaming";
+    const menuItems = [
+        ...(isUser && item.status === "completed" ? [{ key: "edit", label: "编辑问题", icon: <Pencil className="size-3.5" /> }] : []),
+        ...(!isUser && isLatest && item.status === "completed" ? [{ key: "continue", label: "继续生成", icon: <MoreHorizontal className="size-3.5" /> }, { key: "retry", label: "重新生成", icon: <RotateCcw className="size-3.5" /> }] : []),
+        ...(!isUser && isLatest && item.status === "failed" ? [{ key: "retry", label: "重试回答", icon: <RotateCcw className="size-3.5" /> }] : []),
+        ...(canDelete ? [{ key: "delete", label: "删除并回退", icon: <Trash2 className="size-3.5" /> }] : []),
+    ];
     return (
         <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
             <div
@@ -716,34 +1006,53 @@ function ChatBubble({ item, onRetry }: { item: ChatMessage; onRetry: (item: Chat
                 ) : null}
                 {isUser ? <div className="whitespace-pre-wrap break-words">{item.content}</div> : <Streamdown className="agent-streamdown">{item.content || (item.status === "streaming" ? "正在推演..." : item.error || "未返回内容")}</Streamdown>}
                 {item.status === "failed" ? <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">{item.error || "本次问道未能完成"}</div> : null}
-                {item.role === "assistant" && item.status === "failed" && !item.id.startsWith("optimistic-") ? (
-                    <Button
-                        type="text"
-                        size="small"
-                        className="mt-2 !h-7 !px-1.5 !text-stone-500 hover:!bg-stone-100 hover:!text-stone-800 dark:!text-stone-400 dark:hover:!bg-white/10 dark:hover:!text-stone-100"
-                        icon={<RotateCcw className="size-3.5" />}
-                        onClick={() => onRetry(item)}
-                    >
-                        重试
-                    </Button>
-                ) : null}
-                {copyValue ? (
-                    <div className={cn("mt-1.5 flex", isUser ? "justify-end" : "justify-start")}>
-                        <Tooltip title="复制文字">
-                            <Button
-                                type="text"
-                                size="small"
-                                className={cn(
-                                    "!h-7 !w-7 !min-w-7 !p-0",
-                                    isUser
-                                        ? "!text-white/65 hover:!bg-white/10 hover:!text-white dark:!text-stone-700/65 dark:hover:!bg-stone-900/10 dark:hover:!text-stone-900"
-                                        : "!text-stone-400 hover:!bg-stone-100 hover:!text-stone-700 dark:hover:!bg-white/10 dark:hover:!text-stone-200",
-                                )}
-                                aria-label="复制文字"
-                                icon={<Copy className="size-3.5" />}
-                                onClick={() => copyText(copyValue, isUser ? "问题已复制" : "回答已复制")}
-                            />
-                        </Tooltip>
+                {copyValue || menuItems.length ? (
+                    <div className={cn("mt-1.5 flex items-center gap-1", isUser ? "justify-end" : "justify-start")}>
+                        {copyValue ? (
+                            <Tooltip title="复制文字">
+                                <Button
+                                    type="text"
+                                    size="small"
+                                    className={cn(
+                                        "!h-7 !w-7 !min-w-7 !p-0",
+                                        isUser
+                                            ? "!text-white/65 hover:!bg-white/10 hover:!text-white dark:!text-stone-700/65 dark:hover:!bg-stone-900/10 dark:hover:!text-stone-900"
+                                            : "!text-stone-400 hover:!bg-stone-100 hover:!text-stone-700 dark:hover:!bg-white/10 dark:hover:!text-stone-200",
+                                    )}
+                                    aria-label="复制文字"
+                                    icon={<Copy className="size-3.5" />}
+                                    onClick={() => copyText(copyValue, isUser ? "问题已复制" : "回答已复制")}
+                                />
+                            </Tooltip>
+                        ) : null}
+                        {menuItems.length ? (
+                            <Dropdown
+                                trigger={["click"]}
+                                placement={isUser ? "bottomRight" : "bottomLeft"}
+                                menu={{
+                                    items: menuItems,
+                                    onClick: ({ key }) => {
+                                        if (key === "edit") onEdit(item);
+                                        if (key === "continue") onContinue(item);
+                                        if (key === "retry") onRetry(item);
+                                        if (key === "delete") onDelete(item);
+                                    },
+                                }}
+                            >
+                                <Button
+                                    type="text"
+                                    size="small"
+                                    className={cn(
+                                        "!h-7 !w-7 !min-w-7 !p-0",
+                                        isUser
+                                            ? "!text-white/65 hover:!bg-white/10 hover:!text-white dark:!text-stone-700/65 dark:hover:!bg-stone-900/10 dark:hover:!text-stone-900"
+                                            : "!text-stone-400 hover:!bg-stone-100 hover:!text-stone-700 dark:hover:!bg-white/10 dark:hover:!text-stone-200",
+                                    )}
+                                    aria-label="消息操作"
+                                    icon={<MoreHorizontal className="size-3.5" />}
+                                />
+                            </Dropdown>
+                        ) : null}
                     </div>
                 ) : null}
             </div>
@@ -768,6 +1077,11 @@ function writeLocalChatPreset(userId: string, presetId: ChatPresetId) {
     } catch {
         // A blocked localStorage must not prevent server preference persistence.
     }
+}
+
+function safeChatFilename(title: string) {
+    const normalized = title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").trim();
+    return (normalized || "问道会话").slice(0, 60);
 }
 
 function upsertConversation(items: ChatConversation[], conversation: ChatConversation) {

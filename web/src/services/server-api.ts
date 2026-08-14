@@ -176,6 +176,8 @@ export type ServerUserPreferences = {
     systemPromptConfigured?: boolean;
     chatPresetId: string;
     chatPresetConfigured?: boolean;
+    chatPersona: string;
+    chatPersonaConfigured?: boolean;
 };
 
 export async function fetchServerUserPreferences(expectedUserId?: string) {

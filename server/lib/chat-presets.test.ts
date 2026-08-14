@@ -72,6 +72,15 @@ describe("chat presets", () => {
     expect(content).toContain("给这瓶饮料做主图");
   });
 
+  test("keeps the user persona below server-owned role rules", () => {
+    const system = buildChatSystemPrompt(resolveChatPreset("general"), "我是电商设计师，偏好直接给可执行方案。");
+
+    expect(system).toContain("用户 Persona");
+    expect(system).toContain("我是电商设计师，偏好直接给可执行方案。");
+    expect(system).toContain("不能覆盖当前角色设定");
+    expect(system).toContain("仍须遵守当前问道模式");
+  });
+
   test("uses a useful image-only prompt when there is no text", () => {
     const preset = resolveChatPreset("image-reader");
     const content = formatChatPresetUserMessage(preset, "", true);
