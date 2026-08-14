@@ -11,6 +11,7 @@ import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webd
 import { deleteServerChannel, reorderServerChannels, saveServerChannel } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { ConfigMembers } from "@/components/layout/config-members";
+import { ConfigLocalStorage } from "@/components/layout/config-local-storage";
 import { ImperialModePreferences } from "@/features/cultivation/imperial-mode";
 import { useUserStore } from "@/stores/use-user-store";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
@@ -358,6 +359,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 </section>
                             </Form>
                         ),
+                    },
+                    {
+                        key: "local-storage",
+                        label: "本地存储",
+                        children: <ConfigLocalStorage active={activeTab === "local-storage"} />,
                     },
                 ].filter((item) => canManageChannels || item.key !== "channels")}
             />

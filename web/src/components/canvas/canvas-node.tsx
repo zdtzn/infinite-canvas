@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronRight, Group, Image as ImageIcon, LoaderCircle, Music2, Puzzle, RefreshCw, Star, Video } from "lucide-react";
+import { ChevronRight, Copy, Download, Group, Image as ImageIcon, LoaderCircle, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -53,6 +53,9 @@ type CanvasNodeProps = {
     onTitleChange: (nodeId: string, title: string) => void;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
+    onDuplicate?: (node: CanvasNodeData) => void;
+    onDownload?: (node: CanvasNodeData) => void;
+    onDelete?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData) => void;
@@ -81,6 +84,9 @@ type NodeContentRendererProps = {
     onImageLoad?: (node: CanvasNodeData, image: HTMLImageElement) => void;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
+    onDuplicate?: () => void;
+    onDownload?: () => void;
+    onDelete?: (node: CanvasNodeData) => void;
     groupChildCount: number;
     isDouEmperor: boolean;
 };
@@ -119,6 +125,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     onTitleChange,
     onToggleBatch,
     onSetBatchPrimary,
+    onDuplicate,
+    onDownload,
+    onDelete,
     onRetry,
     onGenerateImage,
     onViewImage,
@@ -440,6 +449,9 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onImageLoad={onImageLoad}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         onSetBatchPrimary={() => onSetBatchPrimary?.(data)}
+                        onDuplicate={() => onDuplicate?.(data)}
+                        onDownload={() => onDownload?.(data)}
+                        onDelete={onDelete}
                         groupChildCount={groupChildCount}
                     />
                 </div>
@@ -538,7 +550,7 @@ function LoadingContent({ node, theme }: Pick<NodeContentRendererProps, "node" |
     );
 }
 
-function ErrorContent({ node, theme, onRetry, isDouEmperor }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry" | "isDouEmperor">) {
+function ErrorContent({ node, theme, onRetry, onDelete, isDouEmperor }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry" | "onDelete" | "isDouEmperor">) {
     const isImageCreation = node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Config;
     const feedback = isImageCreation ? generationFailureFeedback(node.metadata?.errorDetails, { isDouEmperor, seed: `${node.id}:${node.metadata?.errorDetails || ""}` }) : null;
 
@@ -553,6 +565,7 @@ function ErrorContent({ node, theme, onRetry, isDouEmperor }: Pick<NodeContentRe
             ) : (
                 <div className="text-xs leading-5 text-red-300">{node.metadata?.errorDetails || "未能完成此项创作"}</div>
             )}
+            <div className="flex items-center gap-2">
             <button
                 type="button"
                 className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
@@ -566,6 +579,23 @@ function ErrorContent({ node, theme, onRetry, isDouEmperor }: Pick<NodeContentRe
                 <RefreshCw className="size-3.5" />
                 重试
             </button>
+                {node.metadata?.batchRootId && onDelete ? (
+                    <button
+                        type="button"
+                        className="grid size-8 place-items-center rounded-full border transition hover:scale-[1.02]"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onDelete(node);
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        aria-label="删除此结果"
+                        title="删除此结果"
+                    >
+                        <Trash2 className="size-3.5" />
+                    </button>
+                ) : null}
+            </div>
         </div>
     );
 }
@@ -644,6 +674,9 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             </BatchFrame>
         );
     }
+    if (!props.node.metadata?.content && props.node.metadata?.status === "error") {
+        return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} onDelete={props.onDelete} isDouEmperor={props.isDouEmperor} />;
+    }
     if (!props.node.metadata?.content) return <EmptyImageContent {...props} />;
 
     return (
@@ -657,6 +690,9 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             batchRecovering={props.batchRecovering}
             onToggleBatch={props.onToggleBatch}
             onSetBatchPrimary={props.onSetBatchPrimary}
+            onDuplicate={props.onDuplicate}
+            onDownload={props.onDownload}
+            onDelete={props.onDelete}
             onImageLoad={props.onImageLoad}
         />
     );
@@ -720,6 +756,9 @@ function ImageContent({
     batchRecovering,
     onToggleBatch,
     onSetBatchPrimary,
+    onDuplicate,
+    onDownload,
+    onDelete,
     onImageLoad,
 }: {
     node: CanvasNodeData;
@@ -731,6 +770,9 @@ function ImageContent({
     batchRecovering: boolean;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
+    onDuplicate?: () => void;
+    onDownload?: () => void;
+    onDelete?: (node: CanvasNodeData) => void;
     onImageLoad?: (node: CanvasNodeData, image: HTMLImageElement) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -777,6 +819,7 @@ function ImageContent({
                 </button>
             ) : null}
             {isBatchChild ? (
+                <>
                 <button
                     type="button"
                     className="absolute right-3 top-3 z-30 flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium opacity-0 shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition group-hover/batch:opacity-100 hover:scale-[1.02]"
@@ -791,6 +834,60 @@ function ImageContent({
                     <Star className="size-3.5 text-[#2f80ff]" />
                     设为主图
                 </button>
+                <div className="absolute right-3 top-14 z-30 flex items-center gap-1.5 opacity-0 transition group-hover/batch:opacity-100">
+                    {node.metadata?.content && onDownload ? (
+                        <button
+                            type="button"
+                            className="grid size-8 place-items-center rounded-lg border transition hover:scale-[1.02]"
+                            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onDownload();
+                            }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            aria-label="下载此结果"
+                            title="下载此结果"
+                        >
+                            <Download className="size-3.5" />
+                        </button>
+                    ) : null}
+                    {node.metadata?.content && onDuplicate ? (
+                        <button
+                            type="button"
+                            className="grid size-8 place-items-center rounded-lg border transition hover:scale-[1.02]"
+                            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onDuplicate();
+                            }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            aria-label="创建副本"
+                            title="创建副本"
+                        >
+                            <Copy className="size-3.5" />
+                        </button>
+                    ) : null}
+                    {onDelete ? (
+                        <button
+                            type="button"
+                            className="grid size-8 place-items-center rounded-lg border transition hover:scale-[1.02]"
+                            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onDelete(node);
+                            }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            aria-label="删除此结果"
+                            title="删除此结果"
+                        >
+                            <Trash2 className="size-3.5" />
+                        </button>
+                    ) : null}
+                </div>
+                </>
             ) : null}
         </BatchFrame>
     );

@@ -931,6 +931,39 @@ function InfiniteCanvasPage() {
         if (next.type !== CanvasNodeType.Group) setDialogNodeId(id);
     }, []);
 
+    const duplicateBatchImage = useCallback(
+        (source: CanvasNodeData) => {
+            if (!source.metadata?.batchRootId) {
+                duplicateNode(source.id);
+                return;
+            }
+            const id = `${source.type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+            const metadata = source.metadata
+                ? {
+                      ...source.metadata,
+                      isBatchRoot: undefined,
+                      batchRootId: undefined,
+                      batchChildIds: undefined,
+                      batchUsesReferenceImages: undefined,
+                      primaryImageId: undefined,
+                      imageBatchExpanded: undefined,
+                  }
+                : undefined;
+            const next: CanvasNodeData = {
+                ...source,
+                id,
+                title: `${source.title} Copy`,
+                position: { x: source.position.x + 36, y: source.position.y + 36 },
+                metadata,
+            };
+            setNodes((prev) => [...prev, next]);
+            setSelectedNodeIds(new Set([id]));
+            setSelectedConnectionId(null);
+            setDialogNodeId(id);
+        },
+        [duplicateNode],
+    );
+
     const copySelectedNodes = useCallback(() => {
         const selectedIds = selectedNodeIdsRef.current;
         if (!selectedIds.size) return;
@@ -1053,7 +1086,7 @@ function InfiniteCanvasPage() {
             if (!node) return;
             const worldX = node.position.x + node.width / 2;
             const worldY = node.position.y + node.height / 2;
-            const k = Math.min(Math.max(Math.min((size.width * 0.6) / node.width, (size.height * 0.6) / node.height), 0.05), 1.5);
+            const k = Math.min(Math.max(Math.min((size.width * 0.6) / node.width, (size.height * 0.6) / node.height), 0.05), 1);
             const target = { x: size.width / 2 - worldX * k, y: size.height / 2 - worldY * k, k };
             setSelectedNodeIds(new Set([nodeId]));
             setSelectedConnectionId(null);

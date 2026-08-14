@@ -13,6 +13,7 @@ export function PromptCard({
     actionIcon = <Copy className="size-3.5" />,
     actionType = "text",
     extraAction,
+    compact = false,
 }: {
     item: Prompt;
     onOpen: () => void;
@@ -21,6 +22,7 @@ export function PromptCard({
     actionIcon?: ReactNode;
     actionType?: "text" | "primary";
     extraAction?: ReactNode;
+    compact?: boolean;
 }) {
     return (
         <Card
@@ -49,12 +51,7 @@ export function PromptCard({
                     </div>
                 </div>
             </button>
-            <div className="flex items-center gap-2 px-4 pb-4">
-                <Button block={actionType === "primary"} type={actionType} size="small" icon={actionIcon} onClick={onCopy}>
-                    {actionLabel}
-                </Button>
-                {extraAction}
-            </div>
+            {!compact ? <div className="flex items-center gap-2 px-4 pb-4"><Button block={actionType === "primary"} type={actionType} size="small" icon={actionIcon} onClick={onCopy}>{actionLabel}</Button>{extraAction}</div> : null}
         </Card>
     );
 }
