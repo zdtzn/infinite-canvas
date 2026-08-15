@@ -31,6 +31,8 @@ export function createDefaultColorSettings(): ColorSettings {
         vignette: 0,
         preset: null,
         presetIntensity: 100,
+        lutId: null,
+        lutIntensity: 100,
     };
 }
 
@@ -63,7 +65,7 @@ export function normalizeColorSettings(value: unknown): ColorSettings {
     if (!value || typeof value !== "object") return defaults;
     const data = value as Partial<ColorSettings>;
     const next = { ...defaults };
-    const ranges: Record<keyof Omit<ColorSettings, "hsl" | "curves" | "splitTone" | "preset">, [number, number]> = {
+    const ranges: Record<keyof Omit<ColorSettings, "hsl" | "curves" | "splitTone" | "preset" | "lutId">, [number, number]> = {
         exposure: [-100, 100],
         brightness: [-100, 100],
         contrast: [-100, 100],
@@ -80,12 +82,14 @@ export function normalizeColorSettings(value: unknown): ColorSettings {
         noise: [0, 100],
         vignette: [-100, 100],
         presetIntensity: [0, 100],
+        lutIntensity: [0, 100],
     };
 
     Object.entries(ranges).forEach(([key, range]) => {
         next[key as keyof typeof ranges] = clampNumber(data[key as keyof ColorSettings], range[0], range[1], defaults[key as keyof typeof ranges]) as never;
     });
     next.preset = typeof data.preset === "string" && data.preset ? data.preset : null;
+    next.lutId = typeof data.lutId === "string" && data.lutId ? data.lutId : null;
     next.hsl = { ...defaults.hsl };
     COLOR_HSL_CHANNELS.forEach((channel) => {
         const source = data.hsl?.[channel];

@@ -6,8 +6,9 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { COLOR_PRESET_CATEGORIES, type ColorAlchemyDocument, type ColorAlchemySource, type ColorPreset, type ColorPresetCategory } from "./types";
 import { COLOR_PRESETS } from "./presets";
 import { ColorSourceImage } from "./color-source-image";
+import { FilmLutLibrary } from "./film-lut-library";
 
-export type ColorSourcePanelTab = "sources" | "presets" | "cutout";
+export type ColorSourcePanelTab = "sources" | "presets" | "luts" | "cutout";
 
 export function ColorSourcePanel({
     document,
@@ -18,6 +19,7 @@ export function ColorSourcePanel({
     onOpenCanvas,
     onSelectSource,
     onApplyPreset,
+    onApplyLut,
     onRemoveDocument,
     activeTab,
     onTabChange,
@@ -30,6 +32,7 @@ export function ColorSourcePanel({
     onOpenCanvas: () => void;
     onSelectSource: (source: ColorAlchemySource) => void;
     onApplyPreset: (preset: ColorPreset) => void;
+    onApplyLut: (lutFile: string | null) => void;
     onRemoveDocument: (id: string) => void;
     activeTab: ColorSourcePanelTab;
     onTabChange: (tab: ColorSourcePanelTab) => void;
@@ -189,6 +192,11 @@ export function ColorSourcePanel({
                                 </div>
                             </div>
                         ),
+                    },
+                    {
+                        key: "luts",
+                        label: "胶片滤镜",
+                        children: <FilmLutLibrary activeLutId={document.settings.lutId} onApplyLut={onApplyLut} />,
                     },
                     {
                         key: "cutout",

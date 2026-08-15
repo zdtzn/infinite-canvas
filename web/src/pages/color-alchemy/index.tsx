@@ -230,6 +230,12 @@ export default function ColorAlchemyPage() {
         message.success(`已展开秘卷：${preset.name}`);
     };
 
+    const applyLut = (lutFile: string | null) => {
+        if (!document) return;
+        replaceSettings(document.id, normalizeColorSettings({ ...document.settings, lutId: lutFile, lutIntensity: 100, preset: null }), true);
+        message.success(lutFile ? "胶片滤镜已应用" : "胶片滤镜已清除");
+    };
+
     const applyAiRecommendation = () => {
         if (!document?.analysis) return;
         const result = recommendColorSettings(document.analysis, document.settings);
@@ -535,6 +541,7 @@ export default function ColorAlchemyPage() {
                                     onOpenCanvas={() => setSourceDialog("canvas")}
                                     onSelectSource={openSource}
                                     onApplyPreset={applyPreset}
+                                    onApplyLut={applyLut}
                                     onRemoveDocument={(id) => void discardDocument(id)}
                                     activeTab={sourcePanelTab}
                                     onTabChange={setSourcePanelTab}
@@ -605,6 +612,7 @@ export default function ColorAlchemyPage() {
                                     setMobilePanel(null);
                                 }}
                                 onApplyPreset={applyPreset}
+                                onApplyLut={applyLut}
                                 onRemoveDocument={(id) => void discardDocument(id)}
                                 activeTab={sourcePanelTab}
                                 onTabChange={(tab) => {

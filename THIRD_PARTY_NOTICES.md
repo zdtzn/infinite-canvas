@@ -1,5 +1,12 @@
 # Third-Party Notices
 
+## Film-Luts
+
+The Color Alchemy film LUT library includes the `.cube` LUTs and preview thumbnails from [BigNerdCoding/Film-Luts](https://github.com/BigNerdCoding/Film-Luts), vendored under `web/public/film-luts` and loaded on demand.
+
+- The upstream repository is published under the MIT License. The accompanying license is included at `web/public/film-luts/LICENSE`.
+- The upstream README notes that some film emulation names and looks may have separate copyright or trademark considerations. Review those terms before commercial redistribution.
+
 ## agency-orchestrator
 
 The image prompt optimization workflow in this repository adapts prompt-rewriting and output-cleanup ideas from [jnMetaCode/agency-orchestrator](https://github.com/jnMetaCode/agency-orchestrator), reviewed at commit `588a0643fe04d795d251d5d535b237f53de4f588`.

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Collapse, Segmented, Slider, Tooltip } from "antd";
-import { BrainCircuit, Clipboard, Droplets, ImagePlus, Sparkles } from "lucide-react";
+import { BrainCircuit, Clipboard, Droplets, ImagePlus, Sparkles, X } from "lucide-react";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { buildColorHarmonies, formatColorValue } from "./color-engine";
@@ -166,6 +166,28 @@ export function ColorControlPanel({
                     <section>
                         <SectionTitle title={`秘卷强度 · ${activePreset.name}`} />
                         <ControlSlider label="强度" value={settings.presetIntensity} min={0} max={100} onChange={(value) => onSettingsChange(applyColorPreset(activePreset, value))} onCommit={onCommit} />
+                    </section>
+                ) : null}
+
+                {settings.lutId ? (
+                    <section>
+                        <div className="flex items-center justify-between">
+                            <SectionTitle title="胶片 LUT 强度" />
+                            <Tooltip title="清除当前胶片滤镜">
+                                <button
+                                    type="button"
+                                    className="grid size-6 place-items-center rounded text-white/45 transition hover:bg-white/8 hover:text-white"
+                                    aria-label="清除当前胶片滤镜"
+                                    onClick={() => {
+                                        onSettingsChange(mergeColorSettings(settings, { lutId: null, lutIntensity: 100 }));
+                                        onCommit();
+                                    }}
+                                >
+                                    <X className="size-3.5" />
+                                </button>
+                            </Tooltip>
+                        </div>
+                        <ControlSlider label="强度" value={settings.lutIntensity} min={0} max={100} onChange={(value) => onSettingsChange(mergeColorSettings(settings, { lutIntensity: value }))} onCommit={onCommit} />
                     </section>
                 ) : null}
 

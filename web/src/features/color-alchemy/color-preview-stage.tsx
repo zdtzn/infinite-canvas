@@ -47,14 +47,15 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis 
         loadedRef.current?.dispose();
         loadedRef.current = null;
         void loadColorImage(source)
-            .then((loaded) => {
+            .then(async (loaded) => {
                 if (cancelled) return loaded.dispose();
                 loadedRef.current = loaded;
                 const originalCanvas = originalCanvasRef.current;
                 const adjustedCanvas = adjustedCanvasRef.current;
                 if (!originalCanvas || !adjustedCanvas) return;
                 const preview = drawOriginalColorPreview(loaded, originalCanvas);
-                renderColorPreview(loaded, adjustedCanvas, settings);
+                await renderColorPreview(loaded, adjustedCanvas, settings);
+                if (cancelled) return;
                 setDimensions({ ...preview, naturalWidth: loaded.width, naturalHeight: loaded.height });
                 onAnalysis(analyzeLoadedColorImage(loaded));
                 setLoading(false);
@@ -76,17 +77,23 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis 
         const canvas = adjustedCanvasRef.current;
         if (!loaded || !canvas || loading) return;
         setRendering(true);
+        let cancelled = false;
         const timer = window.setTimeout(() => {
-            try {
-                renderColorPreview(loaded, canvas, settings);
-                setError("");
-            } catch (reason) {
-                setError(reason instanceof Error ? reason.message : "调色预览失败");
-            } finally {
-                setRendering(false);
-            }
+            void renderColorPreview(loaded, canvas, settings)
+                .then(() => {
+                    if (!cancelled) setError("");
+                })
+                .catch((reason) => {
+                    if (!cancelled) setError(reason instanceof Error ? reason.message : "调色预览失败");
+                })
+                .finally(() => {
+                    if (!cancelled) setRendering(false);
+                });
         }, 36);
-        return () => window.clearTimeout(timer);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
     }, [settings, loading]);
 
     const fit = useMemo(() => {

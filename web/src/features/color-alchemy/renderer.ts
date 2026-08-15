@@ -1,4 +1,5 @@
 import { applyColorSettingsToImageData, extractColorAnalysis } from "./color-engine";
+import { loadFilmLut } from "./film-lut";
 import type { ColorAlchemySource, ColorAnalysis, ColorExportFormat, ColorSettings } from "./types";
 import { readImageBlob, resolveImageUrl } from "@/services/image-storage";
 
@@ -38,11 +39,11 @@ export function drawOriginalColorPreview(source: LoadedColorImage, canvas: HTMLC
     return dimensions;
 }
 
-export function renderColorPreview(source: LoadedColorImage, canvas: HTMLCanvasElement, settings: ColorSettings, maxEdge = 1_400) {
+export async function renderColorPreview(source: LoadedColorImage, canvas: HTMLCanvasElement, settings: ColorSettings, maxEdge = 1_400) {
     const dimensions = drawOriginalColorPreview(source, canvas, maxEdge);
     const context = canvas.getContext("2d", { alpha: true });
     if (!context) throw new Error("当前浏览器无法预览调色结果");
-    processCanvas(context, canvas.width, canvas.height, settings);
+    await processCanvas(context, canvas.width, canvas.height, settings);
     return dimensions;
 }
 
@@ -81,7 +82,7 @@ export async function renderColorBlob(source: ColorAlchemySource, settings: Colo
             context.fillRect(0, 0, canvas.width, canvas.height);
         }
         context.drawImage(loaded.image, 0, 0, canvas.width, canvas.height);
-        processCanvas(context, canvas.width, canvas.height, settings);
+        await processCanvas(context, canvas.width, canvas.height, settings);
         const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, format === "png" ? undefined : Math.min(1, Math.max(0.4, quality))));
         if (!blob) throw new Error("导出失败：浏览器未能编码图片");
         return blob;
@@ -94,11 +95,12 @@ export function colorExportExtension(format: ColorExportFormat) {
     return format === "jpeg" ? "jpg" : format;
 }
 
-function processCanvas(context: CanvasRenderingContext2D, width: number, height: number, settings: ColorSettings) {
+async function processCanvas(context: CanvasRenderingContext2D, width: number, height: number, settings: ColorSettings) {
+    const lut = await loadFilmLut(settings.lutId);
     const pixels = width * height;
     if (pixels <= 4_000_000) {
         const imageData = context.getImageData(0, 0, width, height);
-        applyColorSettingsToImageData(imageData, width, height, settings);
+        applyColorSettingsToImageData(imageData, width, height, settings, 0, 0, width, height, lut);
         context.putImageData(imageData, 0, 0);
         return;
     }
@@ -114,7 +116,7 @@ function processCanvas(context: CanvasRenderingContext2D, width: number, height:
             const readRight = Math.min(width, x + tileWidth + halo);
             const readBottom = Math.min(height, y + tileHeight + halo);
             const imageData = context.getImageData(readX, readY, readRight - readX, readBottom - readY);
-            applyColorSettingsToImageData(imageData, imageData.width, imageData.height, settings, readX, readY, width, height);
+            applyColorSettingsToImageData(imageData, imageData.width, imageData.height, settings, readX, readY, width, height, lut);
             context.putImageData(imageData, x, y, x - readX, y - readY, tileWidth, tileHeight);
         }
     }

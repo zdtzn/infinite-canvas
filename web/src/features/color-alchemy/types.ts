@@ -40,6 +40,8 @@ export type ColorSettings = {
     vignette: number;
     preset: string | null;
     presetIntensity: number;
+    lutId: string | null;
+    lutIntensity: number;
 };
 
 export type ColorSettingsPatch = Partial<Omit<ColorSettings, "hsl" | "curves" | "splitTone">> & {

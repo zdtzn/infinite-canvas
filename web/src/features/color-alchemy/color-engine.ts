@@ -1,4 +1,5 @@
 import { COLOR_HSL_CHANNELS, type AnalyzedColor, type ColorAnalysis, type ColorHarmony, type ColorSettings, type ColorValueFormat } from "./types";
+import { sampleFilmLut, type FilmLut } from "./film-lut";
 import { cloneColorSettings } from "./settings";
 
 const HUE_CENTERS = {
@@ -12,7 +13,7 @@ const HUE_CENTERS = {
     magenta: 325,
 } as const;
 
-export function applyColorSettingsToImageData(imageData: ImageData, width: number, height: number, settings: ColorSettings, originX = 0, originY = 0, totalWidth = width, totalHeight = height) {
+export function applyColorSettingsToImageData(imageData: ImageData, width: number, height: number, settings: ColorSettings, originX = 0, originY = 0, totalWidth = width, totalHeight = height, lut: FilmLut | null = null) {
     const data = imageData.data;
     const exposure = 2 ** (settings.exposure / 50);
     const contrast = Math.max(0, 1 + settings.contrast / 100);
@@ -28,6 +29,7 @@ export function applyColorSettingsToImageData(imageData: ImageData, width: numbe
         return adjustment.hue || adjustment.saturation || adjustment.lightness;
     });
     const hasCurves = Object.values(settings.curves).some((curve) => curve.some(Boolean));
+    const lutOutput = lut && settings.lutIntensity > 0 ? new Float32Array(3) : null;
 
     for (let index = 0; index < data.length; index += 4) {
         if (data[index + 3] === 0) continue;
@@ -95,6 +97,14 @@ export function applyColorSettingsToImageData(imageData: ImageData, width: numbe
         red = mix(red, splitHighlight[0], highlightAmount);
         green = mix(green, splitHighlight[1], highlightAmount);
         blue = mix(blue, splitHighlight[2], highlightAmount);
+
+        if (lut && lutOutput) {
+            const lutAmount = settings.lutIntensity / 100;
+            const sampled = sampleFilmLut(lut, clamp01(red), clamp01(green), clamp01(blue), lutOutput);
+            red = mix(red, sampled[0], lutAmount);
+            green = mix(green, sampled[1], lutAmount);
+            blue = mix(blue, sampled[2], lutAmount);
+        }
 
         const pixel = index / 4;
         const x = originX + (pixel % width);
