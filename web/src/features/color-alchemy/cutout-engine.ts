@@ -8,6 +8,15 @@ export type CutoutSettings = {
     decontaminate: number;
 };
 
+type BackgroundRemovalConfig = {
+    model: "isnet_fp16";
+    device: "cpu" | "gpu";
+    output: { format: "image/png" };
+    progress?: (key: string, current: number, total: number) => void;
+};
+
+type BackgroundRemovalRunner = (source: Blob, config: BackgroundRemovalConfig) => Promise<Blob>;
+
 export const DEFAULT_CUTOUT_SETTINGS: CutoutSettings = {
     edgeEnhancement: 62,
     edgeSoftness: 18,
@@ -27,15 +36,27 @@ export async function removeBackgroundFromSource(source: ColorAlchemySource, onP
     const blob = await readImageBlob(url || source.url);
     const { removeBackground } = await import("@imgly/background-removal");
     const supportsWebGpu = typeof navigator !== "undefined" && Boolean((navigator as Navigator & { gpu?: unknown }).gpu);
+    return runBackgroundRemovalWithFallback(blob, removeBackground as unknown as BackgroundRemovalRunner, supportsWebGpu, onProgress);
+}
+
+export async function runBackgroundRemovalWithFallback(source: Blob, run: BackgroundRemovalRunner, supportsWebGpu: boolean, onProgress?: (progress: number) => void) {
     onProgress?.(2);
-    return removeBackground(blob, {
+    const createConfig = (device: BackgroundRemovalConfig["device"]): BackgroundRemovalConfig => ({
         model: "isnet_fp16",
-        device: supportsWebGpu ? "gpu" : "cpu",
+        device,
         output: { format: "image/png" },
         progress: (_key, current, total) => {
             if (total > 0) onProgress?.(Math.min(98, Math.max(2, Math.round((current / total) * 98))));
         },
     });
+
+    if (!supportsWebGpu) return run(source, createConfig("cpu"));
+    try {
+        return await run(source, createConfig("gpu"));
+    } catch {
+        console.debug("灵彩抠图 GPU 运行时不可用，改用 CPU 继续处理");
+        return run(source, createConfig("cpu"));
+    }
 }
 
 export async function renderCutoutPreview(input: Blob, canvas: HTMLCanvasElement, settings: CutoutSettings, maxEdge = 1_400) {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { DEFAULT_CUTOUT_SETTINGS, normalizeCutoutSettings, refineCutoutPixels } from "./cutout-engine";
+import { DEFAULT_CUTOUT_SETTINGS, normalizeCutoutSettings, refineCutoutPixels, runBackgroundRemovalWithFallback } from "./cutout-engine";
 
 describe("灵彩抠图边缘处理", () => {
     test("normalizes edge settings into the supported range", () => {
@@ -34,6 +34,38 @@ describe("灵彩抠图边缘处理", () => {
         expect(image.data[4]).toBeGreaterThan(255 - 1);
         expect(image.data[5]).toBeLessThan(255);
         expect(image.data[6]).toBeLessThan(255);
+    });
+});
+
+describe("灵彩抠图运行时回退", () => {
+    test("falls back to CPU when the GPU runtime cannot create a session", async () => {
+        const devices: string[] = [];
+        const result = await runBackgroundRemovalWithFallback(
+            new Blob(["source"]),
+            async (_source, config) => {
+                devices.push(config.device);
+                if (config.device === "gpu") throw new Error("webgpu module unavailable");
+                return new Blob(["cutout"]);
+            },
+            true,
+        );
+
+        expect(devices).toEqual(["gpu", "cpu"]);
+        expect(await result.text()).toBe("cutout");
+    });
+
+    test("uses CPU directly when WebGPU is unavailable", async () => {
+        const devices: string[] = [];
+        await runBackgroundRemovalWithFallback(
+            new Blob(["source"]),
+            async (_source, config) => {
+                devices.push(config.device);
+                return new Blob(["cutout"]);
+            },
+            false,
+        );
+
+        expect(devices).toEqual(["cpu"]);
     });
 });
 
