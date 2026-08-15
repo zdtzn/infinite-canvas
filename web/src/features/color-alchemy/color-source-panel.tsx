@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
-import { ImagePlus, Images, Layers3, Trash2 } from "lucide-react";
+import { ImagePlus, Images, Layers3, Scissors, Trash2 } from "lucide-react";
 import { Tabs, Tooltip } from "antd";
 
 import { useAssetStore } from "@/stores/use-asset-store";
 import { COLOR_PRESET_CATEGORIES, type ColorAlchemyDocument, type ColorAlchemySource, type ColorPreset, type ColorPresetCategory } from "./types";
 import { COLOR_PRESETS } from "./presets";
 import { ColorSourceImage } from "./color-source-image";
+
+export type ColorSourcePanelTab = "sources" | "presets" | "cutout";
 
 export function ColorSourcePanel({
     document,
@@ -17,6 +19,8 @@ export function ColorSourcePanel({
     onSelectSource,
     onApplyPreset,
     onRemoveDocument,
+    activeTab,
+    onTabChange,
 }: {
     document: ColorAlchemyDocument;
     documents: ColorAlchemyDocument[];
@@ -27,6 +31,8 @@ export function ColorSourcePanel({
     onSelectSource: (source: ColorAlchemySource) => void;
     onApplyPreset: (preset: ColorPreset) => void;
     onRemoveDocument: (id: string) => void;
+    activeTab: ColorSourcePanelTab;
+    onTabChange: (tab: ColorSourcePanelTab) => void;
 }) {
     const assets = useAssetStore((state) => state.assets);
     const [category, setCategory] = useState<ColorPresetCategory>("电影");
@@ -36,11 +42,12 @@ export function ColorSourcePanel({
     return (
         <aside className="flex h-full min-h-0 flex-col border-r border-white/8 bg-[#151719]/92 text-[#eeeae0] backdrop-blur-xl">
             <div className="border-b border-white/8 px-4 py-3">
-                <div className="text-xs font-medium tracking-[0.12em] text-white/45">素材与色彩秘卷</div>
+                <div className="text-xs font-medium tracking-[0.12em] text-white/45">灵彩素材与工具</div>
             </div>
             <Tabs
                 className="color-alchemy-side-tabs min-h-0 flex-1 px-3"
-                defaultActiveKey="sources"
+                activeKey={activeTab}
+                onChange={(key) => onTabChange(key as ColorSourcePanelTab)}
                 items={[
                     {
                         key: "sources",
@@ -54,7 +61,12 @@ export function ColorSourcePanel({
                                         </div>
                                         <div className="truncate px-2.5 py-2 text-xs font-medium text-white/85">{document.source.title}</div>
                                         <Tooltip title="移除当前草稿">
-                                            <button type="button" className="absolute right-1.5 top-1.5 grid size-7 place-items-center rounded bg-black/55 text-white/65 transition hover:bg-red-500/80 hover:text-white lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100" aria-label={`移除当前草稿 ${document.source.title}`} onClick={() => onRemoveDocument(document.id)}>
+                                            <button
+                                                type="button"
+                                                className="absolute right-1.5 top-1.5 grid size-7 place-items-center rounded bg-black/55 text-white/65 transition hover:bg-red-500/80 hover:text-white lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
+                                                aria-label={`移除当前草稿 ${document.source.title}`}
+                                                onClick={() => onRemoveDocument(document.id)}
+                                            >
                                                 <Trash2 className="size-3.5" />
                                             </button>
                                         </Tooltip>
@@ -80,7 +92,13 @@ export function ColorSourcePanel({
                                                             </div>
                                                             <div className="truncate px-2 py-1.5 text-[11px] text-white/65">{item.source.title}</div>
                                                         </button>
-                                                        <button type="button" className="absolute right-1 top-1 grid size-6 place-items-center rounded bg-black/55 text-white/65 transition hover:bg-red-500/80 hover:text-white lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100" title="移除草稿" aria-label={`移除草稿 ${item.source.title}`} onClick={() => onRemoveDocument(item.id)}>
+                                                        <button
+                                                            type="button"
+                                                            className="absolute right-1 top-1 grid size-6 place-items-center rounded bg-black/55 text-white/65 transition hover:bg-red-500/80 hover:text-white lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
+                                                            title="移除草稿"
+                                                            aria-label={`移除草稿 ${item.source.title}`}
+                                                            onClick={() => onRemoveDocument(item.id)}
+                                                        >
                                                             <Trash2 className="size-3.5" />
                                                         </button>
                                                     </div>
@@ -168,6 +186,37 @@ export function ColorSourcePanel({
                                             </div>
                                         </button>
                                     ))}
+                                </div>
+                            </div>
+                        ),
+                    },
+                    {
+                        key: "cutout",
+                        label: "灵彩抠图",
+                        children: (
+                            <div className="thin-scrollbar h-[calc(100vh-150px)] space-y-5 overflow-y-auto pb-5">
+                                <PanelSection title="当前抠图素材">
+                                    <div className="overflow-hidden rounded-md border border-[#d7b46a]/40 bg-white/5" title={document.source.title}>
+                                        <div className="relative aspect-[4/3] overflow-hidden bg-black/20">
+                                            <ColorSourceImage source={document.source} alt={document.source.title} className="h-full w-full object-cover" />
+                                            <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded bg-black/55 px-2 py-1 text-[10px] text-white/78 backdrop-blur-md">
+                                                <Scissors className="size-3" />
+                                                透明图层
+                                            </div>
+                                        </div>
+                                        <div className="truncate px-2.5 py-2 text-xs font-medium text-white/85">{document.source.title}</div>
+                                    </div>
+                                </PanelSection>
+
+                                <div className="grid grid-cols-3 gap-2">
+                                    <SourceAction title="添加图片" icon={<ImagePlus className="size-4" />} onClick={onUpload} />
+                                    <SourceAction title="作品库" icon={<Images className="size-4" />} onClick={onOpenAssets} />
+                                    <SourceAction title="从画布" icon={<Layers3 className="size-4" />} onClick={onOpenCanvas} />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2 text-[10px] text-white/42">
+                                    <div className="rounded-md border border-white/8 bg-white/4 px-2.5 py-2">本地识别</div>
+                                    <div className="rounded-md border border-white/8 bg-white/4 px-2.5 py-2">透明 PNG</div>
                                 </div>
                             </div>
                         ),

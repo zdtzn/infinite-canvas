@@ -13,13 +13,16 @@ import { useUserStore } from "@/stores/use-user-store";
 import { CanvasNodeType } from "@/types/canvas";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { ColorControlPanel } from "@/features/color-alchemy/color-control-panel";
+import { ColorCutoutPanel, type CutoutPreviewBackground } from "@/features/color-alchemy/color-cutout-panel";
+import { ColorCutoutPreviewStage } from "@/features/color-alchemy/color-cutout-preview-stage";
 import { ColorPreviewStage } from "@/features/color-alchemy/color-preview-stage";
 import { ColorSourceDialog } from "@/features/color-alchemy/color-source-dialog";
-import { ColorSourcePanel } from "@/features/color-alchemy/color-source-panel";
+import { ColorSourcePanel, type ColorSourcePanelTab } from "@/features/color-alchemy/color-source-panel";
 import { deriveBorrowedColorSettings, recommendColorSettings } from "@/features/color-alchemy/color-engine";
 import { applyColorPreset } from "@/features/color-alchemy/presets";
 import { analyzeColorSource, colorExportExtension, renderColorBlob } from "@/features/color-alchemy/renderer";
 import { normalizeColorSettings } from "@/features/color-alchemy/settings";
+import { DEFAULT_CUTOUT_SETTINGS, normalizeCutoutSettings, removeBackgroundFromSource, renderCutoutBlob, type CutoutSettings } from "@/features/color-alchemy/cutout-engine";
 import { prepareColorAlchemyForUser, useColorAlchemyStore } from "@/features/color-alchemy/use-color-alchemy-store";
 import type { ColorAlchemySource, ColorExportFormat, ColorPreset, ColorSettings } from "@/features/color-alchemy/types";
 import { deleteColorAlchemyDocument, fetchColorAlchemyDocuments, saveColorAlchemyDocument, type ColorAlchemyDocumentTombstone } from "@/services/color-alchemy-api";
@@ -48,6 +51,7 @@ export default function ColorAlchemyPage() {
     const addAsset = useAssetStore((state) => state.addAsset);
     const [sourceDialog, setSourceDialog] = useState<"assets" | "canvas" | null>(null);
     const [mobilePanel, setMobilePanel] = useState<"sources" | "controls" | null>(null);
+    const [sourcePanelTab, setSourcePanelTab] = useState<ColorSourcePanelTab>("sources");
     const [originalPinned, setOriginalPinned] = useState(false);
     const [originalHeld, setOriginalHeld] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -57,6 +61,11 @@ export default function ColorAlchemyPage() {
     const [exporting, setExporting] = useState(false);
     const [exportFormat, setExportFormat] = useState<ColorExportFormat>("png");
     const [exportQuality, setExportQuality] = useState(92);
+    const [cutoutResult, setCutoutResult] = useState<Blob | null>(null);
+    const [cutoutSettings, setCutoutSettings] = useState<CutoutSettings>(DEFAULT_CUTOUT_SETTINGS);
+    const [cutoutPreviewBackground, setCutoutPreviewBackground] = useState<CutoutPreviewBackground>("checkerboard");
+    const [cutoutBusy, setCutoutBusy] = useState(false);
+    const [cutoutProgress, setCutoutProgress] = useState(0);
     const [dragActive, setDragActive] = useState(false);
     const [cloudReadyUserId, setCloudReadyUserId] = useState("");
     const [syncTick, setSyncTick] = useState(0);
@@ -158,6 +167,7 @@ export default function ColorAlchemyPage() {
     }, [cloudReadyUserId, documents, hydrated, removeDocuments, syncTick, userId]);
 
     const document = useMemo(() => documents.find((item) => item.id === activeDocumentId) || documents[0] || null, [activeDocumentId, documents]);
+    const toolMode = sourcePanelTab === "cutout" ? "cutout" : "color";
     const forceOriginal = originalPinned || originalHeld;
     const canUndo = Boolean(document && (document.historyIndex > 0 || JSON.stringify(document.settings) !== JSON.stringify(document.history[document.historyIndex])));
     const canRedo = Boolean(document && document.historyIndex < document.history.length - 1);
@@ -165,6 +175,14 @@ export default function ColorAlchemyPage() {
     useEffect(() => {
         setOriginalPinned(false);
         setOriginalHeld(false);
+    }, [document?.id]);
+
+    useEffect(() => {
+        setSourcePanelTab("sources");
+        setCutoutResult(null);
+        setCutoutSettings(DEFAULT_CUTOUT_SETTINGS);
+        setCutoutProgress(0);
+        setCutoutBusy(false);
     }, [document?.id]);
 
     useEffect(() => {
@@ -217,6 +235,63 @@ export default function ColorAlchemyPage() {
         const result = recommendColorSettings(document.analysis, document.settings);
         replaceSettings(document.id, result.settings, true);
         message.success(result.notes.length ? `推荐方案已应用：${result.notes.join("、")}` : "推荐方案已应用");
+    };
+
+    const startCutout = async () => {
+        if (!document || cutoutBusy) return;
+        setCutoutBusy(true);
+        setCutoutProgress(0);
+        setCutoutResult(null);
+        try {
+            const result = await removeBackgroundFromSource(document.source, setCutoutProgress);
+            setCutoutResult(result);
+            setCutoutProgress(100);
+            message.success("主体已识别，透明边界已展开");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "抠图失败，请稍后重试");
+        } finally {
+            setCutoutBusy(false);
+        }
+    };
+
+    const applyCutout = async () => {
+        if (!document || !cutoutResult || cutoutBusy) return;
+        setCutoutBusy(true);
+        try {
+            const blob = await renderCutoutBlob(cutoutResult, cutoutSettings, "png");
+            const image = await uploadImage(blob, { createThumbnail: true });
+            openSource({
+                key: image.storageKey,
+                title: `${document.source.title} - 抠图`,
+                url: image.url,
+                storageKey: image.storageKey,
+                width: image.width,
+                height: image.height,
+                mimeType: image.mimeType,
+                origin: document.source.origin,
+            });
+            setSourcePanelTab("sources");
+            setCutoutResult(null);
+            message.success("透明主体已作为新的灵彩草稿打开");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "应用抠图结果失败，请重试");
+        } finally {
+            setCutoutBusy(false);
+        }
+    };
+
+    const exportCutout = async () => {
+        if (!document || !cutoutResult || cutoutBusy) return;
+        setCutoutBusy(true);
+        try {
+            const blob = await renderCutoutBlob(cutoutResult, cutoutSettings, "png");
+            saveAs(blob, `${safeFileName(document.source.title)}-抠图.png`);
+            message.success("透明 PNG 已导出");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "透明 PNG 导出失败，请重试");
+        } finally {
+            setCutoutBusy(false);
+        }
     };
 
     const addReference = async (file: File) => {
@@ -373,8 +448,8 @@ export default function ColorAlchemyPage() {
                     <div className="flex h-full min-h-0 flex-col">
                         <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-white/8 bg-[#141619]/95 px-3 backdrop-blur-xl lg:px-4">
                             <div className="flex min-w-0 items-center gap-2">
-                                <Tooltip title="素材与秘卷">
-                                    <button type="button" className="grid size-8 place-items-center rounded text-white/55 hover:bg-white/8 hover:text-white lg:hidden" onClick={() => setMobilePanel("sources")}>
+                                <Tooltip title="灵彩素材与工具">
+                                    <button type="button" className="grid size-8 place-items-center rounded text-white/55 hover:bg-white/8 hover:text-white lg:hidden" onClick={() => setMobilePanel("sources")} aria-label="打开灵彩素材与工具">
                                         <PanelLeft className="size-4" />
                                     </button>
                                 </Tooltip>
@@ -401,32 +476,48 @@ export default function ColorAlchemyPage() {
                                 ) : null}
                             </div>
                             <div className="flex items-center gap-0.5">
-                                <TopTool title="撤销" icon={<Undo2 className="size-4" />} disabled={!canUndo} onClick={() => document && undo(document.id)} />
-                                <TopTool title="重做" icon={<Redo2 className="size-4" />} disabled={!canRedo} onClick={() => document && redo(document.id)} />
-                                <TopTool title="原图" icon={<FileImage className="size-4" />} active={originalPinned} onClick={() => setOriginalPinned((value) => !value)} />
-                                <TopTool title="恢复原图" icon={<RotateCcw className="size-4" />} onClick={() => reset(document.id)} />
-                                <span className="mx-1 h-5 w-px bg-white/8" />
-                                <span className="hidden md:contents">
-                                    <TopTool title="复制调色参数" icon={<ClipboardCopy className="size-4" />} onClick={() => void copySettings()} />
-                                    <TopTool title="粘贴调色参数" icon={<ClipboardPaste className="size-4" />} onClick={() => void pasteSettings()} />
-                                </span>
-                                <button
-                                    type="button"
-                                    className="ml-1 flex size-8 items-center justify-center gap-1.5 rounded text-xs font-medium text-white/72 transition hover:bg-white/8 hover:text-white sm:w-auto sm:px-2"
-                                    disabled={saving}
-                                    onClick={() => void saveToAssets()}
-                                    aria-label={saving ? "正在保存入藏卷阁" : "保存入藏卷阁"}
-                                    title={saving ? "正在保存入藏卷阁" : "保存入藏卷阁"}
-                                >
-                                    <Save className="size-3.5" />
-                                    <span className="hidden sm:inline">{saving ? "保存中" : "保存"}</span>
-                                </button>
-                                <button type="button" className="ml-1 flex h-8 items-center gap-1.5 rounded bg-[#d7b46a] px-2.5 text-xs font-semibold text-[#18140d] transition hover:bg-[#e5c783]" onClick={() => setExportOpen(true)}>
-                                    <Download className="size-3.5" />
-                                    <span className="hidden sm:inline">导出</span>
-                                </button>
-                                <Tooltip title="专业调色">
-                                    <button type="button" className="ml-1 grid size-8 place-items-center rounded text-white/55 hover:bg-white/8 hover:text-white lg:hidden" onClick={() => setMobilePanel("controls")}>
+                                {toolMode === "color" ? (
+                                    <>
+                                        <TopTool title="撤销" icon={<Undo2 className="size-4" />} disabled={!canUndo} onClick={() => document && undo(document.id)} />
+                                        <TopTool title="重做" icon={<Redo2 className="size-4" />} disabled={!canRedo} onClick={() => document && redo(document.id)} />
+                                        <TopTool title="原图" icon={<FileImage className="size-4" />} active={originalPinned} onClick={() => setOriginalPinned((value) => !value)} />
+                                        <TopTool title="恢复原图" icon={<RotateCcw className="size-4" />} onClick={() => reset(document.id)} />
+                                        <span className="mx-1 h-5 w-px bg-white/8" />
+                                        <span className="hidden md:contents">
+                                            <TopTool title="复制调色参数" icon={<ClipboardCopy className="size-4" />} onClick={() => void copySettings()} />
+                                            <TopTool title="粘贴调色参数" icon={<ClipboardPaste className="size-4" />} onClick={() => void pasteSettings()} />
+                                        </span>
+                                        <button
+                                            type="button"
+                                            className="ml-1 flex size-8 items-center justify-center gap-1.5 rounded text-xs font-medium text-white/72 transition hover:bg-white/8 hover:text-white sm:w-auto sm:px-2"
+                                            disabled={saving}
+                                            onClick={() => void saveToAssets()}
+                                            aria-label={saving ? "正在保存入藏卷阁" : "保存入藏卷阁"}
+                                            title={saving ? "正在保存入藏卷阁" : "保存入藏卷阁"}
+                                        >
+                                            <Save className="size-3.5" />
+                                            <span className="hidden sm:inline">{saving ? "保存中" : "保存"}</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="ml-1 flex h-8 items-center gap-1.5 rounded bg-[#d7b46a] px-2.5 text-xs font-semibold text-[#18140d] transition hover:bg-[#e5c783]"
+                                            onClick={() => setExportOpen(true)}
+                                            aria-label="导出调色结果"
+                                        >
+                                            <Download className="size-3.5" />
+                                            <span className="hidden sm:inline">导出</span>
+                                        </button>
+                                    </>
+                                ) : (
+                                    <span className="hidden px-2 text-xs font-medium text-[#dfbd78] sm:inline">灵彩抠图</span>
+                                )}
+                                <Tooltip title={toolMode === "cutout" ? "抠图设置" : "专业调色"}>
+                                    <button
+                                        type="button"
+                                        className="ml-1 grid size-8 place-items-center rounded text-white/55 hover:bg-white/8 hover:text-white lg:hidden"
+                                        onClick={() => setMobilePanel("controls")}
+                                        aria-label={toolMode === "cutout" ? "打开抠图设置" : "打开专业调色"}
+                                    >
                                         <PanelRight className="size-4" />
                                     </button>
                                 </Tooltip>
@@ -445,19 +536,41 @@ export default function ColorAlchemyPage() {
                                     onSelectSource={openSource}
                                     onApplyPreset={applyPreset}
                                     onRemoveDocument={(id) => void discardDocument(id)}
+                                    activeTab={sourcePanelTab}
+                                    onTabChange={setSourcePanelTab}
                                 />
                             </div>
-                            <ColorPreviewStage source={document.source} settings={document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} />
+                            {toolMode === "cutout" ? (
+                                <ColorCutoutPreviewStage source={document.source} result={cutoutResult} settings={cutoutSettings} previewBackground={cutoutPreviewBackground} />
+                            ) : (
+                                <ColorPreviewStage source={document.source} settings={document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} />
+                            )}
                             <div className="hidden min-h-0 lg:block">
-                                <ColorControlPanel
-                                    document={document}
-                                    analyzing={!document.analysis}
-                                    onSettingsChange={(settings) => applySettings(settings)}
-                                    onCommit={() => commitSettings(document.id)}
-                                    onApplyAi={applyAiRecommendation}
-                                    onReferenceUpload={(file) => void addReference(file)}
-                                    onBorrowColors={borrowColors}
-                                />
+                                {toolMode === "cutout" ? (
+                                    <ColorCutoutPanel
+                                        hasResult={Boolean(cutoutResult)}
+                                        busy={cutoutBusy}
+                                        progress={cutoutProgress}
+                                        settings={cutoutSettings}
+                                        previewBackground={cutoutPreviewBackground}
+                                        onSettingsChange={(value) => setCutoutSettings(normalizeCutoutSettings(value))}
+                                        onPreviewBackgroundChange={setCutoutPreviewBackground}
+                                        onStart={() => void startCutout()}
+                                        onApply={() => void applyCutout()}
+                                        onExport={() => void exportCutout()}
+                                        onReset={() => setCutoutResult(null)}
+                                    />
+                                ) : (
+                                    <ColorControlPanel
+                                        document={document}
+                                        analyzing={!document.analysis}
+                                        onSettingsChange={(settings) => applySettings(settings)}
+                                        onCommit={() => commitSettings(document.id)}
+                                        onApplyAi={applyAiRecommendation}
+                                        onReferenceUpload={(file) => void addReference(file)}
+                                        onBorrowColors={borrowColors}
+                                    />
+                                )}
                             </div>
                         </div>
                     </div>
@@ -476,7 +589,7 @@ export default function ColorAlchemyPage() {
                 <ColorSourceDialog open={Boolean(sourceDialog)} initialTab={sourceDialog || "assets"} onSelect={openSource} onClose={() => setSourceDialog(null)} />
                 {document ? (
                     <>
-                        <Drawer title="素材与色彩秘卷" placement="left" size={290} open={mobilePanel === "sources"} onClose={() => setMobilePanel(null)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
+                        <Drawer title="灵彩素材与工具" placement="left" size={290} open={mobilePanel === "sources"} onClose={() => setMobilePanel(null)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
                             <ColorSourcePanel
                                 document={document}
                                 documents={documents}
@@ -493,18 +606,46 @@ export default function ColorAlchemyPage() {
                                 }}
                                 onApplyPreset={applyPreset}
                                 onRemoveDocument={(id) => void discardDocument(id)}
+                                activeTab={sourcePanelTab}
+                                onTabChange={(tab) => {
+                                    setSourcePanelTab(tab);
+                                    if (tab === "cutout") setMobilePanel("controls");
+                                }}
                             />
                         </Drawer>
-                        <Drawer title="专业调色" placement="right" size="min(340px, calc(100vw - 12px))" open={mobilePanel === "controls"} onClose={() => setMobilePanel(null)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
-                            <ColorControlPanel
-                                document={document}
-                                analyzing={!document.analysis}
-                                onSettingsChange={(settings) => applySettings(settings)}
-                                onCommit={() => commitSettings(document.id)}
-                                onApplyAi={applyAiRecommendation}
-                                onReferenceUpload={(file) => void addReference(file)}
-                                onBorrowColors={borrowColors}
-                            />
+                        <Drawer
+                            title={toolMode === "cutout" ? "灵彩抠图" : "专业调色"}
+                            placement="right"
+                            size="min(340px, calc(100vw - 12px))"
+                            open={mobilePanel === "controls"}
+                            onClose={() => setMobilePanel(null)}
+                            styles={{ body: { padding: 0, overflow: "hidden" } }}
+                        >
+                            {toolMode === "cutout" ? (
+                                <ColorCutoutPanel
+                                    hasResult={Boolean(cutoutResult)}
+                                    busy={cutoutBusy}
+                                    progress={cutoutProgress}
+                                    settings={cutoutSettings}
+                                    previewBackground={cutoutPreviewBackground}
+                                    onSettingsChange={(value) => setCutoutSettings(normalizeCutoutSettings(value))}
+                                    onPreviewBackgroundChange={setCutoutPreviewBackground}
+                                    onStart={() => void startCutout()}
+                                    onApply={() => void applyCutout()}
+                                    onExport={() => void exportCutout()}
+                                    onReset={() => setCutoutResult(null)}
+                                />
+                            ) : (
+                                <ColorControlPanel
+                                    document={document}
+                                    analyzing={!document.analysis}
+                                    onSettingsChange={(settings) => applySettings(settings)}
+                                    onCommit={() => commitSettings(document.id)}
+                                    onApplyAi={applyAiRecommendation}
+                                    onReferenceUpload={(file) => void addReference(file)}
+                                    onBorrowColors={borrowColors}
+                                />
+                            )}
                         </Drawer>
                     </>
                 ) : null}
@@ -626,12 +767,7 @@ function safeFileName(name: string) {
     return (name || "color-alchemy").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 80);
 }
 
-function applyDeletedDocuments(
-    deleted: ColorAlchemyDocumentTombstone[],
-    removeDocuments: (ids: string[]) => void,
-    syncedVersions: React.MutableRefObject<Map<string, string>>,
-    locallyDeleted: React.MutableRefObject<Map<string, string>>,
-) {
+function applyDeletedDocuments(deleted: ColorAlchemyDocumentTombstone[], removeDocuments: (ids: string[]) => void, syncedVersions: React.MutableRefObject<Map<string, string>>, locallyDeleted: React.MutableRefObject<Map<string, string>>) {
     const ids = deleted.map((item) => item.id);
     if (!ids.length) return;
     for (const item of deleted) {
