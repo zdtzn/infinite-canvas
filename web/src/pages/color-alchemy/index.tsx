@@ -24,7 +24,7 @@ import { analyzeColorSource, colorExportExtension, renderColorBlob } from "@/fea
 import { normalizeColorSettings } from "@/features/color-alchemy/settings";
 import { DEFAULT_CUTOUT_SETTINGS, normalizeCutoutSettings, removeBackgroundFromSource, renderCutoutBlob, type CutoutSettings } from "@/features/color-alchemy/cutout-engine";
 import { prepareColorAlchemyForUser, useColorAlchemyStore } from "@/features/color-alchemy/use-color-alchemy-store";
-import type { ColorAlchemySource, ColorExportFormat, ColorPreset, ColorSettings } from "@/features/color-alchemy/types";
+import type { AnalyzedColor, ColorAlchemySource, ColorExportFormat, ColorPreset, ColorSettings } from "@/features/color-alchemy/types";
 import { deleteColorAlchemyDocument, fetchColorAlchemyDocuments, saveColorAlchemyDocument, type ColorAlchemyDocumentTombstone } from "@/services/color-alchemy-api";
 
 const SETTINGS_CLIPBOARD_KEY = "infinite-canvas:color-alchemy:clipboard";
@@ -66,6 +66,7 @@ export default function ColorAlchemyPage() {
     const [cutoutPreviewBackground, setCutoutPreviewBackground] = useState<CutoutPreviewBackground>("checkerboard");
     const [cutoutBusy, setCutoutBusy] = useState(false);
     const [cutoutProgress, setCutoutProgress] = useState(0);
+    const [pickedColor, setPickedColor] = useState<AnalyzedColor | null>(null);
     const [dragActive, setDragActive] = useState(false);
     const [cloudReadyUserId, setCloudReadyUserId] = useState("");
     const [syncTick, setSyncTick] = useState(0);
@@ -175,7 +176,8 @@ export default function ColorAlchemyPage() {
     useEffect(() => {
         setOriginalPinned(false);
         setOriginalHeld(false);
-    }, [document?.id]);
+        setPickedColor(null);
+    }, [document?.id, document?.source.key]);
 
     useEffect(() => {
         setSourcePanelTab("sources");
@@ -550,7 +552,7 @@ export default function ColorAlchemyPage() {
                             {toolMode === "cutout" ? (
                                 <ColorCutoutPreviewStage source={document.source} result={cutoutResult} settings={cutoutSettings} previewBackground={cutoutPreviewBackground} />
                             ) : (
-                                <ColorPreviewStage source={document.source} settings={document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} />
+                                <ColorPreviewStage source={document.source} settings={document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} onPickColor={setPickedColor} />
                             )}
                             <div className="hidden min-h-0 lg:block">
                                 {toolMode === "cutout" ? (
@@ -576,6 +578,7 @@ export default function ColorAlchemyPage() {
                                         onApplyAi={applyAiRecommendation}
                                         onReferenceUpload={(file) => void addReference(file)}
                                         onBorrowColors={borrowColors}
+                                        pickedColor={pickedColor}
                                     />
                                 )}
                             </div>
@@ -652,6 +655,7 @@ export default function ColorAlchemyPage() {
                                     onApplyAi={applyAiRecommendation}
                                     onReferenceUpload={(file) => void addReference(file)}
                                     onBorrowColors={borrowColors}
+                                    pickedColor={pickedColor}
                                 />
                             )}
                         </Drawer>

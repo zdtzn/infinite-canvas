@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyColorSettingsToImageData, buildColorHarmonies, deriveBorrowedColorSettings, extractColorAnalysis, formatColorValue } from "./color-engine";
+import { analyzedColorFromRgb, applyColorSettingsToImageData, buildColorHarmonies, deriveBorrowedColorSettings, extractColorAnalysis, formatColorValue } from "./color-engine";
 import { applyColorPreset, COLOR_PRESETS } from "./presets";
 import { createDefaultColorSettings } from "./settings";
 
@@ -65,5 +65,12 @@ describe("Color Alchemy engine", () => {
         expect(formatColorValue(color, "hex")).toMatch(/^#[0-9A-F]{6}$/);
         expect(formatColorValue(color, "rgb")).toMatch(/^rgb\(/);
         expect(formatColorValue(color, "hsl")).toMatch(/^hsl\(/);
+    });
+
+    test("converts an eyedropper RGB sample into reusable color values", () => {
+        const color = analyzedColorFromRgb([255, 128, 0]);
+        expect(color.hex).toBe("#FF8000");
+        expect(color.rgb).toEqual([255, 128, 0]);
+        expect(formatColorValue(color, "hsl")).toBe("hsl(30, 100%, 50%)");
     });
 });

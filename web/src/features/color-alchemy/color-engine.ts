@@ -287,6 +287,10 @@ export function formatColorValue(color: AnalyzedColor, format: ColorValueFormat)
     return color.hex;
 }
 
+export function analyzedColorFromRgb(rgb: [number, number, number]): AnalyzedColor {
+    return toAnalyzedColor(rgb, 0);
+}
+
 function applyDetailAdjustments(data: Uint8ClampedArray, width: number, height: number, settings: ColorSettings) {
     if (width < 3 || height < 3 || (!settings.sharpen && !settings.clarity && !settings.texture)) return;
     const source = new Uint8ClampedArray(data);

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LoaderCircle, Maximize, Minus, Plus, ScanSearch } from "lucide-react";
+import { LoaderCircle, Maximize, Minus, Pipette, Plus, ScanSearch } from "lucide-react";
 import { Tooltip } from "antd";
 
+import { analyzedColorFromRgb } from "./color-engine";
 import { analyzeLoadedColorImage, drawOriginalColorPreview, loadColorImage, renderColorPreview, type LoadedColorImage } from "./renderer";
-import type { ColorAlchemySource, ColorAnalysis, ColorSettings } from "./types";
+import type { AnalyzedColor, ColorAlchemySource, ColorAnalysis, ColorSettings } from "./types";
 
 type PreviewDimensions = {
     width: number;
@@ -12,7 +13,7 @@ type PreviewDimensions = {
     naturalHeight: number;
 };
 
-export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis }: { source: ColorAlchemySource; settings: ColorSettings; forceOriginal: boolean; onAnalysis: (analysis: ColorAnalysis) => void }) {
+export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis, onPickColor }: { source: ColorAlchemySource; settings: ColorSettings; forceOriginal: boolean; onAnalysis: (analysis: ColorAnalysis) => void; onPickColor: (color: AnalyzedColor) => void }) {
     const stageRef = useRef<HTMLDivElement>(null);
     const originalCanvasRef = useRef<HTMLCanvasElement>(null);
     const adjustedCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -25,6 +26,7 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis 
     const [loading, setLoading] = useState(true);
     const [rendering, setRendering] = useState(false);
     const [error, setError] = useState("");
+    const [eyedropperActive, setEyedropperActive] = useState(false);
     const pointerRef = useRef<{ mode: "compare" | "pan"; pointerId: number; startX: number; startY: number; panX: number; panY: number } | null>(null);
 
     useEffect(() => {
@@ -36,6 +38,15 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis 
     }, []);
 
     useEffect(() => {
+        if (!eyedropperActive) return;
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setEyedropperActive(false);
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [eyedropperActive]);
+
+    useEffect(() => {
         let cancelled = false;
         setLoading(true);
         setError("");
@@ -44,6 +55,7 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis 
         adjustedCanvasRef.current?.getContext("2d")?.clearRect(0, 0, adjustedCanvasRef.current.width, adjustedCanvasRef.current.height);
         setZoom(1);
         setPan({ x: 0, y: 0 });
+        setEyedropperActive(false);
         loadedRef.current?.dispose();
         loadedRef.current = null;
         void loadColorImage(source)
@@ -121,6 +133,24 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis 
         setCompare(Math.min(100, Math.max(0, ((clientX - rect.left) / Math.max(1, rect.width)) * 100)));
     };
 
+    const pickColor = (clientX: number, clientY: number) => {
+        const frame = stageRef.current?.querySelector<HTMLElement>("[data-color-preview-frame]");
+        if (!frame || !dimensions) return;
+        const rect = frame.getBoundingClientRect();
+        const localX = clientX - rect.left;
+        const localY = clientY - rect.top;
+        if (localX < 0 || localY < 0 || localX > rect.width || localY > rect.height) return;
+        const x = Math.min(dimensions.width - 1, Math.max(0, Math.floor((localX / Math.max(1, rect.width)) * dimensions.width)));
+        const y = Math.min(dimensions.height - 1, Math.max(0, Math.floor((localY / Math.max(1, rect.height)) * dimensions.height)));
+        const inAdjustedPreview = !forceOriginal && localX <= rect.width * (compare / 100);
+        const canvas = inAdjustedPreview ? adjustedCanvasRef.current : originalCanvasRef.current;
+        const context = canvas?.getContext("2d", { willReadFrequently: true });
+        if (!context) return;
+        const pixel = context.getImageData(x, y, 1, 1).data;
+        onPickColor(analyzedColorFromRgb([pixel[0], pixel[1], pixel[2]]));
+        setEyedropperActive(false);
+    };
+
     const handlePointerMove = (event: React.PointerEvent) => {
         const pointer = pointerRef.current;
         if (!pointer || pointer.pointerId !== event.pointerId) return;
@@ -155,8 +185,14 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis 
                 <div
                     data-color-preview-frame
                     className="relative shrink-0 overflow-hidden bg-black shadow-[0_26px_90px_rgba(0,0,0,.48)]"
-                    style={{ width: fit.width, height: fit.height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center", cursor: zoom > 1 ? "grab" : "default" }}
+                    style={{ width: fit.width, height: fit.height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center", cursor: eyedropperActive ? "crosshair" : zoom > 1 ? "grab" : "default" }}
                     onPointerDown={(event) => {
+                        if (eyedropperActive) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            pickColor(event.clientX, event.clientY);
+                            return;
+                        }
                         if (zoom <= 1 || (event.target as HTMLElement).closest("[data-compare-handle]")) return;
                         event.currentTarget.setPointerCapture(event.pointerId);
                         pointerRef.current = { mode: "pan", pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, panX: pan.x, panY: pan.y };
@@ -196,6 +232,8 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis 
             </div>
 
             <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-md border border-white/10 bg-black/45 p-1 text-white/80 backdrop-blur-xl">
+                <PreviewButton title={eyedropperActive ? "取消吸色" : "吸取画面颜色"} icon={<Pipette className="size-4" />} active={eyedropperActive} onClick={() => setEyedropperActive((value) => !value)} />
+                <span className="mx-1 h-4 w-px bg-white/10" />
                 <PreviewButton title="缩小" icon={<Minus className="size-4" />} onClick={() => setZoomAroundCenter(zoom / 1.2)} />
                 <span className="min-w-14 text-center text-xs tabular-nums">{Math.round(zoom * 100)}%</span>
                 <PreviewButton title="放大" icon={<Plus className="size-4" />} onClick={() => setZoomAroundCenter(zoom * 1.2)} />
@@ -221,10 +259,10 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis 
     );
 }
 
-function PreviewButton({ title, icon, onClick }: { title: string; icon: React.ReactNode; onClick: () => void }) {
+function PreviewButton({ title, icon, onClick, active = false }: { title: string; icon: React.ReactNode; onClick: () => void; active?: boolean }) {
     return (
         <Tooltip title={title}>
-            <button type="button" className="grid size-8 place-items-center rounded transition hover:bg-white/10 hover:text-white" onClick={onClick} aria-label={title}>
+            <button type="button" className={`grid size-8 place-items-center rounded transition hover:bg-white/10 hover:text-white ${active ? "bg-[#d7b46a] text-[#18140d] hover:bg-[#e5c783] hover:text-[#18140d]" : ""}`} onClick={onClick} aria-label={title}>
                 {icon}
             </button>
         </Tooltip>

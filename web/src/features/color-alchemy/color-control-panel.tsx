@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Collapse, Segmented, Slider, Tooltip } from "antd";
-import { BrainCircuit, Clipboard, Droplets, ImagePlus, Sparkles, X } from "lucide-react";
+import { BrainCircuit, Clipboard, Droplets, ImagePlus, Pipette, Sparkles, X } from "lucide-react";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { buildColorHarmonies, formatColorValue } from "./color-engine";
@@ -21,6 +21,7 @@ export function ColorControlPanel({
     onApplyAi,
     onReferenceUpload,
     onBorrowColors,
+    pickedColor,
 }: {
     document: ColorAlchemyDocument;
     analyzing: boolean;
@@ -29,6 +30,7 @@ export function ColorControlPanel({
     onApplyAi: () => void;
     onReferenceUpload: (file: File) => void;
     onBorrowColors: () => void;
+    pickedColor: AnalyzedColor | null;
 }) {
     const copyText = useCopyText();
     const referenceInputRef = useRef<HTMLInputElement>(null);
@@ -250,6 +252,21 @@ export function ColorControlPanel({
                                 </Tooltip>
                             ))}
                         </div>
+                        {pickedColor ? (
+                            <div className="mt-3 overflow-hidden rounded-md border border-[#d7b46a]/30 bg-[#d7b46a]/5">
+                                <div className="flex items-center gap-2 border-b border-white/8 px-2.5 py-2 text-[10px] text-white/55">
+                                    <Pipette className="size-3.5 text-[#e0bd75]" />
+                                    <span>吸色结果</span>
+                                </div>
+                                <button type="button" className="flex w-full items-center gap-2.5 p-2.5 text-left transition hover:bg-white/5" onClick={() => copyColor(pickedColor)} aria-label={`复制吸色结果${colorValueFormat.toUpperCase()}`}>
+                                    <span className="size-9 shrink-0 rounded border border-white/15" style={{ background: pickedColor.hex }} />
+                                    <span className="min-w-0 flex-1">
+                                        <strong className="block text-xs font-medium text-white/80">{formatColorValue(pickedColor, colorValueFormat)}</strong>
+                                        <span className="block truncate text-[10px] text-white/40">{formatColorValue(pickedColor, colorValueFormat === "hex" ? "rgb" : "hex")}</span>
+                                    </span>
+                                </button>
+                            </div>
+                        ) : null}
                         <div className="mt-3 space-y-2">
                             {harmonies.map((harmony) => (
                                 <div key={harmony.label} className="flex items-center gap-2">
