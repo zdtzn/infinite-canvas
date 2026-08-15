@@ -1342,22 +1342,20 @@ async function sendDouQiLifeTurn(request: Request, session: SessionPayload, sess
         const context = service.context(session.userId, sessionId);
         const messages: ChatProtocolMessage[] = [{
             role: "user",
-            content: buildDouQiLifeTurnPrompt(context.state, context.messages, action),
+            content: buildDouQiLifeTurnPrompt(context.state, context.messages, action, started.resolution?.state),
             images: [],
         }];
         const controller = new AbortController();
         const signal = AbortSignal.any([request.signal, controller.signal]);
-        const upstream = await openDouQiLifeUpstream(channel, apiKey, target.model, messages, signal, requestId);
-        if (!upstream.stream) {
-            const result = parseDouQiLifeTurnResult(upstream.text);
-            const completed = service.completeTurn(session.userId, sessionId, started.worldMessage.id, result, action);
-            return douQiLifeEventResponse([
-                ["started", { session: started.session, playerMessage: started.playerMessage, worldMessage: started.worldMessage }],
-                ["delta", { messageId: started.worldMessage.id, delta: result.narrative }],
-                ["done", publicDouQiLifeTurn(completed)],
-            ]);
-        }
-        return streamDouQiLifeTurn(upstream, service, session, sessionId, started, action, requestId);
+        return streamDouQiLifeTurn(
+            () => openDouQiLifeUpstream(channel, apiKey, target.model, messages, signal, requestId),
+            service,
+            session,
+            sessionId,
+            started,
+            action,
+            requestId,
+        );
     } catch (error) {
         service.failTurn(session.userId, sessionId, started.worldMessage.id, error instanceof Error ? error.message : "世界回应暂未完成");
         throw error;
@@ -1395,7 +1393,7 @@ async function openDouQiLifeUpstream(channel: ChannelRecord, apiKey: string, mod
 }
 
 function streamDouQiLifeTurn(
-    upstream: { stream: true; response: Response; protocol: ChatProtocol },
+    openUpstream: () => Promise<{ stream: true; response: Response; protocol: ChatProtocol } | { stream: false; response: Response; protocol: ChatProtocol; text: string }>,
     service: ReturnType<typeof createDouQiLifeService>,
     session: SessionPayload,
     sessionId: string,
@@ -1406,28 +1404,63 @@ function streamDouQiLifeTurn(
     const encoder = new TextEncoder();
     let canceled = false;
     let upstreamReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    let upstreamResponse: Response | null = null;
+    let readerToRelease: ReadableStreamDefaultReader<Uint8Array> | null = null;
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
             controller.enqueue(encoder.encode(douQiLifeEvent("started", { session: started.session, playerMessage: started.playerMessage, worldMessage: started.worldMessage })));
             void (async () => {
-                const reader = upstream.response.body!.getReader();
-                upstreamReader = reader;
-                const decoder = new TextDecoder();
-                const streamState: ChatStreamState = { buffer: "", text: "", completed: false };
                 try {
+                    const upstream = await openUpstream();
+                    upstreamResponse = upstream.response;
+                    if (canceled) {
+                        await upstream.response.body?.cancel();
+                        service.failTurn(session.userId, sessionId, started.worldMessage.id, "本次世界回应已取消");
+                        return;
+                    }
+                    if (!upstream.stream) {
+                        if (canceled) {
+                            service.failTurn(session.userId, sessionId, started.worldMessage.id, "本次世界回应已取消");
+                            return;
+                        }
+                        const result = parseDouQiLifeTurnResult(upstream.text);
+                        const completed = service.completeTurn(session.userId, sessionId, started.worldMessage.id, result, action, started.resolution);
+                        controller.enqueue(encoder.encode(douQiLifeEvent("delta", { messageId: started.worldMessage.id, delta: result.narrative })));
+                        controller.enqueue(encoder.encode(douQiLifeEvent("done", publicDouQiLifeTurn(completed))));
+                        controller.close();
+                        return;
+                    }
+                    const reader = upstream.response.body!.getReader();
+                    readerToRelease = reader;
+                    upstreamReader = reader;
+                    const decoder = new TextDecoder();
+                    const streamState: ChatStreamState = { buffer: "", text: "", completed: false };
+                    let emittedNarrative = "";
                     for (;;) {
                         const next = await reader.read();
                         if (next.done) break;
-                        consumeChatStream(upstream.protocol, streamState, decoder.decode(next.value, { stream: true }));
+                        consumeChatStream(upstream.protocol, streamState, decoder.decode(next.value, { stream: true }), () => {
+                            const narrative = partialJsonStringField(streamState.text, "narrative");
+                            const delta = narrative.slice(emittedNarrative.length);
+                            if (!delta) return;
+                            emittedNarrative = narrative;
+                            controller.enqueue(encoder.encode(douQiLifeEvent("delta", { messageId: started.worldMessage.id, delta })));
+                        });
                         if (streamState.error) throw new Error(streamState.error);
                     }
-                    consumeChatStream(upstream.protocol, streamState, decoder.decode(), undefined, true);
+                    consumeChatStream(upstream.protocol, streamState, decoder.decode(), () => {
+                        const narrative = partialJsonStringField(streamState.text, "narrative");
+                        const delta = narrative.slice(emittedNarrative.length);
+                        if (!delta) return;
+                        emittedNarrative = narrative;
+                        controller.enqueue(encoder.encode(douQiLifeEvent("delta", { messageId: started.worldMessage.id, delta })));
+                    }, true);
                     if (streamState.error) throw new Error(streamState.error);
                     if (!streamState.completed) throw new Error("世界回应中途断开，请重试");
                     const result = parseDouQiLifeTurnResult(streamState.text);
-                    const completed = service.completeTurn(session.userId, sessionId, started.worldMessage.id, result, action);
+                    const completed = service.completeTurn(session.userId, sessionId, started.worldMessage.id, result, action, started.resolution);
                     if (!canceled) {
-                        controller.enqueue(encoder.encode(douQiLifeEvent("delta", { messageId: started.worldMessage.id, delta: result.narrative })));
+                        if (!emittedNarrative) controller.enqueue(encoder.encode(douQiLifeEvent("delta", { messageId: started.worldMessage.id, delta: result.narrative })));
                         controller.enqueue(encoder.encode(douQiLifeEvent("done", publicDouQiLifeTurn(completed))));
                         controller.close();
                     }
@@ -1440,22 +1473,58 @@ function streamDouQiLifeTurn(
                         controller.close();
                     }
                 } finally {
-                    if (upstreamReader === reader) upstreamReader = null;
-                    try { reader.releaseLock(); } catch {}
+                    if (readerToRelease) {
+                        try { readerToRelease.releaseLock(); } catch {}
+                        readerToRelease = null;
+                    }
+                    upstreamReader = null;
                 }
             })();
         },
         cancel() {
             canceled = true;
             if (upstreamReader) void upstreamReader.cancel().catch(() => undefined);
-            else if (upstream.response.body) void upstream.response.body.cancel().catch(() => undefined);
+            else if (upstreamResponse?.body) void upstreamResponse.body.cancel().catch(() => undefined);
         },
     });
     return new Response(stream, { headers: chatStreamHeaders() });
 }
 
 function publicDouQiLifeTurn(value: ReturnType<ReturnType<typeof createDouQiLifeService>["completeTurn"]>) {
-    return { session: value.session, worldMessage: value.worldMessage, suggestions: value.suggestions, notice: value.notice };
+    return { session: value.session, worldMessage: value.worldMessage, suggestions: value.suggestions, notice: value.notice, changes: value.changes };
+}
+
+function partialJsonStringField(text: string, key: string) {
+    const keyIndex = text.indexOf(`"${key}"`);
+    if (keyIndex < 0) return "";
+    const colonIndex = text.indexOf(":", keyIndex + key.length + 2);
+    if (colonIndex < 0) return "";
+    let start = colonIndex + 1;
+    while (/\s/.test(text[start] || "")) start += 1;
+    if (text[start] !== '"') return "";
+    let body = "";
+    let escaped = false;
+    for (let index = start + 1; index < text.length; index += 1) {
+        const character = text[index];
+        if (escaped) {
+            body += `\\${character}`;
+            escaped = false;
+            continue;
+        }
+        if (character === "\\") {
+            escaped = true;
+            continue;
+        }
+        if (character === '"') {
+            return decodeJsonString(body);
+        }
+        body += character;
+    }
+    return decodeJsonString(escaped ? body : body);
+}
+
+function decodeJsonString(value: string) {
+    try { return JSON.parse(`"${value}"`) as string; } catch { return ""; }
 }
 
 function douQiLifeEventResponse(events: Array<[string, unknown]>) {

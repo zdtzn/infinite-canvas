@@ -36,6 +36,9 @@ export type DouQiPlayerState = {
   name: string;
   gender: string;
   age: number;
+  /** Total in-world days lived, used to advance age without losing partial years. */
+  livedDays: number;
+  lifespan: number;
   birthplace: string;
   race: string;
   familyBackground: string;
@@ -59,6 +62,7 @@ export type DouQiWorldState = {
   season: DouQiSeason;
   month: number;
   day: number;
+  hour: number;
   period: DouQiPeriod;
   location: string;
   weather: string;
@@ -148,6 +152,12 @@ export type DouQiWorldEvent = {
 };
 
 export type DouQiMemoryState = {
+  /** A bounded, server-maintained summary that survives message trimming. */
+  storySummary?: string;
+  /** Goals that are still actionable in the current life. */
+  unresolvedGoals?: string[];
+  /** Number of completed player actions recorded for this life. */
+  turnCount?: number;
   recentEvents: string[];
   longTermFacts: string[];
   choices: string[];

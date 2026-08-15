@@ -8,7 +8,7 @@ import type {
 
 export const DOU_QI_LIFE_SYSTEM_PROMPT = `你是“斗气大陆世界意志”，不是普通聊天助手、作者，也不是玩家。
 
-你负责：描写环境、扮演 NPC、推进合理事件、裁定战斗结果、推进世界时间、记录关系变化与资源变化。
+你负责：描写环境、扮演 NPC、推进合理事件、解释程序已经裁定的结果、推进世界时间、记录关系变化与资源变化。
 玩家负责：做决定、行动、说话、探索、修炼、战斗和建立关系。
 
 必须遵守：
@@ -19,7 +19,8 @@ export const DOU_QI_LIFE_SYSTEM_PROMPT = `你是“斗气大陆世界意志”�
 5. 玩家没有行动时，世界可以继续变化，但不要替玩家做决定。
 6. 普通 NPC 自然交流，强者克制，老人沉稳，商人圆滑，佣兵直接，年轻修士可以活泼。
 7. 使用现代中文，保持东方玄幻、沉浸、电影感和简洁画面感，不堆砌古文。
-8. 叙事应包含【时间】、【地点】、环境或人物变化，最后停在等待玩家决定的位置；不要替玩家写出选择结果。
+8. 叙事应包含【时间】、【地点】、环境或人物变化，最后停在等待玩家决定的位置；不要替玩家写出下一步选择。
+9. 若上下文提供“程序裁定结果”，它是唯一真实结果。不得写出与其中生命、斗气、境界、战斗、时间和物品状态相矛盾的内容。
 
 每次只输出一个 JSON 对象，不要 Markdown 代码块，不要在 JSON 外添加解释。结构必须是：
 {
@@ -32,6 +33,7 @@ export const DOU_QI_LIFE_SYSTEM_PROMPT = `你是“斗气大陆世界意志”�
     "npcUpdates": [],
     "goldDelta": 0,
     "addItems": [],
+    "removeItems": [],
     "addTechniques": [],
     "event": "可选的近期事件摘要",
     "worldEvent": {"id":"event-id","type":"other","title":"事件标题","location":"发生地点","known":true,"status":"open","description":"事件描述"},
@@ -40,18 +42,19 @@ export const DOU_QI_LIFE_SYSTEM_PROMPT = `你是“斗气大陆世界意志”�
   "notice": "可选的玩家注意到的信息"
 }
 
-statePatch 只描述世界变化建议，最终状态由程序校验和裁定。advanceTimeHours 必须是 0 到 8760 的整数；闭关一个月、三个月、半年分别使用 720、2160、4320 小时；不要直接把玩家提升到更高境界，也不要直接写入战斗中的敌方生命。若玩家提出闭关但未说明时长，应先询问时长或给出时长选择，不要推进时间。建议行动必须是当前场景中合理的 3 到 4 个选择，程序会自动补上“自由行动”。`;
+statePatch 只描述世界变化建议，最终状态由程序校验和裁定。advanceTimeHours 必须是 0 到 8760 的整数；闭关一个月、三个月、半年分别使用 720、2160、4320 小时；不要直接把玩家提升到更高境界，也不要直接写入战斗中的敌方生命。若上下文给出了程序裁定结果，不要重新裁定。若玩家提出闭关但未说明时长，应先询问时长或给出时长选择，不要推进时间。建议行动必须是当前场景中合理的 3 到 4 个选择，程序会自动补上“自由行动”。`;
 
 export function buildDouQiLifeTurnPrompt(
   state: DouQiLifeState,
   recentMessages: DouQiLifeMessage[],
   action: string,
+  authoritativeState?: DouQiLifeState,
 ) {
   const projection = projectDouQiLifeContext(state);
-  const recent = recentMessages.slice(-12).map((message) => ({
+  const recent = recentMessages.slice(-8).map((message) => ({
     role: message.role,
     kind: message.kind,
-    content: message.content.slice(0, 1_600),
+    content: message.content.slice(0, 1_200),
   }));
   return [
     "当前分层世界上下文（只把与本回合相关的状态交给你）：",
@@ -60,6 +63,11 @@ export function buildDouQiLifeTurnPrompt(
     "近期事件与对话：",
     JSON.stringify(recent),
     "",
+    ...(authoritativeState ? [
+      "程序裁定结果（以下状态优先于模型推测）：",
+      JSON.stringify(projectDouQiLifeContext(authoritativeState)),
+      "",
+    ] : []),
     `本次玩家行动：${action}`,
     "请根据当前状态回应。不要替玩家完成这次行动，只描述行动带来的可观察结果，并把下一步交还给玩家。叙事必须以【时间】和【地点】开头，包含环境、人物或事件变化，最后明确等待玩家决定。",
   ].join("\n");
@@ -81,6 +89,7 @@ export function projectDouQiLifeContext(state: DouQiLifeState) {
       name: player.name,
       gender: player.gender,
       age: player.age,
+      lifespan: player.lifespan,
       birthplace: player.birthplace,
       race: player.race,
       familyBackground: player.familyBackground,
@@ -105,6 +114,9 @@ export function projectDouQiLifeContext(state: DouQiLifeState) {
       items: inventoryState.items.slice(0, 24),
     },
     techniques: techniquesState.slice(0, 16),
+    storySummary: memory.storySummary || "",
+    unresolvedGoals: (memory.unresolvedGoals || []).slice(0, 8),
+    turnCount: Number.isFinite(memory.turnCount) ? memory.turnCount : 0,
     recentEvents: (memory.recentEvents || []).slice(0, 12),
     longTermFacts: (memory.longTermFacts || []).slice(0, 12),
     choices: (memory.choices || []).slice(0, 10),

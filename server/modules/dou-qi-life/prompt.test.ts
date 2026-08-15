@@ -40,9 +40,9 @@ describe("dou qi life prompt protocol", () => {
       inventory: { gold: 20, items: [] },
       techniques: [],
       battle: { active: false, enemyName: "", enemyRealm: "", enemyLife: 0, enemyLifeMax: 0, status: "" },
-      memory: { recentEvents: ["近事"], longTermFacts: ["来处"], choices: ["观察"], worldEvents: [] },
+      memory: { storySummary: "前期经历摘要", unresolvedGoals: ["处理：山中异动"], turnCount: 7, recentEvents: ["近事"], longTermFacts: ["来处"], choices: ["观察"], worldEvents: [] },
     } as DouQiLifeState);
-    expect(projected).toMatchObject({ world: { location: "青山镇" }, player: { name: "沈砚" }, recentEvents: ["近事"] });
+    expect(projected).toMatchObject({ world: { location: "青山镇" }, player: { name: "沈砚" }, storySummary: "前期经历摘要", unresolvedGoals: ["处理：山中异动"], turnCount: 7, recentEvents: ["近事"] });
     expect(JSON.stringify(projected)).not.toContain("不要把完整状态原样发送");
   });
 

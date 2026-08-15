@@ -20,6 +20,8 @@ export type DouQiLifeState = {
         name: string;
         gender: string;
         age: number;
+        livedDays: number;
+        lifespan: number;
         birthplace: string;
         race: string;
         familyBackground: string;
@@ -37,16 +39,16 @@ export type DouQiLifeState = {
         mood: string;
         cultivationMethod: string;
     };
-    world: { year: number; season: string; month: number; day: number; period: string; location: string; weather: string; scene: string; lastRealTimeAt?: number };
+    world: { year: number; season: string; month: number; day: number; hour: number; period: string; location: string; weather: string; scene: string; lastRealTimeAt?: number };
     npcs: Array<{ id: string; name: string; identity: string; realm: string; faction: string; personality: string; goal: string; relationship: number; impression: string; history: string[]; secret: string; lastSeenAt: string }>;
     inventory: { gold: number; items: Array<{ id: string; name: string; category: string; quantity: number; description: string }> };
     techniques: Array<{ id: string; name: string; kind: string; grade: string; attribute: string; effect: string; proficiency: number; source: string }>;
     battle: { active: boolean; enemyName: string; enemyRealm: string; enemyLife: number; enemyLifeMax: number; status: string };
-    memory: { recentEvents: string[]; longTermFacts: string[]; choices: string[]; worldEvents: Array<{ id: string; type: string; title: string; location: string; occurredAt: string; known: boolean; status: string; description: string }> };
+    memory: { storySummary?: string; unresolvedGoals?: string[]; turnCount?: number; recentEvents: string[]; longTermFacts: string[]; choices: string[]; worldEvents: Array<{ id: string; type: string; title: string; location: string; occurredAt: string; known: boolean; status: string; description: string }> };
 };
 
 export type DouQiLifeSession = { id: string; title: string; status: "active" | "ended"; state: DouQiLifeState; lastNarrative: string; createdAt: number; updatedAt: number };
-export type DouQiLifeMessage = { id: string; sessionId: string; role: "player" | "world"; kind: "action" | "narrative" | "system"; content: string; metadata: { suggestions?: DouQiLifeSuggestion[]; notice?: string }; status: "streaming" | "completed" | "failed"; error: string; createdAt: number; updatedAt: number };
+export type DouQiLifeMessage = { id: string; sessionId: string; role: "player" | "world"; kind: "action" | "narrative" | "system"; content: string; metadata: { suggestions?: DouQiLifeSuggestion[]; notice?: string; changes?: string[] }; status: "streaming" | "completed" | "failed"; error: string; createdAt: number; updatedAt: number };
 export type DouQiLifeSuggestion = { id: string; label: string; action: string };
 export type DouQiLifeSave = { id: string; sessionId: string; title: string; kind: "auto" | "manual"; createdAt: number; updatedAt: number };
 export type DouQiLifeDetail = { session: DouQiLifeSession; messages: DouQiLifeMessage[] };
@@ -56,7 +58,7 @@ type DouQiTurnHandlers = {
     signal?: AbortSignal;
     onStarted?: (value: { session: DouQiLifeSession; playerMessage: DouQiLifeMessage; worldMessage: DouQiLifeMessage }) => void;
     onDelta?: (value: { messageId: string; delta: string }) => void;
-    onDone?: (value: { session: DouQiLifeSession; worldMessage: DouQiLifeMessage; suggestions: DouQiLifeSuggestion[]; notice: string }) => void;
+    onDone?: (value: { session: DouQiLifeSession; worldMessage: DouQiLifeMessage; suggestions: DouQiLifeSuggestion[]; notice: string; changes?: string[] }) => void;
     onError?: (value: { messageId?: string; message: string }) => void;
 };
 

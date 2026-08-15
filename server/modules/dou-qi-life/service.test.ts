@@ -67,6 +67,42 @@ describe("dou qi life service", () => {
     }
   });
 
+  test("keeps a bounded life summary and unresolved goals across turns", () => {
+    const { store, service } = setup();
+    try {
+      const session = service.createSession("alice", { name: "记忆旅者", lifeGoal: "查明山中异动" });
+      expect(session.state.memory.turnCount).toBe(0);
+      expect(session.state.memory.unresolvedGoals).toContain("查明山中异动");
+      expect(session.state.memory.storySummary).toContain("记忆旅者");
+
+      const action = "前往山中异动所在之处";
+      const started = service.beginTurn("alice", session.id, action);
+      const result = service.completeTurn(
+        "alice",
+        session.id,
+        started.worldMessage.id,
+        {
+          narrative: "山路尽头传来低沉的震动，附近有人留下了新的痕迹。",
+          statePatch: {
+            event: "发现山中异动的线索",
+            worldEvent: { id: "event-memory", type: "other", title: "山中异动", status: "open", known: true, location: "青山" },
+            npcUpdates: [{ id: "npc-memory", name: "叶清禾", identity: "同行者", relationship: 4, impression: "开始信任你" }],
+          },
+        },
+        action,
+        started.resolution,
+      );
+
+      expect(result.session.state.memory.turnCount).toBe(1);
+      expect(result.session.state.memory.unresolvedGoals).toContain("处理：山中异动");
+      expect(result.session.state.memory.storySummary.length).toBeLessThanOrEqual(1_200);
+      expect(result.session.state.memory.longTermFacts.some((fact) => fact.includes("叶清禾"))).toBe(true);
+      expect(service.getSession("alice", session.id)?.state.memory.storySummary).toBe(result.session.state.memory.storySummary);
+    } finally {
+      store.close();
+    }
+  });
+
   test("rejects a second action while preserving the first action lifecycle", () => {
     const { store, service } = setup();
     try {
@@ -125,7 +161,7 @@ describe("dou qi life service", () => {
 
       const restored = service.restoreSave("alice", save.id);
       expect(restored.id).not.toBe(source.id);
-      expect(restored.title).toContain("续");
+      expect(restored.title).toContain("支线");
       expect(service.getSessionWithHistory("alice", restored.id)?.messages).toHaveLength(3);
       expect(service.deleteSave("alice", save.id)).toBe(true);
       expect(service.deleteSave("alice", save.id)).toBe(false);
@@ -176,6 +212,85 @@ describe("dou qi life service", () => {
       expect(result.session.state.world.period).toBe("黄昏");
       expect(result.notice).toBe("");
       expect(result.session.state.player.qi).toBe(10);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("keeps world hours consistent across midnight and advances age days", () => {
+    const { store, service } = setup();
+    try {
+      const session = service.createSession("alice", { name: "沈砚", age: 18 });
+      const started = service.beginTurn("alice", session.id, "观察夜色");
+      const result = service.completeTurn("alice", session.id, started.worldMessage.id, {
+        narrative: "夜色翻过山脊。",
+        statePatch: { advanceTimeHours: 20 },
+      }, "观察夜色");
+
+      expect(result.session.state.world.hour).toBe(2);
+      expect(result.session.state.world.day).toBe(2);
+      expect(result.session.state.world.period).toBe("深夜");
+      expect(result.session.state.player.age).toBe(18);
+      expect(result.session.state.player.livedDays).toBe(18 * 360 + 1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("uses program resolution for deterministic cultivation actions", () => {
+    const { store, service } = setup();
+    try {
+      const session = service.createSession("alice", { name: "沈砚" });
+      const started = service.beginTurn("alice", session.id, "闭关一日");
+      expect(started.resolution).toBeDefined();
+      const result = service.completeTurn("alice", session.id, started.worldMessage.id, {
+        narrative: "你闭关了一日。",
+        statePatch: { advanceTimeHours: 8_760, player: { qiDelta: -40, lifeDelta: -40 } },
+      }, "闭关一日", started.resolution);
+
+      expect(result.session.state.world.day).toBe(2);
+      expect(result.session.state.player.qi).toBe(12);
+      expect(result.session.state.player.life).toBe(100);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("allows recovery after incapacitation and blocks unrelated actions", () => {
+    const { store, service } = setup();
+    try {
+      const session = service.createSession("alice", { name: "沈砚" });
+      const finish = (action: string, statePatch: unknown = {}) => {
+        const started = service.beginTurn("alice", session.id, action);
+        return service.completeTurn("alice", session.id, started.worldMessage.id, { narrative: "伤势变化。", statePatch }, action, started.resolution);
+      };
+      finish("观察", { player: { lifeDelta: -40 } });
+      finish("观察", { player: { lifeDelta: -40 } });
+      finish("观察", { player: { lifeDelta: -40 } });
+      expect(service.getSession("alice", session.id)?.state.player.life).toBe(0);
+      expect(() => service.beginTurn("alice", session.id, "继续探索")).toThrow("重伤昏迷");
+
+      const recovery = service.beginTurn("alice", session.id, "休养");
+      const result = service.completeTurn("alice", session.id, recovery.worldMessage.id, { narrative: "你开始休养。", statePatch: { player: { lifeDelta: -40 } } }, "休养", recovery.resolution);
+      expect(result.session.state.player.life).toBe(25);
+      expect(result.session.state.player.condition).toBe("恢复中");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("keeps ended lives ended when restoring a save", () => {
+    const { store, service } = setup();
+    try {
+      const session = service.createSession("alice", { name: "沈砚", age: 100 });
+      const started = service.beginTurn("alice", session.id, "观察");
+      const ended = service.completeTurn("alice", session.id, started.worldMessage.id, { narrative: "寿元走到尽头。", statePatch: { advanceTimeHours: 8_640 } }, "观察");
+      expect(ended.session.status).toBe("ended");
+
+      const save = service.saveSession("alice", session.id, "终局");
+      const restored = service.restoreSave("alice", save.id);
+      expect(restored.status).toBe("ended");
+      expect(() => service.beginTurn("alice", restored.id, "继续探索")).toThrow("这段人生已经结束");
     } finally {
       store.close();
     }
