@@ -267,6 +267,34 @@ export async function uploadServerAsset(blob: Blob, prefix: string, storageKey?:
     return readJsonResponse<{ asset: ServerAsset }>(response);
 }
 
+export async function requestServerCutout(blob: Blob, expectedUserId?: string, signal?: AbortSignal) {
+    const form = new FormData();
+    form.set("file", blob, `cutout.${mimeExtension(blob.type)}`);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(new DOMException("Timeout", "TimeoutError")), 5 * 60_000);
+    const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    try {
+        const response = await fetch("/api/color-alchemy/cutout", {
+            method: "POST",
+            body: form,
+            headers: expectedUserHeaders(undefined, expectedUserId),
+            credentials: "same-origin",
+            signal: requestSignal,
+        });
+        if (!response.ok) await throwResponseError(response);
+        const result = await response.blob();
+        if (!result.size || result.type !== "image/png") throw new Error("服务器没有返回有效的透明 PNG");
+        return result;
+    } catch (error) {
+        if (error instanceof ServerRequestError) throw error;
+        if (error instanceof DOMException && error.name === "TimeoutError") throw new Error("服务器抠图超时，请稍后重试");
+        if (error instanceof DOMException && error.name === "AbortError" && signal?.aborted) throw error;
+        throw new Error(friendlyErrorMessage(error));
+    } finally {
+        window.clearTimeout(timeout);
+    }
+}
+
 export async function promoteServerJobAsset(sourceUrl: string, expectedUserId?: string) {
     return serverRequest<{ asset: ServerAsset; sourceUrl: string; width?: number; height?: number }>("/api/assets/from-job", {
         method: "POST",

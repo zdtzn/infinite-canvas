@@ -40,7 +40,7 @@ export function ColorCutoutPanel({
                         <Scissors className="size-4 text-[#e0bd75]" />
                         <h2 className="text-sm font-semibold">智能抠图</h2>
                     </div>
-                    <p className="mt-2 text-xs leading-5 text-white/48">在浏览器本地识别主体并生成透明底图片。原图不会上传到抠图模型服务，首次使用会加载本地模型。</p>
+                    <p className="mt-2 text-xs leading-5 text-white/48">由本站后端识别主体并生成透明底图片。原图只发送到本站服务器，不会转发到第三方抠图服务。</p>
                     <button
                         type="button"
                         disabled={busy}
@@ -53,7 +53,7 @@ export function ColorCutoutPanel({
                     {busy ? (
                         <div className="mt-3">
                             <div className="mb-1 flex items-center justify-between text-[10px] text-white/45">
-                                <span>正在加载模型与处理图像</span>
+                                <span>正在连接服务器抠图引擎</span>
                                 <span className="tabular-nums">{Math.round(progress)}%</span>
                             </div>
                             <div className="h-1 overflow-hidden rounded-full bg-white/10">

@@ -82,6 +82,7 @@ import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
 import { defaultUserChatPresetId, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserSystemPrompt, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserSystemPrompt, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
+import { removeBackgroundOnServer } from "./lib/background-removal";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
 import { createColorAlchemyService, ColorAlchemyError } from "./modules/color-alchemy/service";
@@ -190,6 +191,8 @@ const ASSET_GC_INTERVAL_HOURS = Math.max(1, positiveInt(process.env.ASSET_GC_INT
 const ASSET_GC_START_DELAY_MS = 60_000;
 const SHUTDOWN_GRACE_MS = Math.max(5_000, Math.min(60_000, positiveInt(process.env.SHUTDOWN_GRACE_MS, 20_000)));
 const HEAVY_REQUEST_CONCURRENCY = Math.max(1, Math.min(8, positiveInt(process.env.HEAVY_REQUEST_CONCURRENCY, 4)));
+const COLOR_CUTOUT_RATE_LIMIT = Math.max(1, Math.min(30, positiveInt(process.env.COLOR_CUTOUT_RATE_LIMIT, 8)));
+const COLOR_CUTOUT_CONCURRENCY = Math.max(1, Math.min(2, positiveInt(process.env.COLOR_CUTOUT_CONCURRENCY, 1)));
 const APP_VERSION = readAppVersion();
 const APP_COMMIT = (process.env.APP_COMMIT || "unknown").trim();
 
@@ -281,6 +284,7 @@ const promptAssetProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
 const promptThumbnailProxySemaphore = new AsyncSemaphore(PROMPT_THUMBNAIL_PROXY_CONCURRENCY);
 const promptOptimizeSemaphore = new AsyncSemaphore(PROMPT_OPTIMIZE_CONCURRENCY);
 const heavyRequestSemaphore = new AsyncSemaphore(HEAVY_REQUEST_CONCURRENCY);
+const colorCutoutSemaphore = new AsyncSemaphore(COLOR_CUTOUT_CONCURRENCY);
 
 const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
     concurrency: JOB_CONCURRENCY,
@@ -475,6 +479,10 @@ async function route(request: Request, requestId: string) {
             return saveColorAlchemyDocument(request, session, decodeRouteSegment(colorAlchemyDocumentMatch[1], "灵彩草稿 ID"));
         if (colorAlchemyDocumentMatch && request.method === "DELETE")
             return deleteColorAlchemyDocument(session, decodeRouteSegment(colorAlchemyDocumentMatch[1], "灵彩草稿 ID"));
+        if (url.pathname === "/api/color-alchemy/cutout" && request.method === "POST") {
+            enforceRateLimit(`${session.userId}:${clientIp(request)}:color-cutout`, COLOR_CUTOUT_RATE_LIMIT);
+            return heavyRequestSemaphore.run(request.signal, () => colorCutoutSemaphore.run(request.signal, () => cutoutImage(request)));
+        }
         if (url.pathname === "/api/product-lab/context" && request.method === "GET") return productLabContext(session);
         if (url.pathname === "/api/product-lab/projects" && request.method === "GET") return listProductProjects(session);
         if (url.pathname === "/api/product-lab/projects" && request.method === "POST") return createProductProject(request, session);
@@ -2342,6 +2350,35 @@ function deleteGenerationHistoryItem(session: SessionPayload, kind: GenerationHi
     const deletedAt = Date.now();
     appDatabase.deleteGenerationHistoryItems(session.userId, kind, [{ id, kind, deletedAt, jobIds: [] }]);
     return new Response(null, { status: 204 });
+}
+
+async function cutoutImage(request: Request) {
+    const { file } = await readAssetUploadForm(request, MAX_ASSET_UPLOAD_BYTES, MAX_ASSET_BYTES, "抠图请求不能超过 32 MB", "单张图片不能超过 32 MB");
+    const mimeType = await resolveImageMimeType(file);
+    if (!isAllowedImageMimeType(mimeType)) throw new HttpError(400, "抠图仅支持 PNG、JPEG、WebP 或 AVIF 图片");
+    const input = mimeType === "image/avif" ? new Blob([await file.arrayBuffer()], { type: "application/octet-stream" }) : file;
+    let result: Blob;
+    try {
+        result = await removeBackgroundOnServer(input);
+    } catch (error) {
+        console.error(
+            JSON.stringify({
+                event: "color_cutout_failed",
+                message: error instanceof Error ? error.message : "unknown error",
+                stack: error instanceof Error ? error.stack : undefined,
+            }),
+        );
+        throw new HttpError(502, "服务器抠图引擎处理失败，请稍后重试");
+    }
+    return new Response(result, {
+        headers: {
+            "Content-Type": "image/png",
+            "Content-Length": String(result.size),
+            "Cache-Control": "no-store",
+            "Content-Disposition": "inline; filename=\"cutout.png\"",
+            "X-Content-Type-Options": "nosniff",
+        },
+    });
 }
 
 async function uploadAsset(request: Request, session: SessionPayload) {

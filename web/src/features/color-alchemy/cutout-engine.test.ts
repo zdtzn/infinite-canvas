@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { cutoutErrorMessage, DEFAULT_CUTOUT_SETTINGS, normalizeCutoutSettings, refineCutoutPixels, runBackgroundRemovalWithFallback } from "./cutout-engine";
+import { cutoutErrorMessage, DEFAULT_CUTOUT_SETTINGS, normalizeCutoutSettings, refineCutoutPixels } from "./cutout-engine";
 
 describe("灵彩抠图边缘处理", () => {
     test("normalizes edge settings into the supported range", () => {
@@ -38,40 +38,9 @@ describe("灵彩抠图边缘处理", () => {
 });
 
 describe("灵彩抠图运行时", () => {
-    test("uses a clean CPU runtime even when WebGPU is available", async () => {
-        const configs: Array<{ device: string; publicPath?: string }> = [];
-        const resultBlob = { text: async () => "cutout" } as Blob;
-        const result = await runBackgroundRemovalWithFallback(
-            {} as Blob,
-            async (_source, config) => {
-                configs.push(config);
-                return resultBlob;
-            },
-            true,
-        );
-
-        expect(configs).toHaveLength(1);
-        expect(configs[0]?.device).toBe("cpu");
-        expect(new URL(configs[0]?.publicPath || "http://invalid").pathname).toBe("/background-removal/1.7.0/");
-        expect(await result.text()).toBe("cutout");
-    });
-
-    test("uses CPU directly when WebGPU is unavailable", async () => {
-        const devices: string[] = [];
-        await runBackgroundRemovalWithFallback(
-            {} as Blob,
-            async (_source, config) => {
-                devices.push(config.device);
-                return {} as Blob;
-            },
-            false,
-        );
-
-        expect(devices).toEqual(["cpu"]);
-    });
-
-    test("turns a poisoned ONNX runtime error into a recoverable Chinese message", () => {
+    test("keeps the backend failure message actionable", () => {
         expect(cutoutErrorMessage(new Error("previous call to initWasm() failed"))).toBe("抠图运行组件初始化失败，请刷新页面后重试；若仍失败，请清除本站缓存后重新打开。");
+        expect(cutoutErrorMessage(new Error("服务器抠图引擎处理失败，请稍后重试"))).toBe("服务器抠图引擎处理失败，请稍后重试");
     });
 });
 

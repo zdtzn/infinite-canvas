@@ -1,4 +1,5 @@
 import { readImageBlob, resolveImageUrl } from "@/services/image-storage";
+import { requestServerCutout } from "@/services/server-api";
 
 import type { ColorAlchemySource } from "./types";
 
@@ -8,23 +9,11 @@ export type CutoutSettings = {
     decontaminate: number;
 };
 
-type BackgroundRemovalConfig = {
-    model: "isnet_fp16";
-    device: "cpu" | "gpu";
-    publicPath: string;
-    output: { format: "image/png" };
-    progress?: (key: string, current: number, total: number) => void;
-};
-
-type BackgroundRemovalRunner = (source: Blob, config: BackgroundRemovalConfig) => Promise<Blob>;
-
 export const DEFAULT_CUTOUT_SETTINGS: CutoutSettings = {
     edgeEnhancement: 62,
     edgeSoftness: 18,
     decontaminate: 48,
 };
-
-const CUTOUT_ASSET_PATH = "/background-removal/1.7.0/";
 
 export function normalizeCutoutSettings(value?: Partial<CutoutSettings>): CutoutSettings {
     return {
@@ -34,27 +23,13 @@ export function normalizeCutoutSettings(value?: Partial<CutoutSettings>): Cutout
     };
 }
 
-export async function removeBackgroundFromSource(source: ColorAlchemySource, onProgress?: (progress: number) => void) {
+export async function removeBackgroundFromSource(source: ColorAlchemySource, onProgress?: (progress: number) => void, signal?: AbortSignal) {
     const url = await resolveImageUrl(source.storageKey, source.url);
     const blob = await readImageBlob(url || source.url);
-    const { removeBackground } = await import("@imgly/background-removal");
-    return runBackgroundRemovalWithFallback(blob, removeBackground as unknown as BackgroundRemovalRunner, false, onProgress);
-}
-
-export async function runBackgroundRemovalWithFallback(source: Blob, run: BackgroundRemovalRunner, _supportsWebGpu: boolean, onProgress?: (progress: number) => void) {
-    onProgress?.(2);
-    // IMG.LY keeps one ONNX singleton. A failed GPU probe poisons that instance, so every run must start directly on CPU.
-    const config: BackgroundRemovalConfig = {
-        model: "isnet_fp16",
-        device: "cpu",
-        publicPath: resolveCutoutAssetPublicPath(),
-        output: { format: "image/png" },
-        progress: (_key, current, total) => {
-            if (total > 0) onProgress?.(Math.min(98, Math.max(2, Math.round((current / total) * 98))));
-        },
-    };
-
-    return run(source, config);
+    onProgress?.(8);
+    const result = await requestServerCutout(blob, undefined, signal);
+    onProgress?.(100);
+    return result;
 }
 
 export function cutoutErrorMessage(error: unknown) {
@@ -71,11 +46,6 @@ export function cutoutErrorMessage(error: unknown) {
     }
     if (/[\u3400-\u9fff]/.test(detail)) return detail;
     return "抠图处理失败，请刷新页面后重试。";
-}
-
-function resolveCutoutAssetPublicPath() {
-    const base = typeof location === "undefined" ? "http://localhost/" : location.href;
-    return new URL(CUTOUT_ASSET_PATH, base).toString();
 }
 
 export async function renderCutoutPreview(input: Blob, canvas: HTMLCanvasElement, settings: CutoutSettings, maxEdge = 1_400) {
