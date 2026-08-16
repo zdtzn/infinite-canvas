@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ImagePlus, Images, Layers3, Scissors, Trash2 } from "lucide-react";
+import { ImagePlus, Images, Layers3, Trash2 } from "lucide-react";
 import { Tabs, Tooltip } from "antd";
 
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -8,7 +8,7 @@ import { COLOR_PRESETS } from "./presets";
 import { ColorSourceImage } from "./color-source-image";
 import { FilmLutLibrary } from "./film-lut-library";
 
-export type ColorSourcePanelTab = "sources" | "presets" | "luts" | "cutout";
+export type ColorSourcePanelTab = "sources" | "presets" | "luts";
 
 export function ColorSourcePanel({
     document,
@@ -197,37 +197,6 @@ export function ColorSourcePanel({
                         key: "luts",
                         label: "胶片滤镜",
                         children: <FilmLutLibrary activeLutId={document.settings.lutId} onApplyLut={onApplyLut} />,
-                    },
-                    {
-                        key: "cutout",
-                        label: "灵彩抠图",
-                        children: (
-                            <div className="thin-scrollbar h-[calc(100vh-150px)] space-y-5 overflow-y-auto pb-5">
-                                <PanelSection title="当前抠图素材">
-                                    <div className="overflow-hidden rounded-md border border-[#d7b46a]/40 bg-white/5" title={document.source.title}>
-                                        <div className="relative aspect-[4/3] overflow-hidden bg-black/20">
-                                            <ColorSourceImage source={document.source} alt={document.source.title} className="h-full w-full object-cover" />
-                                            <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded bg-black/55 px-2 py-1 text-[10px] text-white/78 backdrop-blur-md">
-                                                <Scissors className="size-3" />
-                                                透明图层
-                                            </div>
-                                        </div>
-                                        <div className="truncate px-2.5 py-2 text-xs font-medium text-white/85">{document.source.title}</div>
-                                    </div>
-                                </PanelSection>
-
-                                <div className="grid grid-cols-3 gap-2">
-                                    <SourceAction title="添加图片" icon={<ImagePlus className="size-4" />} onClick={onUpload} />
-                                    <SourceAction title="作品库" icon={<Images className="size-4" />} onClick={onOpenAssets} />
-                                    <SourceAction title="从画布" icon={<Layers3 className="size-4" />} onClick={onOpenCanvas} />
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2 text-[10px] text-white/42">
-                                    <div className="rounded-md border border-white/8 bg-white/4 px-2.5 py-2">本地识别</div>
-                                    <div className="rounded-md border border-white/8 bg-white/4 px-2.5 py-2">透明 PNG</div>
-                                </div>
-                            </div>
-                        ),
                     },
                 ]}
             />

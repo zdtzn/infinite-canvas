@@ -25,10 +25,3 @@ The homepage Light Rays effect and the authenticated-app Splash Cursor effect ad
 - Copyright (c) 2026 David Haz.
 
 The adapted effects are integrated only as part of the Infinite Canvas application and are not offered as standalone components.
-
-## IMG.LY Background Removal Node
-
-The server-side `灵彩抠图` engine uses [`@imgly/background-removal-node`](https://github.com/imgly/background-removal-js), including its ONNX model assets and Sharp/ONNX Runtime dependencies.
-
-- The package is distributed under the GNU Affero General Public License; its package license and third-party notices are included in the installed server dependency.
-- The model runs on the application server. Uploaded images are processed by this application and are not sent to an external background-removal provider.

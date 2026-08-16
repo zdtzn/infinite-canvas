@@ -10,15 +10,15 @@ test("content security policy permits only loopback HTTP connections for Canvas 
     expect(CONTENT_SECURITY_POLICY).not.toContain("192.168.");
 });
 
-test("browser inference can load generated wasm modules without weakening inline script protection", () => {
+test("dynamic plugin modules can load without weakening inline script protection", () => {
     const scriptPolicy = CONTENT_SECURITY_POLICY.split("; ").find((directive) => directive.startsWith("script-src "));
     expect(scriptPolicy).toContain("blob:");
     expect(scriptPolicy).not.toContain("'unsafe-inline'");
     expect(scriptPolicy).not.toContain("'unsafe-eval'");
 });
 
-test("browser inference can compile WebAssembly without enabling general eval", () => {
+test("the script policy does not enable WebAssembly or general eval", () => {
     const scriptPolicy = CONTENT_SECURITY_POLICY.split("; ").find((directive) => directive.startsWith("script-src "));
-    expect(scriptPolicy).toContain("wasm-unsafe-eval");
+    expect(scriptPolicy).not.toContain("wasm-unsafe-eval");
     expect(scriptPolicy).not.toContain("'unsafe-eval'");
 });

@@ -1,13 +1,5 @@
 {
     "name": "infinite-canvas-server",
     "private": true,
-    "type": "module",
-    "trustedDependencies": [
-        "@imgly/background-removal-node",
-        "onnxruntime-node",
-        "sharp"
-    ],
-    "dependencies": {
-        "@imgly/background-removal-node": "1.4.5"
-    }
+    "type": "module"
 }
