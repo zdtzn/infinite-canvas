@@ -38,8 +38,8 @@ export function isUuAsyncGptImage2Channel(baseUrl: string, model: string) {
     }
 }
 
-export function isUuImageAsyncChannel(baseUrl: string, model: string, referenceCount: number, hasMask: boolean) {
-    return isUuAsyncGptImage2Channel(baseUrl, model) && referenceCount === 0 && !hasMask;
+export function isUuImageAsyncChannel(baseUrl: string, model: string, _referenceCount: number, hasMask: boolean) {
+    return isUuAsyncGptImage2Channel(baseUrl, model) && !hasMask;
 }
 
 export function hasUuAsyncTask(input: ImageJobInput): input is ImageJobInput & {
@@ -84,10 +84,13 @@ export function buildUuAsyncImageForm({
     form.set("size_tier", request.sizeTier);
     form.set("width", String(request.width));
     form.set("height", String(request.height));
-    // UU's async image mode documents a single `image` upload. The image-mode
-    // routing above already limits this path to one reference image.
-    const reference = references[0];
-    if (reference) form.append("image", reference, `reference-1${imageFilenameExtension(reference.type)}`);
+    // Match UU Image Studio: send every reference through `images` and repeat
+    // the first one as the legacy-compatible singular `image` field.
+    references.forEach((reference, index) => {
+        const filename = `reference-${index + 1}${imageFilenameExtension(reference.type)}`;
+        form.append("images", reference, filename);
+        if (index === 0) form.append("image", reference, filename);
+    });
     return form;
 }
 

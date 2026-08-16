@@ -4,12 +4,12 @@ import { UuImageChannelScheduler, buildUuAsyncImageForm, buildUuAsyncImageReques
 
 const ONE_PIXEL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
 
-test("uses the UU async API only for text-to-image gpt-image-2 jobs", () => {
+test("uses the UU async API for text and reference gpt-image-2 jobs without masks", () => {
     expect(isUuImageAsyncChannel("https://uuapi.cc/v1", "gpt-image-2", 0, false)).toBe(true);
-    expect(isUuImageAsyncChannel("https://api.uuapi.net", "GPT-IMAGE-2", 1, false)).toBe(false);
+    expect(isUuImageAsyncChannel("https://api.uuapi.net", "GPT-IMAGE-2", 1, false)).toBe(true);
     expect(isUuImageAsyncChannel("https://api.example.com", "gpt-image-2", 0, false)).toBe(false);
     expect(isUuImageAsyncChannel("https://uuapi.cc", "gpt-image-1", 0, false)).toBe(false);
-    expect(isUuImageAsyncChannel("https://uuapi.cc", "gpt-image-2", 2, false)).toBe(false);
+    expect(isUuImageAsyncChannel("https://uuapi.cc", "gpt-image-2", 2, false)).toBe(true);
     expect(isUuImageAsyncChannel("https://uuapi.cc", "gpt-image-2", 1, true)).toBe(false);
 });
 
@@ -36,13 +36,14 @@ test("builds UU async form fields for text and image modes", () => {
 });
 
 test("matches the UU image studio multipart fields for reference generation", () => {
-    const reference = new Blob(["reference"], { type: "image/png" });
+    const firstReference = new Blob(["reference-1"], { type: "image/png" });
+    const secondReference = new Blob(["reference-2"], { type: "image/webp" });
     const form = buildUuAsyncImageForm({
         model: "gpt-image-2",
         prompt: "edit the reference",
         size: "1:1",
         quality: "low",
-        references: [reference],
+        references: [firstReference, secondReference],
     });
 
     expect(form.get("model")).toBe("gpt-image-2");
@@ -53,7 +54,9 @@ test("matches the UU image studio multipart fields for reference generation", ()
     expect(form.get("height")).toBe("1024");
     expect(form.getAll("image")).toHaveLength(1);
     expect((form.get("image") as File).name).toBe("reference-1.png");
-    expect(form.getAll("images")).toHaveLength(0);
+    expect(form.getAll("images")).toHaveLength(2);
+    expect((form.getAll("images")[0] as File).name).toBe("reference-1.png");
+    expect((form.getAll("images")[1] as File).name).toBe("reference-2.webp");
 });
 
 test("keeps the reference filename extension aligned with its MIME type", () => {
@@ -68,7 +71,9 @@ test("keeps the reference filename extension aligned with its MIME type", () => 
 
     expect((form.get("image") as File).name).toBe("reference-1.jpg");
     expect((form.get("image") as File).type).toBe("image/jpeg");
-    expect(form.getAll("images")).toHaveLength(0);
+    expect(form.getAll("images")).toHaveLength(1);
+    expect((form.get("images") as File).name).toBe("reference-1.jpg");
+    expect((form.get("images") as File).type).toBe("image/jpeg");
 });
 
 test("resumes the async endpoint only for an existing UU task", () => {
