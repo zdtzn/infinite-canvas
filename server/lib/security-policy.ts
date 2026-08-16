@@ -6,7 +6,7 @@ export const CONTENT_SECURITY_POLICY = [
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
-    "script-src 'self' blob: https://www.googletagmanager.com https://hm.baidu.com",
+    "script-src 'self' blob: wasm-unsafe-eval https://www.googletagmanager.com https://hm.baidu.com",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "media-src 'self' data: blob: https:",

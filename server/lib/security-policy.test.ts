@@ -16,3 +16,9 @@ test("browser inference can load generated wasm modules without weakening inline
     expect(scriptPolicy).not.toContain("'unsafe-inline'");
     expect(scriptPolicy).not.toContain("'unsafe-eval'");
 });
+
+test("browser inference can compile WebAssembly without enabling general eval", () => {
+    const scriptPolicy = CONTENT_SECURITY_POLICY.split("; ").find((directive) => directive.startsWith("script-src "));
+    expect(scriptPolicy).toContain("wasm-unsafe-eval");
+    expect(scriptPolicy).not.toContain("'unsafe-eval'");
+});
