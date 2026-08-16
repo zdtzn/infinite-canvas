@@ -76,6 +76,7 @@ import { UuImageChannelScheduler, buildUuAsyncImageForm, hasUuAsyncTask, isUuAsy
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
+import { staticCacheControl } from "./lib/static-cache-policy";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, isLoopbackSetupRequest, isSameApplicationOrigin, normalizePublicBaseUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
@@ -4034,12 +4035,10 @@ async function serveStatic(pathname: string, method: string) {
     let path = resolve(WEB_ROOT, relative || "index.html");
     if (!(path === WEB_ROOT || path.startsWith(`${WEB_ROOT}${sep}`)) || !existsSync(path) || statSync(path).isDirectory() || Bun.file(path).size === 0) path = join(WEB_ROOT, "index.html");
     const file = Bun.file(path);
-    const immutable = /-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2?|svg)$/.test(path);
-    const revalidate = path.endsWith("index.html") || path.endsWith("theme-init.js");
     return new Response(method === "HEAD" ? null : file, {
         headers: {
             "Content-Type": file.type || contentType(path),
-            "Cache-Control": immutable ? "public, max-age=31536000, immutable" : revalidate ? "no-cache" : "public, max-age=3600",
+            "Cache-Control": staticCacheControl(path),
         },
     });
 }

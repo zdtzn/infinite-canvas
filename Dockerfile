@@ -4,6 +4,8 @@ FROM oven/bun:1.3.13 AS web-build
 WORKDIR /app/web
 COPY web/package.json web/bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache
+COPY web/scripts/prepare-background-removal-assets.ts ./scripts/prepare-background-removal-assets.ts
+RUN bun run assets:background-removal
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./

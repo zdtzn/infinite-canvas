@@ -11,8 +11,9 @@
         "prismjs": "^1.30.0"
     },
     "scripts": {
+        "assets:background-removal": "bun run scripts/prepare-background-removal-assets.ts",
         "dev": "vite --host 0.0.0.0 --port 3000",
-        "build": "vite build",
+        "build": "bun run assets:background-removal && vite build",
         "typecheck": "tsc --noEmit && tsc --project ../server/tsconfig.json",
         "test": "bun test ../server src",
         "start": "vite preview --host 0.0.0.0 --port 3000",

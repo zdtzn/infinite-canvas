@@ -11,6 +11,7 @@ export type CutoutSettings = {
 type BackgroundRemovalConfig = {
     model: "isnet_fp16";
     device: "cpu" | "gpu";
+    publicPath: string;
     output: { format: "image/png" };
     progress?: (key: string, current: number, total: number) => void;
 };
@@ -22,6 +23,8 @@ export const DEFAULT_CUTOUT_SETTINGS: CutoutSettings = {
     edgeSoftness: 18,
     decontaminate: 48,
 };
+
+const CUTOUT_ASSET_PATH = "/background-removal/1.7.0/";
 
 export function normalizeCutoutSettings(value?: Partial<CutoutSettings>): CutoutSettings {
     return {
@@ -35,28 +38,44 @@ export async function removeBackgroundFromSource(source: ColorAlchemySource, onP
     const url = await resolveImageUrl(source.storageKey, source.url);
     const blob = await readImageBlob(url || source.url);
     const { removeBackground } = await import("@imgly/background-removal");
-    const supportsWebGpu = typeof navigator !== "undefined" && Boolean((navigator as Navigator & { gpu?: unknown }).gpu);
-    return runBackgroundRemovalWithFallback(blob, removeBackground as unknown as BackgroundRemovalRunner, supportsWebGpu, onProgress);
+    return runBackgroundRemovalWithFallback(blob, removeBackground as unknown as BackgroundRemovalRunner, false, onProgress);
 }
 
-export async function runBackgroundRemovalWithFallback(source: Blob, run: BackgroundRemovalRunner, supportsWebGpu: boolean, onProgress?: (progress: number) => void) {
+export async function runBackgroundRemovalWithFallback(source: Blob, run: BackgroundRemovalRunner, _supportsWebGpu: boolean, onProgress?: (progress: number) => void) {
     onProgress?.(2);
-    const createConfig = (device: BackgroundRemovalConfig["device"]): BackgroundRemovalConfig => ({
+    // IMG.LY keeps one ONNX singleton. A failed GPU probe poisons that instance, so every run must start directly on CPU.
+    const config: BackgroundRemovalConfig = {
         model: "isnet_fp16",
-        device,
+        device: "cpu",
+        publicPath: resolveCutoutAssetPublicPath(),
         output: { format: "image/png" },
         progress: (_key, current, total) => {
             if (total > 0) onProgress?.(Math.min(98, Math.max(2, Math.round((current / total) * 98))));
         },
-    });
+    };
 
-    if (!supportsWebGpu) return run(source, createConfig("cpu"));
-    try {
-        return await run(source, createConfig("gpu"));
-    } catch {
-        console.debug("灵彩抠图 GPU 运行时不可用，改用 CPU 继续处理");
-        return run(source, createConfig("cpu"));
+    return run(source, config);
+}
+
+export function cutoutErrorMessage(error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error || "");
+    const normalized = detail.toLowerCase();
+    if (normalized.includes("previous call to initwasm() failed") || normalized.includes("runtime aborted")) {
+        return "抠图运行组件初始化失败，请刷新页面后重试；若仍失败，请清除本站缓存后重新打开。";
     }
+    if (normalized.includes("resource metadata not found") || normalized.includes("failed to fetch") || normalized.includes("networkerror") || normalized.includes("load failed")) {
+        return "抠图模型加载失败，请检查网络后重试。首次使用需要下载模型资源，之后会由浏览器缓存。";
+    }
+    if (normalized.includes("out of memory") || normalized.includes("memory access out of bounds")) {
+        return "当前设备可用内存不足，建议关闭其他页面、缩小原图后再试。";
+    }
+    if (/[\u3400-\u9fff]/.test(detail)) return detail;
+    return "抠图处理失败，请刷新页面后重试。";
+}
+
+function resolveCutoutAssetPublicPath() {
+    const base = typeof location === "undefined" ? "http://localhost/" : location.href;
+    return new URL(CUTOUT_ASSET_PATH, base).toString();
 }
 
 export async function renderCutoutPreview(input: Blob, canvas: HTMLCanvasElement, settings: CutoutSettings, maxEdge = 1_400) {

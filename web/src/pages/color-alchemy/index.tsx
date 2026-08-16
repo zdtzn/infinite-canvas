@@ -22,7 +22,7 @@ import { deriveBorrowedColorSettings, recommendColorSettings } from "@/features/
 import { applyColorPreset } from "@/features/color-alchemy/presets";
 import { analyzeColorSource, colorExportExtension, renderColorBlob } from "@/features/color-alchemy/renderer";
 import { normalizeColorSettings } from "@/features/color-alchemy/settings";
-import { DEFAULT_CUTOUT_SETTINGS, normalizeCutoutSettings, removeBackgroundFromSource, renderCutoutBlob, type CutoutSettings } from "@/features/color-alchemy/cutout-engine";
+import { cutoutErrorMessage, DEFAULT_CUTOUT_SETTINGS, normalizeCutoutSettings, removeBackgroundFromSource, renderCutoutBlob, type CutoutSettings } from "@/features/color-alchemy/cutout-engine";
 import { prepareColorAlchemyForUser, useColorAlchemyStore } from "@/features/color-alchemy/use-color-alchemy-store";
 import type { AnalyzedColor, ColorAlchemySource, ColorExportFormat, ColorPreset, ColorSettings } from "@/features/color-alchemy/types";
 import { deleteColorAlchemyDocument, fetchColorAlchemyDocuments, saveColorAlchemyDocument, type ColorAlchemyDocumentTombstone } from "@/services/color-alchemy-api";
@@ -254,9 +254,10 @@ export default function ColorAlchemyPage() {
             const result = await removeBackgroundFromSource(document.source, setCutoutProgress);
             setCutoutResult(result);
             setCutoutProgress(100);
-            message.success("主体已识别，透明边界已展开");
+            message.success({ key: "color-alchemy-cutout", content: "主体已识别，透明边界已展开" });
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "抠图失败，请稍后重试");
+            console.error("灵彩抠图处理失败", error);
+            message.error({ key: "color-alchemy-cutout", content: cutoutErrorMessage(error) });
         } finally {
             setCutoutBusy(false);
         }
