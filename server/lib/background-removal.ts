@@ -1,6 +1,8 @@
 import type { Config } from "@imgly/background-removal-node";
 
-const DEFAULT_MODEL = "medium";
+// Keep the default friendly to the single-server production deployment. The
+// medium model remains available through CUTOUT_MODEL when more memory is available.
+const DEFAULT_MODEL = "small";
 
 let removeBackgroundModulePromise: Promise<typeof import("@imgly/background-removal-node")> | undefined;
 

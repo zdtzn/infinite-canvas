@@ -28,7 +28,7 @@ COPY --from=server-deps /app/server/node_modules /app/server/node_modules
 RUN mkdir -p /data && chown -R bun:bun /app /data
 
 USER bun
-ENV PORT=3000 DATA_DIR=/data WEB_ROOT=/app/web APP_COMMIT=${APP_COMMIT} CUTOUT_MODEL=medium COLOR_CUTOUT_CONCURRENCY=1
+ENV PORT=3000 DATA_DIR=/data WEB_ROOT=/app/web APP_COMMIT=${APP_COMMIT} CUTOUT_MODEL=small COLOR_CUTOUT_CONCURRENCY=1
 EXPOSE 3000
 STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD bun -e "const r=await fetch('http://127.0.0.1:3000/health');if(!r.ok)process.exit(1)"
