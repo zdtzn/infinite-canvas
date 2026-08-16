@@ -9,3 +9,10 @@ test("content security policy permits only loopback HTTP connections for Canvas 
     expect(CONTENT_SECURITY_POLICY).not.toContain("connect-src 'self' http:");
     expect(CONTENT_SECURITY_POLICY).not.toContain("192.168.");
 });
+
+test("browser inference can load generated wasm modules without weakening inline script protection", () => {
+    const scriptPolicy = CONTENT_SECURITY_POLICY.split("; ").find((directive) => directive.startsWith("script-src "));
+    expect(scriptPolicy).toContain("blob:");
+    expect(scriptPolicy).not.toContain("'unsafe-inline'");
+    expect(scriptPolicy).not.toContain("'unsafe-eval'");
+});
