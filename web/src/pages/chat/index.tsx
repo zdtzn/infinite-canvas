@@ -1,6 +1,5 @@
 import { App, Button, Drawer, Dropdown, Empty, Input, Popconfirm, Segmented, Skeleton, Tag, Tooltip } from "antd";
 import { BookOpen, ChevronDown, Copy, Download, FileUp, ImagePlus, LoaderCircle, MessageCircle, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserRound, X } from "lucide-react";
-import { Streamdown } from "streamdown";
 import { Suspense, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
@@ -12,6 +11,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId, type ChatPresetOption } from "./chat-presets";
 
 const DouQiLifeView = lazyRoute(() => import("./dou-qi-life-view"));
+const ChatMarkdown = lazyRoute(() => import("./chat-markdown"));
 
 const welcomeLines = ["把疑问交给此方天地。", "可上传图片，让模型结合画面回答。", "这里适合聊创意、提示词、商品图、画面结构和日常问题。"];
 
@@ -996,6 +996,7 @@ function createOptimisticAssistantMessage(pending: PendingChatTurn, error: strin
 function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete }: { item: ChatMessage; isLatest: boolean; onRetry: (item: ChatMessage) => void; onContinue: (item: ChatMessage) => void; onEdit: (item: ChatMessage) => void; onDelete: (item: ChatMessage) => void }) {
     const isUser = item.role === "user";
     const copyText = useCopyText();
+    const markdownContent = item.content;
     const copyValue = item.status === "streaming" ? "" : item.content.trim() || (item.status === "failed" ? item.error?.trim() || "" : "");
     const canDelete = !item.id.startsWith("optimistic-") && item.status !== "streaming";
     const menuItems = [
@@ -1021,7 +1022,17 @@ function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete }: {
                         ))}
                     </div>
                 ) : null}
-                {isUser ? <div className="whitespace-pre-wrap break-words">{item.content}</div> : <Streamdown className="agent-streamdown">{item.content || (item.status === "streaming" ? "正在推演..." : item.error || "未返回内容")}</Streamdown>}
+                {isUser ? (
+                    <div className="whitespace-pre-wrap break-words">{item.content}</div>
+                ) : item.status === "streaming" && !item.content ? (
+                    <div className="whitespace-pre-wrap break-words">正在推演...</div>
+                ) : markdownContent ? (
+                    <Suspense fallback={<div className="whitespace-pre-wrap break-words">{markdownContent}</div>}>
+                        <ChatMarkdown className="agent-streamdown" content={markdownContent} />
+                    </Suspense>
+                ) : (
+                    <div className="whitespace-pre-wrap break-words">{item.status === "failed" ? item.error || "未返回内容" : "未返回内容"}</div>
+                )}
                 {item.status === "failed" ? <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">{item.error || "本次问道未能完成"}</div> : null}
                 {copyValue || menuItems.length ? (
                     <div className={cn("mt-1.5 flex items-center gap-1", isUser ? "justify-end" : "justify-start")}>

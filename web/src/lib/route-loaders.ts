@@ -23,7 +23,7 @@ type PreloadRouteOptions = {
     fromWarmup?: boolean;
 };
 
-const routeWarmupOrder = ["/image", "/chat", "/canvas", "/assets", "/color-alchemy", "/product-lab", "/prompts", "/video", "/cultivation", "/config", "/", "/docs", "/canvas/:id"] as const;
+const routeWarmupOrder = ["/chat", "/image"] as const;
 
 export function preloadRoute(path: string, options: PreloadRouteOptions = {}) {
     const routeKey = routeKeyForPath(path);
@@ -50,7 +50,7 @@ export function warmupRoutesWhenIdle(currentPath: string) {
     if (typeof window === "undefined") return () => undefined;
 
     const connection = (navigator as Navigator & { connection?: { effectiveType?: string; saveData?: boolean } }).connection;
-    if (connection?.saveData || connection?.effectiveType === "slow-2g" || connection?.effectiveType === "2g") return () => undefined;
+    if (connection?.saveData || connection?.effectiveType === "slow-2g" || connection?.effectiveType === "2g" || connection?.effectiveType === "3g") return () => undefined;
 
     const currentRouteKey = routeKeyForPath(currentPath);
     const prioritizedRoutes: string[] = [...routeWarmupOrder];
