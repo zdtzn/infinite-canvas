@@ -28,11 +28,10 @@ export default function UserLayout({ children }: { children: ReactNode }) {
                 VELOCITY_DISSIPATION={2.2}
                 PRESSURE_ITERATIONS={12}
                 CURL={4}
-                SPLAT_RADIUS={0.04}
+                SPLAT_RADIUS={0.025}
                 SPLAT_FORCE={4000}
-                RAINBOW_MODE={!isImperialMode}
-                COLOR="#ebba20"
-                className={cn(pathname.startsWith("/canvas/") && "is-canvas-workspace", isImperialMode && "is-imperial")}
+                RAINBOW_MODE
+                className={cn(pathname.startsWith("/canvas/") && "is-canvas-workspace")}
             />
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
                 <AppTopNav />

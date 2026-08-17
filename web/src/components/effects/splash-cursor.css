@@ -23,11 +23,6 @@
     opacity: 0.64;
 }
 
-.splash-cursor-layer.is-imperial {
-    opacity: 0.88;
-    filter: saturate(1.18) brightness(1.08);
-}
-
 @media (max-width: 767px), (pointer: coarse) {
     .splash-cursor-layer {
         display: none;
