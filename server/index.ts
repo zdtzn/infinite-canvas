@@ -72,7 +72,7 @@ import {
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
-import { UuImageChannelScheduler, buildUuAsyncImageForm, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
+import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageForm, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -277,6 +277,7 @@ let shuttingDown = false;
 let shutdownPromise: Promise<void> | null = null;
 const geminiImageSemaphore = new AsyncSemaphore(GEMINI_IMAGE_CONCURRENCY);
 const uuImageChannelScheduler = new UuImageChannelScheduler();
+const uuAsyncCapabilityRegistry = new UuAsyncCapabilityRegistry();
 const promptAssetProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
 const promptThumbnailProxySemaphore = new AsyncSemaphore(PROMPT_THUMBNAIL_PROXY_CONCURRENCY);
 const promptOptimizeSemaphore = new AsyncSemaphore(PROMPT_OPTIMIZE_CONCURRENCY);
@@ -3035,7 +3036,12 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
 
 function publicJob(job: StoredImageJob) {
     const channel = resolvePlatformChannel(state, job.input.channelId);
-    const usesUuAsync = job.input.apiFormat === "openai" && job.input.count === 1 && Boolean(channel && isUuImageAsyncChannel(channel.baseUrl, job.input.model, job.input.references.length, Boolean(job.input.mask)));
+    const usesUuAsync =
+        job.input.apiFormat === "openai" &&
+        (hasUuAsyncTask(job.input) ||
+            (job.input.count === 1 &&
+                uuAsyncCapabilityRegistry.canSubmit(job.input.channelId) &&
+                Boolean(channel && isUuImageAsyncChannel(channel.baseUrl, job.input.model, job.input.references.length, Boolean(job.input.mask)))));
     const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : usesUuAsync && !hasUuAsyncTask(job.input) ? "submitting" : "waiting_upstream";
     const result = job.result
         ? {
@@ -3078,7 +3084,10 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         const apiKey = decryptChannelApiKey(channel);
         const useUuAsync =
             input.apiFormat === "openai" &&
-            (hasUuAsyncTask(input) || (input.count === 1 && isUuImageAsyncChannel(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))));
+            (hasUuAsyncTask(input) ||
+                (input.count === 1 &&
+                    uuAsyncCapabilityRegistry.canSubmit(input.channelId) &&
+                    isUuImageAsyncChannel(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))));
         const rawImages =
             input.apiFormat === "gemini"
                 ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
@@ -3298,37 +3307,44 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
 async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal, upstreamRequestId: string) {
     if (!hasUuAsyncTask(input)) {
         const runtimeInput = await materializeImageInput(input);
-        const form = buildUuAsyncImageForm({
-            model: input.model,
-            prompt: input.prompt,
-            size: input.size,
-            quality: input.quality,
-            references: runtimeInput.references.map((reference) => dataUrlBlob(reference)),
-        });
-
-        const response = await upstreamFetch(
-            buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations/async"),
-            {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${apiKey}`,
-                    "Idempotency-Key": upstreamIdempotencyKey(upstreamRequestId),
-                },
-                body: form,
-                signal,
+        const fallbackImages = await uuAsyncCapabilityRegistry.runWithFallback<string[] | undefined>(
+            input.channelId,
+            async () => {
+                const form = buildUuAsyncImageForm({
+                    model: input.model,
+                    prompt: input.prompt,
+                    size: input.size,
+                    quality: input.quality,
+                    references: runtimeInput.references.map((reference) => dataUrlBlob(reference)),
+                });
+                const response = await upstreamFetch(
+                    buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations/async"),
+                    {
+                        method: "POST",
+                        headers: {
+                            Authorization: `Bearer ${apiKey}`,
+                            "Idempotency-Key": upstreamIdempotencyKey(upstreamRequestId),
+                        },
+                        body: form,
+                        signal,
+                    },
+                    true,
+                    UU_ASYNC_REQUEST_TIMEOUT_MS,
+                );
+                const task = readUuAsyncTask(await parseUpstreamJson(response));
+                if (!task.taskId) throw new Error(task.message || "UU 异步任务创建成功，但没有返回任务 ID");
+                input.upstream = {
+                    provider: "uu-image",
+                    taskId: task.taskId,
+                    expiresAt: task.expiresAt,
+                    status: task.status,
+                };
+                await imageQueue.touch(job.id);
+                return undefined;
             },
-            true,
-            UU_ASYNC_REQUEST_TIMEOUT_MS,
+            () => generateOpenAiImages(channel, apiKey, runtimeInput, signal, `${upstreamRequestId}:uu-sync-fallback`),
         );
-        const task = readUuAsyncTask(await parseUpstreamJson(response));
-        if (!task.taskId) throw new Error(task.message || "UU 异步任务创建成功，但没有返回任务 ID");
-        input.upstream = {
-            provider: "uu-image",
-            taskId: task.taskId,
-            expiresAt: task.expiresAt,
-            status: task.status,
-        };
-        await imageQueue.touch(job.id);
+        if (fallbackImages) return fallbackImages;
     }
     return pollUuImageTask(channel, apiKey, input, signal);
 }

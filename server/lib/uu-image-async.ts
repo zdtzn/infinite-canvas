@@ -28,6 +28,42 @@ export class UuImageChannelScheduler {
     }
 }
 
+export class UuAsyncCapabilityRegistry {
+    private readonly disabledChannels = new Set<string>();
+
+    canSubmit(channelId: string) {
+        return !this.disabledChannels.has(this.channelKey(channelId));
+    }
+
+    async runWithFallback<T>(channelId: string, asyncOperation: () => Promise<T>, syncOperation: () => Promise<T>) {
+        const key = this.channelKey(channelId);
+        if (this.disabledChannels.has(key)) return syncOperation();
+        try {
+            return await asyncOperation();
+        } catch (error) {
+            if (!isUuAsyncTasksDisabledError(error)) throw error;
+            this.disabledChannels.add(key);
+            return syncOperation();
+        }
+    }
+
+    private channelKey(channelId: string) {
+        return channelId.trim() || "default";
+    }
+}
+
+export function isUuAsyncTasksDisabledError(value: unknown) {
+    const message =
+        value instanceof Error
+            ? value.message
+            : typeof value === "string"
+              ? value
+              : value && typeof value === "object" && "message" in value
+                ? String((value as { message?: unknown }).message || "")
+                : "";
+    return /async image tasks?\s+(?:are|is)\s+(?:not enabled|disabled)\b/i.test(message) || /异步(?:图片|生图)?任务[^。；;]*(?:未启用|未开启|已禁用|不支持)/i.test(message);
+}
+
 export function isUuAsyncGptImage2Channel(baseUrl: string, model: string) {
     try {
         const hostname = new URL(baseUrl).hostname.toLowerCase();

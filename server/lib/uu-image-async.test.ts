@@ -1,6 +1,17 @@
 import { expect, test } from "bun:test";
 
-import { UuImageChannelScheduler, buildUuAsyncImageForm, buildUuAsyncImageRequest, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./uu-image-async";
+import {
+    UuAsyncCapabilityRegistry,
+    UuImageChannelScheduler,
+    buildUuAsyncImageForm,
+    buildUuAsyncImageRequest,
+    hasUuAsyncTask,
+    isUuAsyncGptImage2Channel,
+    isUuAsyncTasksDisabledError,
+    isUuImageAsyncChannel,
+    readUuAsyncTask,
+    resolveUuAsyncImageSize,
+} from "./uu-image-async";
 
 const ONE_PIXEL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
 
@@ -94,6 +105,70 @@ test("resumes the async endpoint only for an existing UU task", () => {
             upstream: { provider: "uu-image", taskId: "task-existing", status: "running" },
         }),
     ).toBe(true);
+});
+
+test("recognizes only an explicit UU async-task disabled response", () => {
+    expect(isUuAsyncTasksDisabledError(new Error("async image tasks are not enabled"))).toBe(true);
+    expect(isUuAsyncTasksDisabledError({ message: "Async image task is disabled for this account" })).toBe(true);
+    expect(isUuAsyncTasksDisabledError(new Error("UU 异步图片任务未启用"))).toBe(true);
+    expect(isUuAsyncTasksDisabledError(new Error("UU 异步生图等待超时"))).toBe(false);
+    expect(isUuAsyncTasksDisabledError(new Error("upstream service unavailable"))).toBe(false);
+});
+
+test("downgrades a UU channel to synchronous generation after an explicit rejection", async () => {
+    const registry = new UuAsyncCapabilityRegistry();
+    let asyncAttempts = 0;
+    let syncAttempts = 0;
+
+    const first = await registry.runWithFallback(
+        "uu-channel",
+        async () => {
+            asyncAttempts += 1;
+            throw new Error("async image tasks are not enabled");
+        },
+        async () => {
+            syncAttempts += 1;
+            return "sync-result";
+        },
+    );
+    const second = await registry.runWithFallback(
+        "uu-channel",
+        async () => {
+            asyncAttempts += 1;
+            return "unexpected-async-result";
+        },
+        async () => {
+            syncAttempts += 1;
+            return "sync-result-again";
+        },
+    );
+
+    expect(first).toBe("sync-result");
+    expect(second).toBe("sync-result-again");
+    expect(asyncAttempts).toBe(1);
+    expect(syncAttempts).toBe(2);
+    expect(registry.canSubmit("uu-channel")).toBe(false);
+});
+
+test("does not downgrade or retry synchronously after an uncertain UU failure", async () => {
+    const registry = new UuAsyncCapabilityRegistry();
+    let syncAttempts = 0;
+
+    await expect(
+        registry.runWithFallback(
+            "uu-channel",
+            async () => {
+                throw new Error("UU 异步生图等待超时");
+            },
+            async () => {
+                syncAttempts += 1;
+                return "sync-result";
+            },
+        ),
+    ).rejects.toThrow("等待超时");
+
+    expect(syncAttempts).toBe(0);
+    expect(registry.canSubmit("uu-channel")).toBe(true);
 });
 
 test("serializes UU generation per channel without blocking another channel", async () => {
