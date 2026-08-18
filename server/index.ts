@@ -70,7 +70,7 @@ import {
     normalizeProductAnalysisResult,
 } from "./lib/product-analysis";
 import { isValidProjectPayload } from "./lib/project-payload";
-import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
+import { buildSadaiImageRequestOptions, isSadaiImage2Channel, isSadaiImageResultUrl } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
@@ -3088,6 +3088,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                 (input.count === 1 &&
                     uuAsyncCapabilityRegistry.canSubmit(input.channelId) &&
                     isUuImageAsyncChannel(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))));
+        const useSadaiUrlResults = input.apiFormat === "openai" && isSadaiImage2Channel(channel.baseUrl, input.model) && !input.mask;
         const rawImages =
             input.apiFormat === "gemini"
                 ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
@@ -3107,6 +3108,17 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                         durationMs,
                         ...(uuDimensions || {}),
                         ...(input.upstream?.expiresAt ? { expiresAt: input.upstream.expiresAt } : {}),
+                    }),
+                );
+                continue;
+            }
+            if (useSadaiUrlResults && isSadaiImageResultUrl(raw)) {
+                const url = assertAllowedUpstreamUrl(raw);
+                images.push(
+                    createDeferredImageResult({
+                        id: randomUUID(),
+                        url: url.toString(),
+                        durationMs,
                     }),
                 );
                 continue;

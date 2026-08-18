@@ -36,6 +36,15 @@ export function isSadaiImage2Channel(baseUrl: string, model: string) {
     }
 }
 
+export function isSadaiImageResultUrl(value: string) {
+    try {
+        const url = new URL(value);
+        return url.protocol === "https:" && !url.username && !url.password;
+    } catch {
+        return false;
+    }
+}
+
 export function buildSadaiImageRequestOptions({ count, size, outputResolution, generationQuality, references }: SadaiImageRequestOptionsInput) {
     const aspectRatio = resolveSadaiAspectRatio(size);
     const resolution = SADAI_RESOLUTION_MAP[String(outputResolution || "").trim().toLowerCase()];
@@ -45,8 +54,7 @@ export function buildSadaiImageRequestOptions({ count, size, outputResolution, g
         ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
         ...(resolution ? { resolution } : {}),
         ...(quality ? { quality } : {}),
-        // SADAI result URLs can briefly return 404 after generation completes.
-        response_format: "b64_json",
+        response_format: "url",
         ...(references.length ? { images: [...references] } : {}),
     };
 }

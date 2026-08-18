@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./sadai-image";
+import { buildSadaiImageRequestOptions, isSadaiImage2Channel, isSadaiImageResultUrl } from "./sadai-image";
 
 test("uses the SADAI Image2 adapter only for the documented API host", () => {
     expect(isSadaiImage2Channel("https://api.sadai.top/v1", "gpt-image-2")).toBe(true);
@@ -16,7 +16,7 @@ test("maps workbench ratio and resolution to SADAI Image2 fields", () => {
             outputResolution: "low",
             references: [],
         }),
-    ).toEqual({ n: 1, aspect_ratio: "9:16", resolution: "1k", response_format: "b64_json" });
+    ).toEqual({ n: 1, aspect_ratio: "9:16", resolution: "1k", response_format: "url" });
 
     expect(
         buildSadaiImageRequestOptions({
@@ -31,7 +31,7 @@ test("maps workbench ratio and resolution to SADAI Image2 fields", () => {
         aspect_ratio: "16:9",
         resolution: "2k",
         quality: "high",
-        response_format: "b64_json",
+        response_format: "url",
         images: ["data:image/png;base64,reference"],
     });
 });
@@ -45,7 +45,7 @@ test("migrates legacy automatic ratios to square and reduces explicit dimensions
             generationQuality: "auto",
             references: [],
         }),
-    ).toEqual({ n: 1, aspect_ratio: "1:1", response_format: "b64_json" });
+    ).toEqual({ n: 1, aspect_ratio: "1:1", response_format: "url" });
 
     expect(
         buildSadaiImageRequestOptions({
@@ -54,7 +54,14 @@ test("migrates legacy automatic ratios to square and reduces explicit dimensions
             outputResolution: "high",
             references: [],
         }),
-    ).toEqual({ n: 1, aspect_ratio: "4:3", resolution: "4k", response_format: "b64_json" });
+    ).toEqual({ n: 1, aspect_ratio: "4:3", resolution: "4k", response_format: "url" });
+});
+
+test("defers only secure SADAI URL results for background persistence", () => {
+    expect(isSadaiImageResultUrl("https://cdn.sadai.top/generated/result.webp?token=temporary")).toBe(true);
+    expect(isSadaiImageResultUrl("http://cdn.sadai.top/generated/result.webp")).toBe(false);
+    expect(isSadaiImageResultUrl("data:image/png;base64,abc")).toBe(false);
+    expect(isSadaiImageResultUrl("not-a-url")).toBe(false);
 });
 
 test("supports the latest documented SADAI Image2 mapped ratios", () => {
