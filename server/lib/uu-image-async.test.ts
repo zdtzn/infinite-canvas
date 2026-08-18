@@ -5,6 +5,7 @@ import {
     UuImageChannelScheduler,
     buildUuAsyncImageForm,
     buildUuAsyncImageRequest,
+    buildUuAsyncTaskPath,
     hasUuAsyncTask,
     isUuAsyncGptImage2Channel,
     isUuAsyncTasksDisabledError,
@@ -107,12 +108,22 @@ test("resumes the async endpoint only for an existing UU task", () => {
     ).toBe(true);
 });
 
+test("uses the UU image task endpoint for polling and cancellation", () => {
+    expect(buildUuAsyncTaskPath("imgtask_236aa5f0bfcd488a957b0a77e0388227")).toBe("/images/tasks/imgtask_236aa5f0bfcd488a957b0a77e0388227");
+    expect(buildUuAsyncTaskPath("task/with spaces")).toBe("/images/tasks/task%2Fwith%20spaces");
+});
+
 test("recognizes only an explicit UU async-task disabled response", () => {
     expect(isUuAsyncTasksDisabledError(new Error("async image tasks are not enabled"))).toBe(true);
     expect(isUuAsyncTasksDisabledError({ message: "Async image task is disabled for this account" })).toBe(true);
     expect(isUuAsyncTasksDisabledError(new Error("UU 异步图片任务未启用"))).toBe(true);
     expect(isUuAsyncTasksDisabledError(new Error("UU 异步生图等待超时"))).toBe(false);
     expect(isUuAsyncTasksDisabledError(new Error("upstream service unavailable"))).toBe(false);
+});
+
+test("falls back when the UU async submission route is missing", () => {
+    expect(isUuAsyncTasksDisabledError(new Error("上游服务返回 404：404 page not found"))).toBe(true);
+    expect(isUuAsyncTasksDisabledError(new Error("upstream service returned 404: not found"))).toBe(true);
 });
 
 test("downgrades a UU channel to synchronous generation after an explicit rejection", async () => {

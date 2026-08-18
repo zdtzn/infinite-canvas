@@ -15,6 +15,9 @@ export function friendlyErrorMessage(value: unknown, status?: number) {
     if (/(invalid request|invalid_request|bad request|unsupported parameter|unknown parameter)/i.test(raw)) {
         return withSupportReference("当前渠道不支持这组生成参数，请检查模型、尺寸、质量和参考图设置");
     }
+    if (/(?:no|without) available compatible accounts?|no compatible accounts?/i.test(raw)) {
+        return withSupportReference("当前渠道暂时没有可用的模型账号，请稍后重试或切换其他渠道");
+    }
     if (/(upstream service temporarily unavailable|service unavailable|bad gateway|gateway timeout|overloaded)/i.test(raw) || [502, 503, 504, 524].includes(status || 0)) {
         return withSupportReference("当前渠道或模型暂时不可用，请刷新模型列表或更换渠道后重试");
     }

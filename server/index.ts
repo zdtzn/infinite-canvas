@@ -72,7 +72,7 @@ import {
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
-import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageForm, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
+import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageForm, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -3351,7 +3351,7 @@ async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, inp
 
 async function pollUuImageTask(channel: ChannelRecord, apiKey: string, input: ImageJobInput, signal: AbortSignal) {
     if (!hasUuAsyncTask(input)) throw new Error("UU 异步任务 ID 丢失");
-    const taskUrl = buildUpstreamUrl(channel.baseUrl, "openai", `/images/generations/tasks/${encodeURIComponent(input.upstream.taskId)}`);
+    const taskUrl = buildUpstreamUrl(channel.baseUrl, "openai", buildUuAsyncTaskPath(input.upstream.taskId));
     const expiresAt = Date.parse(input.upstream.expiresAt || "");
     const deadline = Math.min(Date.now() + UU_ASYNC_MAX_WAIT_MS, Number.isFinite(expiresAt) ? expiresAt : Number.POSITIVE_INFINITY);
     while (!signal.aborted) {
@@ -3377,7 +3377,7 @@ async function cancelUuImageTask(input: ImageJobInput) {
     const channel = platformChannel(input.channelId);
     const apiKey = decryptChannelApiKey(channel);
     const response = await upstreamFetch(
-        buildUpstreamUrl(channel.baseUrl, "openai", `/images/generations/tasks/${encodeURIComponent(input.upstream.taskId)}`),
+        buildUpstreamUrl(channel.baseUrl, "openai", buildUuAsyncTaskPath(input.upstream.taskId)),
         { method: "DELETE", headers: { Authorization: `Bearer ${apiKey}` } },
         false,
         UU_ASYNC_REQUEST_TIMEOUT_MS,

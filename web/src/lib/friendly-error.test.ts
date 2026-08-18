@@ -11,6 +11,10 @@ test("turns common upstream failures into actionable Chinese messages", () => {
     assert.equal(friendlyErrorMessage("图片生成失败：上游服务请求过于频繁，请稍后重试。"), "上游请求过于频繁，请稍后重试");
 });
 
+test("explains when an image provider has no compatible account available", () => {
+    assert.equal(friendlyErrorMessage("No available compatible accounts"), "当前渠道暂时没有可用的模型账号，请稍后重试或切换其他渠道");
+});
+
 test("preserves useful application errors and handles empty server failures", () => {
     assert.equal(friendlyErrorMessage("今日斗气已经耗尽"), "今日斗气已经耗尽");
     assert.equal(friendlyErrorMessage("", 503), "当前渠道或模型暂时不可用，请刷新模型列表或更换渠道后重试");

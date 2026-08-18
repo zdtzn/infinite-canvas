@@ -61,7 +61,11 @@ export function isUuAsyncTasksDisabledError(value: unknown) {
               : value && typeof value === "object" && "message" in value
                 ? String((value as { message?: unknown }).message || "")
                 : "";
-    return /async image tasks?\s+(?:are|is)\s+(?:not enabled|disabled)\b/i.test(message) || /异步(?:图片|生图)?任务[^。；;]*(?:未启用|未开启|已禁用|不支持)/i.test(message);
+    return (
+        /async image tasks?\s+(?:are|is)\s+(?:not enabled|disabled)\b/i.test(message) ||
+        /异步(?:图片|生图)?任务[^。；;]*(?:未启用|未开启|已禁用|不支持)/i.test(message) ||
+        /(?:upstream service returned|上游服务返回)\s*404\b|404\s+(?:page\s+)?not found/i.test(message)
+    );
 }
 
 export function isUuAsyncGptImage2Channel(baseUrl: string, model: string) {
@@ -128,6 +132,10 @@ export function buildUuAsyncImageForm({
         if (index === 0) form.append("image", reference, filename);
     });
     return form;
+}
+
+export function buildUuAsyncTaskPath(taskId: string) {
+    return `/images/tasks/${encodeURIComponent(taskId)}`;
 }
 
 function imageFilenameExtension(mimeType: string) {
