@@ -58,11 +58,13 @@ describe("resolved image model settings", () => {
         expect(supportedSadaiRatio.config.size).toBe("2:3");
         expect(supportedSadaiRatio.capabilities.maxReferences).toBe(6);
 
-        const uuSettings = resolveImageModelSettings({ ...defaultConfig, channels: [uu], model: uuModel, imageModel: uuModel, quality: "high", imageQuality: "high", imageOutputFormat: "webp" }, uuModel);
+        const uuSettings = resolveImageModelSettings({ ...defaultConfig, channels: [uu], model: uuModel, imageModel: uuModel, quality: "high", imageQuality: "high", imageOutputFormat: "webp", size: "9:16", count: "2" }, uuModel);
         expect(uuSettings.capabilities.resolutions).toEqual(["low", "medium", "high"]);
         expect(uuSettings.config.quality).toBe("high");
-        expect(uuSettings.config.imageQuality).toBe("auto");
+        expect(uuSettings.config.imageQuality).toBe("high");
         expect(uuSettings.config.imageOutputFormat).toBe("auto");
+        expect(uuSettings.config.size).toBe("3:4");
+        expect(uuSettings.config.count).toBe("1");
     });
 
     test("uses conservative defaults for newly configured unknown image models", () => {

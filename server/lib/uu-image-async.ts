@@ -1,4 +1,4 @@
-import { normalizeImageResponseValue, resolveOpenAiImageSize } from "./image-request";
+import { normalizeImageResponseValue } from "./image-request";
 import { AsyncSemaphore } from "./async-semaphore";
 import type { ImageJobInput } from "../types";
 
@@ -78,8 +78,8 @@ export function isUuAsyncGptImage2Channel(baseUrl: string, model: string) {
     }
 }
 
-export function isUuImageAsyncChannel(baseUrl: string, model: string, _referenceCount: number, hasMask: boolean) {
-    return isUuAsyncGptImage2Channel(baseUrl, model) && !hasMask;
+export function isUuImageAsyncChannel(baseUrl: string, model: string, referenceCount: number, hasMask: boolean) {
+    return isUuAsyncGptImage2Channel(baseUrl, model) && referenceCount <= 1 && !hasMask;
 }
 
 export function hasUuAsyncTask(input: ImageJobInput): input is ImageJobInput & {
@@ -89,49 +89,49 @@ export function hasUuAsyncTask(input: ImageJobInput): input is ImageJobInput & {
 }
 
 export function resolveUuAsyncImageSize(size?: string, quality?: string) {
-    const resolved = resolveOpenAiImageSize(size, quality, "gpt-image-2") || "1024x1024";
-    const match = resolved.match(/^(\d+)x(\d+)$/i);
-    if (!match) return { width: 1024, height: 1024 };
-    const width = Number(match[1]);
-    const height = Number(match[2]);
-    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return { width: 1024, height: 1024 };
+    const ratio = !size || size === "auto" ? "1:1" : size.trim();
+    const resolution = !quality || quality === "auto" ? "low" : quality.trim().toLowerCase();
+    const resolved = UU_IMAGE_SIZES[resolution]?.[ratio];
+    if (!resolved) throw new Error(`UU GPT Image 2 不支持 ${ratio} / ${resolution} 组合`);
+    const [width, height] = resolved.split("x").map(Number);
     return { width, height };
 }
 
-export function buildUuAsyncImageRequest({ size, quality, referenceCount }: { size?: string; quality?: string; referenceCount: number }) {
-    const { width, height } = resolveUuAsyncImageSize(size, quality);
-    return { mode: referenceCount ? "image" : "text", sizeTier: resolveUuAsyncImageSizeTier(width, height), width, height };
-}
-
-export function buildUuAsyncImageForm({
+export function buildUuAsyncImageSubmission({
     model,
     prompt,
     size,
-    quality,
+    resolution,
+    generationQuality,
     references,
 }: {
     model: string;
     prompt: string;
     size?: string;
-    quality?: string;
+    resolution?: string;
+    generationQuality?: string;
     references: Blob[];
 }) {
-    const request = buildUuAsyncImageRequest({ size, quality, referenceCount: references.length });
+    if (references.length > 1) throw new Error("UU GPT Image 2 当前最多支持 1 张参考图");
+    const { width, height } = resolveUuAsyncImageSize(size, resolution);
+    const outputSize = `${width}x${height}`;
+    const quality = resolveUuGenerationQuality(generationQuality);
+    if (!references.length) {
+        return {
+            path: "/images/generations/async" as const,
+            contentType: "application/json" as const,
+            body: JSON.stringify({ model, prompt, size: outputSize, quality }),
+        };
+    }
+
     const form = new FormData();
     form.set("model", model);
-    form.set("mode", request.mode);
     form.set("prompt", prompt);
-    form.set("size_tier", request.sizeTier);
-    form.set("width", String(request.width));
-    form.set("height", String(request.height));
-    // Match UU Image Studio: send every reference through `images` and repeat
-    // the first one as the legacy-compatible singular `image` field.
-    references.forEach((reference, index) => {
-        const filename = `reference-${index + 1}${imageFilenameExtension(reference.type)}`;
-        form.append("images", reference, filename);
-        if (index === 0) form.append("image", reference, filename);
-    });
-    return form;
+    form.set("size", outputSize);
+    form.set("quality", quality);
+    const reference = references[0];
+    form.set("image", reference, `reference-1${imageFilenameExtension(reference.type)}`);
+    return { path: "/images/edits/async" as const, contentType: undefined, body: form };
 }
 
 export function buildUuAsyncTaskPath(taskId: string) {
@@ -148,12 +148,17 @@ function imageFilenameExtension(mimeType: string) {
     )[mimeType.toLowerCase()] || ".png";
 }
 
-function resolveUuAsyncImageSizeTier(width: number, height: number): "1K" | "2K" | "4K" {
-    const longestEdge = Math.max(width, height);
-    if (longestEdge <= 1024) return "1K";
-    if (longestEdge <= 2048) return "2K";
-    return "4K";
+function resolveUuGenerationQuality(quality?: string) {
+    const normalized = quality?.trim().toLowerCase() || "medium";
+    if (["auto", "medium", "high"].includes(normalized)) return normalized;
+    throw new Error(`UU GPT Image 2 不支持 ${normalized} 生成质量`);
 }
+
+const UU_IMAGE_SIZES: Record<string, Record<string, string>> = {
+    low: { "1:1": "1024x1024", "4:3": "1024x768", "3:4": "768x1024", "16:9": "1024x576" },
+    medium: { "1:1": "2048x2048", "4:3": "2048x1536", "3:4": "1536x2048", "16:9": "2048x1152" },
+    high: { "1:1": "4096x4096", "4:3": "4096x3072", "3:4": "3072x4096", "16:9": "3840x2160" },
+};
 
 export function readUuAsyncTask(payload: unknown): UuImageAsyncTask {
     const root = asRecord(payload);

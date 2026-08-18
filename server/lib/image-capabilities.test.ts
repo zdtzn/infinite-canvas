@@ -27,8 +27,11 @@ describe("server image channel capabilities", () => {
 
     expect(profile.source).toBe("documented");
     expect(profile.capabilities.resolutions).toEqual(["low", "medium", "high"]);
+    expect(profile.capabilities.generationQualities).toEqual(["auto", "medium", "high"]);
+    expect(profile.capabilities.sizes).toEqual(["1:1", "4:3", "3:4", "16:9"]);
     expect(profile.capabilities.customSize).toBeFalse();
-    expect(profile.capabilities.maxOutputs).toBe(10);
+    expect(profile.capabilities.maxReferences).toBe(1);
+    expect(profile.capabilities.maxOutputs).toBe(1);
   });
 
   test("uses the latest SADAI mapped-group ratios and reference limit", () => {

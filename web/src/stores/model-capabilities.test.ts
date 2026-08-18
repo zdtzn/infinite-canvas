@@ -40,12 +40,15 @@ describe("image model capabilities", () => {
         assert.throws(() => validateImageRequest({ ...capabilities, outputFormats: ["auto", "png"] }, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "", referenceCount: 0 }), /输出格式/);
     });
 
-    test("UU async GPT Image exposes 4K but serializes multi-image submissions", () => {
+    test("UU async GPT Image exposes only the current Image Studio options", () => {
         const capabilities = deriveImageModelCapabilities("uuapi::gpt-image-2", "openai", "https://uuapi.net/v1");
         assert.deepEqual(capabilities.resolutions, ["low", "medium", "high"]);
         assert.equal(capabilities.customSize, false);
-        assert.deepEqual(capabilities.generationQualities, ["auto"]);
+        assert.deepEqual(capabilities.generationQualities, ["auto", "medium", "high"]);
         assert.deepEqual(capabilities.outputFormats, ["auto"]);
+        assert.deepEqual(capabilities.sizes, ["1:1", "4:3", "3:4", "16:9"]);
+        assert.equal(capabilities.maxReferences, 1);
+        assert.equal(capabilities.maxOutputs, 1);
         assert.throws(() => validateImageRequest(capabilities, { resolution: "medium", imageOutputFormat: "jpeg", size: "1:1", background: "", referenceCount: 0 }), /输出格式/);
         assert.equal(resolveImageSlotConcurrency("https://uuapi.net/v1", "uuapi::gpt-image-2", 4), 1);
         assert.equal(resolveImageSlotConcurrency("https://api.example.com/v1", "gpt-image-2", 4), 4);
@@ -70,7 +73,7 @@ describe("image model capabilities", () => {
 
         const uu = deriveImageModelCapabilities("gpt-image-2", "openai", "https://uuapi.cc");
         assert.equal(uu.customSize, false);
-        assert.deepEqual(uu.sizes, ["1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "9:21", "3:1", "1:3"]);
+        assert.deepEqual(uu.sizes, ["1:1", "4:3", "3:4", "16:9"]);
     });
 
     test("Dragon channels expose only the ratios and resolutions documented by the provider", () => {

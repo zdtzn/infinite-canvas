@@ -72,7 +72,7 @@ import {
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
-import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageForm, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
+import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -2749,7 +2749,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
     } catch (error) {
         throw new HttpError(400, error instanceof Error ? error.message : "生图参数超出渠道能力范围");
     }
-    const imageQuality = isUuGptImage2 ? undefined : requestedImageQuality;
+    const imageQuality = requestedImageQuality;
     const imageOutputFormat = isUuGptImage2 ? undefined : requestedImageOutputFormat;
     cultivation?.reserveGeneration({
         jobId,
@@ -3310,22 +3310,24 @@ async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, inp
         const fallbackImages = await uuAsyncCapabilityRegistry.runWithFallback<string[] | undefined>(
             input.channelId,
             async () => {
-                const form = buildUuAsyncImageForm({
+                const submission = buildUuAsyncImageSubmission({
                     model: input.model,
                     prompt: input.prompt,
                     size: input.size,
-                    quality: input.quality,
+                    resolution: input.quality,
+                    generationQuality: input.imageQuality,
                     references: runtimeInput.references.map((reference) => dataUrlBlob(reference)),
                 });
                 const response = await upstreamFetch(
-                    buildUpstreamUrl(channel.baseUrl, "openai", "/images/generations/async"),
+                    buildUpstreamUrl(channel.baseUrl, "openai", submission.path),
                     {
                         method: "POST",
                         headers: {
                             Authorization: `Bearer ${apiKey}`,
                             "Idempotency-Key": upstreamIdempotencyKey(upstreamRequestId),
+                            ...(submission.contentType ? { "Content-Type": submission.contentType } : {}),
                         },
-                        body: form,
+                        body: submission.body,
                         signal,
                     },
                     true,

@@ -29,6 +29,7 @@ export type ImageCapabilityProfile = {
 
 const COMMON_SIZES = ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"];
 const GPT_IMAGE_2_SIZES = ["1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", "9:21", "3:1", "1:3"];
+const UU_GPT_IMAGE_2_SIZES = ["1:1", "4:3", "3:4", "16:9"];
 const LEGACY_GPT_IMAGE_SIZES = ["1:1", "3:2", "2:3"];
 const SADAI_SIZES = ["1:1", "5:4", "9:16", "21:9", "16:9", "3:2", "4:3", "4:5", "3:4", "2:3"];
 const DRAGON_FOUR_K_SIZES = ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"];
@@ -113,13 +114,13 @@ function documentedImageCapabilities(model: string, apiFormat: "openai" | "gemin
     if (isUuAsyncGptImageModel(baseUrl, name)) {
         return documented("UU GPT Image 2", {
             resolutions: OUTPUT_RESOLUTIONS,
-            generationQualities: ["auto"],
+            generationQualities: ["auto", "medium", "high"],
             outputFormats: ["auto"],
-            sizes: GPT_IMAGE_2_SIZES,
+            sizes: UU_GPT_IMAGE_2_SIZES,
             customSize: false,
             transparentBackground: false,
-            maxReferences: 16,
-            maxOutputs: 10,
+            maxReferences: 1,
+            maxOutputs: 1,
         });
     }
     if (isSadaiImage2Model(baseUrl, name)) {
