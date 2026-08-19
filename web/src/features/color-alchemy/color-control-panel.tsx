@@ -4,6 +4,7 @@ import { BrainCircuit, Clipboard, Droplets, ImagePlus, Pipette, Sparkles, X } fr
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { buildColorHarmonies, formatColorValue } from "./color-engine";
+import { ColorCurveEditor } from "./color-curve-editor";
 import { ColorSourceImage } from "./color-source-image";
 import { mergeColorSettings } from "./settings";
 import { applyColorPreset, COLOR_PRESETS } from "./presets";
@@ -84,20 +85,12 @@ export function ColorControlPanel({
                             </button>
                         ))}
                     </div>
-                    <CurvePreview curve={settings.curves[curveChannel]} color={curveChannel === "red" ? "#ef6a62" : curveChannel === "green" ? "#62bd7b" : curveChannel === "blue" ? "#6d8ee8" : "#d7b46a"} />
-                    {(["暗部", "中调", "高光"] as const).map((label, index) => (
-                        <ControlSlider
-                            key={label}
-                            label={label}
-                            value={settings.curves[curveChannel][index]}
-                            onChange={(value) => {
-                                const curve = [...settings.curves[curveChannel]] as [number, number, number];
-                                curve[index] = value;
-                                patch({ curves: { [curveChannel]: curve } });
-                            }}
-                            onCommit={onCommit}
-                        />
-                    ))}
+                    <ColorCurveEditor
+                        curve={settings.curves[curveChannel]}
+                        color={curveChannel === "red" ? "#ef6a62" : curveChannel === "green" ? "#62bd7b" : curveChannel === "blue" ? "#6d8ee8" : "#d7b46a"}
+                        onChange={(curve) => patch({ curves: { [curveChannel]: curve } })}
+                        onCommit={onCommit}
+                    />
                 </div>
             ),
         },
@@ -349,22 +342,6 @@ function ControlSlider({ label, value, onChange, onCommit, min = -100, max = 100
             {color ? <div className="mb-[-10px] h-1 rounded-full opacity-75" style={{ background: color }} /> : null}
             <Slider min={min} max={max} value={value} tooltip={{ open: false }} onChange={onChange} onChangeComplete={onCommit} />
         </div>
-    );
-}
-
-function CurvePreview({ curve, color }: { curve: [number, number, number]; color: string }) {
-    const points = [0, 25, 50, 75, 100]
-        .map((x) => {
-            const value = x / 100;
-            const shift = ((1 - value) ** 2 * curve[0] + 4 * value * (1 - value) * curve[1] + value ** 2 * curve[2]) / 4;
-            return `${x},${100 - Math.min(100, Math.max(0, x + shift))}`;
-        })
-        .join(" ");
-    return (
-        <svg viewBox="0 0 100 100" className="h-24 w-full rounded-md border border-white/8 bg-black/20">
-            <path d="M0 100 L100 0" stroke="rgba(255,255,255,.12)" strokeWidth="1" />
-            <polyline points={points} fill="none" stroke={color} strokeWidth="2" />
-        </svg>
     );
 }
 

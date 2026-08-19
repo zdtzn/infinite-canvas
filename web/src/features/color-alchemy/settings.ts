@@ -1,7 +1,15 @@
-import { COLOR_CURVE_CHANNELS, COLOR_HSL_CHANNELS, type ColorCurve, type ColorSettings, type ColorSettingsPatch, type HslAdjustment } from "./types";
+import { COLOR_CURVE_CHANNELS, COLOR_HSL_CHANNELS, type ColorCurve, type ColorCurvePoint, type ColorSettings, type ColorSettingsPatch, type HslAdjustment } from "./types";
 
 const ZERO_HSL: HslAdjustment = { hue: 0, saturation: 0, lightness: 0 };
-const ZERO_CURVE: ColorCurve = [0, 0, 0];
+const MAX_CURVE_POINTS = 16;
+const LEGACY_CURVE_SAMPLES = [0, 0.25, 0.5, 0.75, 1] as const;
+
+export function createDefaultColorCurve(): ColorCurve {
+    return [
+        { x: 0, y: 0 },
+        { x: 1, y: 1 },
+    ];
+}
 
 export function createDefaultColorSettings(): ColorSettings {
     return {
@@ -16,7 +24,7 @@ export function createDefaultColorSettings(): ColorSettings {
         temperature: 0,
         tint: 0,
         hsl: Object.fromEntries(COLOR_HSL_CHANNELS.map((channel) => [channel, { ...ZERO_HSL }])) as ColorSettings["hsl"],
-        curves: Object.fromEntries(COLOR_CURVE_CHANNELS.map((channel) => [channel, [...ZERO_CURVE]])) as ColorSettings["curves"],
+        curves: Object.fromEntries(COLOR_CURVE_CHANNELS.map((channel) => [channel, createDefaultColorCurve()])) as ColorSettings["curves"],
         splitTone: {
             shadowHue: 220,
             shadowSaturation: 0,
@@ -121,8 +129,59 @@ export function colorSettingsEqual(left: ColorSettings, right: ColorSettings) {
     return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function normalizeCurve(value: Partial<ColorCurve> | ColorCurve | undefined): ColorCurve {
-    return [clampNumber(value?.[0], -100, 100, 0), clampNumber(value?.[1], -100, 100, 0), clampNumber(value?.[2], -100, 100, 0)];
+function normalizeCurve(value: unknown): ColorCurve {
+    if (isLegacyCurve(value)) return migrateLegacyCurve(value);
+    if (!Array.isArray(value)) return createDefaultColorCurve();
+
+    const points = value
+        .slice(0, MAX_CURVE_POINTS)
+        .map(normalizeCurvePoint)
+        .filter((point): point is ColorCurvePoint => Boolean(point))
+        .sort((left, right) => left.x - right.x);
+    if (!points.length) return createDefaultColorCurve();
+
+    const unique: ColorCurve = [];
+    for (const point of points) {
+        const previous = unique.at(-1);
+        if (previous && Math.abs(previous.x - point.x) < 0.001) previous.y = point.y;
+        else unique.push(point);
+    }
+
+    if (unique[0].x > 0.001) unique.unshift({ x: 0, y: 0 });
+    else unique[0].x = 0;
+    if (unique.at(-1)!.x < 0.999) unique.push({ x: 1, y: 1 });
+    else unique[unique.length - 1].x = 1;
+    return unique;
+}
+
+function normalizeCurvePoint(value: unknown): ColorCurvePoint | null {
+    if (!value || typeof value !== "object") return null;
+    const point = value as Partial<ColorCurvePoint>;
+    const x = Number(point.x);
+    const y = Number(point.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x: roundCurveValue(Math.min(1, Math.max(0, x))), y: roundCurveValue(Math.min(1, Math.max(0, y))) };
+}
+
+function isLegacyCurve(value: unknown): value is [number, number, number] {
+    return Array.isArray(value) && value.length === 3 && value.every((item) => Number.isFinite(Number(item)));
+}
+
+function migrateLegacyCurve(curve: [number, number, number]): ColorCurve {
+    const normalized = curve.map((value) => Math.min(100, Math.max(-100, Number(value)))) as [number, number, number];
+    if (normalized.every((value) => value === 0)) return createDefaultColorCurve();
+    return LEGACY_CURVE_SAMPLES.map((x) => ({
+        x,
+        y: roundCurveValue(Math.min(1, Math.max(0, x + legacyCurveShift(x, normalized)))),
+    }));
+}
+
+function legacyCurveShift(value: number, curve: [number, number, number]) {
+    return (((1 - value) ** 2 * curve[0] + 4 * value * (1 - value) * curve[1] + value ** 2 * curve[2]) / 400);
+}
+
+function roundCurveValue(value: number) {
+    return Math.round(value * 10_000) / 10_000;
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number) {

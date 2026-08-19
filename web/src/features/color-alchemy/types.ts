@@ -5,7 +5,11 @@ export const COLOR_PRESET_CATEGORIES = ["电影", "摄影", "艺术", "东方", 
 export type ColorHslChannel = (typeof COLOR_HSL_CHANNELS)[number];
 export type ColorCurveChannel = (typeof COLOR_CURVE_CHANNELS)[number];
 export type ColorPresetCategory = (typeof COLOR_PRESET_CATEGORIES)[number];
-export type ColorCurve = [number, number, number];
+export type ColorCurvePoint = {
+    x: number;
+    y: number;
+};
+export type ColorCurve = ColorCurvePoint[];
 
 export type HslAdjustment = {
     hue: number;
@@ -46,7 +50,7 @@ export type ColorSettings = {
 
 export type ColorSettingsPatch = Partial<Omit<ColorSettings, "hsl" | "curves" | "splitTone">> & {
     hsl?: Partial<Record<ColorHslChannel, Partial<HslAdjustment>>>;
-    curves?: Partial<Record<ColorCurveChannel, Partial<ColorCurve> | ColorCurve>>;
+    curves?: Partial<Record<ColorCurveChannel, ColorCurve>>;
     splitTone?: Partial<ColorSettings["splitTone"]>;
 };
 

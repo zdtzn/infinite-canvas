@@ -145,7 +145,7 @@ export const useColorAlchemyStore = create<ColorAlchemyStore>()(
         }),
         {
             name: STORE_KEY,
-            version: 1,
+            version: 2,
             storage,
             migrate: (persisted) => {
                 const value = (persisted || {}) as Partial<ColorAlchemyStore>;

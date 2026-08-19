@@ -28,6 +28,55 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
     const [error, setError] = useState("");
     const [eyedropperActive, setEyedropperActive] = useState(false);
     const pointerRef = useRef<{ mode: "compare" | "pan"; pointerId: number; startX: number; startY: number; panX: number; panY: number } | null>(null);
+    const settingsRef = useRef(settings);
+    const sourceGenerationRef = useRef(0);
+    const previewTimerRef = useRef<number | null>(null);
+    const settleTimerRef = useRef<number | null>(null);
+    const lastPreviewStartedRef = useRef(0);
+    const renderInFlightRef = useRef(false);
+    const queuedRenderRef = useRef<{ generation: number; maxEdge: number } | null>(null);
+    const processingCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const lastRenderedSettingsRef = useRef<ColorSettings | null>(null);
+
+    const requestPreviewRender = useCallback((maxEdge: number, generation: number): void => {
+        if (renderInFlightRef.current) {
+            const queued = queuedRenderRef.current;
+            queuedRenderRef.current = !queued || queued.generation !== generation ? { generation, maxEdge } : { generation, maxEdge: Math.max(queued.maxEdge, maxEdge) };
+            return;
+        }
+
+        const loaded = loadedRef.current;
+        const canvas = adjustedCanvasRef.current;
+        if (!loaded || !canvas || generation !== sourceGenerationRef.current) return;
+        const renderSettings = settingsRef.current;
+        const processingCanvas = processingCanvasRef.current || document.createElement("canvas");
+        processingCanvasRef.current = processingCanvas;
+        renderInFlightRef.current = true;
+        setRendering(true);
+
+        void renderColorPreview(loaded, processingCanvas, renderSettings, maxEdge)
+            .then(() => {
+                if (generation !== sourceGenerationRef.current || loadedRef.current !== loaded) return;
+                canvas.width = processingCanvas.width;
+                canvas.height = processingCanvas.height;
+                const context = canvas.getContext("2d", { alpha: true });
+                if (!context) throw new Error("当前浏览器无法预览调色结果");
+                context.clearRect(0, 0, canvas.width, canvas.height);
+                context.drawImage(processingCanvas, 0, 0);
+                lastRenderedSettingsRef.current = renderSettings;
+                setError("");
+            })
+            .catch((reason) => {
+                if (generation === sourceGenerationRef.current) setError(reason instanceof Error ? reason.message : "调色预览失败");
+            })
+            .finally(() => {
+                renderInFlightRef.current = false;
+                const queued = queuedRenderRef.current;
+                queuedRenderRef.current = null;
+                if (queued) requestPreviewRender(queued.maxEdge, queued.generation);
+                else if (generation === sourceGenerationRef.current) setRendering(false);
+            });
+    }, []);
 
     useEffect(() => {
         const element = stageRef.current;
@@ -48,7 +97,17 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
 
     useEffect(() => {
         let cancelled = false;
+        const generation = sourceGenerationRef.current + 1;
+        sourceGenerationRef.current = generation;
+        settingsRef.current = settings;
+        lastRenderedSettingsRef.current = null;
+        queuedRenderRef.current = null;
+        if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
+        if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+        previewTimerRef.current = null;
+        settleTimerRef.current = null;
         setLoading(true);
+        setRendering(false);
         setError("");
         setDimensions(null);
         originalCanvasRef.current?.getContext("2d")?.clearRect(0, 0, originalCanvasRef.current.width, originalCanvasRef.current.height);
@@ -66,8 +125,16 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
                 const adjustedCanvas = adjustedCanvasRef.current;
                 if (!originalCanvas || !adjustedCanvas) return;
                 const preview = drawOriginalColorPreview(loaded, originalCanvas);
-                await renderColorPreview(loaded, adjustedCanvas, settings);
+                const renderSettings = settingsRef.current;
+                const initialCanvas = document.createElement("canvas");
+                await renderColorPreview(loaded, initialCanvas, renderSettings);
                 if (cancelled) return;
+                adjustedCanvas.width = initialCanvas.width;
+                adjustedCanvas.height = initialCanvas.height;
+                const adjustedContext = adjustedCanvas.getContext("2d", { alpha: true });
+                if (!adjustedContext) throw new Error("当前浏览器无法预览调色结果");
+                adjustedContext.drawImage(initialCanvas, 0, 0);
+                lastRenderedSettingsRef.current = renderSettings;
                 setDimensions({ ...preview, naturalWidth: loaded.width, naturalHeight: loaded.height });
                 onAnalysis(analyzeLoadedColorImage(loaded));
                 setLoading(false);
@@ -85,28 +152,34 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
     }, [source.key, source.storageKey, source.url]);
 
     useEffect(() => {
-        const loaded = loadedRef.current;
-        const canvas = adjustedCanvasRef.current;
-        if (!loaded || !canvas || loading) return;
-        setRendering(true);
-        let cancelled = false;
-        const timer = window.setTimeout(() => {
-            void renderColorPreview(loaded, canvas, settings)
-                .then(() => {
-                    if (!cancelled) setError("");
-                })
-                .catch((reason) => {
-                    if (!cancelled) setError(reason instanceof Error ? reason.message : "调色预览失败");
-                })
-                .finally(() => {
-                    if (!cancelled) setRendering(false);
-                });
-        }, 36);
-        return () => {
-            cancelled = true;
-            window.clearTimeout(timer);
-        };
-    }, [settings, loading]);
+        settingsRef.current = settings;
+        if (loading || lastRenderedSettingsRef.current === settings) return;
+        const generation = sourceGenerationRef.current;
+        const elapsed = performance.now() - lastPreviewStartedRef.current;
+        if (previewTimerRef.current === null) {
+            previewTimerRef.current = window.setTimeout(
+                () => {
+                    previewTimerRef.current = null;
+                    lastPreviewStartedRef.current = performance.now();
+                    requestPreviewRender(760, generation);
+                },
+                Math.max(0, 72 - elapsed),
+            );
+        }
+        if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = window.setTimeout(() => {
+            settleTimerRef.current = null;
+            requestPreviewRender(1_400, generation);
+        }, 180);
+    }, [loading, requestPreviewRender, settings]);
+
+    useEffect(
+        () => () => {
+            if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
+            if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+        },
+        [],
+    );
 
     const fit = useMemo(() => {
         if (!dimensions) return { width: 1, height: 1 };
@@ -140,12 +213,12 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
         const localX = clientX - rect.left;
         const localY = clientY - rect.top;
         if (localX < 0 || localY < 0 || localX > rect.width || localY > rect.height) return;
-        const x = Math.min(dimensions.width - 1, Math.max(0, Math.floor((localX / Math.max(1, rect.width)) * dimensions.width)));
-        const y = Math.min(dimensions.height - 1, Math.max(0, Math.floor((localY / Math.max(1, rect.height)) * dimensions.height)));
         const inAdjustedPreview = !forceOriginal && localX <= rect.width * (compare / 100);
         const canvas = inAdjustedPreview ? adjustedCanvasRef.current : originalCanvasRef.current;
         const context = canvas?.getContext("2d", { willReadFrequently: true });
-        if (!context) return;
+        if (!canvas || !context) return;
+        const x = Math.min(canvas.width - 1, Math.max(0, Math.floor((localX / Math.max(1, rect.width)) * canvas.width)));
+        const y = Math.min(canvas.height - 1, Math.max(0, Math.floor((localY / Math.max(1, rect.height)) * canvas.height)));
         const pixel = context.getImageData(x, y, 1, 1).data;
         onPickColor(analyzedColorFromRgb([pixel[0], pixel[1], pixel[2]]));
         setEyedropperActive(false);
