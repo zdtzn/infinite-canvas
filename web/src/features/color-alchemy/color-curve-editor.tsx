@@ -48,7 +48,6 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
             pendingCurveRef.current = null;
             if (!pending) return;
             setWorkingCurve(pending);
-            onChangeRef.current(pending);
         });
     };
 
@@ -59,7 +58,12 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
         pendingCurveRef.current = null;
         if (!pending) return;
         setWorkingCurve(pending);
-        onChangeRef.current(pending);
+    };
+
+    const commitCurve = () => {
+        flushCurve();
+        onChangeRef.current(workingCurveRef.current);
+        onCommit();
     };
 
     const beginDrag = (index: number, pointerId: number) => {
@@ -70,10 +74,9 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
 
     const endDrag = (pointerId: number) => {
         if (draggingIndexRef.current === null) return;
-        flushCurve();
         draggingIndexRef.current = null;
         if (svgRef.current?.hasPointerCapture(pointerId)) svgRef.current.releasePointerCapture(pointerId);
-        onCommit();
+        commitCurve();
     };
 
     const updatePoint = (index: number, x: number, y: number) => {
@@ -187,6 +190,7 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
                                 event.preventDefault();
                                 updatePoint(index, point.x + direction[0], point.y + direction[1]);
                                 flushCurve();
+                                onChangeRef.current(workingCurveRef.current);
                             }}
                             onKeyUp={(event) => {
                                 if (event.key.startsWith("Arrow")) onCommit();
