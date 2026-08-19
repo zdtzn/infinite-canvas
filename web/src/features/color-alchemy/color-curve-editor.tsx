@@ -9,13 +9,20 @@ import type { ColorCurve } from "./types";
 const MAX_CURVE_POINTS = 12;
 const MIN_POINT_GAP = 0.015;
 const KEYBOARD_STEP = 1 / 255;
+type CurveBounds = Pick<DOMRectReadOnly, "left" | "top" | "width" | "height">;
 
 export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: ColorCurve; color: string; onChange: (curve: ColorCurve) => void; onCommit: () => void }) {
     const svgRef = useRef<SVGSVGElement>(null);
+    const curveLineRef = useRef<SVGPolylineElement>(null);
+    const curvePointRefs = useRef<Array<SVGCircleElement | null>>([]);
+    const inputValueRef = useRef<HTMLSpanElement>(null);
+    const outputValueRef = useRef<HTMLSpanElement>(null);
     const frameRef = useRef<number | null>(null);
     const pendingCurveRef = useRef<ColorCurve | null>(null);
     const workingCurveRef = useRef(curve);
     const draggingIndexRef = useRef<number | null>(null);
+    const selectedIndexRef = useRef(0);
+    const dragBoundsRef = useRef<CurveBounds | null>(null);
     const onChangeRef = useRef(onChange);
     const [workingCurve, setWorkingCurve] = useState(curve);
     const [selectedIndex, setSelectedIndex] = useState(0);
@@ -28,7 +35,11 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
         if (draggingIndexRef.current !== null) return;
         workingCurveRef.current = curve;
         setWorkingCurve(curve);
-        setSelectedIndex((index) => Math.min(index, curve.length - 1));
+        setSelectedIndex((index) => {
+            const nextIndex = Math.min(index, curve.length - 1);
+            selectedIndexRef.current = nextIndex;
+            return nextIndex;
+        });
     }, [curve]);
 
     useEffect(
@@ -37,6 +48,28 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
         },
         [],
     );
+
+    const renderCurveVisual = (next: ColorCurve) => {
+        const lut = buildColorCurveLut(next);
+        if (curveLineRef.current) curveLineRef.current.setAttribute("points", linePointsForCurve(lut));
+        next.forEach((point, index) => {
+            renderPointVisual(index, point);
+        });
+        const selectedPoint = next[Math.min(selectedIndexRef.current, next.length - 1)] || next[0];
+        if (selectedPoint) renderPointValues(selectedPoint);
+    };
+
+    const renderPointVisual = (index: number, point: ColorCurve[number]) => {
+        const element = curvePointRefs.current[index];
+        if (!element) return;
+        element.setAttribute("cx", String(point.x * 100));
+        element.setAttribute("cy", String((1 - point.y) * 100));
+    };
+
+    const renderPointValues = (point: ColorCurve[number]) => {
+        if (inputValueRef.current) inputValueRef.current.textContent = `输入 ${Math.round(point.x * 255)}`;
+        if (outputValueRef.current) outputValueRef.current.textContent = `输出 ${Math.round(point.y * 255)}`;
+    };
 
     const publishCurve = (next: ColorCurve) => {
         workingCurveRef.current = next;
@@ -47,7 +80,7 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
             const pending = pendingCurveRef.current;
             pendingCurveRef.current = null;
             if (!pending) return;
-            setWorkingCurve(pending);
+            renderCurveVisual(pending);
         });
     };
 
@@ -57,24 +90,30 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
         const pending = pendingCurveRef.current;
         pendingCurveRef.current = null;
         if (!pending) return;
-        setWorkingCurve(pending);
+        renderCurveVisual(pending);
     };
 
     const commitCurve = () => {
         flushCurve();
-        onChangeRef.current(workingCurveRef.current);
+        const next = workingCurveRef.current;
+        setWorkingCurve(next);
+        onChangeRef.current(next);
         onCommit();
     };
 
     const beginDrag = (index: number, pointerId: number) => {
         draggingIndexRef.current = index;
+        selectedIndexRef.current = index;
+        workingCurveRef.current = workingCurveRef.current.map((point) => ({ ...point }));
         setSelectedIndex(index);
+        dragBoundsRef.current = svgRef.current?.getBoundingClientRect() || null;
         svgRef.current?.setPointerCapture(pointerId);
     };
 
     const endDrag = (pointerId: number) => {
         if (draggingIndexRef.current === null) return;
         draggingIndexRef.current = null;
+        dragBoundsRef.current = null;
         if (svgRef.current?.hasPointerCapture(pointerId)) svgRef.current.releasePointerCapture(pointerId);
         commitCurve();
     };
@@ -85,17 +124,24 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
         const next = current[index + 1];
         const point = current[index];
         const lockedX = index === 0 ? 0 : index === current.length - 1 ? 1 : clamp(x, previous.x + MIN_POINT_GAP, next.x - MIN_POINT_GAP);
+        const nextX = round(lockedX);
+        const nextY = round(clamp(y, 0, 1));
+        if (point.x === nextX && point.y === nextY) return;
+        if (draggingIndexRef.current !== null) {
+            point.x = nextX;
+            point.y = nextY;
+            renderPointVisual(index, point);
+            if (selectedIndexRef.current === index) renderPointValues(point);
+            publishCurve(current);
+            return;
+        }
         const updated = current.map((item, itemIndex) => (itemIndex === index ? { x: round(lockedX), y: round(clamp(y, 0, 1)) } : item));
-        if (point.x === updated[index].x && point.y === updated[index].y) return;
         publishCurve(updated);
     };
 
     const selectedPoint = workingCurve[Math.min(selectedIndex, workingCurve.length - 1)] || workingCurve[0];
     const lut = buildColorCurveLut(workingCurve);
-    const linePoints = Array.from({ length: 65 }, (_, index) => {
-        const x = index / 64;
-        return `${x * 100},${100 - sampleColorCurveLut(lut, x) * 100}`;
-    }).join(" ");
+    const linePoints = linePointsForCurve(lut);
 
     return (
         <div className="space-y-2">
@@ -106,7 +152,7 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
                     className="size-full touch-none select-none"
                     onPointerDown={(event) => {
                         if (event.button !== 0 || workingCurve.length >= MAX_CURVE_POINTS) return;
-                        const point = pointerPosition(svgRef.current, event.clientX, event.clientY);
+                        const point = pointerPosition(svgRef.current?.getBoundingClientRect() || null, event.clientX, event.clientY);
                         const inserted = { x: round(clamp(point.x, MIN_POINT_GAP, 1 - MIN_POINT_GAP)), y: round(clamp(point.y, 0, 1)) };
                         const next = [...workingCurveRef.current, inserted].sort((left, right) => left.x - right.x);
                         const index = next.indexOf(inserted);
@@ -118,7 +164,7 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
                     onPointerMove={(event) => {
                         const index = draggingIndexRef.current;
                         if (index === null) return;
-                        const point = pointerPosition(svgRef.current, event.clientX, event.clientY);
+                        const point = pointerPosition(dragBoundsRef.current, event.clientX, event.clientY);
                         updatePoint(index, point.x, point.y);
                     }}
                     onPointerUp={(event) => endDrag(event.pointerId)}
@@ -132,9 +178,12 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
                         </g>
                     ))}
                     <line x1="0" y1="100" x2="100" y2="0" stroke="rgba(255,255,255,.15)" strokeWidth="0.7" strokeDasharray="2 2" />
-                    <polyline points={linePoints} fill="none" stroke={color} strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
+                    <polyline ref={curveLineRef} points={linePoints} fill="none" stroke={color} strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
                     {workingCurve.map((point, index) => (
                         <circle
+                            ref={(element) => {
+                                curvePointRefs.current[index] = element;
+                            }}
                             key={index}
                             cx={point.x * 100}
                             cy={(1 - point.y) * 100}
@@ -158,22 +207,29 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
                                 if (index === 0 || index === workingCurve.length - 1) return;
                                 draggingIndexRef.current = null;
                                 const next = workingCurveRef.current.filter((_, itemIndex) => itemIndex !== index);
+                                const nextIndex = Math.max(0, index - 1);
                                 workingCurveRef.current = next;
                                 setWorkingCurve(next);
-                                setSelectedIndex(Math.max(0, index - 1));
+                                selectedIndexRef.current = nextIndex;
+                                setSelectedIndex(nextIndex);
                                 onChangeRef.current(next);
                                 onCommit();
                             }}
-                            onFocus={() => setSelectedIndex(index)}
+                            onFocus={() => {
+                                selectedIndexRef.current = index;
+                                setSelectedIndex(index);
+                            }}
                             onKeyDown={(event) => {
                                 const multiplier = event.shiftKey ? 5 : 1;
                                 if (event.key === "Delete" || event.key === "Backspace") {
                                     if (index === 0 || index === workingCurve.length - 1) return;
                                     event.preventDefault();
                                     const next = workingCurveRef.current.filter((_, itemIndex) => itemIndex !== index);
+                                    const nextIndex = Math.max(0, index - 1);
                                     workingCurveRef.current = next;
                                     setWorkingCurve(next);
-                                    setSelectedIndex(Math.max(0, index - 1));
+                                    selectedIndexRef.current = nextIndex;
+                                    setSelectedIndex(nextIndex);
                                     onChangeRef.current(next);
                                     onCommit();
                                     return;
@@ -188,9 +244,12 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
                                 const direction = directions[event.key];
                                 if (!direction) return;
                                 event.preventDefault();
-                                updatePoint(index, point.x + direction[0], point.y + direction[1]);
+                                const currentPoint = workingCurveRef.current[index];
+                                updatePoint(index, currentPoint.x + direction[0], currentPoint.y + direction[1]);
                                 flushCurve();
-                                onChangeRef.current(workingCurveRef.current);
+                                const next = workingCurveRef.current;
+                                setWorkingCurve(next);
+                                onChangeRef.current(next);
                             }}
                             onKeyUp={(event) => {
                                 if (event.key.startsWith("Arrow")) onCommit();
@@ -200,8 +259,8 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
                 </svg>
             </div>
             <div className="flex h-7 items-center justify-between text-[10px] tabular-nums text-white/45">
-                <span>输入 {Math.round(selectedPoint.x * 255)}</span>
-                <span>输出 {Math.round(selectedPoint.y * 255)}</span>
+                <span ref={inputValueRef}>输入 {Math.round(selectedPoint.x * 255)}</span>
+                <span ref={outputValueRef}>输出 {Math.round(selectedPoint.y * 255)}</span>
                 <Tooltip title="重置当前通道曲线">
                     <button
                         type="button"
@@ -211,6 +270,7 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
                             const next = createDefaultColorCurve();
                             workingCurveRef.current = next;
                             setWorkingCurve(next);
+                            selectedIndexRef.current = 0;
                             setSelectedIndex(0);
                             onChangeRef.current(next);
                             onCommit();
@@ -224,8 +284,14 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
     );
 }
 
-function pointerPosition(svg: SVGSVGElement | null, clientX: number, clientY: number) {
-    const bounds = svg?.getBoundingClientRect();
+function linePointsForCurve(lut: Float32Array) {
+    return Array.from({ length: 65 }, (_, index) => {
+        const x = index / 64;
+        return `${x * 100},${100 - sampleColorCurveLut(lut, x) * 100}`;
+    }).join(" ");
+}
+
+function pointerPosition(bounds: CurveBounds | null, clientX: number, clientY: number) {
     if (!bounds?.width || !bounds.height) return { x: 0.5, y: 0.5 };
     return {
         x: clamp((clientX - bounds.left) / bounds.width, 0, 1),
