@@ -1,7 +1,6 @@
 import { COLOR_HSL_CHANNELS, type AnalyzedColor, type ColorAnalysis, type ColorHarmony, type ColorSettings, type ColorValueFormat } from "./types";
 import { sampleFilmLut, type FilmLut } from "./film-lut";
 import { cloneColorSettings } from "./settings";
-import { buildColorCurveLut, colorCurveIsNeutral, sampleColorCurveLut } from "./color-curve";
 
 const HUE_CENTERS = {
     red: 0,
@@ -29,15 +28,6 @@ export function applyColorSettingsToImageData(imageData: ImageData, width: numbe
         const adjustment = settings.hsl[channel];
         return adjustment.hue || adjustment.saturation || adjustment.lightness;
     });
-    const hasCurves = Object.values(settings.curves).some((curve) => !colorCurveIsNeutral(curve));
-    const curveLuts = hasCurves
-        ? {
-              rgb: buildColorCurveLut(settings.curves.rgb),
-              red: buildColorCurveLut(settings.curves.red),
-              green: buildColorCurveLut(settings.curves.green),
-              blue: buildColorCurveLut(settings.curves.blue),
-          }
-        : null;
     const lutOutput = lut && settings.lutIntensity > 0 ? new Float32Array(3) : null;
 
     for (let index = 0; index < data.length; index += 4) {
@@ -87,12 +77,6 @@ export function applyColorSettingsToImageData(imageData: ImageData, width: numbe
                 lightnessShift += (adjustment.lightness / 100) * 0.45 * influence;
             });
             [red, green, blue] = hslToRgb(normalizeHue(hsl[0] + hueShift), clamp01(hsl[1] + saturationShift), clamp01(hsl[2] + lightnessShift));
-        }
-
-        if (curveLuts) {
-            red = sampleColorCurveLut(curveLuts.red, sampleColorCurveLut(curveLuts.rgb, red));
-            green = sampleColorCurveLut(curveLuts.green, sampleColorCurveLut(curveLuts.rgb, green));
-            blue = sampleColorCurveLut(curveLuts.blue, sampleColorCurveLut(curveLuts.rgb, blue));
         }
 
         luminance = clamp01(rgbLuminance(red, green, blue));

@@ -1,6 +1,5 @@
 import { createDefaultColorSettings, mergeColorSettings } from "./settings";
 import type { ColorPreset, ColorSettings } from "./types";
-import { blendColorCurves } from "./color-curve";
 
 export const COLOR_PRESETS: ColorPreset[] = [
     {
@@ -153,10 +152,6 @@ function blendSettings(base: ColorSettings, target: ColorSettings, amount: numbe
             saturation: mix(base.hsl[channel].saturation, target.hsl[channel].saturation),
             lightness: mix(base.hsl[channel].lightness, target.hsl[channel].lightness),
         };
-    });
-    Object.keys(next.curves).forEach((key) => {
-        const channel = key as keyof ColorSettings["curves"];
-        next.curves[channel] = blendColorCurves(base.curves[channel], target.curves[channel], amount);
     });
     next.splitTone = {
         shadowHue: target.splitTone.shadowHue,

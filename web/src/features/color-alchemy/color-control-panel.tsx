@@ -4,15 +4,13 @@ import { BrainCircuit, Clipboard, Droplets, ImagePlus, Pipette, Sparkles, X } fr
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { buildColorHarmonies, formatColorValue } from "./color-engine";
-import { ColorCurveEditor } from "./color-curve-editor";
 import { ColorSourceImage } from "./color-source-image";
 import { mergeColorSettings } from "./settings";
 import { applyColorPreset, COLOR_PRESETS } from "./presets";
-import { COLOR_CURVE_CHANNELS, COLOR_HSL_CHANNELS, type AnalyzedColor, type ColorAlchemyDocument, type ColorCurveChannel, type ColorHslChannel, type ColorSettings, type ColorValueFormat } from "./types";
+import { COLOR_HSL_CHANNELS, type AnalyzedColor, type ColorAlchemyDocument, type ColorHslChannel, type ColorSettings, type ColorValueFormat } from "./types";
 
 const HSL_LABELS: Record<ColorHslChannel, string> = { red: "红", orange: "橙", yellow: "黄", green: "绿", cyan: "青", blue: "蓝", purple: "紫", magenta: "洋红" };
 const HSL_SWATCHES: Record<ColorHslChannel, string> = { red: "#e45b55", orange: "#e99545", yellow: "#dfc84d", green: "#64a66a", cyan: "#58aeb5", blue: "#5e82c8", purple: "#8b6bc1", magenta: "#c0659b" };
-const CURVE_LABELS: Record<ColorCurveChannel, string> = { rgb: "RGB", red: "R", green: "G", blue: "B" };
 
 export function ColorControlPanel({
     document,
@@ -36,7 +34,6 @@ export function ColorControlPanel({
     const copyText = useCopyText();
     const referenceInputRef = useRef<HTMLInputElement>(null);
     const [hslChannel, setHslChannel] = useState<ColorHslChannel>("red");
-    const [curveChannel, setCurveChannel] = useState<ColorCurveChannel>("rgb");
     const [colorValueFormat, setColorValueFormat] = useState<ColorValueFormat>("hex");
     const analysis = document.analysis;
     const settings = document.settings;
@@ -70,27 +67,6 @@ export function ColorControlPanel({
                     <ControlSlider label="色相" value={settings.hsl[hslChannel].hue} onChange={(value) => patch({ hsl: { [hslChannel]: { hue: value } } })} onCommit={onCommit} />
                     <ControlSlider label="饱和" value={settings.hsl[hslChannel].saturation} onChange={(value) => patch({ hsl: { [hslChannel]: { saturation: value } } })} onCommit={onCommit} />
                     <ControlSlider label="明度" value={settings.hsl[hslChannel].lightness} onChange={(value) => patch({ hsl: { [hslChannel]: { lightness: value } } })} onCommit={onCommit} />
-                </div>
-            ),
-        },
-        {
-            key: "curves",
-            label: "RGB 曲线",
-            children: (
-                <div className="space-y-4">
-                    <div className="grid grid-cols-4 gap-1">
-                        {COLOR_CURVE_CHANNELS.map((channel) => (
-                            <button key={channel} type="button" className={`h-7 rounded text-[11px] ${curveChannel === channel ? "bg-white/12 text-white" : "bg-white/4 text-white/45"}`} onClick={() => setCurveChannel(channel)}>
-                                {CURVE_LABELS[channel]}
-                            </button>
-                        ))}
-                    </div>
-                    <ColorCurveEditor
-                        curve={settings.curves[curveChannel]}
-                        color={curveChannel === "red" ? "#ef6a62" : curveChannel === "green" ? "#62bd7b" : curveChannel === "blue" ? "#6d8ee8" : "#d7b46a"}
-                        onChange={(curve) => patch({ curves: { [curveChannel]: curve } })}
-                        onCommit={onCommit}
-                    />
                 </div>
             ),
         },
