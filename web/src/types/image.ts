@@ -6,4 +6,5 @@ export type ReferenceImage = {
     url?: string;
     storageKey?: string;
     thumbnailKey?: string;
+    thumbnailUrl?: string;
 };

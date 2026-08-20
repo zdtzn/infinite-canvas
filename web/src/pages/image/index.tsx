@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { App, Button, Checkbox, Input, Modal, Tag, Tooltip, Typography } from "antd";
@@ -19,6 +19,7 @@ import { nanoid } from "nanoid";
 import { formatDuration } from "@/lib/image-utils";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { settleWithConcurrency } from "@/lib/async-pool";
+import { getClipboardImageFiles } from "@/lib/image-clipboard";
 import { convertImageOutput, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { clearImageGenerationJob, getImageGenerationSnapshot, replaceImageGenerationResult, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
 import { IMAGE_WORKBENCH_ASSET_SOURCE } from "@/stores/asset-source";
@@ -77,6 +78,8 @@ export default function ImagePage() {
     const authenticatedUserId = useUserStore((state) => state.user?.id || "");
     const historyUserId = PUBLIC_MODE ? authenticatedUserId : "local";
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const replaceFileInputRef = useRef<HTMLInputElement>(null);
+    const replacementIndexRef = useRef<number | null>(null);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
@@ -91,6 +94,7 @@ export default function ImagePage() {
     const [savingAssetIds, setSavingAssetIds] = useState<string[]>([]);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
+    const [previewReference, setPreviewReference] = useState<ReferenceImage | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [deletingLogs, setDeletingLogs] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
@@ -134,6 +138,7 @@ export default function ImagePage() {
               ? [{ id: previewLog.id, status: "failed", error: "该次创作未留下可预览的画卷" }]
               : []
         : generationJob?.results || [];
+    const previewReferenceIndex = previewReference ? references.findIndex((item) => item.id === previewReference.id) : -1;
     const archivedGenerationImages = (generationJob?.results || []).flatMap((result) => {
         const image = result.image;
         return result.status === "success" && image?.persisted !== false && image?.serverJobId ? [image] : [];
@@ -150,53 +155,80 @@ export default function ImagePage() {
         setReferences((value) => (value.length ? value : generationJob.references));
     }, [generationJob?.id]);
 
-    const addReferences = async (files?: FileList | null) => {
-        const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
-        const limited = limitImageReferenceAdditions(references, imageFiles, activeImageCapabilities.maxReferences);
+    const uploadReference = async (input: Blob, name: string): Promise<ReferenceImage> => {
+        const image = await uploadImage(input, { thumbnailMaxEdge: 1280 });
+        return {
+            id: nanoid(),
+            name,
+            type: image.mimeType,
+            dataUrl: image.url,
+            storageKey: image.storageKey,
+            thumbnailKey: image.thumbnailKey,
+            thumbnailUrl: image.thumbnailUrl,
+        };
+    };
+
+    const appendReferences = async (entries: Array<{ input: Blob; name: string }>, successMessage?: string) => {
+        const limited = limitImageReferenceAdditions(references, entries, activeImageCapabilities.maxReferences);
         if (limited.rejected) message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图，已忽略 ${limited.rejected} 张`);
         if (!limited.accepted.length) return;
         try {
-            const nextReferences = await Promise.all(
-                limited.accepted.map(async (file) => {
-                    const image = await uploadImage(file, { thumbnailMaxEdge: 1280 });
-                    return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey };
-                }),
-            );
+            const nextReferences = await Promise.all(limited.accepted.map((entry) => uploadReference(entry.input, entry.name)));
             setReferences((value) => limitImageReferenceAdditions(value, nextReferences, activeImageCapabilities.maxReferences).items as ReferenceImage[]);
+            if (successMessage) message.success(successMessage.replace("{count}", String(nextReferences.length)));
         } catch (error) {
             message.error(error instanceof Error ? error.message : "参考图上传失败");
         }
     };
 
+    const addReferences = async (files?: FileList | null) => {
+        const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
+        await appendReferences(imageFiles.map((file) => ({ input: file, name: file.name })));
+    };
+
     const addReferencesFromClipboard = async () => {
         try {
+            if (!navigator.clipboard?.read) throw new Error("clipboard-read-unsupported");
             const items = await navigator.clipboard.read();
             const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("image/")).map((type) => item.getType(type))));
             if (!blobs.length) {
-                message.error("剪切板里没有可读取的图片");
+                message.warning("剪贴板里没有图片，请先复制图片后再粘贴");
                 return;
             }
-            const limited = limitImageReferenceAdditions(references, blobs, activeImageCapabilities.maxReferences);
-            if (limited.rejected) message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图，已忽略 ${limited.rejected} 张`);
-            if (!limited.accepted.length) return;
-            const nextReferences = await Promise.all(
-                limited.accepted.map(async (blob, index) => {
-                    const image = await uploadImage(blob, { thumbnailMaxEdge: 1280 });
-                    return {
-                        id: nanoid(),
-                        name: `clipboard-${index + 1}.png`,
-                        type: image.mimeType,
-                        dataUrl: image.url,
-                        storageKey: image.storageKey,
-                        thumbnailKey: image.thumbnailKey,
-                    };
-                }),
+            await appendReferences(
+                blobs.map((blob, index) => ({ input: blob, name: `clipboard-${index + 1}.png` })),
+                "已读取 {count} 张参考图",
             );
-            setReferences((value) => limitImageReferenceAdditions(value, nextReferences, activeImageCapabilities.maxReferences).items as ReferenceImage[]);
-            message.success(`已读取 ${nextReferences.length} 张参考图`);
-        } catch {
-            message.error("剪切板里没有可读取的图片");
+        } catch (error) {
+            const errorName = error instanceof DOMException ? error.name : error instanceof Error ? error.message : "";
+            if (errorName === "NotAllowedError" || errorName === "SecurityError") {
+                message.warning("浏览器未授权按钮读取剪贴板，请先复制图片，再按 Ctrl/Cmd+V");
+            } else if (errorName === "clipboard-read-unsupported") {
+                message.warning("当前浏览器不支持按钮读取剪贴板，请先复制图片，再按 Ctrl/Cmd+V");
+            } else {
+                message.error("读取剪贴板图片失败，请改用 Ctrl/Cmd+V 或上传图片");
+            }
         }
+    };
+
+    const replaceReference = async (index: number, file?: File) => {
+        if (!file || !file.type.startsWith("image/")) {
+            message.warning("请选择一张图片替换当前参考图");
+            return;
+        }
+        try {
+            const replacement = await uploadReference(file, file.name);
+            setReferences((value) => value.map((item, itemIndex) => (itemIndex === index ? replacement : item)));
+            setPreviewReference(null);
+            message.success("参考图已替换");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "参考图替换失败");
+        }
+    };
+
+    const openReferenceReplacement = (index: number) => {
+        replacementIndexRef.current = index;
+        replaceFileInputRef.current?.click();
     };
 
     const generate = () => {
@@ -334,7 +366,7 @@ export default function ImagePage() {
         }
         const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
         const stored = image.storageKey
-            ? { url: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
+            ? { url: image.dataUrl, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey, thumbnailUrl: image.thumbnailUrl, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
             : await uploadImage(image.dataUrl, { outputFormat, thumbnailMaxEdge: 1280 });
         const reference = {
             id: nanoid(),
@@ -342,7 +374,8 @@ export default function ImagePage() {
             type: stored.mimeType,
             dataUrl: stored.url,
             storageKey: stored.storageKey,
-            thumbnailKey: "thumbnailKey" in stored ? stored.thumbnailKey : undefined,
+            thumbnailKey: stored.thumbnailKey,
+            thumbnailUrl: stored.thumbnailUrl,
         };
         setReferences((value) => limitImageReferenceAdditions(value, [reference], activeImageCapabilities.maxReferences).items as ReferenceImage[]);
         message.success("已加入参考图");
@@ -394,6 +427,7 @@ export default function ImagePage() {
                 dataUrl: stored.url,
                 storageKey: stored.storageKey,
                 thumbnailKey: stored.thumbnailKey,
+                thumbnailUrl: stored.thumbnailUrl,
             };
             setReferences((value) => limitImageReferenceAdditions(value, [reference], activeImageCapabilities.maxReferences).items as ReferenceImage[]);
         } else {
@@ -563,7 +597,18 @@ export default function ImagePage() {
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
-            <main className="min-h-0 flex-1 overflow-y-auto p-3 lg:overflow-hidden">
+            <main
+                className="min-h-0 flex-1 overflow-y-auto p-3 lg:overflow-hidden"
+                onPaste={(event) => {
+                    const files = getClipboardImageFiles(event.clipboardData);
+                    if (!files.length) return;
+                    event.preventDefault();
+                    void appendReferences(
+                        files.map((file) => ({ input: file, name: file.name || "clipboard-image.png" })),
+                        "已粘贴 {count} 张参考图",
+                    );
+                }}
+            >
                 <section className="grid min-h-0 min-w-0 w-full gap-3 lg:h-full lg:grid-cols-[minmax(380px,460px)_minmax(0,1fr)]">
                     <div className="flex min-h-0 min-w-0 flex-col rounded-lg border border-stone-200 bg-card shadow-sm dark:border-stone-800 lg:h-full">
                         <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4 lg:p-5">
@@ -623,7 +668,7 @@ export default function ImagePage() {
                                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                                         <div>
                                             <span className="text-base font-semibold">参考图</span>
-                                            <span className="ml-2 text-xs text-stone-400">可上传或从剪贴板粘贴</span>
+                                            <span className="ml-2 text-xs text-stone-400">可上传、粘贴，点击图片预览，右上角可替换</span>
                                         </div>
                                         <div className="flex gap-2">
                                             <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
@@ -635,7 +680,7 @@ export default function ImagePage() {
                                         </div>
                                     </div>
                                     <div
-                                        className="hover-scrollbar hover-scrollbar-hint flex min-h-20 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700"
+                                        className="hover-scrollbar hover-scrollbar-hint flex min-h-32 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700"
                                         onWheel={(event) => {
                                             if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth) return;
                                             event.preventDefault();
@@ -652,18 +697,38 @@ export default function ImagePage() {
                                         }}
                                     >
                                         {references.map((item, index) => (
-                                            <div key={item.id} className="group relative size-16 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800 sm:size-20">
-                                                <img src={item.dataUrl} alt={item.name} className="size-full object-cover" decoding="async" />
-                                                <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
-                                                <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                                <button
-                                                    type="button"
-                                                    className="absolute right-1 top-1 flex size-6 items-center justify-center rounded bg-black/60 text-white transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
-                                                    onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
-                                                    aria-label="移除参考图"
-                                                >
-                                                    <Trash2 className="size-3.5" />
+                                            <div key={item.id} className="group relative size-24 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900 sm:size-28">
+                                                <button type="button" className="block size-full cursor-zoom-in p-0" onClick={() => setPreviewReference(item)} aria-label={`预览${imageReferenceLabel(index)}：${item.name}`}>
+                                                    <img src={item.thumbnailUrl || item.dataUrl} alt={item.name} className="size-full object-cover" decoding="async" />
                                                 </button>
+                                                <span className="pointer-events-none absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
+                                                <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                                <Tooltip title="替换参考图">
+                                                    <button
+                                                        type="button"
+                                                        className="absolute right-8 top-1 flex size-6 items-center justify-center rounded bg-black/60 text-white transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+                                                        onClick={(event) => {
+                                                            event.stopPropagation();
+                                                            openReferenceReplacement(index);
+                                                        }}
+                                                        aria-label="替换参考图"
+                                                    >
+                                                        <RefreshCw className="size-3.5" />
+                                                    </button>
+                                                </Tooltip>
+                                                <Tooltip title="移除参考图">
+                                                    <button
+                                                        type="button"
+                                                        className="absolute right-1 top-1 flex size-6 items-center justify-center rounded bg-black/60 text-white transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+                                                        onClick={(event) => {
+                                                            event.stopPropagation();
+                                                            setReferences((value) => value.filter((ref) => ref.id !== item.id));
+                                                        }}
+                                                        aria-label="移除参考图"
+                                                    >
+                                                        <Trash2 className="size-3.5" />
+                                                    </button>
+                                                </Tooltip>
                                             </div>
                                         ))}
                                         {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考图</div> : null}
@@ -830,6 +895,18 @@ export default function ImagePage() {
                     event.target.value = "";
                 }}
             />
+            <input
+                ref={replaceFileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => {
+                    const index = replacementIndexRef.current;
+                    replacementIndexRef.current = null;
+                    if (index !== null) void replaceReference(index, Array.from(event.target.files || [])[0]);
+                    event.target.value = "";
+                }}
+            />
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
             <Modal
@@ -848,6 +925,29 @@ export default function ImagePage() {
                 <div className="space-y-2">
                     <p>确定从太古遗迹移除选中的 {selectedLogIds.length} 条记录吗？</p>
                     <p className="text-sm text-stone-500 dark:text-stone-400">已入藏卷阁的图片不会受到影响。</p>
+                </div>
+            </Modal>
+            <Modal
+                title={previewReference?.name || "参考图预览"}
+                open={Boolean(previewReference)}
+                onCancel={() => setPreviewReference(null)}
+                footer={
+                    previewReferenceIndex >= 0 ? (
+                        <Button
+                            icon={<RefreshCw className="size-3.5" />}
+                            onClick={() => {
+                                setPreviewReference(null);
+                                openReferenceReplacement(previewReferenceIndex);
+                            }}
+                        >
+                            替换此图
+                        </Button>
+                    ) : null
+                }
+                width={960}
+            >
+                <div className="flex max-h-[72vh] min-h-40 items-center justify-center overflow-auto rounded-lg bg-stone-100 p-3 dark:bg-stone-900">
+                    {previewReference ? <img src={previewReference.dataUrl} alt={previewReference.name} className="max-h-[68vh] max-w-full object-contain" /> : null}
                 </div>
             </Modal>
         </div>
@@ -1062,10 +1162,10 @@ function generationPromptSummary(log: GenerationLog) {
 
 async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
     const references = await Promise.all(
-        (log.references || []).map(async (item) => ({
-            ...item,
-            dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl),
-        })),
+        (log.references || []).map(async (item) => {
+            const dataUrl = await resolveImageUrl(item.storageKey, item.dataUrl);
+            return { ...item, dataUrl, thumbnailUrl: await resolveImageUrl(item.thumbnailKey, item.thumbnailUrl || dataUrl) };
+        }),
     );
     const images = await Promise.all(
         (log.images || []).map(async (item) => ({
@@ -1104,7 +1204,7 @@ async function prepareImageLogForServer(log: GenerationLog, expectedUserId: stri
         log.references.map(async (item) => {
             if (item.storageKey || !item.dataUrl) return item;
             const stored = await uploadImage(item.dataUrl, { expectedUserId, thumbnailMaxEdge: 1280 });
-            return { ...item, dataUrl: stored.url, storageKey: stored.storageKey, thumbnailKey: stored.thumbnailKey, type: stored.mimeType };
+            return { ...item, dataUrl: stored.url, storageKey: stored.storageKey, thumbnailKey: stored.thumbnailKey, thumbnailUrl: stored.thumbnailUrl, type: stored.mimeType };
         }),
     );
     const images = await Promise.all(
@@ -1222,8 +1322,28 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
     if (total <= 1) return null;
     return (
         <div className="absolute inset-x-1 bottom-1 flex justify-between">
-            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowLeft className="size-3" />} disabled={index <= 0} onClick={() => onMove(-1)} />
-            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
+            <Button
+                size="small"
+                className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm"
+                icon={<ArrowLeft className="size-3" />}
+                disabled={index <= 0}
+                onClick={(event) => {
+                    event.stopPropagation();
+                    onMove(-1);
+                }}
+                aria-label="上移参考图"
+            />
+            <Button
+                size="small"
+                className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm"
+                icon={<ArrowRight className="size-3" />}
+                disabled={index >= total - 1}
+                onClick={(event) => {
+                    event.stopPropagation();
+                    onMove(1);
+                }}
+                aria-label="下移参考图"
+            />
         </div>
     );
 }
