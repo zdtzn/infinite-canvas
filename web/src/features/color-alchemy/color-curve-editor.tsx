@@ -18,6 +18,8 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
     const inputValueRef = useRef<HTMLSpanElement>(null);
     const outputValueRef = useRef<HTMLSpanElement>(null);
     const frameRef = useRef<number | null>(null);
+    const dragFrameRef = useRef<number | null>(null);
+    const latestPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
     const pendingCurveRef = useRef<ColorCurve | null>(null);
     const workingCurveRef = useRef(curve);
     const draggingIndexRef = useRef<number | null>(null);
@@ -45,6 +47,7 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
     useEffect(
         () => () => {
             if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+            if (dragFrameRef.current !== null) cancelAnimationFrame(dragFrameRef.current);
         },
         [],
     );
@@ -105,13 +108,36 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
         draggingIndexRef.current = index;
         selectedIndexRef.current = index;
         workingCurveRef.current = workingCurveRef.current.map((point) => ({ ...point }));
+        latestPointerRef.current = null;
         setSelectedIndex(index);
         dragBoundsRef.current = svgRef.current?.getBoundingClientRect() || null;
         svgRef.current?.setPointerCapture(pointerId);
     };
 
-    const endDrag = (pointerId: number) => {
+    const applyLatestPointer = () => {
+        const pointer = latestPointerRef.current;
+        const index = draggingIndexRef.current;
+        if (!pointer || index === null) return;
+        const point = pointerPosition(dragBoundsRef.current, pointer.clientX, pointer.clientY);
+        updatePoint(index, point.x, point.y);
+        latestPointerRef.current = null;
+    };
+
+    const scheduleDragFrame = () => {
+        if (dragFrameRef.current !== null) return;
+        dragFrameRef.current = requestAnimationFrame(() => {
+            dragFrameRef.current = null;
+            applyLatestPointer();
+            if (latestPointerRef.current && draggingIndexRef.current !== null) scheduleDragFrame();
+        });
+    };
+
+    const endDrag = (pointerId: number, clientX: number, clientY: number) => {
         if (draggingIndexRef.current === null) return;
+        latestPointerRef.current = { clientX, clientY };
+        if (dragFrameRef.current !== null) cancelAnimationFrame(dragFrameRef.current);
+        dragFrameRef.current = null;
+        applyLatestPointer();
         draggingIndexRef.current = null;
         dragBoundsRef.current = null;
         if (svgRef.current?.hasPointerCapture(pointerId)) svgRef.current.releasePointerCapture(pointerId);
@@ -164,11 +190,11 @@ export function ColorCurveEditor({ curve, color, onChange, onCommit }: { curve: 
                     onPointerMove={(event) => {
                         const index = draggingIndexRef.current;
                         if (index === null) return;
-                        const point = pointerPosition(dragBoundsRef.current, event.clientX, event.clientY);
-                        updatePoint(index, point.x, point.y);
+                        latestPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+                        scheduleDragFrame();
                     }}
-                    onPointerUp={(event) => endDrag(event.pointerId)}
-                    onPointerCancel={(event) => endDrag(event.pointerId)}
+                    onPointerUp={(event) => endDrag(event.pointerId, event.clientX, event.clientY)}
+                    onPointerCancel={(event) => endDrag(event.pointerId, event.clientX, event.clientY)}
                 >
                     <rect width="100" height="100" fill="transparent" />
                     {[25, 50, 75].map((position) => (
