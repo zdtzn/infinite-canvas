@@ -23,7 +23,10 @@ type PreloadRouteOptions = {
     fromWarmup?: boolean;
 };
 
-const routeWarmupOrder = ["/chat", "/image"] as const;
+// Warm the most likely next workspace before the first navigation. Color Alchemy
+// has its own lazy chunk and IndexedDB hydration, so loading it on demand makes
+// the first click feel slower than the subsequent visits.
+const routeWarmupOrder = ["/color-alchemy", "/chat", "/image"] as const;
 
 export function preloadRoute(path: string, options: PreloadRouteOptions = {}) {
     const routeKey = routeKeyForPath(path);
@@ -76,7 +79,11 @@ export function warmupRoutesWhenIdle(currentPath: string) {
             return;
         }
         if (initial) {
-            timeoutHandle = window.setTimeout(runNext, 1_200);
+            if (idleWindow.requestIdleCallback) {
+                idleHandle = idleWindow.requestIdleCallback(runNext, { timeout: 800 });
+            } else {
+                timeoutHandle = window.setTimeout(runNext, 800);
+            }
             return;
         }
         if (idleWindow.requestIdleCallback) {
