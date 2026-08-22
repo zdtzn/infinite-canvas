@@ -815,6 +815,72 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 21").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS chat_memories (
+          user_id TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('summary', 'fact', 'preference', 'goal')),
+          content TEXT NOT NULL,
+          source_conversation_id TEXT NOT NULL DEFAULT '',
+          pinned INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, memory_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_memories_user_updated
+          ON chat_memories(user_id, pinned DESC, updated_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (21, ?)",
+        )
+        .run(Date.now());
+    })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 22").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS prompt_index (
+          source_id TEXT NOT NULL,
+          prompt_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          cover_url TEXT NOT NULL DEFAULT '',
+          preview TEXT NOT NULL DEFAULT '',
+          tags_json TEXT NOT NULL DEFAULT '[]',
+          category TEXT NOT NULL DEFAULT '',
+          github_url TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT '',
+          updated_at TEXT NOT NULL DEFAULT '',
+          indexed_at INTEGER NOT NULL,
+          PRIMARY KEY (source_id, prompt_id)
+        );
+        CREATE TABLE IF NOT EXISTS prompt_index_status (
+          source_id TEXT PRIMARY KEY,
+          count INTEGER NOT NULL DEFAULT 0,
+          last_success_at INTEGER,
+          last_error TEXT NOT NULL DEFAULT '',
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_prompt_index_category_updated
+          ON prompt_index(category, indexed_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_prompt_index_title
+          ON prompt_index(title);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (22, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(

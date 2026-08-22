@@ -322,7 +322,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     return (
         <div
             data-node-id={data.id}
-            className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${isGroup ? "z-[5]" : isSelected ? "z-50" : "z-10"}`}
+            className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${isGroup ? "z-[5]" : isSelected ? "z-50" : "z-10"} ${data.metadata?.locked ? "cursor-not-allowed" : ""}`}
             style={{
                 transform: `translate(${data.position.x}px, ${data.position.y}px)`,
                 width: data.width,
@@ -473,10 +473,10 @@ export const CanvasNode = React.memo(function CanvasNode({
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} />
                 ) : null}
 
-                <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
+                {!data.metadata?.locked ? <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} /> : null}
+                {!data.metadata?.locked ? <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} /> : null}
+                {!data.metadata?.locked ? <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} /> : null}
+                {!data.metadata?.locked ? <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} /> : null}
             </div>
 
             {!isGroup ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}

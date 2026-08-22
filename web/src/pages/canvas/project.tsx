@@ -15,6 +15,7 @@ import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
+import { collectMovableCanvasNodeIds } from "@/lib/canvas/canvas-interaction";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { buildSplitLayout, cropImageBlob, IMAGE_SPLIT_CONCURRENCY, splitImageBlobs, upscaleImageBlob } from "@/lib/canvas/canvas-image-data";
@@ -99,6 +100,7 @@ import type { ReferenceAudio } from "@/types/media";
 import { cancelServerJob, waitForServerJob } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useCanvasProjectLock } from "@/pages/canvas/hooks/use-canvas-project-lock";
+import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
 
 // 内置节点注册到统一注册表(模块加载时执行一次)
 registerBuiltinNodes();
@@ -233,6 +235,8 @@ function InfiniteCanvasPage() {
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
+    const setCanvasContext = useCanvasContextStore((state) => state.setSnapshot);
+    const clearCanvasContext = useCanvasContextStore((state) => state.clear);
     const colorTheme = useThemeStore((state) => state.theme);
     const canvasBackdropEnabled = useThemeStore((state) => state.canvasBackdropEnabled);
     const setCanvasBackdropEnabled = useThemeStore((state) => state.setCanvasBackdropEnabled);
@@ -295,6 +299,30 @@ function InfiniteCanvasPage() {
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
     const pendingImageUploadsRef = useRef(new Map<string, PendingImageUpload>());
     const restoreAbortRef = useRef<AbortController | null>(null);
+
+    useEffect(() => {
+        if (!projectLoaded || !selectedNodeIds.size) {
+            clearCanvasContext();
+            return;
+        }
+        const contextNodes = nodes
+            .filter((node) => selectedNodeIds.has(node.id) && !node.metadata?.hidden)
+            .slice(0, 8)
+            .map((node) => ({
+                id: node.id,
+                type: String(node.type),
+                title: node.title || "未命名节点",
+                ...(node.metadata?.content && !node.metadata.content.startsWith("data:") ? { text: node.metadata.content.slice(0, 4_000) } : {}),
+                ...(node.metadata?.storageKey ? { storageKey: node.metadata.storageKey } : {}),
+            }));
+        if (!contextNodes.length) {
+            clearCanvasContext();
+            return;
+        }
+        setCanvasContext({ projectId, projectTitle: currentProject?.title || "未命名画布", nodes: contextNodes, updatedAt: Date.now() });
+    }, [clearCanvasContext, currentProject?.title, nodes, projectId, projectLoaded, selectedNodeIds, setCanvasContext]);
+
+    useEffect(() => () => clearCanvasContext(), [clearCanvasContext, projectId]);
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -611,7 +639,8 @@ function InfiniteCanvasPage() {
 
     const createConnectedNode = useCallback(
         (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio, pending: PendingConnectionCreate) => {
-            const metadata = type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count), textCount: 1 } : undefined;
+            const metadata =
+                type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count), textCount: 1 } : undefined;
             const newNode = createCanvasNode(type, pending.position, metadata);
             const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {
@@ -681,7 +710,9 @@ function InfiniteCanvasPage() {
         const viewRight = viewLeft + width / viewport.k + padding * 2;
         const viewBottom = viewTop + height / viewport.k + padding * 2;
 
-        return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom);
+        return nodes.filter(
+            (node) => !node.metadata?.hidden && !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom,
+        );
     }, [collapsingBatchIds, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
     const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
 
@@ -698,6 +729,9 @@ function InfiniteCanvasPage() {
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
+    const selectedNodes = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id)), [nodes, selectedNodeIds]);
+    const allSelectedLocked = selectedNodes.length > 0 && selectedNodes.every((node) => Boolean(node.metadata?.locked));
+    const allSelectedHidden = selectedNodes.length > 0 && selectedNodes.every((node) => Boolean(node.metadata?.hidden));
     const activeNodeId = hasMultipleSelectedNodes ? null : hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
     const batchChildCountById = useMemo(() => {
         const map = new Map<string, number>();
@@ -1275,16 +1309,8 @@ function InfiniteCanvasPage() {
         const currentNodes = nodesRef.current;
         const nextSelected = pendingSelectionRef.current ?? selectNodeByEvent(event, nodeId).nextSelected;
         pendingSelectionRef.current = null;
-        const dragIds = new Set(nextSelected);
-        currentNodes.forEach((node) => {
-            if (!nextSelected.has(node.id)) return;
-            node.metadata?.batchChildIds?.forEach((childId) => dragIds.add(childId));
-            if (node.type === CanvasNodeType.Group) {
-                currentNodes.forEach((child) => {
-                    if (child.metadata?.groupId === node.id) dragIds.add(child.id);
-                });
-            }
-        });
+        const dragIds = collectMovableCanvasNodeIds(currentNodes, nextSelected);
+        if (!dragIds.size) return;
         dragRef.current = {
             isDraggingNode: true,
             hasMoved: false,
@@ -1772,6 +1798,7 @@ function InfiniteCanvasPage() {
     );
 
     const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
+        if (nodesRef.current.find((node) => node.id === nodeId)?.metadata?.locked) return;
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
     }, []);
 
@@ -1787,6 +1814,61 @@ function InfiniteCanvasPage() {
                 const ratio = (node.metadata?.naturalWidth || node.width) / (node.metadata?.naturalHeight || node.height || 1);
                 const height = node.width / ratio;
                 return { ...node, height, position: { x: node.position.x, y: node.position.y + node.height / 2 - height / 2 }, metadata: { ...node.metadata, freeResize } };
+            }),
+        );
+    }, []);
+
+    const toggleSelectedNodeFlag = useCallback((flag: "locked" | "hidden") => {
+        const selectedIds = selectedNodeIdsRef.current;
+        if (!selectedIds.size) return;
+        const selected = nodesRef.current.filter((node) => selectedIds.has(node.id));
+        const nextValue = !selected.every((node) => Boolean(node.metadata?.[flag]));
+        setNodes((prev) => prev.map((node) => (selectedIds.has(node.id) ? { ...node, metadata: { ...node.metadata, [flag]: nextValue } } : node)));
+    }, []);
+
+    const alignSelectedNodes = useCallback((mode: "left" | "center" | "right" | "top" | "middle" | "bottom" | "horizontal" | "vertical" | "grid") => {
+        const selectedIds = selectedNodeIdsRef.current;
+        const selected = nodesRef.current.filter((node) => selectedIds.has(node.id) && !node.metadata?.locked);
+        if (selected.length < 2 && mode !== "grid") return;
+        const bounds = selected.reduce(
+            (acc, node) => ({
+                left: Math.min(acc.left, node.position.x),
+                top: Math.min(acc.top, node.position.y),
+                right: Math.max(acc.right, node.position.x + node.width),
+                bottom: Math.max(acc.bottom, node.position.y + node.height),
+            }),
+            { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity },
+        );
+        const sortedX = [...selected].sort((left, right) => left.position.x - right.position.x);
+        const sortedY = [...selected].sort((left, right) => left.position.y - right.position.y);
+        setNodes((prev) =>
+            prev.map((node) => {
+                if (!selectedIds.has(node.id) || node.metadata?.locked) return node;
+                let x = node.position.x;
+                let y = node.position.y;
+                if (mode === "left") x = bounds.left;
+                if (mode === "center") x = (bounds.left + bounds.right - node.width) / 2;
+                if (mode === "right") x = bounds.right - node.width;
+                if (mode === "top") y = bounds.top;
+                if (mode === "middle") y = (bounds.top + bounds.bottom - node.height) / 2;
+                if (mode === "bottom") y = bounds.bottom - node.height;
+                if (mode === "horizontal" && sortedX.length > 2) {
+                    const index = sortedX.findIndex((item) => item.id === node.id);
+                    const totalWidth = sortedX.reduce((sum, item) => sum + item.width, 0);
+                    const gap = (bounds.right - bounds.left - totalWidth) / (sortedX.length - 1);
+                    x = sortedX.slice(0, index).reduce((sum, item) => sum + item.width + gap, bounds.left);
+                }
+                if (mode === "vertical" && sortedY.length > 2) {
+                    const index = sortedY.findIndex((item) => item.id === node.id);
+                    const totalHeight = sortedY.reduce((sum, item) => sum + item.height, 0);
+                    const gap = (bounds.bottom - bounds.top - totalHeight) / (sortedY.length - 1);
+                    y = sortedY.slice(0, index).reduce((sum, item) => sum + item.height + gap, bounds.top);
+                }
+                if (mode === "grid") {
+                    x = Math.round(x / 16) * 16;
+                    y = Math.round(y / 16) * 16;
+                }
+                return { ...node, position: { x, y } };
             }),
         );
     }, []);
@@ -3453,6 +3535,8 @@ function InfiniteCanvasPage() {
                     backgroundMode={backgroundMode}
                     showImageInfo={showImageInfo}
                     canvasBackdropEnabled={canvasBackdropEnabled}
+                    allSelectedLocked={allSelectedLocked}
+                    allSelectedHidden={allSelectedHidden}
                     onAddImage={() => createNode(CanvasNodeType.Image)}
                     onAddVideo={() => createNode(CanvasNodeType.Video)}
                     onAddAudio={() => createNode(CanvasNodeType.Audio)}
@@ -3469,6 +3553,9 @@ function InfiniteCanvasPage() {
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
                     onCanvasBackdropEnabledChange={setCanvasBackdropEnabled}
+                    onToggleLock={() => toggleSelectedNodeFlag("locked")}
+                    onToggleHidden={() => toggleSelectedNodeFlag("hidden")}
+                    onAlign={alignSelectedNodes}
                 />
 
                 {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}

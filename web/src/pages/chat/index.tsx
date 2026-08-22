@@ -1,13 +1,14 @@
 import { App, Button, Drawer, Dropdown, Empty, Input, Popconfirm, Segmented, Skeleton, Tag, Tooltip } from "antd";
-import { BookOpen, ChevronDown, Copy, Download, FileUp, ImagePlus, LoaderCircle, MessageCircle, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserRound, X } from "lucide-react";
+import { BookOpen, Brain, ChevronDown, Copy, Download, FileUp, ImagePlus, LoaderCircle, MessageCircle, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { lazyRoute } from "@/lib/lazy-route";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { createChatConversation, deleteChatConversation, fetchChatConversation, fetchChatConversations, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, uploadChatImage, type ChatAttachment, type ChatConversation, type ChatMessage } from "@/services/chat-api";
+import { createChatConversation, createChatMemory, deleteChatConversation, deleteChatMemory, fetchChatConversation, fetchChatConversations, fetchChatMemories, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, updateChatMemory, uploadChatImage, type ChatAttachment, type ChatCanvasContext, type ChatConversation, type ChatMemory, type ChatMessage } from "@/services/chat-api";
 import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId, type ChatPresetOption } from "./chat-presets";
 
 const DouQiLifeView = lazyRoute(() => import("./dou-qi-life-view"));
@@ -42,6 +43,8 @@ export default function ChatPage() {
     const scrollRef = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
     const userId = useUserStore((state) => state.user?.id || "");
+    const canvasContext = useCanvasContextStore((state) => state.snapshot);
+    const clearCanvasContext = useCanvasContextStore((state) => state.clear);
 
     const [conversations, setConversations] = useState<ChatConversation[]>([]);
     const [activeConversationId, setActiveConversationId] = useState("");
@@ -62,6 +65,11 @@ export default function ChatPage() {
     const [personaDraft, setPersonaDraft] = useState("");
     const [personaSaving, setPersonaSaving] = useState(false);
     const [profileOpen, setProfileOpen] = useState(false);
+    const [memoryOpen, setMemoryOpen] = useState(false);
+    const [memories, setMemories] = useState<ChatMemory[]>([]);
+    const [memoryDraft, setMemoryDraft] = useState("");
+    const [editingMemoryId, setEditingMemoryId] = useState("");
+    const [memorySaving, setMemorySaving] = useState(false);
     const presetIdRef = useRef<ChatPresetId>(defaultChatPresetId);
     const presetEditedDuringHydration = useRef(false);
     const presetSaveQueue = useRef(Promise.resolve());
@@ -112,6 +120,24 @@ export default function ChatPage() {
                 if (canceled) return;
                 setPresetReadyUser(userId);
                 message.error(error instanceof Error ? error.message : "问道角色加载失败");
+            });
+        return () => {
+            canceled = true;
+        };
+    }, [message, userId]);
+
+    useEffect(() => {
+        if (!userId) {
+            setMemories([]);
+            return;
+        }
+        let canceled = false;
+        void fetchChatMemories(userId)
+            .then((response) => {
+                if (!canceled) setMemories(response.items);
+            })
+            .catch((error) => {
+                if (!canceled) message.error(error instanceof Error ? error.message : "长期记忆加载失败");
             });
         return () => {
             canceled = true;
@@ -344,6 +370,7 @@ export default function ChatPage() {
         conversationId: string;
         content: string;
         attachments: ChatAttachment[];
+        canvasContext?: ChatCanvasContext;
         retryAssistantMessageId?: string;
         editUserMessageId?: string;
         continueAssistantMessageId?: string;
@@ -398,6 +425,7 @@ export default function ChatPage() {
                 ...(input.retryAssistantMessageId ? { retryAssistantMessageId: input.retryAssistantMessageId } : {}),
                 ...(input.editUserMessageId ? { editUserMessageId: input.editUserMessageId } : {}),
                 ...(input.continueAssistantMessageId ? { continueAssistantMessageId: input.continueAssistantMessageId } : {}),
+                ...(input.canvasContext ? { canvasContext: input.canvasContext } : {}),
                 expectedUserId: userId,
                 signal: controller.signal,
                 onStarted: ({ conversation, userMessage, assistantMessage }) => {
@@ -476,7 +504,7 @@ export default function ChatPage() {
         sendStartingRef.current = true;
         try {
             const conversationId = await ensureConversation();
-            await runChatTurn({ conversationId, content, attachments, editUserMessageId: editingMessageId || undefined, showOptimisticUser: !editingMessageId });
+            await runChatTurn({ conversationId, content, attachments, canvasContext: canvasContext || undefined, editUserMessageId: editingMessageId || undefined, showOptimisticUser: !editingMessageId });
         } catch (error) {
             message.error(error instanceof Error ? error.message : "问道台暂未回应");
         } finally {
@@ -624,6 +652,42 @@ export default function ChatPage() {
         }
     }
 
+    async function handleSaveMemory() {
+        const content = memoryDraft.trim();
+        if (!content || memorySaving) return;
+        setMemorySaving(true);
+        try {
+            if (editingMemoryId) {
+                const response = await updateChatMemory(editingMemoryId, { content }, userId);
+                setMemories((current) => current.map((item) => (item.id === editingMemoryId ? response.memory : item)));
+                message.success("记忆已更新");
+            } else {
+                const response = await createChatMemory({ kind: "fact", content, pinned: true }, userId);
+                setMemories((current) => [response.memory, ...current]);
+                message.success("记忆已保存");
+            }
+            setMemoryDraft("");
+            setEditingMemoryId("");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "记忆保存失败");
+        } finally {
+            setMemorySaving(false);
+        }
+    }
+
+    async function handleDeleteMemory(id: string) {
+        try {
+            await deleteChatMemory(id, userId);
+            setMemories((current) => current.filter((item) => item.id !== id));
+            if (editingMemoryId === id) {
+                setEditingMemoryId("");
+                setMemoryDraft("");
+            }
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "记忆删除失败");
+        }
+    }
+
     if (mode === "douqi") {
         return (
             <Suspense
@@ -740,6 +804,15 @@ export default function ChatPage() {
                                     onClick={() => setProfileOpen(true)}
                                 />
                             </Tooltip>
+                            <Tooltip title="查看长期记忆">
+                                <Button
+                                    type="text"
+                                    className="!h-8 !w-8 !min-w-8 !p-0"
+                                    icon={<Brain className="size-4" />}
+                                    aria-label="查看长期记忆"
+                                    onClick={() => setMemoryOpen(true)}
+                                />
+                            </Tooltip>
                             <Button className="lg:hidden" icon={<Plus className="size-4" />} onClick={handleNewConversation} loading={creating}>
                                 新建
                             </Button>
@@ -763,6 +836,12 @@ export default function ChatPage() {
                     </div>
 
                     <div className="mt-3 shrink-0 rounded-xl border border-stone-200/80 bg-white/85 p-3 shadow-sm dark:border-white/10 dark:bg-[#171512]">
+                        {canvasContext ? (
+                            <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-sky-200/70 bg-sky-50/70 px-3 py-2 text-xs text-sky-800 dark:border-sky-300/15 dark:bg-sky-300/[0.06] dark:text-sky-100">
+                                <span className="min-w-0 truncate">已附加画布上下文：{canvasContext.projectTitle} · {canvasContext.nodes.length} 个节点</span>
+                                <Button type="text" size="small" className="shrink-0 !px-1.5" onClick={clearCanvasContext}>移除</Button>
+                            </div>
+                        ) : null}
                         {editingMessageId ? (
                             <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-800 dark:border-amber-300/15 dark:bg-amber-300/[0.06] dark:text-amber-100">
                                 <span className="inline-flex min-w-0 items-center gap-2 truncate">
@@ -912,6 +991,59 @@ export default function ChatPage() {
                                 保存用户身份
                             </Button>
                         </div>
+                    </div>
+                </div>
+            </Drawer>
+            <Drawer
+                title={
+                    <div className="flex items-center gap-2">
+                        <Brain className="size-4 text-amber-600" />
+                        <span>长期记忆</span>
+                        <Tag bordered={false}>{memories.length}</Tag>
+                    </div>
+                }
+                open={memoryOpen}
+                width="min(460px, 100vw)"
+                onClose={() => setMemoryOpen(false)}
+                styles={{ body: { padding: 20 } }}
+            >
+                <div className="space-y-4">
+                    <div className="rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 text-xs leading-5 text-stone-600 dark:border-amber-300/15 dark:bg-amber-300/[0.06] dark:text-stone-300">
+                        这里保存的是跨会话的背景信息。系统会把近期问道摘要作为参考；你手动保存的内容优先级更高，但不会覆盖本轮要求。
+                    </div>
+                    <div className="flex items-end gap-2">
+                        <Input.TextArea
+                            value={memoryDraft}
+                            onChange={(event) => setMemoryDraft(event.target.value)}
+                            autoSize={{ minRows: 2, maxRows: 5 }}
+                            maxLength={4000}
+                            placeholder="例如：我偏好直接、具体、可执行的技术方案。"
+                        />
+                        <Button type="primary" loading={memorySaving} disabled={!memoryDraft.trim()} onClick={() => void handleSaveMemory()}>
+                            {editingMemoryId ? "更新" : "记住"}
+                        </Button>
+                    </div>
+                    {editingMemoryId ? (
+                        <Button type="link" size="small" onClick={() => { setEditingMemoryId(""); setMemoryDraft(""); }}>
+                            取消编辑
+                        </Button>
+                    ) : null}
+                    <div className="space-y-2">
+                        {memories.map((memory) => (
+                            <div key={memory.id} className="rounded-lg border border-stone-200/80 bg-white/70 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                    <Tag color={memory.pinned ? "gold" : "default"}>{memoryKindLabel(memory.kind)}{memory.pinned ? " · 已固定" : ""}</Tag>
+                                    <div className="flex items-center gap-1">
+                                        <Button type="text" size="small" icon={<Pencil className="size-3.5" />} aria-label="编辑记忆" onClick={() => { setEditingMemoryId(memory.id); setMemoryDraft(memory.content); }} />
+                                        <Popconfirm title="删除这条记忆？" okText="删除" cancelText="取消" onConfirm={() => void handleDeleteMemory(memory.id)}>
+                                            <Button type="text" danger size="small" icon={<Trash2 className="size-3.5" />} aria-label="删除记忆" />
+                                        </Popconfirm>
+                                    </div>
+                                </div>
+                                <div className="whitespace-pre-wrap break-words text-sm leading-6 text-stone-700 dark:text-stone-200">{memory.content}</div>
+                            </div>
+                        ))}
+                        {!memories.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有长期记忆" /> : null}
                     </div>
                 </div>
             </Drawer>
@@ -1092,4 +1224,8 @@ function safeChatFilename(title: string) {
 
 function upsertConversation(items: ChatConversation[], conversation: ChatConversation) {
     return [conversation, ...items.filter((item) => item.id !== conversation.id)].sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+function memoryKindLabel(kind: ChatMemory["kind"]) {
+    return ({ summary: "摘要", fact: "事实", preference: "偏好", goal: "目标" })[kind];
 }

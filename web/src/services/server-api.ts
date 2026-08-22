@@ -19,7 +19,7 @@ export type PromptOptimizerAdminConfiguration = {
     effective: PromptOptimizerTarget | null;
     lockedByEnvironment: boolean;
 };
-export type ServerAssetLibrary = { initialized: boolean; items: Asset[] };
+export type ServerAssetLibrary = { initialized: boolean; items: Asset[]; page?: number; pageSize?: number; total?: number; hasMore?: boolean };
 export type ServerJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string; width?: number; height?: number; persisted?: boolean; expiresAt?: string; recoveryUrl?: string };
 export type ServerJob = {
@@ -296,8 +296,15 @@ export async function deleteServerAsset(storageKey: string, expectedUserId?: str
     await serverRequest(`/api/assets/${encodeURIComponent(storageKey)}`, { method: "DELETE", expectedUserId });
 }
 
-export async function fetchServerAssetLibrary(expectedUserId?: string) {
-    return serverRequest<ServerAssetLibrary>("/api/library-assets", { timeoutMs: 20_000, expectedUserId });
+export async function fetchServerAssetLibrary(expectedUserId?: string, options: { page?: number; pageSize?: number; keyword?: string; kind?: string; tag?: string } = {}) {
+    const params = new URLSearchParams();
+    if (options.page) params.set("page", String(options.page));
+    if (options.pageSize) params.set("pageSize", String(options.pageSize));
+    if (options.keyword) params.set("keyword", options.keyword);
+    if (options.kind) params.set("kind", options.kind);
+    if (options.tag) params.set("tag", options.tag);
+    const query = params.toString();
+    return serverRequest<ServerAssetLibrary>(`/api/library-assets${query ? `?${query}` : ""}`, { timeoutMs: 20_000, expectedUserId });
 }
 
 export async function replaceServerAssetLibrary(items: Asset[], initializeOnly = false, expectedUserId?: string) {

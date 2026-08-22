@@ -46,6 +46,31 @@ describe("chat service", () => {
     }
   });
 
+  test("persists editable long-term memories and captures explicit facts", () => {
+    const { store, service } = setup();
+    try {
+      const manual = service.createMemory("user-a", { kind: "preference", content: "偏好简洁、可执行的方案", pinned: true });
+      expect(service.listMemories("user-a")).toContainEqual(expect.objectContaining({ id: manual.id, pinned: true }));
+      const updated = service.updateMemory("user-a", manual.id, { content: "偏好简洁、可执行并保留风险说明的方案" });
+      expect(updated?.content).toContain("风险说明");
+
+      const conversation = service.createConversation("user-a");
+      const turn = service.beginTurn("user-a", conversation.id, {
+        content: "请记住：我的项目是一个中文 AI 创作工具。",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+      });
+      service.completeAssistant("user-a", turn.assistantMessage.id, "后续会围绕创作工具继续。" );
+      expect(service.memoryContext("user-a")).toContain("中文 AI 创作工具");
+
+      expect(service.deleteMemory("user-a", manual.id)).toBe(true);
+      expect(service.listMemories("user-a").some((item) => item.id === manual.id)).toBe(false);
+    } finally {
+      store.close();
+    }
+  });
+
   test("binds a preset to the conversation and persists explicit switches", () => {
     const { store, service } = setup();
     try {

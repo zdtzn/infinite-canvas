@@ -14,6 +14,7 @@ import {
     resolveChatPreset,
     type ChatPreset,
 } from "./lib/chat-presets";
+import { canvasContextImageKeys, formatChatCanvasContext, normalizeChatCanvasContext, type ChatCanvasContext } from "./lib/chat-canvas-context";
 import {
     buildGeminiChatBody,
     buildOpenAiChatCompletionBody,
@@ -81,6 +82,7 @@ import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstrea
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
+import { normalizePromptIndexItems, promptIndexStatuses, queryPromptIndex, replacePromptIndex } from "./lib/prompt-index";
 import { defaultUserChatPresetId, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserSystemPrompt, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserSystemPrompt, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
@@ -395,6 +397,9 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "GET") return adminPromptOptimizationConfiguration(session);
         if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "PUT") return adminUpdatePromptOptimizationConfiguration(request, session);
         if (url.pathname === "/api/prompt-sources" && request.method === "GET") return listPromptSources();
+        if (url.pathname === "/api/prompt-index" && request.method === "GET") return listPromptIndex(url);
+        if (url.pathname === "/api/prompt-index" && request.method === "PUT") return savePromptIndex(request, session);
+        if (url.pathname === "/api/admin/prompt-index/status" && request.method === "GET") return listPromptIndexStatus(session);
         const adminPromptSourceMatch = url.pathname.match(/^\/api\/admin\/prompt-sources\/([^/]+)$/);
         if (adminPromptSourceMatch && request.method === "PUT") return savePromptSource(request, session, decodeRouteSegment(adminPromptSourceMatch[1], "提示词来源 ID"));
         if (adminPromptSourceMatch && request.method === "DELETE") return deletePromptSource(session, decodeRouteSegment(adminPromptSourceMatch[1], "提示词来源 ID"));
@@ -442,6 +447,11 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/chat/conversations" && request.method === "GET") return listChatConversations(session);
         if (url.pathname === "/api/chat/conversations" && request.method === "POST") return createChatConversation(request, session);
         if (url.pathname === "/api/chat/conversations/import" && request.method === "POST") return importChatConversation(request, session);
+        if (url.pathname === "/api/chat/memories" && request.method === "GET") return listChatMemories(session);
+        if (url.pathname === "/api/chat/memories" && request.method === "POST") return createChatMemory(request, session);
+        const chatMemoryMatch = url.pathname.match(/^\/api\/chat\/memories\/([^/]+)$/);
+        if (chatMemoryMatch && request.method === "PATCH") return updateChatMemory(request, session, decodeRouteSegment(chatMemoryMatch[1], "记忆 ID"));
+        if (chatMemoryMatch && request.method === "DELETE") return deleteChatMemory(session, decodeRouteSegment(chatMemoryMatch[1], "记忆 ID"));
         if (url.pathname === "/api/chat/usage" && request.method === "GET") return chatUsage(session);
         const chatMessageActionMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages\/([^/]+)\/truncate$/);
         if (chatMessageActionMatch && request.method === "POST") {
@@ -505,7 +515,7 @@ async function route(request: Request, requestId: string) {
             return updateProductProject(request, session, decodeRouteSegment(productProjectMatch[1], "商品项目 ID"));
         if (productProjectMatch && request.method === "DELETE")
             return deleteProductProject(session, decodeRouteSegment(productProjectMatch[1], "商品项目 ID"));
-        if (url.pathname === "/api/library-assets" && request.method === "GET") return listLibraryAssets(session);
+        if (url.pathname === "/api/library-assets" && request.method === "GET") return listLibraryAssets(url, session);
         if (url.pathname === "/api/library-assets" && request.method === "PUT") return heavyRequestSemaphore.run(request.signal, () => replaceLibraryAssets(request, session));
         const libraryAssetMatch = url.pathname.match(/^\/api\/library-assets\/([^/]+)$/);
         if (libraryAssetMatch && request.method === "PUT") return saveLibraryAsset(request, session, decodeRouteSegment(libraryAssetMatch[1], "资产记录 ID"));
@@ -1202,6 +1212,41 @@ function listPromptSources() {
     return json({ items: loadManagedPromptSources(appDatabase).map(publicPromptSource) });
 }
 
+function listPromptIndex(url: URL) {
+    const database = appDatabase.raw;
+    if (!database) return json({ items: [], tags: [], categories: [], total: 0, page: 1, pageSize: 20, indexed: false });
+    return json(queryPromptIndex(database, {
+        keyword: url.searchParams.get("keyword") || "",
+        category: url.searchParams.get("category") || "",
+        tags: url.searchParams.getAll("tag"),
+        page: Number(url.searchParams.get("page") || 1),
+        pageSize: Number(url.searchParams.get("pageSize") || 20),
+    }), 200, { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" });
+}
+
+async function savePromptIndex(request: Request, session: SessionPayload) {
+    requireAdmin(session);
+    const database = appDatabase.raw;
+    if (!database) throw new HttpError(503, "提示词索引数据库暂不可用");
+    const body = await readJson<{ sourceId?: unknown; items?: unknown }>(request, 8 * 1024 * 1024);
+    const sourceId = String(body.sourceId || "").trim();
+    if (!sourceId) throw new HttpError(400, "提示词来源 ID 不能为空");
+    let items;
+    try {
+        items = normalizePromptIndexItems(sourceId, body.items);
+    } catch (error) {
+        throw new HttpError(400, error instanceof Error ? error.message : "提示词索引格式无效");
+    }
+    replacePromptIndex(database, sourceId, items);
+    return json({ sourceId, count: items.length });
+}
+
+function listPromptIndexStatus(session: SessionPayload) {
+    requireAdmin(session);
+    const database = appDatabase.raw;
+    return json({ items: database ? promptIndexStatuses(database) : [] }, 200, { "Cache-Control": "no-store" });
+}
+
 async function savePromptSource(request: Request, session: SessionPayload, id: string) {
     requireAdmin(session);
     const body = await readJson<Record<string, unknown>>(request);
@@ -1356,6 +1401,26 @@ function defaultChatTextModel() {
 
 function listChatConversations(session: SessionPayload) {
     return json({ items: requireChat().listConversations(session.userId) }, 200, { "Cache-Control": "no-store" });
+}
+
+function listChatMemories(session: SessionPayload) {
+    return json({ items: requireChat().listMemories(session.userId) }, 200, { "Cache-Control": "no-store" });
+}
+
+async function createChatMemory(request: Request, session: SessionPayload) {
+    const memory = requireChat().createMemory(session.userId, await readJson<unknown>(request, 16 * 1024));
+    return json({ memory }, 201, { "Cache-Control": "no-store" });
+}
+
+async function updateChatMemory(request: Request, session: SessionPayload, memoryId: string) {
+    const memory = requireChat().updateMemory(session.userId, memoryId, await readJson<unknown>(request, 16 * 1024));
+    if (!memory) throw new HttpError(404, "记忆不存在");
+    return json({ memory }, 200, { "Cache-Control": "no-store" });
+}
+
+function deleteChatMemory(session: SessionPayload, memoryId: string) {
+    if (!requireChat().deleteMemory(session.userId, memoryId)) throw new HttpError(404, "记忆不存在");
+    return new Response(null, { status: 204 });
 }
 
 function requireDouQiLife() {
@@ -1789,6 +1854,7 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
     const retryAssistantMessageId = String(source.retryAssistantMessageId || "").trim();
     const editUserMessageId = String(source.editUserMessageId || "").trim();
     const continueAssistantMessageId = String(source.continueAssistantMessageId || "").trim();
+    const canvasContext = retryAssistantMessageId || continueAssistantMessageId ? undefined : normalizeChatCanvasContext(source.canvasContext);
     if ((retryAssistantMessageId && editUserMessageId) || (continueAssistantMessageId && (retryAssistantMessageId || editUserMessageId))) {
         throw new HttpError(400, "一次只能执行一种消息操作");
     }
@@ -1826,12 +1892,19 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
         const context = "contextMessages" in turn
             ? (turn.contextMessages as ChatMessage[])
             : requireChat().contextMessages(session.userId, conversationId, 24, MAX_CHAT_CONTEXT_CHARACTERS);
+        const canvasAttachments = prepareChatCanvasAttachments(
+            session.userId,
+            canvasContext,
+            Math.max(0, MAX_CHAT_CONTEXT_ATTACHMENT_BYTES - preparedAttachments.reduce((total, attachment) => total + attachment.bytes, 0)),
+        );
         const messages = chatProtocolMessages(
             session.userId,
             context,
             "contextMessages" in turn ? "" : turn.userMessage.id,
             preparedAttachments,
             preset,
+            canvasContext,
+            canvasAttachments,
         );
         if ("contextMessages" in turn) {
             messages.push({ role: "user", content: "请从上一条回答自然中断处继续，保留已有结论，不要重复已经说过的内容。", images: [] });
@@ -1839,7 +1912,8 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
         const channel = platformChannel(channelId);
         const apiKey = decryptChannelApiKey(channel);
         const chatPersona = readStoredUserChatPersona(appDatabase.loadUserPreference(session.userId, USER_CHAT_PERSONA_KEY)) || "";
-        const upstream = await openChatUpstream(channel, apiKey, model, messages, signal, requestId, preset, chatPersona);
+        const memoryContext = requireChat().memoryContext(session.userId);
+        const upstream = await openChatUpstream(channel, apiKey, model, messages, signal, requestId, preset, chatPersona, memoryContext);
         const publicUserMessage = publicChatMessage(session.userId, turn.userMessage);
         const publicAssistantMessage = publicChatMessage(session.userId, turn.assistantMessage);
 
@@ -1957,14 +2031,38 @@ function prepareChatAttachments(userId: string, attachments: ChatAttachment[], m
     });
 }
 
+function prepareChatCanvasAttachments(userId: string, context: ChatCanvasContext | undefined, maxBytes = MAX_CHAT_CONTEXT_ATTACHMENT_BYTES) {
+    const prepared: ReturnType<typeof prepareChatAttachments> = [];
+    let totalBytes = 0;
+    for (const storageKey of canvasContextImageKeys(context).slice(0, 4)) {
+        if (totalBytes >= maxBytes) break;
+        try {
+            const attachment = prepareChatAttachments(
+                userId,
+                [{ assetKey: storageKey, mimeType: "", name: "画布参考图" }],
+                maxBytes - totalBytes,
+            )[0];
+            if (!attachment) continue;
+            prepared.push(attachment);
+            totalBytes += attachment.bytes;
+        } catch {
+            // 画布中已被删除或不可读取的旧图片不应阻塞问道台文字回答。
+        }
+    }
+    return prepared;
+}
+
 function chatProtocolMessages(
     userId: string,
     messages: ChatMessage[],
     latestUserMessageId: string,
     attachments: ReturnType<typeof prepareChatAttachments>,
     preset: ChatPreset,
+    canvasContext?: ChatCanvasContext,
+    canvasAttachments: ReturnType<typeof prepareChatAttachments> = [],
 ): ChatProtocolMessage[] {
-    let contextAttachmentBytes = attachments.reduce((total, attachment) => total + attachment.bytes, 0);
+    const latestAttachments = [...attachments, ...canvasAttachments];
+    let contextAttachmentBytes = latestAttachments.reduce((total, attachment) => total + attachment.bytes, 0);
     const historicalImages = new Map<string, Array<{ mimeType: string; base64: string }>>();
     for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index];
@@ -1982,17 +2080,22 @@ function chatProtocolMessages(
         role: message.role,
         content:
             message.id === latestUserMessageId
-                ? formatChatPresetUserMessage(preset, message.content, attachments.length > 0)
+                ? [
+                      canvasContext ? formatChatCanvasContext(canvasContext) : "",
+                      formatChatPresetUserMessage(preset, message.content, latestAttachments.length > 0),
+                  ]
+                      .filter(Boolean)
+                      .join("\n\n")
                 : message.content,
         images:
             message.id === latestUserMessageId
-                ? attachments.map((attachment) => ({ mimeType: attachment.mimeType, base64: attachment.base64 }))
+                ? latestAttachments.map((attachment) => ({ mimeType: attachment.mimeType, base64: attachment.base64 }))
                 : historicalImages.get(message.id) || [],
     }));
 }
 
-async function openChatUpstream(channel: ChannelRecord, apiKey: string, model: string, messages: ChatProtocolMessage[], signal: AbortSignal, requestId: string, preset: ChatPreset, chatPersona = "") {
-    const system = buildChatSystemPrompt(preset, chatPersona);
+async function openChatUpstream(channel: ChannelRecord, apiKey: string, model: string, messages: ChatProtocolMessage[], signal: AbortSignal, requestId: string, preset: ChatPreset, chatPersona = "", memoryContext = "") {
+    const system = buildChatSystemPrompt(preset, chatPersona, memoryContext);
     if (channel.apiFormat === "gemini") {
         const response = await upstreamFetch(
             buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(model.replace(/^models\//, ""))}:streamGenerateContent`) + "?alt=sse",
@@ -2497,12 +2600,36 @@ function jobImagePath(userId: string, jobId: string, dataUrl: string) {
     }
 }
 
-function listLibraryAssets(session: SessionPayload) {
+function listLibraryAssets(url: URL, session: SessionPayload) {
     const library = appDatabase.loadAssetLibrary(session.userId);
+    const pageSize = Math.max(1, Math.min(100, Math.floor(Number(url.searchParams.get("pageSize") || 24)) || 24));
+    const requestedPage = Math.max(1, Math.floor(Number(url.searchParams.get("page") || 1)) || 1);
+    const keyword = (url.searchParams.get("keyword") || "").trim().toLowerCase();
+    const kind = (url.searchParams.get("kind") || "").trim().toLowerCase();
+    const tags = url.searchParams.getAll("tag").map((tag) => tag.trim()).filter(Boolean);
+    const filtered = library.items.filter((item) => {
+        const payload = item.payload;
+        const payloadKind = String(payload.kind || "").toLowerCase();
+        if (kind && kind !== "all" && payloadKind !== kind) return false;
+        const payloadTags = Array.isArray(payload.tags) ? payload.tags.map((tag) => String(tag).toLowerCase()) : [];
+        if (tags.some((tag) => !payloadTags.includes(tag.toLowerCase()))) return false;
+        if (!keyword) return true;
+        return [payload.title, payload.note, payload.source, payloadKind, ...payloadTags]
+            .map((value) => String(value || "").toLowerCase())
+            .join(" ")
+            .includes(keyword);
+    });
+    const total = filtered.length;
+    const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
+    const items = filtered.slice((page - 1) * pageSize, page * pageSize);
     return json({
         initialized: library.initialized,
-        items: library.items.map((item) => publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl)),
-    });
+        items: items.map((item) => publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl)),
+        total,
+        page,
+        pageSize,
+        hasMore: page * pageSize < total,
+    }, 200, { "Cache-Control": "private, max-age=5, stale-while-revalidate=30" });
 }
 
 async function replaceLibraryAssets(request: Request, session: SessionPayload) {

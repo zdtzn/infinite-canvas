@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Dropdown, Segmented, Switch } from "antd";
-import { CircleDot, Eraser, Film, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, Music2, Palette, Plus, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, CircleDot, Eraser, Eye, EyeOff, Film, Grid2x2, Grid3X3, Group, Hand, Image as ImageIcon, Info, Lock, Moon, Music2, Palette, Plus, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Unlock, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -15,6 +15,8 @@ export function CanvasToolbar({
     backgroundMode,
     showImageInfo,
     canvasBackdropEnabled,
+    allSelectedLocked,
+    allSelectedHidden,
     onAddImage,
     onAddVideo,
     onAddAudio,
@@ -31,6 +33,9 @@ export function CanvasToolbar({
     onBackgroundModeChange,
     onShowImageInfoChange,
     onCanvasBackdropEnabledChange,
+    onToggleLock,
+    onToggleHidden,
+    onAlign,
 }: {
     selectedCount: number;
     canUndo: boolean;
@@ -38,6 +43,8 @@ export function CanvasToolbar({
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
     canvasBackdropEnabled: boolean;
+    allSelectedLocked: boolean;
+    allSelectedHidden: boolean;
     onAddImage: () => void;
     onAddVideo: () => void;
     onAddAudio: () => void;
@@ -54,6 +61,9 @@ export function CanvasToolbar({
     onBackgroundModeChange: (mode: CanvasBackgroundMode) => void;
     onShowImageInfoChange: (show: boolean) => void;
     onCanvasBackdropEnabledChange: (enabled: boolean) => void;
+    onToggleLock: () => void;
+    onToggleHidden: () => void;
+    onAlign: (mode: "left" | "center" | "right" | "top" | "middle" | "bottom" | "horizontal" | "vertical" | "grid") => void;
 }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const rootRef = useRef<HTMLDivElement>(null);
@@ -143,6 +153,31 @@ export function CanvasToolbar({
                     {selectedCount ? (
                         <>
                             <Divider theme={theme} />
+                            <Dropdown
+                                trigger={["click"]}
+                                menu={{
+                                    items: [
+                                        { key: "lock", icon: allSelectedLocked ? <Unlock className="size-4" /> : <Lock className="size-4" />, label: allSelectedLocked ? "解锁选中" : "锁定选中", onClick: onToggleLock },
+                                        { key: "hidden", icon: allSelectedHidden ? <Eye className="size-4" /> : <EyeOff className="size-4" />, label: allSelectedHidden ? "显示选中" : "隐藏选中", onClick: onToggleHidden },
+                                        { type: "divider" },
+                                        { key: "left", icon: <AlignStartHorizontal className="size-4" />, label: "左对齐", onClick: () => onAlign("left") },
+                                        { key: "center", icon: <AlignCenterHorizontal className="size-4" />, label: "水平居中", onClick: () => onAlign("center") },
+                                        { key: "right", icon: <AlignEndHorizontal className="size-4" />, label: "右对齐", onClick: () => onAlign("right") },
+                                        { key: "top", icon: <AlignStartVertical className="size-4" />, label: "顶对齐", onClick: () => onAlign("top") },
+                                        { key: "middle", icon: <AlignCenterVertical className="size-4" />, label: "垂直居中", onClick: () => onAlign("middle") },
+                                        { key: "bottom", icon: <AlignEndVertical className="size-4" />, label: "底对齐", onClick: () => onAlign("bottom") },
+                                        { key: "horizontal", icon: <AlignHorizontalSpaceAround className="size-4" />, label: "水平等距", onClick: () => onAlign("horizontal") },
+                                        { key: "vertical", icon: <AlignVerticalSpaceAround className="size-4" />, label: "垂直等距", onClick: () => onAlign("vertical") },
+                                        { key: "grid", icon: <Grid3X3 className="size-4" />, label: "吸附网格", onClick: () => onAlign("grid") },
+                                    ],
+                                }}
+                            >
+                                <span>
+                                    <ToolbarButton id="tool-layout" label="锁定、隐藏与排版" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={() => undefined}>
+                                        <Grid3X3 className="size-4.5" />
+                                    </ToolbarButton>
+                                </span>
+                            </Dropdown>
                             <ToolbarButton id="tool-delete" label="删除选中" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onDelete} danger>
                                 <Trash2 className="size-4.5" />
                             </ToolbarButton>

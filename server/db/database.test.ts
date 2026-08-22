@@ -209,7 +209,7 @@ describe("SQLite application database", () => {
       expect(Number(migration.version)).toBeGreaterThanOrEqual(16);
       expect(userPreferenceTables).toEqual(["user_preferences"]);
       expect(userPreferenceIndex?.name).toBe("idx_user_preferences_user_updated");
-      expect(chatTables).toEqual(["chat_conversations", "chat_messages", "chat_usage"]);
+      expect(chatTables).toEqual(["chat_conversations", "chat_memories", "chat_messages", "chat_usage"]);
       const douQiTables = (
         store.raw!
           .query(

@@ -147,7 +147,7 @@ export const useAssetStore = create<AssetStore>()(
                 const localAlreadyMigrated = current.migratedUserIds.includes(userId);
                 if (!canMigrateLocal) set({ assets: [], ownerUserId: userId, serverHydrated: false });
 
-                const remote = await fetchServerAssetLibrary(userId);
+                const remote = await fetchServerAssetLibrary(userId, { page: 1, pageSize: 60 });
                 if (requestVersion !== assetHydrationVersion) return;
                 const remoteAssets = await Promise.all(remote.items.map(hydrateServerAsset));
                 const migration = localAlreadyMigrated ? { prepared: [] as Asset[], failed: [] as Asset[] } : await prepareAssetsForServer(localAssets, userId);
@@ -168,6 +168,7 @@ export const useAssetStore = create<AssetStore>()(
                         migratedUserIds: migration.failed.length || state.migratedUserIds.includes(userId) ? state.migratedUserIds : [...state.migratedUserIds, userId],
                     }));
                     if (migration.failed.length) reportAssetSyncError(new Error(`${migration.failed.length} 项旧资产暂未迁移，已保留在当前浏览器，下次打开时会继续尝试`));
+                    if (!plan.writeServer && remote.hasMore) void hydrateRemainingServerAssets(userId, remote.pageSize || 60, requestVersion);
                 }
             },
             cleanupImages: (extra) => {
@@ -221,6 +222,20 @@ async function hydrateServerAsset(asset: Asset): Promise<Asset> {
         return { ...asset, coverUrl: url, data: { ...asset.data, url } };
     }
     return asset;
+}
+
+async function hydrateRemainingServerAssets(userId: string, pageSize: number, requestVersion: number) {
+    let page = 2;
+    for (;;) {
+        const current = useAssetStore.getState();
+        if (assetHydrationVersion !== requestVersion || current.ownerUserId !== userId) return;
+        const remote = await fetchServerAssetLibrary(userId, { page, pageSize });
+        if (assetHydrationVersion !== requestVersion) return;
+        const assets = await Promise.all(remote.items.map(hydrateServerAsset));
+        useAssetStore.setState((state) => ({ assets: mergeAssetRecords(state.assets, assets) }));
+        if (!remote.hasMore) return;
+        page += 1;
+    }
 }
 
 function normalizeAssetRecord<T extends Asset>(asset: T): T {

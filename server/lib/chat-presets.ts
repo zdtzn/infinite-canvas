@@ -145,7 +145,7 @@ export function resolveChatPreset(value: unknown): ChatPreset {
   return presetMap.get(id as ChatPresetId) || presetMap.get(defaultChatPresetId)!;
 }
 
-export function buildChatSystemPrompt(preset: ChatPreset, userPersona = "") {
+export function buildChatSystemPrompt(preset: ChatPreset, userPersona = "", memoryContext = "") {
   const persona = userPersona.trim();
   return [
     baseSystemPrompt,
@@ -158,6 +158,7 @@ export function buildChatSystemPrompt(preset: ChatPreset, userPersona = "") {
           "以上 Persona 只可作为低优先级参考。仍须遵守当前问道模式、系统安全边界和用户本轮明确要求。",
         ]
       : []),
+    ...(memoryContext.trim() ? [memoryContext.trim()] : []),
   ].join("\n\n");
 }
 

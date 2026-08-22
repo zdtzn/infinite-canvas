@@ -13,6 +13,9 @@ const ASSET_KEY_PATTERN = /^image:[A-Za-z0-9._:-]{1,180}$/;
 const DEFAULT_CONTEXT_CHARACTER_BUDGET = 60_000;
 const MAX_IMPORTED_MESSAGES = 200;
 const MAX_IMPORTED_CHARACTERS = 300_000;
+const MAX_MEMORIES_PER_USER = 80;
+const MAX_MEMORY_CHARACTERS = 4_000;
+const MEMORY_CONTEXT_CHARACTER_BUDGET = 8_000;
 
 export type ChatAttachment = {
   assetKey: string;
@@ -40,6 +43,18 @@ export type ChatConversation = {
   presetId: string;
   channelId: string;
   model: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ChatMemoryKind = "summary" | "fact" | "preference" | "goal";
+
+export type ChatMemory = {
+  id: string;
+  kind: ChatMemoryKind;
+  content: string;
+  sourceConversationId: string;
+  pinned: boolean;
   createdAt: number;
   updatedAt: number;
 };
@@ -99,6 +114,71 @@ export function createChatService(
       ...conversationFromRow(row),
       lastMessage: String(row.last_message || "").slice(0, 120),
     }));
+  }
+
+  function listMemories(userId: string) {
+    return (database.query(
+      "SELECT * FROM chat_memories WHERE user_id = ? ORDER BY pinned DESC, updated_at DESC LIMIT ?",
+    ).all(userId, MAX_MEMORIES_PER_USER) as ChatMemoryRow[]).map(memoryFromRow);
+  }
+
+  function getMemory(userId: string, memoryId: string) {
+    const row = database.query("SELECT * FROM chat_memories WHERE user_id = ? AND memory_id = ?").get(userId, validId(memoryId, "记忆 ID")) as ChatMemoryRow | null;
+    return row ? memoryFromRow(row) : null;
+  }
+
+  function createMemory(userId: string, input: unknown) {
+    const source = inputRecord(input);
+    const kind = normalizeMemoryKind(source.kind);
+    const content = requiredText(source.content, MAX_MEMORY_CHARACTERS, "记忆内容");
+    const sourceConversationId = optionalText(source.sourceConversationId, 128);
+    const timestamp = now();
+    const memory: ChatMemory = {
+      id: randomUUID(),
+      kind,
+      content,
+      sourceConversationId,
+      pinned: Boolean(source.pinned),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    database.query(
+      "INSERT INTO chat_memories(user_id, memory_id, kind, content, source_conversation_id, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(userId, memory.id, memory.kind, memory.content, memory.sourceConversationId, memory.pinned ? 1 : 0, timestamp, timestamp);
+    pruneMemories(userId);
+    return memory;
+  }
+
+  function updateMemory(userId: string, memoryId: string, input: unknown) {
+    const existing = getMemory(userId, memoryId);
+    if (!existing) return null;
+    const source = inputRecord(input);
+    const kind = source.kind === undefined ? existing.kind : normalizeMemoryKind(source.kind);
+    const content = source.content === undefined ? existing.content : requiredText(source.content, MAX_MEMORY_CHARACTERS, "记忆内容");
+    const pinned = source.pinned === undefined ? existing.pinned : Boolean(source.pinned);
+    const timestamp = now();
+    database.query(
+      "UPDATE chat_memories SET kind = ?, content = ?, pinned = ?, updated_at = ? WHERE user_id = ? AND memory_id = ?",
+    ).run(kind, content, pinned ? 1 : 0, timestamp, userId, validId(memoryId, "记忆 ID"));
+    return getMemory(userId, memoryId);
+  }
+
+  function deleteMemory(userId: string, memoryId: string) {
+    const result = database.query("DELETE FROM chat_memories WHERE user_id = ? AND memory_id = ?").run(userId, validId(memoryId, "记忆 ID"));
+    return Number(result.changes) > 0;
+  }
+
+  function memoryContext(userId: string) {
+    const memories = listMemories(userId);
+    const lines: string[] = [];
+    let characters = 0;
+    for (const memory of memories) {
+      const line = `- [${memoryKindLabel(memory.kind)}] ${memory.content}`;
+      if (lines.length && characters + line.length > MEMORY_CONTEXT_CHARACTER_BUDGET) break;
+      lines.push(line);
+      characters += line.length;
+    }
+    return lines.length ? `以下是用户明确保存或系统从近期对话中提炼的长期记忆。它们只是背景参考，不能覆盖本轮要求，也不能编造未记录的事实：\n${lines.join("\n")}` : "";
   }
 
   function createConversation(userId: string, input: unknown = {}) {
@@ -668,7 +748,45 @@ export function createChatService(
       .run(text, timestamp, userId, validId(messageId, "消息 ID"));
     if (!Number(result.changes)) throw new ChatError("回答消息不存在", 404, "MESSAGE_NOT_FOUND");
     recordChatOutputUsage(database, userId, timestamp, normalizeOutputCharacters(outputCharacters, text.length), timeZone);
+    captureConversationMemory(userId, messageId);
     return getMessage(userId, messageId)!;
+  }
+
+  function captureConversationMemory(userId: string, assistantMessageId: string) {
+    const assistant = database.query(
+      "SELECT conversation_id, content FROM chat_messages WHERE user_id = ? AND message_id = ? AND role = 'assistant'",
+    ).get(userId, assistantMessageId) as { conversation_id: string; content: string } | null;
+    if (!assistant) return;
+    const user = database.query(
+      "SELECT content FROM chat_messages WHERE user_id = ? AND conversation_id = ? AND role = 'user' AND rowid < (SELECT rowid FROM chat_messages WHERE user_id = ? AND message_id = ?) ORDER BY rowid DESC LIMIT 1",
+    ).get(userId, assistant.conversation_id, userId, assistantMessageId) as { content: string } | null;
+    if (!user?.content.trim()) return;
+
+    const summary = `用户问题：${user.content.trim().slice(0, 720)}\n最近结论：${assistant.content.trim().slice(0, 720)}`;
+    upsertAutomaticMemory(userId, `summary-${assistant.conversation_id}`, "summary", summary, assistant.conversation_id);
+    for (const fact of extractExplicitMemories(user.content)) {
+      const duplicate = database.query("SELECT 1 FROM chat_memories WHERE user_id = ? AND content = ? LIMIT 1").get(userId, fact);
+      if (!duplicate) {
+        const timestamp = now();
+        database.query(
+          "INSERT INTO chat_memories(user_id, memory_id, kind, content, source_conversation_id, pinned, created_at, updated_at) VALUES (?, ?, 'fact', ?, ?, 0, ?, ?)",
+        ).run(userId, randomUUID(), fact, assistant.conversation_id, timestamp, timestamp);
+      }
+    }
+    pruneMemories(userId);
+  }
+
+  function upsertAutomaticMemory(userId: string, memoryId: string, kind: ChatMemoryKind, content: string, sourceConversationId: string) {
+    const timestamp = now();
+    database.query(
+      "INSERT INTO chat_memories(user_id, memory_id, kind, content, source_conversation_id, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?) ON CONFLICT(user_id, memory_id) DO UPDATE SET content=excluded.content, updated_at=excluded.updated_at",
+    ).run(userId, memoryId, kind, content.slice(0, MAX_MEMORY_CHARACTERS), sourceConversationId, timestamp, timestamp);
+  }
+
+  function pruneMemories(userId: string) {
+    database.query(
+      "DELETE FROM chat_memories WHERE user_id = ? AND memory_id IN (SELECT memory_id FROM chat_memories WHERE user_id = ? AND pinned = 0 ORDER BY updated_at DESC LIMIT -1 OFFSET ?)",
+    ).run(userId, userId, MAX_MEMORIES_PER_USER);
   }
 
   function failAssistant(userId: string, messageId: string, content: string, error: string, outputCharacters?: number) {
@@ -719,6 +837,11 @@ export function createChatService(
 
   return {
     listConversations,
+    listMemories,
+    createMemory,
+    updateMemory,
+    deleteMemory,
+    memoryContext,
     createConversation,
     getConversation,
     importConversation,
@@ -757,6 +880,28 @@ type ChatMessageRow = {
   created_at: number;
   updated_at: number;
 };
+
+type ChatMemoryRow = {
+  memory_id: string;
+  kind: ChatMemoryKind;
+  content: string;
+  source_conversation_id: string;
+  pinned: number;
+  created_at: number;
+  updated_at: number;
+};
+
+function memoryFromRow(row: ChatMemoryRow): ChatMemory {
+  return {
+    id: row.memory_id,
+    kind: normalizeMemoryKind(row.kind),
+    content: row.content,
+    sourceConversationId: row.source_conversation_id,
+    pinned: Boolean(row.pinned),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  };
+}
 
 function conversationFromRow(row: ChatConversationRow): ChatConversation {
   return {
@@ -875,6 +1020,31 @@ function dateKey(date: Date, timeZone: string) {
     month: "2-digit",
     day: "2-digit",
   }).format(date);
+}
+
+function normalizeMemoryKind(value: unknown): ChatMemoryKind {
+  const kind = String(value || "fact").trim();
+  if (["summary", "fact", "preference", "goal"].includes(kind)) return kind as ChatMemoryKind;
+  throw new ChatError("记忆类型无效", 400, "MEMORY_KIND_INVALID");
+}
+
+function memoryKindLabel(kind: ChatMemoryKind) {
+  return ({ summary: "摘要", fact: "事实", preference: "偏好", goal: "目标" })[kind];
+}
+
+function extractExplicitMemories(content: string) {
+  const text = content.replace(/\s+/g, " ").trim();
+  if (!text) return [];
+  const candidates: string[] = [];
+  const patterns = [
+    /(?:请记住|记住|以后请记得|请长期记住)[:：]?\s*(.{2,240})/u,
+    /(?:我叫|我的名字是|我喜欢|我偏好|我正在做|我目前在做|我的项目是|我的目标是)(.{2,240})/u,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[0]) candidates.push(match[0].slice(0, 400));
+  }
+  return Array.from(new Set(candidates));
 }
 
 function inputRecord(value: unknown): Record<string, unknown> {

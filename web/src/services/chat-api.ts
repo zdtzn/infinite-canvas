@@ -51,6 +51,22 @@ export type ChatUsage = {
     outputCharacters: number;
 };
 
+export type ChatMemory = {
+    id: string;
+    kind: "summary" | "fact" | "preference" | "goal";
+    content: string;
+    sourceConversationId: string;
+    pinned: boolean;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type ChatCanvasContext = {
+    projectId: string;
+    projectTitle: string;
+    nodes: Array<{ id: string; type: string; title: string; text?: string; storageKey?: string }>;
+};
+
 export type ChatStartedEvent = {
     conversation: ChatConversation;
     userMessage: ChatMessage;
@@ -69,6 +85,7 @@ export type SendChatMessageInput = {
     retryAssistantMessageId?: string;
     editUserMessageId?: string;
     continueAssistantMessageId?: string;
+    canvasContext?: ChatCanvasContext;
     expectedUserId?: string;
     signal?: AbortSignal;
     onStarted?: (event: ChatStartedEvent) => void;
@@ -83,6 +100,22 @@ export function fetchChatConversations(expectedUserId?: string) {
 
 export function createChatConversation(input: { title?: string; presetId?: string } = {}, expectedUserId?: string) {
     return serverRequest<{ conversation: ChatConversation }>("/api/chat/conversations", { method: "POST", body: input, expectedUserId });
+}
+
+export function fetchChatMemories(expectedUserId?: string) {
+    return serverRequest<{ items: ChatMemory[] }>("/api/chat/memories", { timeoutMs: 12_000, expectedUserId });
+}
+
+export function createChatMemory(input: Pick<ChatMemory, "kind" | "content"> & Partial<Pick<ChatMemory, "sourceConversationId" | "pinned">>, expectedUserId?: string) {
+    return serverRequest<{ memory: ChatMemory }>("/api/chat/memories", { method: "POST", body: input, expectedUserId });
+}
+
+export function updateChatMemory(id: string, input: Partial<Pick<ChatMemory, "kind" | "content" | "pinned">>, expectedUserId?: string) {
+    return serverRequest<{ memory: ChatMemory }>(`/api/chat/memories/${encodeURIComponent(id)}`, { method: "PATCH", body: input, expectedUserId });
+}
+
+export function deleteChatMemory(id: string, expectedUserId?: string) {
+    return serverRequest(`/api/chat/memories/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
 }
 
 export function importChatConversation(payload: unknown, expectedUserId?: string) {
@@ -138,6 +171,7 @@ export async function sendChatMessage(input: SendChatMessageInput) {
                 ...(input.retryAssistantMessageId ? { retryAssistantMessageId: input.retryAssistantMessageId } : {}),
                 ...(input.editUserMessageId ? { editUserMessageId: input.editUserMessageId } : {}),
                 ...(input.continueAssistantMessageId ? { continueAssistantMessageId: input.continueAssistantMessageId } : {}),
+                ...(input.canvasContext ? { canvasContext: input.canvasContext } : {}),
             }),
             signal: input.signal,
         },
