@@ -10,6 +10,7 @@ import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { generationFailureFeedback } from "@/features/cultivation/generation-messages";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { DeferredImage } from "@/components/ui/deferred-image";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
@@ -793,17 +794,30 @@ function ImageContent({
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="h-full w-full overflow-hidden rounded-3xl">
-                <img
-                    src={imageSource}
-                    alt={node.title}
-                    draggable={false}
-                    decoding="async"
-                    loading={loadingAttributes.loading}
-                    fetchPriority={loadingAttributes.fetchPriority}
-                    onLoad={(event) => onImageLoad?.(node, event.currentTarget)}
-                    onDragStart={(event) => event.preventDefault()}
-                    className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
-                />
+                {isSelected ? (
+                    <img
+                        src={imageSource}
+                        alt={node.title}
+                        draggable={false}
+                        decoding="async"
+                        loading={loadingAttributes.loading}
+                        fetchPriority={loadingAttributes.fetchPriority}
+                        onLoad={(event) => onImageLoad?.(node, event.currentTarget)}
+                        onDragStart={(event) => event.preventDefault()}
+                        className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
+                    />
+                ) : (
+                    <DeferredImage
+                        src={imageSource}
+                        alt={node.title}
+                        draggable={false}
+                        fetchPriority={loadingAttributes.fetchPriority}
+                        rootMargin="96px"
+                        onLoad={(event) => onImageLoad?.(node, event.currentTarget)}
+                        onDragStart={(event) => event.preventDefault()}
+                        className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
+                    />
+                )}
             </div>
             {node.metadata?.uploading ? (
                 <div className="pointer-events-none absolute bottom-3 left-3 z-30 inline-flex h-7 items-center gap-1.5 rounded-md border border-white/15 bg-black/55 px-2.5 text-[11px] font-medium text-white/90 backdrop-blur-md">
