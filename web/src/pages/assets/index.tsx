@@ -5,11 +5,12 @@ import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
-import { assetCardImageUrl, assetGridImageLoading, assetNeedsThumbnail, assetOriginalImageUrl } from "@/lib/asset-image";
+import { assetCardImageUrl, assetNeedsThumbnail, assetOriginalImageUrl } from "@/lib/asset-image";
 import { createThumbnailFromImageElement, deleteStoredImages, fitImageWithinEdge, uploadImage } from "@/services/image-storage";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
+import { DeferredImage } from "@/components/ui/deferred-image";
 
 type AssetFormValues = {
     kind: AssetKind;
@@ -40,6 +41,7 @@ async function backfillAssetThumbnail(asset: Asset, image: HTMLImageElement) {
     const backfillKey = `${asset.id}:${originalStorageKey}`;
     if (assetThumbnailBackfills.has(backfillKey)) return;
     assetThumbnailBackfills.add(backfillKey);
+    let completed = false;
 
     try {
         const thumbnail = await createThumbnailFromImageElement(image, 512);
@@ -58,9 +60,23 @@ async function backfillAssetThumbnail(asset: Asset, image: HTMLImageElement) {
             coverUrl: stored.url,
             data: { ...latest.data, thumbnailKey: stored.storageKey, thumbnailUrl: stored.url },
         });
+        completed = true;
     } catch {
         // Thumbnail backfill is opportunistic; the original image remains usable.
+    } finally {
+        if (!completed) assetThumbnailBackfills.delete(backfillKey);
     }
+}
+
+async function loadImageElement(source: string) {
+    const image = new window.Image();
+    image.decoding = "async";
+    await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("Unable to load asset image"));
+        image.src = source;
+    });
+    return image;
 }
 
 /**
@@ -113,6 +129,42 @@ export default function AssetsPage() {
         const maxPage = Math.max(1, Math.ceil(filteredAssets.length / pageSize));
         setPage((value) => Math.min(value, maxPage));
     }, [filteredAssets.length, pageSize]);
+
+    useEffect(() => {
+        const legacyAsset = validAssets.find((asset) => assetNeedsThumbnail(asset));
+        if (!legacyAsset) return;
+
+        let canceled = false;
+        let idleHandle: number | undefined;
+        let timeoutHandle: number | undefined;
+        const run = async () => {
+            const source = assetCardImageUrl(legacyAsset);
+            if (!source || canceled) return;
+            try {
+                const image = await loadImageElement(source);
+                if (canceled) return;
+                await backfillAssetThumbnail(legacyAsset, image);
+            } catch {
+                // Legacy thumbnail migration must never block the asset library.
+            }
+        };
+
+        const idleWindow = window as Window & {
+            requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+            cancelIdleCallback?: (handle: number) => void;
+        };
+        if (idleWindow.requestIdleCallback) {
+            idleHandle = idleWindow.requestIdleCallback(() => void run(), { timeout: 2_000 });
+        } else {
+            timeoutHandle = window.setTimeout(() => void run(), 1_200);
+        }
+
+        return () => {
+            canceled = true;
+            if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle);
+            if (timeoutHandle !== undefined) window.clearTimeout(timeoutHandle);
+        };
+    }, [validAssets]);
 
     const openCreate = () => {
         setEditingAsset(null);
@@ -304,8 +356,8 @@ export default function AssetsPage() {
                 {/* ── 画轴瀑布 ── */}
                 <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 pb-12">
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {visibleAssets.map((asset, index) => (
-                            <AssetScrollCard key={asset.id} asset={asset} imageIndex={index} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
+                        {visibleAssets.map((asset) => (
+                            <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                         ))}
                     </div>
 
@@ -482,9 +534,8 @@ export default function AssetsPage() {
 }
 
 /** 画轴卡片:封面 + hover 浮现操作层 + 落款条 */
-function AssetScrollCard({ asset, imageIndex, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; imageIndex: number; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
+function AssetScrollCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
     const cover = assetCardImageUrl(asset);
-    const imageLoading = assetGridImageLoading(imageIndex);
     const summary = assetSummary(asset);
     const actions: { key: string; label: string; icon: typeof Eye; run: () => void; danger?: boolean }[] = [
         { key: "open", label: "查看", icon: Eye, run: onOpen },
@@ -499,12 +550,10 @@ function AssetScrollCard({ asset, imageIndex, onOpen, onEdit, onCopy, onDownload
             <div className="relative">
                 <button type="button" className="block w-full text-left" onClick={onOpen}>
                     {cover ? (
-                        <img
+                        <DeferredImage
                             src={cover}
                             alt={asset.title}
-                            loading={imageLoading.loading}
-                            fetchPriority={imageLoading.fetchPriority}
-                            decoding="async"
+                            rootMargin="240px 0px"
                             className="aspect-[4/3] w-full object-cover transition duration-500 group-hover:scale-[1.03]"
                             onLoad={(event) => void backfillAssetThumbnail(asset, event.currentTarget)}
                         />

@@ -21,13 +21,6 @@ export function assetOriginalImageUrl(asset: AssetImageView) {
     return asset.coverUrl || "";
 }
 
-export function assetGridImageLoading(index: number) {
-    return {
-        loading: index < 4 ? ("eager" as const) : ("lazy" as const),
-        fetchPriority: index === 0 ? ("high" as const) : ("auto" as const),
-    };
-}
-
 export function assetNeedsThumbnail(asset: AssetImageView) {
     const data = imageData(asset);
     return asset.kind === "image" && Boolean(data?.storageKey) && !data?.thumbnailKey;
