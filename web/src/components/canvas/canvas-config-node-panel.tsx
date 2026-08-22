@@ -125,9 +125,11 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                 ) : (
                     <CanvasTextSettingsPopover
                         config={config}
+                        count={node.metadata?.textCount || 1}
                         placement="topRight"
                         buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
                         onConfigChange={(_, value) => onConfigChange(node.id, { reasoningEffort: value })}
+                        onCountChange={(textCount) => onConfigChange(node.id, { textCount })}
                     />
                 )}
             </div>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Settings2 } from "lucide-react";
-import { Button } from "antd";
+import { Button, InputNumber } from "antd";
 
 import { reasoningEffortLabel, TextSettingsPanel } from "@/components/text-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -11,11 +11,13 @@ import type { AiConfig, ReasoningEffort } from "@/stores/use-config-store";
 type CanvasTextSettingsPopoverProps = {
     config: AiConfig;
     onConfigChange: (key: "reasoningEffort", value: ReasoningEffort) => void;
+    count?: number;
+    onCountChange?: (count: number) => void;
     buttonClassName?: string;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
 };
 
-export function CanvasTextSettingsPopover({ config, onConfigChange, buttonClassName, placement = "topLeft" }: CanvasTextSettingsPopoverProps) {
+export function CanvasTextSettingsPopover({ config, onConfigChange, count, onCountChange, buttonClassName, placement = "topLeft" }: CanvasTextSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
@@ -52,21 +54,23 @@ export function CanvasTextSettingsPopover({ config, onConfigChange, buttonClassN
                     icon={<Settings2 className="size-3.5" />}
                     onClick={() => setOpen((current) => !current)}
                 >
-                    <span className="truncate">推理 · {reasoningEffortLabel(config.reasoningEffort)}</span>
+                    <span className="truncate">推理 · {reasoningEffortLabel(config.reasoningEffort)}{onCountChange ? ` · ${count || 1} 份` : ""}</span>
                 </Button>
             </span>
-            {open && buttonRect ? <TextSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} /> : null}
+            {open && buttonRect ? <TextSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} count={count} onConfigChange={onConfigChange} onCountChange={onCountChange} /> : null}
         </>
     );
 }
 
-function TextSettingsPortal({ buttonRect, panelRef, placement, theme, config, onConfigChange }: {
+function TextSettingsPortal({ buttonRect, panelRef, placement, theme, config, count, onConfigChange, onCountChange }: {
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
     placement: CanvasTextSettingsPopoverProps["placement"];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     config: AiConfig;
+    count?: number;
     onConfigChange: CanvasTextSettingsPopoverProps["onConfigChange"];
+    onCountChange?: (count: number) => void;
 }) {
     const gap = 8;
     const margin = 12;
@@ -91,6 +95,12 @@ function TextSettingsPortal({ buttonRect, panelRef, placement, theme, config, on
     return createPortal(
         <div ref={panelRef} style={style} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
             <TextSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} />
+            {onCountChange ? (
+                <div className="mt-4 space-y-2.5">
+                    <div className="text-sm font-medium" style={{ color: theme.node.muted }}>生成份数</div>
+                    <InputNumber className="w-full" min={1} max={15} precision={0} value={count || 1} onChange={(value) => onCountChange(Math.max(1, Math.min(15, Math.floor(Number(value) || 1))))} />
+                </div>
+            ) : null}
         </div>,
         document.body,
     );

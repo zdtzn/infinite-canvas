@@ -48,7 +48,9 @@ type CanvasNodeProps = {
     onHoverStart: (nodeId: string) => void;
     onHoverEnd: (nodeId: string) => void;
     onConnectStart: (event: React.MouseEvent, nodeId: string, handleType: "source" | "target") => void;
+    onResizeStart?: () => void;
     onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
+    onResizeEnd?: () => void;
     onContentChange: (nodeId: string, content: string) => void;
     onTitleChange: (nodeId: string, title: string) => void;
     onToggleBatch?: (nodeId: string) => void;
@@ -120,7 +122,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     onHoverStart,
     onHoverEnd,
     onConnectStart,
+    onResizeStart,
     onResize,
+    onResizeEnd,
     onContentChange,
     onTitleChange,
     onToggleBatch,
@@ -277,10 +281,12 @@ export const CanvasNode = React.memo(function CanvasNode({
     );
 
     const handleResizeUp = useCallback(() => {
+        const wasResizing = resizeRef.current.isResizing;
         resizeRef.current.isResizing = false;
         window.removeEventListener("mousemove", handleResizeMove);
         window.removeEventListener("mouseup", handleResizeUp);
-    }, [handleResizeMove]);
+        if (wasResizing) onResizeEnd?.();
+    }, [handleResizeMove, onResizeEnd]);
 
     const handleResizeMouseDown = (event: React.MouseEvent, corner: ResizeCorner) => {
         event.stopPropagation();
@@ -297,16 +303,20 @@ export const CanvasNode = React.memo(function CanvasNode({
             keepRatio: (data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video || Boolean(definition?.keepAspectRatio?.(data)),
             ratio: (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
         };
+        onResizeStart?.();
         window.addEventListener("mousemove", handleResizeMove);
         window.addEventListener("mouseup", handleResizeUp);
     };
 
     useEffect(() => {
         return () => {
+            const wasResizing = resizeRef.current.isResizing;
+            resizeRef.current.isResizing = false;
             window.removeEventListener("mousemove", handleResizeMove);
             window.removeEventListener("mouseup", handleResizeUp);
+            if (wasResizing) onResizeEnd?.();
         };
-    }, [handleResizeMove, handleResizeUp]);
+    }, [handleResizeMove, handleResizeUp, onResizeEnd]);
 
     return (
         <div
