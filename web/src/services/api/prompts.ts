@@ -29,6 +29,8 @@ export type PromptSourceStatus = {
 };
 
 export const PROMPT_SOURCE_CACHE_TTL_MS = 1000 * 60 * 60;
+const PROMPT_INITIAL_LOAD_BUDGET_MS = 2_500;
+export const PROMPT_LIBRARY_UPDATED_EVENT = "infinite-canvas:prompt-library-updated";
 const promptCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "prompt_cache" });
 
 type SourceCache = PromptSourceStatus & { items: Prompt[]; fetchedAt: number; signature: string };
@@ -88,6 +90,7 @@ async function runSource(source: PromptSource): Promise<Prompt[]> {
         lastError: "",
         signature: sourceSignature(source),
     });
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(PROMPT_LIBRARY_UPDATED_EVENT, { detail: { sourceId: source.id } }));
     return prompts;
 }
 
@@ -134,15 +137,13 @@ async function getSourcePrompts(source: PromptSource, force = false): Promise<Pr
 
 /** Aggregate prompts across all enabled sources; a failing source is skipped so others still load. */
 async function getAllPrompts(): Promise<Prompt[]> {
-    const settled = await Promise.all(
-        enabledSources().map(async (source) => {
-            try {
-                return await getSourcePrompts(source);
-            } catch {
-                return [];
-            }
-        }),
-    );
+    const settled = await Promise.all(enabledSources().map((source) => {
+        const task = getSourcePrompts(source).catch(() => [] as Prompt[]);
+        return Promise.race([
+            task,
+            new Promise<Prompt[]>((resolve) => window.setTimeout(() => resolve([]), PROMPT_INITIAL_LOAD_BUDGET_MS)),
+        ]);
+    }));
     return settled.flat();
 }
 

@@ -24,6 +24,7 @@ export type UserRecord = {
   userId: string;
   displayName: string;
   admin?: boolean;
+  sessionVersion?: number;
   createdAt: number;
   disabled?: boolean;
   status?: UserStatus;
@@ -105,6 +106,8 @@ export type ImageJobInput = {
     projectId?: string;
     nodeId?: string;
     label?: string;
+    productBatchId?: string;
+    productGenerationId?: string;
   };
   retryOf?: string;
   recoveryOnly?: boolean;

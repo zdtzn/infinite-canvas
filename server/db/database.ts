@@ -97,8 +97,12 @@ export function openAppDatabase({ dataDir }: { dataDir: string }): AppDatabase {
   } catch (error) {
     database?.close();
     if (firstMigration)
-      for (const suffix of ["", "-wal", "-shm"])
-        rmSync(`${databasePath}${suffix}`, { force: true });
+      for (const suffix of ["-wal", "-shm", ""])
+        rmSync(`${databasePath}${suffix}`, {
+          force: true,
+          maxRetries: 20,
+          retryDelay: 50,
+        });
     throw error;
   }
 }
@@ -750,6 +754,67 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 19").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        ALTER TABLE users
+          ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1;
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (19, ?)",
+        )
+        .run(Date.now());
+    })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 20").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS product_batch_jobs (
+          user_id TEXT NOT NULL,
+          batch_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'canceled')),
+          total INTEGER NOT NULL,
+          completed INTEGER NOT NULL DEFAULT 0,
+          failed INTEGER NOT NULL DEFAULT 0,
+          canceled INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, batch_id),
+          FOREIGN KEY (user_id, project_id) REFERENCES product_projects(user_id, project_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS product_batch_items (
+          user_id TEXT NOT NULL,
+          batch_id TEXT NOT NULL,
+          item_id TEXT NOT NULL,
+          generation_id TEXT NOT NULL,
+          job_id TEXT,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'canceled')),
+          error TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, batch_id, item_id),
+          UNIQUE (user_id, batch_id, generation_id),
+          FOREIGN KEY (user_id, batch_id) REFERENCES product_batch_jobs(user_id, batch_id) ON DELETE CASCADE,
+          FOREIGN KEY (user_id, generation_id) REFERENCES product_generations(user_id, generation_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_product_batch_jobs_user_updated
+          ON product_batch_jobs(user_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_product_batch_items_user_job
+          ON product_batch_items(user_id, job_id);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (20, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(
@@ -1148,8 +1213,15 @@ function replaceState(database: Database, state: ServerState) {
         state.auth.sessionSecret,
         state.auth.adminUserId,
       );
+    const hasSessionVersion = (
+      database
+        .query("PRAGMA table_info(users)")
+        .all() as Array<{ name: string }>
+    ).some((column) => column.name === "session_version");
     const insertUser = database.query(
-      "INSERT INTO users(user_id, display_name, is_admin, status, created_at, login_hash, internal_note, public_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name, is_admin=excluded.is_admin, status=excluded.status, login_hash=excluded.login_hash, internal_note=excluded.internal_note, public_message=excluded.public_message WHERE users.display_name IS NOT excluded.display_name OR users.is_admin IS NOT excluded.is_admin OR users.status IS NOT excluded.status OR users.login_hash IS NOT excluded.login_hash OR users.internal_note IS NOT excluded.internal_note OR users.public_message IS NOT excluded.public_message",
+      hasSessionVersion
+        ? "INSERT INTO users(user_id, display_name, is_admin, status, created_at, login_hash, internal_note, public_message, session_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name, is_admin=excluded.is_admin, status=excluded.status, login_hash=excluded.login_hash, internal_note=excluded.internal_note, public_message=excluded.public_message, session_version=excluded.session_version WHERE users.display_name IS NOT excluded.display_name OR users.is_admin IS NOT excluded.is_admin OR users.status IS NOT excluded.status OR users.login_hash IS NOT excluded.login_hash OR users.internal_note IS NOT excluded.internal_note OR users.public_message IS NOT excluded.public_message OR users.session_version IS NOT excluded.session_version"
+        : "INSERT INTO users(user_id, display_name, is_admin, status, created_at, login_hash, internal_note, public_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name, is_admin=excluded.is_admin, status=excluded.status, login_hash=excluded.login_hash, internal_note=excluded.internal_note, public_message=excluded.public_message WHERE users.display_name IS NOT excluded.display_name OR users.is_admin IS NOT excluded.is_admin OR users.status IS NOT excluded.status OR users.login_hash IS NOT excluded.login_hash OR users.internal_note IS NOT excluded.internal_note OR users.public_message IS NOT excluded.public_message",
     );
     for (const user of Object.values(state.users))
       insertUser.run(
@@ -1161,6 +1233,14 @@ function replaceState(database: Database, state: ServerState) {
         user.loginHash || null,
         user.internalNote || "",
         user.publicMessage || "",
+        ...(hasSessionVersion
+          ? [
+              Number.isInteger(Number(user.sessionVersion)) &&
+              Number(user.sessionVersion) >= 1
+                ? Number(user.sessionVersion)
+                : 1,
+            ]
+          : []),
       );
     const insertChannel = database.query(
       "INSERT INTO channels(id, user_id, payload_json) VALUES (?, ?, ?) ON CONFLICT(user_id, id) DO UPDATE SET payload_json=excluded.payload_json WHERE channels.payload_json IS NOT excluded.payload_json",
@@ -1278,6 +1358,7 @@ function loadState(database: Database): ServerState {
       userId: String(row.user_id),
       displayName: String(row.display_name),
       admin: Boolean(row.is_admin),
+      sessionVersion: Number(row.session_version || 1),
       status: String(row.status) as "NORMAL" | "DISABLED" | "BANNED",
       disabled: row.status !== "NORMAL",
       createdAt: Number(row.created_at),

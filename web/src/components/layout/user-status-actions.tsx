@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
-import { BookOpen, CircleUserRound, Crown, Keyboard, LogOut, Moon, MoreHorizontal, Puzzle, Sun } from "lucide-react";
-import { Dropdown, type MenuProps } from "antd";
+import { BookOpen, CircleUserRound, Crown, Keyboard, LogOut, Moon, MoreHorizontal, Puzzle, ShieldCheck, Sun } from "lucide-react";
+import { App, Dropdown, Input, Modal, type MenuProps } from "antd";
+import { useState } from "react";
 
 import { VersionReleaseModal } from "@/components/layout/version-release-modal";
 import { DOCS_URL, REPOSITORY_URL } from "@/constant/env";
@@ -8,7 +9,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { TaskCenter } from "@/components/layout/task-center";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
-import { logoutAccess } from "@/services/server-api";
+import { changePersonalPassword, logoutAccess, revokeAllServerSessions } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cn } from "@/lib/utils";
@@ -75,6 +76,12 @@ export function WorkspaceMenuAction({ variant = "default", onOpenShortcuts, onOp
 }
 
 export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
+    const { modal, message } = App.useApp();
+    const [passwordOpen, setPasswordOpen] = useState(false);
+    const [passwordSaving, setPasswordSaving] = useState(false);
+    const [currentPassword, setCurrentPassword] = useState("");
+    const [newPassword, setNewPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
     const theme = useThemeStore((state) => state.theme);
     const user = useUserStore((state) => state.user);
     const clearSession = useUserStore((state) => state.clearSession);
@@ -90,6 +97,29 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
               },
               { type: "divider" },
               {
+                  key: "revoke-sessions",
+                  icon: <ShieldCheck className="size-4" />,
+                  label: "退出其他设备",
+                  onClick: () => {
+                      modal.confirm({
+                          title: "退出其他设备？",
+                          content: "其他电脑、手机和浏览器中的登录状态会立即失效，当前设备会保持登录。",
+                          okText: "确认退出",
+                          cancelText: "取消",
+                          onOk: async () => {
+                              await revokeAllServerSessions();
+                              message.success("已退出其他设备");
+                          },
+                      });
+                  },
+              },
+              {
+                  key: "change-password",
+                  icon: <ShieldCheck className="size-4" />,
+                  label: "修改个人密码",
+                  onClick: () => setPasswordOpen(true),
+              },
+              {
                   key: "logout",
                   icon: <LogOut className="size-4" />,
                   danger: true,
@@ -100,6 +130,7 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
         : [];
 
     return (
+        <>
         <div className="inline-flex shrink-0 items-center gap-1">
             {showTaskCenter ? <TaskCenter /> : null}
             {showWorkspaceMenu ? <WorkspaceMenuAction variant={variant} onOpenShortcuts={onOpenShortcuts} onOpenPlugins={onOpenPlugins} /> : null}
@@ -133,5 +164,45 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
             ) : null}
             <VersionReleaseModal style={versionStyle} />
         </div>
+        <Modal
+            title="修改个人密码"
+            open={passwordOpen}
+            okText="保存密码"
+            cancelText="取消"
+            confirmLoading={passwordSaving}
+            onCancel={() => {
+                if (!passwordSaving) setPasswordOpen(false);
+            }}
+            onOk={async () => {
+                if (newPassword.length < 6) {
+                    message.error("新密码至少 6 位");
+                    return;
+                }
+                if (newPassword !== confirmPassword) {
+                    message.error("两次输入的新密码不一致");
+                    return;
+                }
+                setPasswordSaving(true);
+                try {
+                    await changePersonalPassword(currentPassword, newPassword);
+                    setCurrentPassword("");
+                    setNewPassword("");
+                    setConfirmPassword("");
+                    setPasswordOpen(false);
+                    message.success("个人密码已更新，其他设备已退出");
+                } catch (error) {
+                    message.error(error instanceof Error ? error.message : "密码更新失败");
+                } finally {
+                    setPasswordSaving(false);
+                }
+            }}
+        >
+            <div className="space-y-3">
+                <Input.Password value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} placeholder="当前密码" autoComplete="current-password" />
+                <Input.Password value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="新密码（至少 6 位）" autoComplete="new-password" />
+                <Input.Password value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="再次输入新密码" autoComplete="new-password" />
+            </div>
+        </Modal>
+        </>
     );
 }

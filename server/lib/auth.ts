@@ -7,6 +7,7 @@ export type SessionPayload = {
     userId: string;
     displayName: string;
     admin?: boolean;
+    sessionVersion?: number;
 };
 
 export async function hashAccessCode(value: string) {
@@ -38,7 +39,7 @@ export function readSessionToken(token: string | undefined, secret: string, now 
     try {
         const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as SessionPayload & { exp?: number };
         if (!payload.userId || !payload.displayName || !payload.exp || payload.exp <= now) return null;
-        return { userId: payload.userId, displayName: payload.displayName, admin: payload.admin };
+        return { userId: payload.userId, displayName: payload.displayName, admin: payload.admin, sessionVersion: payload.sessionVersion };
     } catch {
         return null;
     }

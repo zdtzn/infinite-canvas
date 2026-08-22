@@ -286,9 +286,10 @@ const heavyRequestSemaphore = new AsyncSemaphore(HEAVY_REQUEST_CONCURRENCY);
 const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
     concurrency: JOB_CONCURRENCY,
     worker: runImageJob,
-    onChange: (job) => {
+    onChange: async (job) => {
         state.jobs[job.id] = job;
         appDatabase.saveJob(job);
+        await syncProductBatchJob(job);
         if (["succeeded", "failed", "canceled"].includes(job.status)) pruneTerminalJobs();
         if (job.status === "succeeded" && job.result?.recoveryPending) scheduleJobImageRecovery(job.id);
     },
@@ -296,6 +297,7 @@ const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
         if (!job.input.recoveryOnly) cultivation?.refundGeneration(job.id, "initial job persistence failed");
     },
 });
+const productBatchSyncExecutor = new KeyedSerialExecutor();
 
 for (const job of Object.values(state.jobs)) {
     if (job.status === "running") {
@@ -404,6 +406,8 @@ async function route(request: Request, requestId: string) {
         if (profileAvatarMatch && ["GET", "HEAD"].includes(request.method)) return serveProfileAvatar(request, session, decodeRouteSegment(profileAvatarMatch[1], "用户 ID"));
         if (url.pathname === "/api/profile/avatar" && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => uploadProfileAvatar(request, session));
         if (url.pathname === "/api/profile/avatar" && request.method === "DELETE") return deleteProfileAvatar(session);
+        if (url.pathname === "/api/auth/sessions/revoke" && request.method === "POST") return revokeAllSessions(session);
+        if (url.pathname === "/api/auth/password" && request.method === "POST") return changePersonalPassword(request, session);
         const seenBreakthroughMatch = url.pathname.match(/^\/api\/cultivation\/breakthroughs\/([^/]+)\/seen$/);
         if (seenBreakthroughMatch && request.method === "POST") return markCultivationBreakthroughSeen(session, seenBreakthroughMatch[1]);
         if (url.pathname === "/api/admin/cultivation/users" && request.method === "GET") return adminCultivationUsers(url, session);
@@ -480,6 +484,7 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/product-lab/projects" && request.method === "GET") return listProductProjects(session);
         if (url.pathname === "/api/product-lab/projects" && request.method === "POST") return createProductProject(request, session);
         if (url.pathname === "/api/product-lab/generations" && request.method === "POST") return saveProductGeneration(request, session);
+        if (url.pathname === "/api/product-lab/batches" && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => createProductBatch(request, session));
         if (url.pathname === "/api/product-lab/analyze" && request.method === "POST") {
             enforceRateLimit(`${session.userId}:${clientIp(request)}:product-analysis`, PRODUCT_ANALYSIS_RATE_LIMIT);
             return promptOptimizeSemaphore.run(request.signal, () => analyzeProductImage(request, session, requestId));
@@ -487,6 +492,12 @@ async function route(request: Request, requestId: string) {
         const productGenerationsMatch = url.pathname.match(/^\/api\/product-lab\/projects\/([^/]+)\/generations$/);
         if (productGenerationsMatch && request.method === "GET")
             return listProductGenerations(session, decodeRouteSegment(productGenerationsMatch[1], "商品项目 ID"));
+        const productBatchesMatch = url.pathname.match(/^\/api\/product-lab\/projects\/([^/]+)\/batches$/);
+        if (productBatchesMatch && request.method === "GET")
+            return listProductBatches(session, decodeRouteSegment(productBatchesMatch[1], "商品项目 ID"));
+        const productBatchMatch = url.pathname.match(/^\/api\/product-lab\/batches\/([^/]+)$/);
+        if (productBatchMatch && request.method === "GET")
+            return getProductBatch(session, decodeRouteSegment(productBatchMatch[1], "商品批任务 ID"));
         const productProjectMatch = url.pathname.match(/^\/api\/product-lab\/projects\/([^/]+)$/);
         if (productProjectMatch && request.method === "GET")
             return getProductProject(session, decodeRouteSegment(productProjectMatch[1], "商品项目 ID"));
@@ -545,7 +556,7 @@ async function route(request: Request, requestId: string) {
 async function authStatus(request: Request) {
     const candidate = optionalSession(request);
     const user = candidate ? state.users[candidate.userId] : undefined;
-    const session = candidate && user && !isUserDisabled(user) ? candidate : null;
+    const session = candidate && user && !isUserDisabled(user) && isCurrentSession(candidate, user) ? candidate : null;
     return json({
         configured: Boolean(state.auth.accessCodeHash),
         authenticated: Boolean(session),
@@ -574,6 +585,7 @@ async function setupAuth(request: Request) {
             userId,
             displayName,
             admin: true,
+            sessionVersion: 1,
             status: "NORMAL",
             createdAt: Date.now(),
             loginHash: await hashAccessCode(personalCode),
@@ -654,10 +666,12 @@ async function login(request: Request) {
             userId: randomUUID(),
             displayName,
             admin: false,
+            sessionVersion: 1,
             status: "NORMAL" as const,
             createdAt: Date.now(),
             loginHash: await hashAccessCode(personalCode),
         };
+        user.sessionVersion = currentSessionVersion(user);
         if (!user.loginHash) user.loginHash = await hashAccessCode(personalCode);
         user.disabled = false;
         user.status = "NORMAL";
@@ -677,7 +691,16 @@ async function login(request: Request) {
 }
 
 function authenticatedResponse(user: UserRecord) {
-    const token = createSessionToken(user, state.auth.sessionSecret, SESSION_TTL_MS);
+    const token = createSessionToken(
+        {
+            userId: user.userId,
+            displayName: user.displayName,
+            admin: Boolean(user.admin),
+            sessionVersion: currentSessionVersion(user),
+        },
+        state.auth.sessionSecret,
+        SESSION_TTL_MS,
+    );
     const identity = createIdentityToken(user.userId, state.auth.sessionSecret);
     const headers = new Headers();
     headers.append("Set-Cookie", sessionCookie(token, secureCookies));
@@ -710,9 +733,56 @@ function requireSession(request: Request) {
     if (!session) throw new HttpError(401, "请先登录");
     const user = state.users[session.userId];
     if (!user || isUserDisabled(user)) throw new HttpError(403, "当前账号已停用");
+    if (!isCurrentSession(session, user)) throw new HttpError(401, "登录状态已失效，请重新登录");
     const expectedUserId = request.headers.get("x-expected-user-id")?.trim();
     if (expectedUserId && expectedUserId !== session.userId) throw new HttpError(409, "账号已经切换，本次后台同步已取消");
     return session;
+}
+
+function revokeAllSessions(session: SessionPayload) {
+    const user = state.users[session.userId];
+    if (!user) throw new HttpError(401, "登录状态已失效，请重新登录");
+    user.sessionVersion = currentSessionVersion(user) + 1;
+    writeState();
+    const token = createSessionToken(
+        {
+            userId: user.userId,
+            displayName: user.displayName,
+            admin: Boolean(user.admin),
+            sessionVersion: currentSessionVersion(user),
+        },
+        state.auth.sessionSecret,
+        SESSION_TTL_MS,
+    );
+    const headers = new Headers();
+    headers.append("Set-Cookie", sessionCookie(token, secureCookies));
+    return json({ ok: true }, 200, headers);
+}
+
+async function changePersonalPassword(request: Request, session: SessionPayload) {
+    enforceRateLimit(`password:${session.userId}:${clientIp(request)}`, 8);
+    const body = await readJson<{ currentPassword?: unknown; newPassword?: unknown }>(request, 16 * 1024);
+    const currentPassword = normalizePersonalCode(body.currentPassword);
+    const newPassword = normalizePersonalCode(body.newPassword);
+    if (currentPassword === newPassword) throw new HttpError(400, "新密码不能与当前密码相同");
+    return withAuthMutation(async () => {
+        const user = state.users[session.userId];
+        if (!user || isUserDisabled(user)) throw new HttpError(403, "当前账号已停用");
+        if (!user.loginHash || !(await verifyAccessCode(currentPassword, user.loginHash))) throw new HttpError(403, "当前密码不正确");
+        user.loginHash = await hashAccessCode(newPassword);
+        user.sessionVersion = currentSessionVersion(user) + 1;
+        writeState();
+        return authenticatedResponse(user);
+    });
+}
+
+function currentSessionVersion(user: UserRecord) {
+    const version = Number(user.sessionVersion);
+    return Number.isInteger(version) && version >= 1 ? version : 1;
+}
+
+function isCurrentSession(session: SessionPayload, user: UserRecord) {
+    return Number(session.sessionVersion || 1) === currentSessionVersion(user);
 }
 
 function listUsers(session: SessionPayload) {
@@ -2071,6 +2141,12 @@ function listProductGenerations(session: SessionPayload, projectId: string) {
     });
 }
 
+function listProductBatches(session: SessionPayload, projectId: string) {
+    const service = requireProductLab();
+    if (!service.getProject(session.userId, projectId)) throw new HttpError(404, "商品项目不存在");
+    return json({ items: service.listBatches(session.userId, projectId).map((batch) => publicProductBatch(session.userId, batch)) });
+}
+
 async function saveProductGeneration(request: Request, session: SessionPayload) {
     const service = requireProductLab();
     const body = await readJson<Record<string, unknown>>(request, 64 * 1024);
@@ -2079,6 +2155,105 @@ async function saveProductGeneration(request: Request, session: SessionPayload) 
     requireProductCapability(session.userId, capabilityKey);
     const generation = service.saveGeneration(session.userId, body as Parameters<typeof service.saveGeneration>[1]);
     return json({ generation: publicProductGeneration(session.userId, generation) }, 201);
+}
+
+async function createProductBatch(request: Request, session: SessionPayload) {
+    const service = requireProductLab();
+    const body = await readJson<Record<string, unknown>>(request, 512 * 1024);
+    const projectId = String(body.projectId || "").trim();
+    const project = service.getProject(session.userId, projectId);
+    if (!project) throw new HttpError(404, "商品项目不存在");
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    if (!rawItems.length) throw new HttpError(400, "请至少选择一幅商品画卷");
+    const itemCapabilities = rawItems.map((rawItem) => {
+        if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) throw new HttpError(400, "商品批任务项目无效");
+        const capability = productOutputCapability((rawItem as Record<string, unknown>).outputKind);
+        if (!capability) throw new HttpError(400, "商品输出类型无效");
+        return capability;
+    });
+    for (const capability of new Set(itemCapabilities)) requireProductCapability(session.userId, capability);
+    if (rawItems.length > 1) requireProductCapability(session.userId, "product.batch_generate");
+
+    const batchId = String(body.batchId || "").trim();
+    if (!/^[A-Za-z0-9_-]{8,80}$/.test(batchId)) throw new HttpError(400, "商品批任务 ID 无效");
+    const existing = service.getBatch(session.userId, batchId);
+    if (existing) {
+        if (existing.batch.projectId !== project.id) throw new HttpError(409, "商品批任务已经绑定到其他项目");
+        return json({ ...publicProductBatch(session.userId, existing), recovered: true }, 200);
+    }
+
+    const channelId = String(body.channelId || "").trim();
+    const model = String(body.model || "").trim();
+    if (!channelId || !model) throw new HttpError(400, "请先选择生图渠道和模型");
+    platformChannel(channelId);
+    assertPlatformModelAllowed(channelId, model, "image");
+    const preparedItems = rawItems.map((rawItem, index) => {
+        if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) throw new HttpError(400, "商品批任务项目无效");
+        const item = rawItem as Record<string, unknown>;
+        const generationId = String(item.generationId || randomUUID());
+        const idempotencyKey = `product-batch-${batchId}-${generationId}`;
+        const jobId = createHash("sha256").update(`${session.userId}:${idempotencyKey}`).digest("hex");
+        return {
+            itemId: String(item.itemId || `${batchId}-${index}`),
+            generationId,
+            jobId,
+            idempotencyKey,
+            outputKind: item.outputKind,
+            pageIndex: item.pageIndex,
+            title: item.title,
+            prompt: item.prompt,
+            aspectRatio: item.aspectRatio,
+            size: item.size,
+            quality: item.quality,
+            imageQuality: item.imageQuality,
+            imageOutputFormat: item.imageOutputFormat,
+            background: item.background,
+        };
+    });
+    service.createBatch(session.userId, { batchId, projectId, items: preparedItems });
+    for (const item of preparedItems) {
+        try {
+            const jobRequest = new Request("http://product-batch.internal/api/jobs/images", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Idempotency-Key": String(item.idempotencyKey) },
+                body: JSON.stringify({
+                    channelId,
+                    model,
+                    prompt: item.prompt,
+                    count: 1,
+                    quality: item.quality ?? body.quality,
+                    imageQuality: item.imageQuality ?? body.imageQuality,
+                    imageOutputFormat: item.imageOutputFormat ?? body.imageOutputFormat,
+                    size: item.size ?? item.aspectRatio ?? body.size,
+                    background: item.background ?? body.background,
+                    references: [{ assetKey: project.sourceAssetKey }],
+                    source: {
+                        route: "/product-lab-batch",
+                        projectId,
+                        productBatchId: batchId,
+                        productGenerationId: String(item.generationId),
+                        label: `商品幻境 · ${String(item.title || "商品画卷")}`,
+                    },
+                }),
+            });
+            await createImageJob(jobRequest, session);
+        } catch (error) {
+            service.updateBatchItem(session.userId, {
+                batchId,
+                generationId: String(item.generationId),
+                jobId: String(item.jobId),
+                status: "failed",
+                error: error instanceof Error ? error.message : "商品画卷提交失败",
+            });
+        }
+    }
+    return json(publicProductBatch(session.userId, service.getBatch(session.userId, batchId)!), 202);
+}
+
+function getProductBatch(session: SessionPayload, batchId: string) {
+    const batch = requireProductLab().getBatch(session.userId, batchId);
+    if (!batch) throw new HttpError(404, "商品批任务不存在");
+    return json(publicProductBatch(session.userId, batch));
 }
 
 async function analyzeProductImage(request: Request, session: SessionPayload, requestId: string) {
@@ -2227,6 +2402,99 @@ function publicProductGeneration(userId: string, generation: ReturnType<ReturnTy
         ...generation,
         assetUrl: asset ? assetUrl(asset.key, asset.createdAt) : "",
     };
+}
+
+function publicProductBatch(userId: string, details: ReturnType<ReturnType<typeof createProductLabService>["getBatch"]>) {
+    if (!details) throw new HttpError(404, "商品批任务不存在");
+    return {
+        batch: details.batch,
+        items: details.items.map((item) => ({
+            id: item.id,
+            batchId: item.batchId,
+            generationId: item.generationId,
+            jobId: item.jobId,
+            status: item.status,
+            error: item.error,
+            generation: publicProductGeneration(userId, item.generation),
+        })),
+    };
+}
+
+async function syncProductBatchJob(job: StoredImageJob) {
+    const source = job.input.source;
+    if (!source?.productBatchId || !source.productGenerationId || !productLab) return;
+    const userId = job.input.userId;
+    await productBatchSyncExecutor.run(`${userId}:${source.productBatchId}:${source.productGenerationId}`, () => syncProductBatchJobLocked(job));
+}
+
+async function syncProductBatchJobLocked(job: StoredImageJob) {
+    const source = job.input.source;
+    if (!source?.productBatchId || !source.productGenerationId || !productLab) return;
+    const userId = job.input.userId;
+    const details = productLab.getBatch(userId, source.productBatchId);
+    const item = details?.items.find((candidate) => candidate.generationId === source.productGenerationId);
+    if (!item || (item.jobId && item.jobId !== job.id)) return;
+    if (["succeeded", "failed", "canceled"].includes(item.status)) return;
+    if (job.status === "queued") return;
+    if (job.status === "running") {
+        productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "running" });
+        return;
+    }
+    if (job.status === "failed" || job.status === "canceled") {
+        productLab.updateBatchItem(userId, {
+            batchId: source.productBatchId,
+            generationId: source.productGenerationId,
+            jobId: job.id,
+            status: job.status,
+            error: job.error || (job.status === "canceled" ? "商品画卷已取消" : "商品画卷生成失败"),
+        });
+        return;
+    }
+    const image = job.result?.images[0];
+    if (!image) {
+        productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "failed", error: "生图任务没有返回图片" });
+        return;
+    }
+    let storedImage = image;
+    if (storedImage.persisted === false) {
+        try {
+            storedImage = await persistJobImage(userId, job.id, storedImage.dataUrl, storedImage.durationMs, new AbortController().signal, { downloadAttempts: 1 });
+            job.result = { ...job.result!, images: [storedImage, ...job.result!.images.slice(1)], recoveryPending: job.result!.images.length > 1 };
+            state.jobs[job.id] = job;
+            appDatabase.saveJob(job);
+        } catch (error) {
+            productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "failed", error: error instanceof Error ? error.message : "结果图片无法保存" });
+            return;
+        }
+    }
+    const path = jobImagePath(userId, job.id, storedImage.dataUrl);
+    if (!path || !existsSync(path)) {
+        productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "failed", error: "结果图片文件不存在" });
+        return;
+    }
+    try {
+        const { asset } = await storeAssetForUser(userId, `image:${randomUUID()}`, Bun.file(path), storedImage.mimeType);
+        const updated = productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "succeeded", assetKey: asset.key });
+        if (updated.batch.status === "completed") {
+            const project = productLab.getProject(userId, source.projectId || "");
+            if (project && project.status !== "completed") productLab.updateProject(userId, project.id, { status: "completed" });
+        }
+    } catch (error) {
+        productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "failed", error: error instanceof Error ? error.message : "商品结果保存失败" });
+    }
+}
+
+function jobImagePath(userId: string, jobId: string, dataUrl: string) {
+    const match = dataUrl.match(/^\/api\/job-files\/([^/?#]+)\/([^/?#]+)$/);
+    if (!match) return "";
+    try {
+        const decodedJobId = decodeURIComponent(match[1]);
+        const filename = decodeURIComponent(match[2]);
+        if (decodedJobId !== jobId) return "";
+        return join(JOB_FILE_ROOT, safeSegment(userId), safeSegment(jobId), safeSegment(filename));
+    } catch {
+        return "";
+    }
 }
 
 function listLibraryAssets(session: SessionPayload) {
@@ -2425,15 +2693,19 @@ async function readAssetUploadForm(request: Request, maxUploadBytes: number, max
 }
 
 async function storeAsset(session: SessionPayload, key: string, file: Blob, mimeType: string) {
+    return storeAssetForUser(session.userId, key, file, mimeType);
+}
+
+async function storeAssetForUser(userId: string, key: string, file: Blob, mimeType: string) {
     return withAssetMutation(async () => {
-        const recordKey = assetKey(session.userId, key);
+        const recordKey = assetKey(userId, key);
         const existing = state.assets[recordKey];
-        const usedBytes = assetBytesByUser.get(session.userId) || 0;
+        const usedBytes = assetBytesByUser.get(userId) || 0;
         if (usedBytes - (existing?.bytes || 0) + file.size > MAX_USER_ASSET_BYTES) throw new HttpError(413, "服务端素材空间不足，请删除不再使用的素材");
         assertDiskCapacity(Math.max(0, file.size - (existing?.bytes || 0)));
-        const directory = assetDirectory(session.userId);
+        const directory = assetDirectory(userId);
         mkdirSync(directory, { recursive: true });
-        const finalPath = assetPath(session.userId, key);
+        const finalPath = assetPath(userId, key);
         const temporaryPath = `${finalPath}.${randomUUID()}.tmp`;
         const backupPath = `${finalPath}.${randomUUID()}.bak`;
         let installed = false;
@@ -2441,7 +2713,7 @@ async function storeAsset(session: SessionPayload, key: string, file: Blob, mime
         let databaseSaved = false;
         const asset: StoredAsset = {
             key,
-            userId: session.userId,
+            userId,
             mimeType,
             bytes: file.size,
             createdAt: nextAssetVersion(existing?.createdAt),
@@ -2457,9 +2729,9 @@ async function storeAsset(session: SessionPayload, key: string, file: Blob, mime
             appDatabase.saveAsset(asset);
             databaseSaved = true;
             state.assets[recordKey] = asset;
-            assetBytesByUser.set(session.userId, usedBytes - (existing?.bytes || 0) + asset.bytes);
+            assetBytesByUser.set(userId, usedBytes - (existing?.bytes || 0) + asset.bytes);
             removeAssetFileBestEffort(backupPath, asset, "asset_backup_cleanup_failed");
-            const legacyPath = legacyAssetPath(session.userId, key);
+            const legacyPath = legacyAssetPath(userId, key);
             if (legacyPath !== finalPath) removeAssetFileBestEffort(legacyPath, asset, "legacy_asset_cleanup_failed");
             return { asset, replaced: Boolean(existing) };
         } catch (error) {
@@ -4670,13 +4942,17 @@ function normalizeJobSource(value: unknown): ImageJobInput["source"] {
     const projectId = optionalString(input.projectId);
     const nodeId = optionalString(input.nodeId);
     const label = optionalString(input.label);
-    const fields = [route, projectId, nodeId, label];
+    const productBatchId = optionalString(input.productBatchId);
+    const productGenerationId = optionalString(input.productGenerationId);
+    const fields = [route, projectId, nodeId, label, productBatchId, productGenerationId];
     if (fields.some((item) => item && item.length > 180)) throw new HttpError(400, "任务来源信息过长");
     return {
         ...(route ? { route } : {}),
         ...(projectId ? { projectId } : {}),
         ...(nodeId ? { nodeId } : {}),
         ...(label ? { label } : {}),
+        ...(productBatchId ? { productBatchId } : {}),
+        ...(productGenerationId ? { productGenerationId } : {}),
     };
 }
 

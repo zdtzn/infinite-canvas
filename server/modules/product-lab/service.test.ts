@@ -30,6 +30,23 @@ afterEach(() => {
 });
 
 describe("product lab persistence and capabilities", () => {
+  test("applies the persistent batch schema migration", () => {
+    const { store } = setup();
+    try {
+      expect(
+        store.raw!.query("SELECT version FROM schema_migrations WHERE version = 20").get(),
+      ).toEqual({ version: 20 });
+      expect(
+        store.raw!.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('product_batch_jobs', 'product_batch_items') ORDER BY name").all(),
+      ).toEqual([
+        { name: "product_batch_items" },
+        { name: "product_batch_jobs" },
+      ]);
+    } finally {
+      store.close();
+    }
+  });
+
   test("maps only supported product outputs to cultivation capabilities", () => {
     expect(productOutputCapability("basic_image")).toBe("product.basic");
     expect(productOutputCapability("detail_page")).toBe(
@@ -157,6 +174,81 @@ describe("product lab persistence and capabilities", () => {
       expect(() => productLab.createProject("user-a", [] as never)).toThrow(
         ProductLabError,
       );
+    } finally {
+      store.close();
+    }
+  });
+
+  test("persists batch items, enforces job ownership, and makes terminal updates idempotent", () => {
+    const { store, productLab } = setup();
+    try {
+      insertAsset(store.raw!, "user-a", "image:source-batch");
+      insertAsset(store.raw!, "user-a", "image:result-batch");
+      const project = productLab.createProject("user-a", {
+        title: "批量测试商品",
+        platform: "pinduoduo",
+        styleKey: "clean",
+        sourceAssetKey: "image:source-batch",
+      });
+      const batch = productLab.createBatch("user-a", {
+        batchId: "batch-test-1",
+        projectId: project.id,
+        items: [
+          {
+            itemId: "item-main",
+            generationId: "generation-main",
+            jobId: "job-main",
+            outputKind: "main_image",
+            pageIndex: 0,
+            prompt: "批量生成商品主图",
+          },
+        ],
+      });
+
+      expect(batch.batch.status).toBe("queued");
+      expect(productLab.getBatch("user-a", "batch-test-1")?.items[0].jobId).toBe("job-main");
+      expect(() =>
+        productLab.updateBatchItem("user-a", {
+          batchId: "batch-test-1",
+          generationId: "generation-main",
+          jobId: "job-other",
+          status: "running",
+        }),
+      ).toThrow(ProductLabError);
+
+      productLab.updateBatchItem("user-a", {
+        batchId: "batch-test-1",
+        generationId: "generation-main",
+        jobId: "job-main",
+        status: "running",
+      });
+      const completed = productLab.updateBatchItem("user-a", {
+        batchId: "batch-test-1",
+        generationId: "generation-main",
+        jobId: "job-main",
+        status: "succeeded",
+        assetKey: "image:result-batch",
+      });
+      expect(completed.batch.status).toBe("completed");
+      expect(completed.items[0].generation.assetKey).toBe("image:result-batch");
+
+      const repeated = productLab.updateBatchItem("user-a", {
+        batchId: "batch-test-1",
+        generationId: "generation-main",
+        jobId: "job-main",
+        status: "succeeded",
+        assetKey: "image:result-batch",
+      });
+      expect(repeated.items[0].generation.assetKey).toBe("image:result-batch");
+      expect(() =>
+        productLab.updateBatchItem("user-a", {
+          batchId: "batch-test-1",
+          generationId: "generation-main",
+          jobId: "job-main",
+          status: "failed",
+          error: "late callback",
+        }),
+      ).toThrow(ProductLabError);
     } finally {
       store.close();
     }

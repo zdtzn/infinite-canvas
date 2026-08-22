@@ -34,6 +34,28 @@ export type ProductGeneration = {
     updatedAt: number;
 };
 
+export type ProductBatchItem = {
+    id: string;
+    batchId: string;
+    generationId: string;
+    jobId?: string;
+    status: ProductGenerationStatus;
+    error: string;
+    generation: ProductGeneration;
+};
+
+export type ProductBatch = {
+    id: string;
+    projectId: string;
+    status: "queued" | "running" | "completed" | "failed" | "canceled";
+    total: number;
+    completed: number;
+    failed: number;
+    canceled: number;
+    createdAt: number;
+    updatedAt: number;
+};
+
 export type ProductTemplate = {
     id: string;
     platform: string;
@@ -70,6 +92,53 @@ export async function fetchProductGenerations(projectId: string, expectedUserId?
 
 export async function saveProductGeneration(input: { projectId: string; outputKind: ProductOutputKind; pageIndex: number; prompt: string; jobId?: string; assetKey?: string; status: ProductGenerationStatus; error?: string }, expectedUserId?: string) {
     return serverRequest<{ generation: ProductGeneration }>("/api/product-lab/generations", { method: "POST", body: input, expectedUserId });
+}
+
+export async function createProductBatch(input: {
+    batchId: string;
+    projectId: string;
+    channelId: string;
+    model: string;
+    quality?: string;
+    imageQuality?: string;
+    imageOutputFormat?: string;
+    size?: string;
+    background?: string;
+    items: Array<{
+        itemId?: string;
+        generationId?: string;
+        outputKind: ProductOutputKind;
+        pageIndex: number;
+        title?: string;
+        prompt: string;
+        aspectRatio?: string;
+        size?: string;
+        quality?: string;
+        imageQuality?: string;
+        imageOutputFormat?: string;
+        background?: string;
+    }>;
+}, expectedUserId?: string) {
+    return serverRequest<{ batch: ProductBatch; items: ProductBatchItem[]; recovered?: boolean }>("/api/product-lab/batches", {
+        method: "POST",
+        body: input,
+        timeoutMs: 60_000,
+        expectedUserId,
+    });
+}
+
+export async function fetchProductBatch(batchId: string, expectedUserId?: string) {
+    return serverRequest<{ batch: ProductBatch; items: ProductBatchItem[] }>(`/api/product-lab/batches/${encodeURIComponent(batchId)}`, {
+        timeoutMs: 20_000,
+        expectedUserId,
+    });
+}
+
+export async function fetchProductBatches(projectId: string, expectedUserId?: string) {
+    return serverRequest<{ items: Array<{ batch: ProductBatch; items: ProductBatchItem[] }> }>(`/api/product-lab/projects/${encodeURIComponent(projectId)}/batches`, {
+        timeoutMs: 20_000,
+        expectedUserId,
+    });
 }
 
 export async function analyzeProduct(input: { assetKey: string; platform: string; styleKey: string; notes: string }, expectedUserId?: string) {

@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ALL_PROMPTS_OPTION, fetchPrompts } from "@/services/api/prompts";
+import { ALL_PROMPTS_OPTION, fetchPrompts, PROMPT_LIBRARY_UPDATED_EVENT } from "@/services/api/prompts";
 
 export const PROMPT_PAGE_SIZE = 20;
 
 export function usePromptList({ keyword, tags, category, enabled = true }: { keyword: string; tags: string[]; category: string; enabled?: boolean }) {
     const [debouncedKeyword, setDebouncedKeyword] = useState(keyword);
+    const queryClient = useQueryClient();
     useEffect(() => {
         const timer = window.setTimeout(() => setDebouncedKeyword(keyword), 300);
         return () => window.clearTimeout(timer);
     }, [keyword]);
+    useEffect(() => {
+        const refresh = () => void queryClient.invalidateQueries({ queryKey: ["prompts"] });
+        window.addEventListener(PROMPT_LIBRARY_UPDATED_EVENT, refresh);
+        return () => window.removeEventListener(PROMPT_LIBRARY_UPDATED_EVENT, refresh);
+    }, [queryClient]);
     const query = useInfiniteQuery({
         queryKey: ["prompts", debouncedKeyword, tags, category],
         queryFn: ({ pageParam }) => fetchPrompts({ keyword: debouncedKeyword, tag: tags, category, page: pageParam, pageSize: PROMPT_PAGE_SIZE }),

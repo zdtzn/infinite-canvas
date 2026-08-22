@@ -82,6 +82,8 @@ export async function renderColorBlob(source: ColorAlchemySource, settings: Colo
             context.fillRect(0, 0, canvas.width, canvas.height);
         }
         context.drawImage(loaded.image, 0, 0, canvas.width, canvas.height);
+        const workerBlob = await renderWithWorkerIfAvailable(context, canvas.width, canvas.height, settings, format, quality);
+        if (workerBlob) return workerBlob;
         await processCanvas(context, canvas.width, canvas.height, settings);
         const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, format === "png" ? undefined : Math.min(1, Math.max(0.4, quality))));
         if (!blob) throw new Error("导出失败：浏览器未能编码图片");
@@ -119,6 +121,32 @@ async function processCanvas(context: CanvasRenderingContext2D, width: number, h
             applyColorSettingsToImageData(imageData, imageData.width, imageData.height, settings, readX, readY, width, height, lut);
             context.putImageData(imageData, x, y, x - readX, y - readY, tileWidth, tileHeight);
         }
+    }
+}
+
+async function renderWithWorkerIfAvailable(context: CanvasRenderingContext2D, width: number, height: number, settings: ColorSettings, format: ColorExportFormat, quality: number) {
+    if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") return null;
+    const source = context.getImageData(0, 0, width, height).data;
+    const worker = new Worker(new URL("./color-render.worker.ts", import.meta.url), { type: "module" });
+    try {
+        const response = await new Promise<{ buffer: ArrayBuffer; mimeType: string }>((resolve, reject) => {
+            worker.onmessage = (event: MessageEvent<{ ok: boolean; buffer?: ArrayBuffer; mimeType?: string; error?: string }>) => {
+                const payload = event.data;
+                if (!payload.ok || !payload.buffer) {
+                    reject(new Error(payload.error || "后台导出失败"));
+                    return;
+                }
+                resolve({ buffer: payload.buffer, mimeType: payload.mimeType || exportMimeType(format) });
+            };
+            worker.onerror = () => reject(new Error("后台导出线程不可用"));
+            worker.postMessage({ id: 1, width, height, pixels: source.buffer, settings, format, quality }, [source.buffer]);
+        });
+        return new Blob([response.buffer], { type: response.mimeType });
+    } catch (error) {
+        console.warn("color_render_worker_fallback", error instanceof Error ? error.message : error);
+        return null;
+    } finally {
+        worker.terminate();
     }
 }
 

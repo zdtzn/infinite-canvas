@@ -169,34 +169,12 @@ export default function ChatPage() {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: sending ? "smooth" : "auto" });
     }, [messages, sending]);
 
-    useEffect(() => {
-        const abortOnLeave = () => {
-            const pending = pendingTurnRef.current;
-            if (!pending || pending.terminal) return;
-            pending.stopped = true;
-            abortRef.current?.abort();
-        };
-        window.addEventListener("pagehide", abortOnLeave);
-        return () => {
-            window.removeEventListener("pagehide", abortOnLeave);
-            abortOnLeave();
-        };
-    }, []);
-
     const canSend = Boolean((draft.trim() || attachments.length) && !sending && !uploading);
 
     function confirmPendingNavigation(action: string) {
         if (!pendingTurnRef.current || pendingTurnRef.current.terminal) return Promise.resolve(true);
-        return new Promise<boolean>((resolve) => {
-            modal.confirm({
-                title: "回答正在进行",
-                content: `${action}会停止当前回答，已经收到的内容会保留。是否继续？`,
-                okText: `停止并${action}`,
-                cancelText: "继续等待",
-                onOk: () => stopActiveTurn().then(() => resolve(true)).catch(() => resolve(false)),
-                onCancel: () => resolve(false),
-            });
-        });
+        message.info(`当前回答会在后台继续，已允许${action}`);
+        return Promise.resolve(true);
     }
 
     async function stopActiveTurn() {

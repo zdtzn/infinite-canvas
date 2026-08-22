@@ -25,6 +25,7 @@ const OUTPUT_KINDS = new Set([
 const ASSET_KEY_PATTERN = /^image:[A-Za-z0-9._:-]{1,180}$/;
 const SAFE_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const MAX_PROJECTS_PER_USER = 200;
+const MAX_BATCH_ITEMS = 32;
 
 export type ProductProjectStatus =
   | "draft"
@@ -84,6 +85,35 @@ export type ProductGeneration = {
   error: string;
   createdAt: number;
   updatedAt: number;
+};
+
+export type ProductBatchStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+export type ProductBatch = {
+  id: string;
+  projectId: string;
+  status: ProductBatchStatus;
+  total: number;
+  completed: number;
+  failed: number;
+  canceled: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ProductBatchItem = {
+  id: string;
+  batchId: string;
+  generationId: string;
+  jobId?: string;
+  status: ProductGenerationStatus;
+  error: string;
+  generation: ProductGeneration;
 };
 
 export type ProductTemplate = {
@@ -335,6 +365,153 @@ export function createProductLabService(
     return generation;
   }
 
+  function createBatch(userId: string, input: unknown) {
+    const source = inputRecord(input, "商品批任务内容无效");
+    const batchId = validId(source.batchId, "商品批任务 ID");
+    const project = requireProject(userId, validId(source.projectId, "商品项目 ID"));
+    const rawItems = Array.isArray(source.items) ? source.items : [];
+    if (!rawItems.length || rawItems.length > MAX_BATCH_ITEMS)
+      throw new ProductLabError(`一次最多提交 ${MAX_BATCH_ITEMS} 幅商品画卷`);
+    const existing = getBatch(userId, batchId);
+    if (existing) return existing;
+
+    const timestamp = now();
+    const batch: ProductBatch = {
+      id: batchId,
+      projectId: project.id,
+      status: "queued",
+      total: rawItems.length,
+      completed: 0,
+      failed: 0,
+      canceled: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const generations: ProductGeneration[] = [];
+    database.transaction(() => {
+      database
+        .query(
+          "INSERT INTO product_batch_jobs(user_id, batch_id, project_id, status, total, completed, failed, canceled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, ?)",
+        )
+        .run(userId, batch.id, project.id, batch.status, batch.total, timestamp, timestamp);
+      const insertGeneration = database.query(
+        "INSERT INTO product_generations(user_id, generation_id, project_id, output_kind, page_index, prompt, job_id, asset_key, status, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'pending', '', ?, ?)",
+      );
+      const insertItem = database.query(
+        "INSERT INTO product_batch_items(user_id, batch_id, item_id, generation_id, job_id, status, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', '', ?, ?)",
+      );
+      for (const rawItem of rawItems) {
+        const item = inputRecord(rawItem, "商品批任务项目无效");
+        const generationId = validId(item.generationId, "商品生成记录 ID");
+        const jobId = optionalId(item.jobId, "生成任务 ID");
+        const generation: ProductGeneration = {
+          id: generationId,
+          projectId: project.id,
+          outputKind: enumValue(item.outputKind, OUTPUT_KINDS, "商品输出类型无效"),
+          pageIndex: boundedInteger(item.pageIndex, 0, 99),
+          prompt: requiredText(item.prompt, 20_000, "商品生成提示词不能为空"),
+          jobId,
+          status: "pending",
+          error: "",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        generations.push(generation);
+        insertGeneration.run(
+          userId,
+          generation.id,
+          generation.projectId,
+          generation.outputKind,
+          generation.pageIndex,
+          generation.prompt,
+          generation.jobId || null,
+          timestamp,
+          timestamp,
+        );
+        insertItem.run(userId, batch.id, validId(item.itemId || randomUUID(), "商品批任务项目 ID"), generation.id, generation.jobId || null, timestamp, timestamp);
+      }
+    })();
+    return { batch, items: generations.map((generation) => batchItemFromGeneration(batch.id, generation)) };
+  }
+
+  function getBatch(userId: string, batchId: string) {
+    const id = validId(batchId, "商品批任务 ID");
+    const row = database
+      .query("SELECT * FROM product_batch_jobs WHERE user_id = ? AND batch_id = ?")
+      .get(userId, id) as ProductBatchRow | null;
+    if (!row) return null;
+    const items = database
+      .query(
+        "SELECT bi.item_id, bi.batch_id, bi.generation_id, bi.job_id AS item_job_id, bi.status AS item_status, bi.error AS item_error, pg.* FROM product_batch_items bi JOIN product_generations pg ON pg.user_id = bi.user_id AND pg.generation_id = bi.generation_id WHERE bi.user_id = ? AND bi.batch_id = ? ORDER BY pg.created_at ASC, pg.page_index ASC",
+      )
+      .all(userId, id) as ProductBatchItemRow[];
+    return {
+      batch: batchFromRow(row),
+      items: items.map((item) => ({
+        id: item.item_id,
+        batchId: item.batch_id,
+        generationId: item.generation_id,
+        jobId: item.item_job_id || undefined,
+        status: item.item_status,
+        error: item.item_error,
+        generation: generationFromRow(item),
+      })),
+    };
+  }
+
+  function listBatches(userId: string, projectId?: string) {
+    const rows = projectId
+      ? (database
+          .query("SELECT * FROM product_batch_jobs WHERE user_id = ? AND project_id = ? ORDER BY updated_at DESC LIMIT 20")
+          .all(userId, validId(projectId, "商品项目 ID")) as ProductBatchRow[])
+      : (database
+          .query("SELECT * FROM product_batch_jobs WHERE user_id = ? ORDER BY updated_at DESC LIMIT 20")
+          .all(userId) as ProductBatchRow[]);
+    return rows.map((row) => getBatch(userId, row.batch_id)!).filter(Boolean);
+  }
+
+  function updateBatchItem(userId: string, input: unknown) {
+    const source = inputRecord(input, "商品批任务更新无效");
+    const batchId = validId(source.batchId, "商品批任务 ID");
+    const generationId = validId(source.generationId, "商品生成记录 ID");
+    const status = enumValue(source.status, GENERATION_STATUSES, "商品生成状态无效");
+    const expectedJobId = optionalId(source.jobId, "生成任务 ID");
+    const assetKey = source.assetKey ? ownedImageAsset(database, userId, source.assetKey) : undefined;
+    if (status === "succeeded" && !assetKey) throw new ProductLabError("成功的商品生成记录必须包含结果素材", 400, "ASSET_REQUIRED");
+    const batch = getBatch(userId, batchId);
+    const item = batch?.items.find((candidate) => candidate.generationId === generationId);
+    if (!batch || !item) throw new ProductLabError("商品批任务不存在", 404, "BATCH_NOT_FOUND");
+    if (expectedJobId && item.jobId !== expectedJobId) throw new ProductLabError("商品生成任务关联不一致", 409, "BATCH_JOB_MISMATCH");
+    if (item.status === status) return batch;
+    if (["succeeded", "failed", "canceled"].includes(item.status)) throw new ProductLabError("商品批任务项目已经结束", 409, "BATCH_ITEM_TERMINAL");
+    if (item.status === "running" && status === "pending") throw new ProductLabError("商品批任务状态不能回退", 409, "BATCH_ITEM_STATE_REGRESSION");
+    const timestamp = now();
+    const error = optionalText(source.error, 1_000);
+    const nextAssetKey = assetKey || item.generation.assetKey || undefined;
+    database.transaction(() => {
+      database
+        .query("UPDATE product_batch_items SET status = ?, error = ?, updated_at = ? WHERE user_id = ? AND batch_id = ? AND generation_id = ?")
+        .run(status, error, timestamp, userId, batchId, generationId);
+      database
+        .query("UPDATE product_generations SET status = ?, asset_key = ?, error = ?, updated_at = ? WHERE user_id = ? AND generation_id = ?")
+        .run(status, nextAssetKey || null, error, timestamp, userId, generationId);
+      const counts = database
+        .query("SELECT COUNT(*) AS total, SUM(status = 'succeeded') AS completed, SUM(status = 'failed') AS failed, SUM(status = 'canceled') AS canceled, SUM(status IN ('pending', 'running')) AS active FROM product_batch_items WHERE user_id = ? AND batch_id = ?")
+        .get(userId, batchId) as { total: number; completed: number; failed: number; canceled: number; active: number };
+      const nextStatus: ProductBatchStatus = Number(counts.active) > 0
+        ? "running"
+        : Number(counts.completed) > 0
+          ? "completed"
+          : Number(counts.canceled) === Number(counts.total)
+            ? "canceled"
+            : "failed";
+      database
+        .query("UPDATE product_batch_jobs SET status = ?, total = ?, completed = ?, failed = ?, canceled = ?, updated_at = ? WHERE user_id = ? AND batch_id = ?")
+        .run(nextStatus, counts.total, counts.completed || 0, counts.failed || 0, counts.canceled || 0, timestamp, userId, batchId);
+    })();
+    return getBatch(userId, batchId)!;
+  }
+
   function listTemplates(platform = "pinduoduo") {
     return (
       database
@@ -385,6 +562,10 @@ export function createProductLabService(
     deleteProject,
     listGenerations,
     saveGeneration,
+    createBatch,
+    getBatch,
+    listBatches,
+    updateBatchItem,
     listTemplates,
     hasCapability,
     assetReferenceRoots,
@@ -417,6 +598,27 @@ type ProductGenerationRow = {
   error: string;
   created_at: number;
   updated_at: number;
+};
+
+type ProductBatchRow = {
+  batch_id: string;
+  project_id: string;
+  status: ProductBatchStatus;
+  total: number;
+  completed: number;
+  failed: number;
+  canceled: number;
+  created_at: number;
+  updated_at: number;
+};
+
+type ProductBatchItemRow = ProductGenerationRow & {
+  item_id: string;
+  batch_id: string;
+  generation_id: string;
+  item_job_id: string | null;
+  item_status: ProductGenerationStatus;
+  item_error: string;
 };
 
 type ProductTemplateRow = {
@@ -458,6 +660,32 @@ function generationFromRow(row: ProductGenerationRow): ProductGeneration {
     error: row.error,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+  };
+}
+
+function batchFromRow(row: ProductBatchRow): ProductBatch {
+  return {
+    id: row.batch_id,
+    projectId: row.project_id,
+    status: row.status,
+    total: Number(row.total),
+    completed: Number(row.completed),
+    failed: Number(row.failed),
+    canceled: Number(row.canceled),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+function batchItemFromGeneration(batchId: string, generation: ProductGeneration): ProductBatchItem {
+  return {
+    id: randomUUID(),
+    batchId,
+    generationId: generation.id,
+    jobId: generation.jobId,
+    status: generation.status,
+    error: generation.error,
+    generation,
   };
 }
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Group, Video } from "lucide-react";
+import { Group, ImagePlus, Sparkles, Type, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
@@ -96,7 +96,7 @@ import {
 } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio } from "@/types/media";
-import { waitForServerJob } from "@/services/server-api";
+import { cancelServerJob, waitForServerJob } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useCanvasProjectLock } from "@/pages/canvas/hooks/use-canvas-project-lock";
 
@@ -830,13 +830,25 @@ function InfiniteCanvasPage() {
             nodesRef.current.forEach((node) => {
                 if (ids.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => allIds.add(childId));
             });
+            const canceledJobIds = new Set<string>();
+            generationRequestsRef.current.forEach((request) => {
+                if (!allIds.has(request.targetNodeId) && !allIds.has(request.originNodeId) && !allIds.has(request.runningNodeId)) return;
+                request.controller.abort();
+                generationRequestsRef.current.delete(request.targetNodeId);
+            });
             allIds.forEach((id) => {
+                const node = nodesRef.current.find((item) => item.id === id);
+                const jobId = String(node?.metadata?.jobId || "").trim();
+                if (jobId) canceledJobIds.add(jobId);
                 const pending = pendingImageUploadsRef.current.get(id);
                 if (!pending) return;
                 pending.canceled = true;
                 pendingImageUploadsRef.current.delete(id);
                 URL.revokeObjectURL(pending.previewUrl);
             });
+            if (canceledJobIds.size) {
+                void Promise.all([...canceledJobIds].map((jobId) => cancelServerJob(jobId).catch(() => undefined)));
+            }
             setNodes((prev) => {
                 const next = prev.filter((node) => !allIds.has(node.id));
                 return next.map((node) => {
@@ -3287,6 +3299,52 @@ function InfiniteCanvasPage() {
                             })}
                         {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
                     </svg>
+
+                    {nodes.length === 0 ? (
+                        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center px-4">
+                            <section className="pointer-events-auto w-full max-w-xl border border-stone-300/80 bg-white/85 p-5 shadow-xl backdrop-blur-md dark:border-white/10 dark:bg-stone-950/75">
+                                <div className="text-center">
+                                    <div className="text-base font-semibold">从一个动作开始</div>
+                                    <p className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">上传素材、开始生图，或先写下你的创作想法。</p>
+                                </div>
+                                <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                    <button
+                                        type="button"
+                                        className="flex min-h-24 flex-col items-center justify-center gap-2 border border-stone-200 bg-white px-3 py-3 text-sm transition hover:border-stone-400 hover:bg-stone-50 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/25 dark:hover:bg-white/[0.08]"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleUploadRequest();
+                                        }}
+                                    >
+                                        <ImagePlus className="size-5" />
+                                        <span>上传素材</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-24 flex-col items-center justify-center gap-2 border border-stone-200 bg-white px-3 py-3 text-sm transition hover:border-stone-400 hover:bg-stone-50 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/25 dark:hover:bg-white/[0.08]"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            createNode(CanvasNodeType.Config);
+                                        }}
+                                    >
+                                        <Sparkles className="size-5" />
+                                        <span>开始生图</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-24 flex-col items-center justify-center gap-2 border border-stone-200 bg-white px-3 py-3 text-sm transition hover:border-stone-400 hover:bg-stone-50 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/25 dark:hover:bg-white/[0.08]"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            createNode(CanvasNodeType.Text);
+                                        }}
+                                    >
+                                        <Type className="size-5" />
+                                        <span>添加文字</span>
+                                    </button>
+                                </div>
+                            </section>
+                        </div>
+                    ) : null}
 
                     {visibleNodes.map((node) => (
                         <CanvasNode

@@ -5,7 +5,6 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { ModelPicker } from "@/components/model-picker";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
-import { generationFailureFeedback, generationFailureText } from "@/features/cultivation/generation-messages";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
 import { cultivationGenerationBlockReason, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 import {
@@ -35,16 +34,17 @@ import {
 import { ProductOutputGrid, ProductRealmHeader, ProductWorkflowSteps, type ProductWorkflowStep } from "@/features/product-lab/product-lab-view";
 import { readImageMeta } from "@/lib/image-utils";
 import { cn } from "@/lib/utils";
-import { requestEdit } from "@/services/api/image";
 import { getImageBlob, uploadImage } from "@/services/image-storage";
 import {
     analyzeProduct,
+    createProductBatch,
     createProductProject,
     deleteProductProject,
+    fetchProductBatch,
+    fetchProductBatches,
     fetchProductGenerations,
     fetchProductLabContext,
     fetchProductProjects,
-    saveProductGeneration,
     updateProductProject,
     type ProductGeneration,
     type ProductProject,
@@ -53,9 +53,8 @@ import {
 import { PRODUCT_LAB_ASSET_SOURCE } from "@/stores/asset-source";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { modelOptionName, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
-import type { ReferenceImage } from "@/types/image";
 
 type ProductAnalysisDraft = ProductAnalysis & { sourceNotes?: string };
 type GenerationProgress = { completed: number; total: number; title: string; failed: number; itemId?: string };
@@ -94,6 +93,7 @@ export default function ProductLabPage() {
     const [savingPlan, setSavingPlan] = useState(false);
     const [savingArchiveIds, setSavingArchiveIds] = useState<string[]>([]);
     const [generating, setGenerating] = useState(false);
+    const [activeBatchId, setActiveBatchId] = useState("");
     const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
     const [imperialEntryVisible, setImperialEntryVisible] = useState(false);
     const [draftAnalysis, setDraftAnalysis] = useState<ProductAnalysisDraft>(emptyProductAnalysis());
@@ -205,13 +205,55 @@ export default function ProductLabPage() {
         }
         let canceled = false;
         setGenerations([]);
-        void fetchProductGenerations(activeProject.id, userId)
-            .then((response) => !canceled && setGenerations(response.items))
+        setActiveBatchId("");
+        void Promise.all([fetchProductGenerations(activeProject.id, userId), fetchProductBatches(activeProject.id, userId)])
+            .then(([generationResponse, batchResponse]) => {
+                if (canceled) return;
+                setGenerations(generationResponse.items);
+                const latestActive = batchResponse.items.find((item) => ["queued", "running"].includes(item.batch.status));
+                if (latestActive) {
+                    setActiveBatchId(latestActive.batch.id);
+                    setGenerations(latestActive.items.map((item) => item.generation));
+                }
+            })
             .catch((error) => !canceled && message.error(error instanceof Error ? error.message : "商品生成记录加载失败"));
         return () => {
             canceled = true;
         };
     }, [activeProject?.id, message, userId]);
+
+    useEffect(() => {
+        if (!activeBatchId || !userId) return;
+        let canceled = false;
+        let timer: number | undefined;
+        const refreshBatch = async () => {
+            try {
+                const response = await fetchProductBatch(activeBatchId, userId);
+                if (canceled) return;
+                setGenerations(response.items.map((item) => item.generation));
+                const finished = response.batch.completed + response.batch.failed + response.batch.canceled;
+                const current = response.items.find((item) => item.status === "running") || response.items.find((item) => item.status === "pending");
+                setGenerationProgress({ completed: finished, total: response.batch.total, title: current?.generation.outputKind === "detail_page" ? `详情页 ${current.generation.pageIndex + 1}` : current?.generation.outputKind || "商品画卷", failed: response.batch.failed, itemId: current?.generation.id });
+                if (["queued", "running"].includes(response.batch.status)) {
+                    setGenerating(true);
+                    timer = window.setTimeout(() => void refreshBatch(), 1_000);
+                } else {
+                    setGenerating(false);
+                    setActiveBatchId("");
+                    if (response.batch.completed) message.success("商品画卷炼制完成，可手动选择入藏");
+                    if (response.batch.failed) message.warning(`${response.batch.failed} 幅画卷未能凝聚，失败额度已按现有规则处理`);
+                    void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
+                }
+            } catch (error) {
+                if (!canceled) timer = window.setTimeout(() => void refreshBatch(), 2_000);
+            }
+        };
+        void refreshBatch();
+        return () => {
+            canceled = true;
+            if (timer) window.clearTimeout(timer);
+        };
+    }, [activeBatchId, message, queryClient, userId]);
 
     useEffect(() => {
         setSelectedPlanIds([]);
@@ -523,99 +565,48 @@ export default function ProductLabPage() {
             message.warning(localGenerationBlockReason);
             return;
         }
-
-        const reference: ReferenceImage = {
-            id: activeProject.sourceAssetKey,
-            name: activeProject.title,
-            type: "image/*",
-            dataUrl: activeProject.sourceUrl,
-            storageKey: activeProject.sourceAssetKey,
-        };
+        const batchId = crypto.randomUUID();
         setGenerating(true);
         setGenerationProgress({ completed: 0, total: items.length, title: "正在解析商品灵韵...", failed: 0, itemId: items[0]?.id });
-        const completedGenerations: ProductGeneration[] = [];
-        let failed = 0;
         try {
-            for (const [index, item] of items.entries()) {
-                setGenerationProgress({ completed: index, total: items.length, title: item.title, failed, itemId: item.id });
-                let serverJobId = "";
-                try {
-                    const configured = resolveImageModelSettings(
-                        {
-                            ...effectiveConfig,
-                            model,
-                            imageModel: model,
-                            size: item.aspectRatio,
-                            count: "1",
-                        },
-                        model,
-                        1,
-                    ).config;
-                    const images = await requestEdit({ ...configured, model: configured.imageModel, count: "1" }, item.prompt, [reference], undefined, {
-                        expectedUserId: userId,
-                        source: { route: "/product-lab", projectId: activeProject.id, label: `商品幻境 · ${item.title}` },
-                        onJobCreated: (jobId) => {
-                            serverJobId = jobId;
-                        },
-                    });
-                    const image = images[0];
-                    if (!image) throw new Error("接口没有返回商品图片");
-                    const stored = await uploadImage(image.dataUrl, { outputFormat: configured.imageOutputFormat, expectedUserId: userId });
-                    const saved = await saveProductGeneration(
-                        {
-                            projectId: activeProject.id,
-                            outputKind: item.kind,
-                            pageIndex: item.pageIndex,
-                            prompt: item.prompt,
-                            jobId: serverJobId || undefined,
-                            assetKey: stored.storageKey,
-                            status: "succeeded",
-                        },
-                        userId,
-                    );
-                    completedGenerations.push(saved.generation);
-                    setGenerations((current) => [...current.filter((generation) => generation.id !== saved.generation.id), saved.generation]);
-                } catch (error) {
-                    failed += 1;
-                    const failure = generationFailureFeedback(error, { isDouEmperor: realmExperience.imperial });
-                    const savedFailure = await saveProductGeneration(
-                        {
-                            projectId: activeProject.id,
-                            outputKind: item.kind,
-                            pageIndex: item.pageIndex,
-                            prompt: item.prompt,
-                            jobId: serverJobId || undefined,
-                            status: "failed",
-                            error: generationFailureText(failure),
-                        },
-                        userId,
-                    ).catch(() => null);
-                    if (savedFailure) setGenerations((current) => [...current.filter((generation) => generation.id !== savedFailure.generation.id), savedFailure.generation]);
-                }
-                setGenerationProgress({ completed: index + 1, total: items.length, title: item.title, failed });
-            }
-
-            const nextStatus = completedGenerations.length || generations.some((generation) => generation.status === "succeeded" && generation.assetUrl) ? "completed" : "planned";
-            const updated = await updateProductProject(
-                activeProject.id,
+            const response = await createProductBatch(
                 {
-                    status: nextStatus,
-                    styleKey: selectedStyles[0] || "clean",
-                    brandName: canUseBrand ? brandName : "",
-                    analysis: normalizeDraftAnalysis(draftAnalysis, activeProject.title),
-                    plan: visualPlan,
+                    batchId,
+                    projectId: activeProject.id,
+                    channelId: resolvedImageSettings.channel.id,
+                    model: modelOptionName(model),
+                    items: items.map((item) => {
+                        const configured = resolveImageModelSettings(
+                            { ...effectiveConfig, model, imageModel: model, size: item.aspectRatio, count: "1" },
+                            model,
+                            1,
+                        ).config;
+                        return {
+                            itemId: item.id,
+                            outputKind: item.kind,
+                            pageIndex: item.pageIndex,
+                            title: item.title,
+                            prompt: item.prompt,
+                            aspectRatio: item.aspectRatio,
+                            size: configured.size,
+                            quality: configured.quality,
+                            imageQuality: configured.imageQuality,
+                            imageOutputFormat: configured.imageOutputFormat,
+                            background: configured.background,
+                        };
+                    }),
                 },
                 userId,
-            ).then((result) => result.project);
-            replaceProject(updated);
-            if (completedGenerations.length) {
-                message.success(realmExperience.imperial ? "一念落笔，万象成卷。可择卷入藏。" : "商品画卷炼制完成，可手动选择入藏。");
-                setWorkflowStep("generate");
-            }
-            if (failed) message.warning(`${failed} 幅画卷未能凝聚，失败额度已按现有规则处理`);
-        } finally {
+            );
+            setActiveBatchId(response.batch.id);
+            setGenerations(response.items.map((item) => item.generation));
+            setWorkflowStep("generate");
+            message.info("套图已提交到后台，离开页面也会继续生成");
+        } catch (error) {
             setGenerating(false);
-            void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
+            setActiveBatchId("");
+            setGenerationProgress(null);
+            message.error(error instanceof Error ? error.message : "商品套图提交失败");
         }
     };
 

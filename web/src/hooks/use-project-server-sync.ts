@@ -82,13 +82,46 @@ export function useProjectServerSync(userId?: string) {
                 if (ownsCurrentStore()) useCanvasStore.getState().setProjectServerRevision(projectId, saved.revision);
             } catch (error) {
                 if (isProjectConflict(error)) {
-                    if (active) message.warning("画布已在其他位置更新或删除，当前本地修改未覆盖云端版本");
+                    await preserveConflictCopy(project, projectId);
                     return;
                 }
                 showSaveError(error);
                 if (ownsCurrentStore() && useCanvasStore.getState().projects.some((item) => item.id === projectId)) scheduleSave(projectId, 5_000);
             }
         };
+
+        async function preserveConflictCopy(localProject: CanvasProject, originalProjectId: string) {
+            if (!ownsCurrentStore()) return;
+            const timestamp = new Date().toLocaleString("zh-CN", { hour12: false }).replace(/[/:]/g, "-");
+            const copyId = useCanvasStore.getState().importProject({
+                ...localProject,
+                title: `${localProject.title} · 冲突副本 · ${timestamp}`,
+                serverRevision: undefined,
+            });
+            const copy = useCanvasStore.getState().projects.find((item) => item.id === copyId);
+            if (!copy) return;
+
+            try {
+                const saved = await saveServerProject(copy as unknown as Record<string, unknown>, 0, userId);
+                if (ownsCurrentStore()) useCanvasStore.getState().setProjectServerRevision(copyId, saved.revision);
+            } catch (copyError) {
+                if (active) message.error(`冲突副本保存失败：${copyError instanceof Error ? copyError.message : "请稍后重试"}`);
+                return;
+            }
+
+            try {
+                const latest = await fetchServerProjects(userId);
+                const remote = latest.items.find((item) => String(item.project.id || "") === originalProjectId);
+                const remoteProject = remote ? normalizeCanvasProject({ ...remote.project, serverRevision: remote.revision }) : null;
+                const currentProjects = useCanvasStore.getState().projects.filter((item) => item.id !== originalProjectId);
+                useCanvasStore.getState().replaceProjects(remoteProject ? [remoteProject, ...currentProjects] : currentProjects);
+                if (remote) revisions.set(originalProjectId, remote.revision);
+                else revisions.delete(originalProjectId);
+                if (active) message.warning(`检测到云端版本冲突，已保存为“${copy.title}”，原画布已对齐云端版本`);
+            } catch {
+                if (active) message.warning(`检测到云端版本冲突，已先保存“${copy.title}”；原画布将在下次同步时对齐`);
+            }
+        }
 
         const scheduleDeleteRetry = (projectId: string) => {
             if (!active) return;

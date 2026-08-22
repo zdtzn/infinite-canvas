@@ -171,6 +171,17 @@ export async function logoutAccess() {
     await serverRequest("/api/auth/logout", { method: "POST" });
 }
 
+export async function revokeAllServerSessions() {
+    return serverRequest<{ ok: true }>("/api/auth/sessions/revoke", { method: "POST" });
+}
+
+export async function changePersonalPassword(currentPassword: string, newPassword: string) {
+    return serverRequest<{ authenticated: true; user: AuthUser }>("/api/auth/password", {
+        method: "POST",
+        body: { currentPassword, newPassword },
+    });
+}
+
 export type ServerUserPreferences = {
     systemPrompt: string;
     systemPromptConfigured?: boolean;

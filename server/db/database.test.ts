@@ -148,6 +148,8 @@ describe("SQLite application database", () => {
         .get() as { version: number };
 
       expect(tables).toEqual([
+        "product_batch_items",
+        "product_batch_jobs",
         "product_generations",
         "product_projects",
         "product_templates",
