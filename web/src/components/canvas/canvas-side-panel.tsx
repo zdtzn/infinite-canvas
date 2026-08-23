@@ -11,7 +11,7 @@ import { DeferredImage } from "@/components/ui/deferred-image";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
-import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
+import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, persistCanvasSidePanelWidth, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
@@ -67,7 +67,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
             setWidth(nextWidth);
         };
         const onUp = () => {
-            localStorage.setItem("canvas-side-panel-width", String(nextWidth));
+            persistCanvasSidePanelWidth(nextWidth);
             window.removeEventListener("pointermove", onMove);
             window.removeEventListener("pointerup", onUp);
             setResizing(false);
