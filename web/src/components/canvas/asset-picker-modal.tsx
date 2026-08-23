@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Empty, Input, Modal, Pagination, Tag } from "antd";
+import { Button, Empty, Input, Modal, Pagination, Tag } from "antd";
 import { Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -56,6 +56,9 @@ function PickerCard({ title, kind, cover, onClick }: { title: string; kind: stri
 
 function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => void }) {
     const assets = useAssetStore((state) => state.assets);
+    const serverAssetHasMore = useAssetStore((state) => state.serverAssetHasMore);
+    const serverAssetLoading = useAssetStore((state) => state.serverAssetLoading);
+    const loadMoreServerAssets = useAssetStore((state) => state.loadMoreServerAssets);
     const [keyword, setKeyword] = useState("");
     const [kindFilter, setKindFilter] = useState("all");
     const [page, setPage] = useState(1);
@@ -130,6 +133,13 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
                     <Pagination size="small" current={page} pageSize={PAGE_SIZE} total={filtered.length} onChange={setPage} showSizeChanger={false} />
                 </div>
             )}
+            {serverAssetHasMore ? (
+                <div className="flex justify-center">
+                    <Button size="small" loading={serverAssetLoading} onClick={() => void loadMoreServerAssets()}>
+                        加载更多藏卷阁
+                    </Button>
+                </div>
+            ) : null}
         </div>
     );
 }

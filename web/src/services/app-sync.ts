@@ -85,6 +85,7 @@ const storageKeyPattern = /^(image|video|audio|file|video-reference|audio-refere
 export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?: AppSyncProgress): Promise<AppSyncResult> {
     emitProgress(onProgress, { stage: "等待本地数据加载" });
     await Promise.all([waitForHydration(useCanvasStore), waitForHydration(useAssetStore)]);
+    await useAssetStore.getState().loadAllServerAssets();
     const userId = useUserStore.getState().user?.id || "local";
 
     const [canvas, assets, imageLogs, videoLogs] = await Promise.all([

@@ -40,6 +40,7 @@ type SourceCache = PromptSourceStatus & { items: Prompt[]; fetchedAt: number; si
 export type PromptSourceCacheState = "missing" | "invalid" | "fresh" | "stale";
 
 const loadingSources = new Map<string, Promise<Prompt[]>>();
+let promptIndexWarmupTask: Promise<void> | null = null;
 
 const sourceCacheRevisions: Record<string, string> = {
     "youmind-gpt-image-2": "html-content-images-v1",
@@ -156,7 +157,7 @@ async function getAllPrompts(): Promise<Prompt[]> {
 
 export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
     const serverResult = await fetchPromptIndex({ keyword, tag, category, page, pageSize });
-    if (serverResult?.indexed) return { ...serverResult, items: serverResult.items.map(withPromptTaxonomy) };
+    if (serverResult) return { ...serverResult, items: serverResult.items.map(withPromptTaxonomy) };
     const items = await fetchAllPrompts();
     const normalizedKeyword = keyword.trim().toLowerCase();
     const normalizedPage = Math.max(1, page);
@@ -172,8 +173,8 @@ export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROM
     };
 }
 
-async function fetchPromptIndex({ keyword, tag, category, page, pageSize }: { keyword: string; tag: string[]; category: string; page: number; pageSize: number }) {
-    const params = new URLSearchParams({ keyword, category, page: String(page), pageSize: String(pageSize) });
+async function fetchPromptIndex({ sourceId = "", keyword, tag, category, page, pageSize }: { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number }) {
+    const params = new URLSearchParams({ sourceId, keyword, category, page: String(page), pageSize: String(pageSize) });
     for (const value of tag) params.append("tag", value);
     try {
         return await serverRequest<PromptListResponse>(`/api/prompt-index?${params.toString()}`, { timeoutMs: 5_000, expectedUserId: useUserStore.getState().user?.id });
@@ -191,7 +192,41 @@ export async function fetchAllPrompts(): Promise<Prompt[]> {
 export async function fetchSourcePrompts(sourceId: string, force = false): Promise<Prompt[]> {
     const source = usePromptSourceStore.getState().sources.find((item) => item.id === sourceId);
     if (!source) throw new Error("提示词来源不存在");
+    if (PUBLIC_MODE) {
+        const items: Prompt[] = [];
+        for (let page = 1; page <= 20; page += 1) {
+            const result = await fetchPromptIndex({ sourceId: source.id, keyword: "", tag: [], category: ALL_PROMPTS_OPTION, page, pageSize: 100 });
+            if (!result) throw new Error("提示词索引暂不可用，请稍后重试");
+            if (!result.indexed) return [];
+            items.push(...result.items.map(withPromptTaxonomy));
+            if (!result.items.length || items.length >= result.total) break;
+        }
+        return items;
+    }
     return (await getSourcePrompts(source, force)).map(withPromptTaxonomy);
+}
+
+export async function fetchPromptIndexStatuses(): Promise<PromptSourceStatus[]> {
+    const response = await serverRequest<{ items: PromptSourceStatus[] }>("/api/admin/prompt-index/status", { timeoutMs: 12_000, expectedUserId: useUserStore.getState().user?.id });
+    return response.items;
+}
+
+export async function ensurePromptIndexReady() {
+    if (!PUBLIC_MODE || !useUserStore.getState().user?.admin || promptIndexWarmupTask) return promptIndexWarmupTask || undefined;
+    const sources = enabledSources();
+    if (!sources.length || hasPromptIndexWarmupMarker()) return undefined;
+    promptIndexWarmupTask = (async () => {
+        const statuses = await fetchPromptIndexStatuses();
+        const statusById = new Map(statuses.map((status) => [status.sourceId, status]));
+        if (sources.every((source) => Boolean(statusById.get(source.id)?.lastSuccessAt))) return;
+        setPromptIndexWarmupMarker();
+        await refreshAllSources();
+    })()
+        .catch(() => undefined)
+        .finally(() => {
+            promptIndexWarmupTask = null;
+        });
+    return promptIndexWarmupTask;
 }
 
 /** Force refetch one source and refresh its cache; returns the fetched count. */
@@ -269,6 +304,22 @@ function withPromptTaxonomy(item: Prompt): Prompt {
 
 function isActiveOption(value: string) {
     return value && value !== "全部" && value !== "all";
+}
+
+function hasPromptIndexWarmupMarker() {
+    try {
+        return window.sessionStorage.getItem("infinite-canvas:prompt-index-warmup:v1") === "1";
+    } catch {
+        return false;
+    }
+}
+
+function setPromptIndexWarmupMarker() {
+    try {
+        window.sessionStorage.setItem("infinite-canvas:prompt-index-warmup:v1", "1");
+    } catch {
+        // Storage is optional; a failed marker only allows another harmless check.
+    }
 }
 
 export function formatPromptDate(value: string) {

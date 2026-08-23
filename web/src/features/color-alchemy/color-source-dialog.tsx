@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Empty, Input, Modal, Tabs } from "antd";
+import { Button, Empty, Input, Modal, Tabs } from "antd";
 import { Image as ImageIcon, Search } from "lucide-react";
 
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -16,6 +16,9 @@ type DialogColorSource = ColorAlchemySource & {
 
 export function ColorSourceDialog({ open, initialTab, onSelect, onClose }: { open: boolean; initialTab: "assets" | "canvas"; onSelect: (source: ColorAlchemySource) => void; onClose: () => void }) {
     const assets = useAssetStore((state) => state.assets);
+    const serverAssetHasMore = useAssetStore((state) => state.serverAssetHasMore);
+    const serverAssetLoading = useAssetStore((state) => state.serverAssetLoading);
+    const loadMoreServerAssets = useAssetStore((state) => state.loadMoreServerAssets);
     const projects = useCanvasStore((state) => state.projects);
     const [keyword, setKeyword] = useState("");
 
@@ -64,39 +67,50 @@ export function ColorSourceDialog({ open, initialTab, onSelect, onClose }: { ope
         return query ? sources.filter((source) => `${source.title} ${source.group}`.toLowerCase().includes(query)) : sources;
     };
 
-    const renderSources = (sources: DialogColorSource[]) => {
+    const renderSources = (sources: DialogColorSource[], canLoadMore = false) => {
         const visible = filtered(sources);
-        return visible.length ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                {visible.map((source) => (
-                    <button
-                        key={`${source.group}:${source.key}`}
-                        type="button"
-                        className="group overflow-hidden rounded-md border border-stone-200 bg-white text-left transition hover:border-[#c9a86a] hover:shadow-md dark:border-stone-700 dark:bg-stone-900"
-                        onClick={() => {
-                            onSelect(source);
-                            onClose();
-                        }}
-                    >
-                        <div className="relative aspect-[4/3] overflow-hidden bg-stone-100 dark:bg-stone-800">
-                            <ColorSourceImage
-                                source={{ storageKey: source.previewStorageKey, url: source.preview }}
-                                alt={source.title}
-                                loading="lazy"
-                                decoding="async"
-                                className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
-                            />
-                            <div className="absolute inset-0 grid place-items-center bg-black/0 text-xs font-medium text-white opacity-0 transition group-hover:bg-black/45 group-hover:opacity-100">送入灵彩</div>
-                        </div>
-                        <div className="p-2.5">
-                            <div className="truncate text-sm font-medium">{source.title}</div>
-                            <div className="mt-1 truncate text-xs text-stone-400">{source.group}</div>
-                        </div>
-                    </button>
-                ))}
+        return (
+            <div className="space-y-4">
+                {visible.length ? (
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                        {visible.map((source) => (
+                            <button
+                                key={`${source.group}:${source.key}`}
+                                type="button"
+                                className="group overflow-hidden rounded-md border border-stone-200 bg-white text-left transition hover:border-[#c9a86a] hover:shadow-md dark:border-stone-700 dark:bg-stone-900"
+                                onClick={() => {
+                                    onSelect(source);
+                                    onClose();
+                                }}
+                            >
+                                <div className="relative aspect-[4/3] overflow-hidden bg-stone-100 dark:bg-stone-800">
+                                    <ColorSourceImage
+                                        source={{ storageKey: source.previewStorageKey, url: source.preview }}
+                                        alt={source.title}
+                                        loading="lazy"
+                                        decoding="async"
+                                        className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+                                    />
+                                    <div className="absolute inset-0 grid place-items-center bg-black/0 text-xs font-medium text-white opacity-0 transition group-hover:bg-black/45 group-hover:opacity-100">送入灵彩</div>
+                                </div>
+                                <div className="p-2.5">
+                                    <div className="truncate text-sm font-medium">{source.title}</div>
+                                    <div className="mt-1 truncate text-xs text-stone-400">{source.group}</div>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                ) : (
+                    <Empty image={<ImageIcon className="mx-auto size-10 text-stone-300" />} description="这里还没有可用图片" className="py-14" />
+                )}
+                {canLoadMore && serverAssetHasMore ? (
+                    <div className="flex justify-center">
+                        <Button size="small" loading={serverAssetLoading} onClick={() => void loadMoreServerAssets()}>
+                            加载更多作品
+                        </Button>
+                    </div>
+                ) : null}
             </div>
-        ) : (
-            <Empty image={<ImageIcon className="mx-auto size-10 text-stone-300" />} description="这里还没有可用图片" className="py-14" />
         );
     };
 
@@ -107,7 +121,7 @@ export function ColorSourceDialog({ open, initialTab, onSelect, onClose }: { ope
                 key={initialTab}
                 defaultActiveKey={initialTab}
                 items={[
-                    { key: "assets", label: `作品库 ${assetSources.length}`, children: renderSources(assetSources) },
+                    { key: "assets", label: `作品库 ${assetSources.length}`, children: renderSources(assetSources, true) },
                     { key: "canvas", label: `画布图片 ${canvasSources.length}`, children: renderSources(canvasSources) },
                 ]}
             />

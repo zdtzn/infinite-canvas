@@ -300,6 +300,9 @@ function buildInsertPayload(asset: Asset): InsertAssetPayload {
 const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
     const assets = useAssetStore((state) => state.assets);
+    const serverAssetHasMore = useAssetStore((state) => state.serverAssetHasMore);
+    const serverAssetLoading = useAssetStore((state) => state.serverAssetLoading);
+    const loadMoreServerAssets = useAssetStore((state) => state.loadMoreServerAssets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
@@ -421,6 +424,17 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                 ) : (
                     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="藏卷阁暂无内容" className="pt-16" />
                 )}
+                {serverAssetHasMore ? (
+                    <button
+                        type="button"
+                        className="mx-auto mt-3 block rounded-md px-3 py-1.5 text-xs font-medium opacity-65 transition hover:bg-black/5 hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
+                        style={{ color: theme.node.text }}
+                        disabled={serverAssetLoading}
+                        onClick={() => void loadMoreServerAssets()}
+                    >
+                        {serverAssetLoading ? "正在加载…" : "加载更多藏卷阁"}
+                    </button>
+                ) : null}
             </div>
         </div>
     );

@@ -82,7 +82,7 @@ import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstrea
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
-import { normalizePromptIndexItems, promptIndexStatuses, queryPromptIndex, replacePromptIndex } from "./lib/prompt-index";
+import { normalizePromptIndexItems, normalizePromptSourceIndexItems, promptIndexStatuses, queryPromptIndex, recordPromptIndexError, replacePromptIndex } from "./lib/prompt-index";
 import { runPromptSourceScript, type ServerPromptSourceItem } from "./lib/prompt-source-runtime";
 import { defaultUserChatPresetId, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserSystemPrompt, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserSystemPrompt, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
@@ -380,6 +380,10 @@ console.info(
         commit: APP_COMMIT,
     }),
 );
+
+setTimeout(() => {
+    void warmManagedPromptIndexes();
+}, 1_000);
 
 async function route(request: Request, requestId: string) {
     const url = new URL(request.url);
@@ -1318,6 +1322,7 @@ function listPromptIndex(url: URL) {
     if (!database) return json({ items: [], tags: [], categories: [], total: 0, page: 1, pageSize: 20, indexed: false });
     return json(queryPromptIndex(database, {
         keyword: url.searchParams.get("keyword") || "",
+        sourceId: url.searchParams.get("sourceId") || "",
         category: url.searchParams.get("category") || "",
         tags: url.searchParams.getAll("tag"),
         page: Number(url.searchParams.get("page") || 1),
@@ -1348,6 +1353,33 @@ function listPromptIndexStatus(session: SessionPayload) {
     return json({ items: database ? promptIndexStatuses(database) : [] }, 200, { "Cache-Control": "no-store" });
 }
 
+let promptIndexWarmup: Promise<void> | null = null;
+
+function warmManagedPromptIndexes() {
+    if (!appDatabase.raw || promptIndexWarmup) return promptIndexWarmup || Promise.resolve();
+    const sources = loadManagedPromptSources(appDatabase).filter((source) => source.enabled);
+    if (!sources.length) return Promise.resolve();
+    promptIndexWarmup = Promise.all(
+        sources.map(async (source) => {
+            try {
+                const rawItems = await runPromptSourceScript(source.script);
+                const items = normalizePromptSourceIndexItems(source, rawItems);
+                replacePromptIndex(appDatabase.raw!, source.id, items);
+                console.info(JSON.stringify({ event: "prompt_index_warmed", sourceId: source.id, count: items.length }));
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                recordPromptIndexError(appDatabase.raw!, source.id, message);
+                console.warn(JSON.stringify({ event: "prompt_index_warmup_failed", sourceId: source.id, message }));
+            }
+        }),
+    )
+        .then(() => undefined)
+        .finally(() => {
+            promptIndexWarmup = null;
+        });
+    return promptIndexWarmup;
+}
+
 async function savePromptSource(request: Request, session: SessionPayload, id: string) {
     requireAdmin(session);
     const body = await readJson<Record<string, unknown>>(request);
@@ -1360,6 +1392,7 @@ async function savePromptSource(request: Request, session: SessionPayload, id: s
     const sources = loadManagedPromptSources(appDatabase).filter((item) => item.id !== id);
     saveManagedPromptSources(appDatabase, [...sources, source]);
     promptSourceRuntimeCache.delete(source.id);
+    void warmManagedPromptIndexes();
     console.info(JSON.stringify({ event: "prompt_source_updated", adminUserId: session.userId, sourceId: source.id }));
     return json({ ok: true, source: publicPromptSource(source) });
 }
@@ -1369,6 +1402,7 @@ function deletePromptSource(session: SessionPayload, id: string) {
     const sources = loadManagedPromptSources(appDatabase);
     saveManagedPromptSources(appDatabase, sources.filter((item) => item.id !== id));
     promptSourceRuntimeCache.delete(id);
+    if (appDatabase.raw) appDatabase.raw.query("DELETE FROM prompt_index WHERE source_id = ?").run(id);
     console.info(JSON.stringify({ event: "prompt_source_deleted", adminUserId: session.userId, sourceId: id }));
     return new Response(null, { status: 204 });
 }

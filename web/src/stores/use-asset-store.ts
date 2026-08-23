@@ -34,6 +34,10 @@ type AssetStore = {
     hydrated: boolean;
     ownerUserId: string;
     serverHydrated: boolean;
+    serverAssetPage: number;
+    serverAssetPageSize: number;
+    serverAssetHasMore: boolean;
+    serverAssetLoading: boolean;
     migratedUserIds: string[];
     assets: Asset[];
     addAsset: (asset: Omit<Asset, "id" | "createdAt" | "updatedAt">) => string;
@@ -42,6 +46,8 @@ type AssetStore = {
     replaceAssets: (assets: Asset[]) => void;
     prepareForUser: (userId: string) => void;
     hydrateFromServer: (userId: string) => Promise<void>;
+    loadMoreServerAssets: () => Promise<void>;
+    loadAllServerAssets: () => Promise<void>;
     cleanupImages: (extra?: unknown) => void;
 };
 
@@ -49,6 +55,7 @@ const ASSET_STORE_KEY = "infinite-canvas:asset_store";
 const ASSET_MIGRATION_CONCURRENCY = 4;
 let assetLibraryMutation = Promise.resolve();
 let assetHydrationVersion = 0;
+let serverAssetMoreTask: Promise<void> | null = null;
 
 const assetStorage: PersistStorage<AssetStore> = {
     getItem: async (name) => {
@@ -59,8 +66,10 @@ const assetStorage: PersistStorage<AssetStore> = {
         parsed.state.assets = await Promise.all(
             parsed.state.assets.map(async (storedAsset) => {
                 const asset = normalizeAssetRecord(storedAsset);
+                if (PUBLIC_MODE && asset.kind === "video" && asset.data.storageKey) return asset;
                 if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
                 if (asset.kind !== "image") return asset;
+                if (PUBLIC_MODE && asset.data.storageKey) return asset;
                 if (asset.data.storageKey) {
                     const [dataUrl, thumbnailUrl] = await Promise.all([
                         asset.data.dataUrl && !asset.data.dataUrl.startsWith("blob:") ? asset.data.dataUrl : resolveImageUrl(asset.data.storageKey, asset.data.dataUrl),
@@ -88,6 +97,10 @@ export const useAssetStore = create<AssetStore>()(
             hydrated: false,
             ownerUserId: "",
             serverHydrated: false,
+            serverAssetPage: 0,
+            serverAssetPageSize: 60,
+            serverAssetHasMore: false,
+            serverAssetLoading: false,
             migratedUserIds: [],
             assets: [],
             addAsset: (asset) => {
@@ -121,7 +134,7 @@ export const useAssetStore = create<AssetStore>()(
             },
             replaceAssets: (assets) => {
                 const normalizedAssets = assets.map(normalizeAssetRecord);
-                set({ assets: normalizedAssets });
+                set({ assets: normalizedAssets, serverAssetHasMore: false, serverAssetPage: 0, serverAssetLoading: false });
                 const current = get();
                 if (shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => replaceServerAssetLibrary(normalizedAssets, false, current.ownerUserId));
             },
@@ -134,7 +147,8 @@ export const useAssetStore = create<AssetStore>()(
                 }
                 if (current.ownerUserId && current.ownerUserId !== userId) {
                     assetHydrationVersion += 1;
-                    set({ ownerUserId: userId, serverHydrated: false, assets: [] });
+                    serverAssetMoreTask = null;
+                    set({ ownerUserId: userId, serverHydrated: false, serverAssetPage: 0, serverAssetHasMore: false, serverAssetLoading: false, assets: [] });
                 }
             },
             hydrateFromServer: async (userId) => {
@@ -145,7 +159,7 @@ export const useAssetStore = create<AssetStore>()(
                 const canMigrateLocal = !current.ownerUserId || current.ownerUserId === userId;
                 const localAssets = canMigrateLocal ? current.assets : [];
                 const localAlreadyMigrated = current.migratedUserIds.includes(userId);
-                if (!canMigrateLocal) set({ assets: [], ownerUserId: userId, serverHydrated: false });
+                if (!canMigrateLocal) set({ assets: [], ownerUserId: userId, serverHydrated: false, serverAssetPage: 0, serverAssetHasMore: false, serverAssetLoading: false });
 
                 const remote = await fetchServerAssetLibrary(userId, { page: 1, pageSize: 60 });
                 if (requestVersion !== assetHydrationVersion) return;
@@ -169,15 +183,62 @@ export const useAssetStore = create<AssetStore>()(
                 });
                 const serverAssets = plan.writeServer ? await replaceServerAssetLibrary(plan.assets, false, userId).then((result) => Promise.all(result.items.map(hydrateServerAsset))) : plan.assets;
                 const assets = mergeAssetRecords(migration.failed, serverAssets);
+                const loadedCompleteLibrary = plan.writeServer && remoteItems.length > remote.items.length;
                 if (requestVersion === assetHydrationVersion) {
                     set((state) => ({
                         assets,
                         ownerUserId: userId,
                         serverHydrated: true,
+                        serverAssetPage: remote.page || 1,
+                        serverAssetPageSize: remote.pageSize || 60,
+                        serverAssetHasMore: loadedCompleteLibrary ? false : Boolean(remote.hasMore),
+                        serverAssetLoading: false,
                         migratedUserIds: migration.failed.length || state.migratedUserIds.includes(userId) ? state.migratedUserIds : [...state.migratedUserIds, userId],
                     }));
                     if (migration.failed.length) reportAssetSyncError(new Error(`${migration.failed.length} 项旧资产暂未迁移，已保留在当前浏览器，下次打开时会继续尝试`));
-                    if (!plan.writeServer && remote.hasMore) void hydrateRemainingServerAssets(userId, remote.pageSize || 60, requestVersion);
+                }
+            },
+            loadMoreServerAssets: async () => {
+                if (!PUBLIC_MODE || serverAssetMoreTask) return serverAssetMoreTask || undefined;
+                const current = get();
+                if (!current.serverHydrated || !current.ownerUserId || !current.serverAssetHasMore || current.serverAssetLoading) return;
+                const requestVersion = assetHydrationVersion;
+                const userId = current.ownerUserId;
+                const page = current.serverAssetPage + 1;
+                const pageSize = current.serverAssetPageSize || 60;
+                set({ serverAssetLoading: true });
+                serverAssetMoreTask = (async () => {
+                    try {
+                        const remote = await fetchServerAssetLibrary(userId, { page, pageSize });
+                        if (requestVersion !== assetHydrationVersion) return;
+                        const assets = await Promise.all(remote.items.map(hydrateServerAsset));
+                        if (requestVersion !== assetHydrationVersion) return;
+                        set((state) => ({
+                            assets: mergeAssetRecords(state.assets, assets),
+                            serverAssetPage: remote.page || page,
+                            serverAssetPageSize: remote.pageSize || pageSize,
+                            serverAssetHasMore: Boolean(remote.hasMore),
+                            serverAssetLoading: false,
+                        }));
+                    } catch (error) {
+                        if (requestVersion === assetHydrationVersion) {
+                            set({ serverAssetLoading: false });
+                            reportAssetSyncError(error);
+                        }
+                    } finally {
+                        serverAssetMoreTask = null;
+                    }
+                })();
+                return serverAssetMoreTask;
+            },
+            loadAllServerAssets: async () => {
+                if (!PUBLIC_MODE) return;
+                for (;;) {
+                    const current = get();
+                    if (!current.serverAssetHasMore) return;
+                    const task = current.loadMoreServerAssets();
+                    if (!task) return;
+                    await task;
                 }
             },
             cleanupImages: (extra) => {
@@ -194,6 +255,10 @@ export const useAssetStore = create<AssetStore>()(
                     ...value,
                     ownerUserId: typeof value.ownerUserId === "string" ? value.ownerUserId : "",
                     serverHydrated: false,
+                    serverAssetPage: 0,
+                    serverAssetPageSize: 60,
+                    serverAssetHasMore: false,
+                    serverAssetLoading: false,
                     migratedUserIds: Array.isArray(value.migratedUserIds) ? value.migratedUserIds.filter((item): item is string => typeof item === "string") : [],
                     assets: Array.isArray(value.assets) ? value.assets.map(normalizeAssetRecord) : [],
                 } as AssetStore;
@@ -231,24 +296,6 @@ async function hydrateServerAsset(asset: Asset): Promise<Asset> {
         return { ...asset, coverUrl: url, data: { ...asset.data, url } };
     }
     return asset;
-}
-
-async function hydrateRemainingServerAssets(userId: string, pageSize: number, requestVersion: number) {
-    try {
-        let page = 2;
-        for (;;) {
-            const current = useAssetStore.getState();
-            if (assetHydrationVersion !== requestVersion || current.ownerUserId !== userId) return;
-            const remote = await fetchServerAssetLibrary(userId, { page, pageSize });
-            if (assetHydrationVersion !== requestVersion) return;
-            const assets = await Promise.all(remote.items.map(hydrateServerAsset));
-            useAssetStore.setState((state) => ({ assets: mergeAssetRecords(state.assets, assets) }));
-            if (!remote.hasMore) return;
-            page += 1;
-        }
-    } catch (error) {
-        if (assetHydrationVersion === requestVersion) reportAssetSyncError(error);
-    }
 }
 
 async function fetchAllServerAssets(userId: string, firstPage: Awaited<ReturnType<typeof fetchServerAssetLibrary>>, requestVersion: number) {

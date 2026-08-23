@@ -17,6 +17,7 @@ export type PromptIndexItem = {
 };
 
 export type PromptIndexQuery = {
+  sourceId?: string;
   keyword?: string;
   category?: string;
   tags?: string[];
@@ -65,6 +66,22 @@ export function normalizePromptIndexItems(sourceId: string, input: unknown): Pro
   return items;
 }
 
+export function normalizePromptSourceIndexItems(
+  source: { id: string; name: string; githubUrl: string },
+  input: unknown,
+) {
+  if (!Array.isArray(input)) throw new Error("提示词索引必须是数组");
+  const withSource = input.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    return {
+      ...(item as Record<string, unknown>),
+      category: source.name,
+      githubUrl: source.githubUrl,
+    };
+  });
+  return normalizePromptIndexItems(source.id, withSource);
+}
+
 export function replacePromptIndex(database: Database, sourceId: string, items: PromptIndexItem[]) {
   const timestamp = Date.now();
   database.transaction(() => {
@@ -90,12 +107,17 @@ export function recordPromptIndexError(database: Database, sourceId: string, err
 
 export function queryPromptIndex(database: Database, options: PromptIndexQuery = {}): PromptIndexResult {
   const keyword = String(options.keyword || "").trim().toLowerCase();
+  const sourceId = String(options.sourceId || "").trim();
   const category = String(options.category || "").trim();
   const tags = Array.isArray(options.tags) ? options.tags.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 20) : [];
   const page = Math.max(1, Math.floor(Number(options.page) || 1));
   const pageSize = Math.max(1, Math.min(100, Math.floor(Number(options.pageSize) || 20)));
   const where = ["1 = 1"];
   const params: Array<string | number> = [];
+  if (sourceId) {
+    where.push("source_id = ?");
+    params.push(sourceId);
+  }
   if (keyword) {
     where.push("lower(title || ' ' || prompt || ' ' || category || ' ' || tags_json) LIKE ?");
     params.push(`%${keyword}%`);
@@ -119,6 +141,10 @@ export function queryPromptIndex(database: Database, options: PromptIndexQuery =
   const rows = database.query(`SELECT * FROM prompt_index WHERE ${condition} ORDER BY indexed_at DESC, rowid DESC LIMIT ? OFFSET ?`).all(...params, pageSize, (page - 1) * pageSize) as PromptIndexRow[];
   const tagParams: Array<string | number> = [];
   const tagWhere = ["1 = 1"];
+  if (sourceId) {
+    tagWhere.push("prompt_index.source_id = ?");
+    tagParams.push(sourceId);
+  }
   if (keyword) {
     tagWhere.push("lower(title || ' ' || prompt || ' ' || category || ' ' || tags_json) LIKE ?");
     tagParams.push(`%${keyword}%`);
@@ -128,7 +154,9 @@ export function queryPromptIndex(database: Database, options: PromptIndexQuery =
     tagParams.push(category);
   }
   const tagRows = database.query(`SELECT DISTINCT json_each.value AS tag FROM prompt_index, json_each(prompt_index.tags_json) WHERE ${tagWhere.join(" AND ")} ORDER BY tag COLLATE NOCASE`).all(...tagParams) as Array<{ tag?: string }>;
-  const categoryRows = database.query("SELECT DISTINCT category FROM prompt_index WHERE category <> '' ORDER BY category COLLATE NOCASE").all() as Array<{ category?: string }>;
+  const categoryRows = sourceId
+    ? (database.query("SELECT DISTINCT category FROM prompt_index WHERE source_id = ? AND category <> '' ORDER BY category COLLATE NOCASE").all(sourceId) as Array<{ category?: string }>)
+    : (database.query("SELECT DISTINCT category FROM prompt_index WHERE category <> '' ORDER BY category COLLATE NOCASE").all() as Array<{ category?: string }>);
   return {
     items: rows.map(promptIndexRow),
     tags: tagRows.map((row) => String(row.tag || "")).filter(Boolean),

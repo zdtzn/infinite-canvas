@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { openAppDatabase } from "../db/database";
 import {
   normalizePromptIndexItems,
+  normalizePromptSourceIndexItems,
   queryPromptIndex,
   replacePromptIndex,
 } from "./prompt-index";
@@ -90,6 +91,36 @@ describe("prompt index", () => {
         total: 0,
         indexed: true,
       });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("keeps source filtering independent from display categories", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-prompt-index-source-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      replacePromptIndex(
+        store.raw!,
+        "source-a",
+        normalizePromptSourceIndexItems(
+          { id: "source-a", name: "同名来源", githubUrl: "https://example.com/a" },
+          [{ id: "a-1", title: "来源 A", prompt: "提示词 A" }],
+        ),
+      );
+      replacePromptIndex(
+        store.raw!,
+        "source-b",
+        normalizePromptSourceIndexItems(
+          { id: "source-b", name: "同名来源", githubUrl: "https://example.com/b" },
+          [{ id: "b-1", title: "来源 B", prompt: "提示词 B" }],
+        ),
+      );
+
+      expect(queryPromptIndex(store.raw!, { sourceId: "source-a" }).items.map((item) => item.id)).toEqual(["a-1"]);
+      expect(queryPromptIndex(store.raw!, { sourceId: "source-b" }).items.map((item) => item.id)).toEqual(["b-1"]);
+      expect(queryPromptIndex(store.raw!, { category: "同名来源" }).total).toBe(2);
     } finally {
       store.close();
     }

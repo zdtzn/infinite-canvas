@@ -31,5 +31,6 @@ export function usePromptList({ keyword, tags, category, enabled = true }: { key
         tags: useMemo(() => [ALL_PROMPTS_OPTION, ...(firstPage?.tags || [])], [firstPage?.tags]),
         categories: useMemo(() => [ALL_PROMPTS_OPTION, ...(firstPage?.categories || [])], [firstPage?.categories]),
         total: firstPage?.total || 0,
+        indexed: firstPage?.indexed,
     };
 }

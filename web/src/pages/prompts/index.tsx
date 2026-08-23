@@ -18,7 +18,7 @@ export default function PromptsPage() {
     const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
     const addAsset = useAssetStore((state) => state.addAsset);
     const copyText = useCopyText();
-    const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory });
+    const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts, indexed } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory });
 
     useEffect(() => {
         if (query.isError) {
@@ -87,6 +87,7 @@ export default function PromptsPage() {
                                         items={promptItems}
                                         onOpen={setSelectedPrompt}
                                         onCopy={(item) => copyText(item.prompt, "提示词已复制")}
+                                        emptyDescription={indexed === false ? "提示词库正在同步，请稍后刷新" : "没有找到匹配的提示词"}
                                         renderActions={(item) => (
                                             <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => savePromptAsset(item)}>
                                                 加入资产
@@ -121,7 +122,7 @@ function PromptFilter({ label, options, selected, onChange }: { label: string; o
     );
 }
 
-function PromptGrid({ items, onOpen, onCopy, renderActions }: { items: Prompt[]; onOpen: (item: Prompt) => void; onCopy: (item: Prompt) => void; renderActions: (item: Prompt) => ReactNode }) {
+function PromptGrid({ items, onOpen, onCopy, renderActions, emptyDescription }: { items: Prompt[]; onOpen: (item: Prompt) => void; onCopy: (item: Prompt) => void; renderActions: (item: Prompt) => ReactNode; emptyDescription: string }) {
     return (
         <div>
             <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
@@ -129,7 +130,7 @@ function PromptGrid({ items, onOpen, onCopy, renderActions }: { items: Prompt[];
                     <PromptCard key={`${item.category}:${item.id}`} item={item} onOpen={() => onOpen(item)} onCopy={() => onCopy(item)} extraAction={renderActions(item)} />
                 ))}
             </div>
-            {items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有找到匹配的提示词" className="py-16" /> : null}
+            {items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyDescription} className="py-16" /> : null}
         </div>
     );
 }

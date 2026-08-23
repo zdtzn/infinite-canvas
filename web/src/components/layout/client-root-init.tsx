@@ -5,6 +5,7 @@ import { App } from "antd";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useProjectServerSync } from "@/hooks/use-project-server-sync";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
+import { ensurePromptIndexReady } from "@/services/api/prompts";
 import { fetchServerChannels, fetchServerPromptSources, fetchServerUserPreferences, saveServerChannel, saveServerPromptSource, saveServerUserPreferences, type ServerChannel } from "@/services/server-api";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { isBuiltInPromptSource, usePromptSourceStore } from "@/stores/use-prompt-source-store";
@@ -154,7 +155,10 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                         response = await fetchServerPromptSources();
                     }
                 }
-                if (active) setSharedPromptSources(response.items);
+                if (active) {
+                    setSharedPromptSources(response.items);
+                    if (user.admin) void ensurePromptIndexReady();
+                }
             } catch (error) {
                 if (!active) return;
                 syncedPromptSourceUser.current = "";
