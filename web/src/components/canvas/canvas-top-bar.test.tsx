@@ -17,9 +17,6 @@ mock.module("antd", () => ({
 mock.module("@/components/layout/user-status-actions", () => ({ UserStatusActions: () => null }));
 mock.module("@/constant/env", () => ({ DOCS_URL: "https://example.com/docs" }));
 mock.module("@/features/cultivation/status-pill", () => ({ CultivationStatusPill: () => null }));
-mock.module("@/stores/use-canvas-side-panel-store", () => ({
-    useCanvasSidePanelStore: (selector: (state: { panelOpen: boolean; togglePanel: () => void }) => unknown) => selector({ panelOpen: false, togglePanel: () => undefined }),
-}));
 mock.module("@/stores/use-theme-store", () => ({
     useThemeStore: (selector: (state: { theme: "dark" }) => unknown) => selector({ theme: "dark" }),
 }));
