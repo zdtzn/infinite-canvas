@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "bun:test";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { persistCanvasSidePanelWidth, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
+import { readCanvasSidePanelPreference, writeCanvasSidePanelPreference } from "@/stores/use-canvas-side-panel-store";
 import { CanvasNodesTab } from "./canvas-side-panel";
 
 test("selected canvas nodes do not expose an embedded Ask Dao shortcut", () => {
@@ -21,14 +21,16 @@ test("selected canvas nodes do not expose an embedded Ask Dao shortcut", () => {
 });
 
 test("canvas side panel preferences tolerate unavailable local storage", () => {
-    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
-    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: undefined });
+    const blockedStorage = {
+        getItem: () => {
+            throw new Error("storage blocked");
+        },
+        setItem: () => {
+            throw new Error("storage blocked");
+        },
+    };
 
-    try {
-        expect(() => useCanvasSidePanelStore.getState().openPanel()).not.toThrow();
-        expect(() => persistCanvasSidePanelWidth(320)).not.toThrow();
-    } finally {
-        if (descriptor) Object.defineProperty(globalThis, "localStorage", descriptor);
-        else delete (globalThis as { localStorage?: Storage }).localStorage;
-    }
+    expect(readCanvasSidePanelPreference(undefined, "width")).toBeNull();
+    expect(readCanvasSidePanelPreference(blockedStorage, "width")).toBeNull();
+    expect(() => writeCanvasSidePanelPreference(blockedStorage, "width", "320")).not.toThrow();
 });

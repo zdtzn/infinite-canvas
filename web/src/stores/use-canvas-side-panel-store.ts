@@ -8,20 +8,39 @@ export const CANVAS_SIDE_PANEL_DEFAULT_WIDTH = 280;
 const WIDTH_KEY = "canvas-side-panel-width";
 const OPEN_KEY = "canvas-side-panel-open";
 
-function readPreference(key: string) {
+type PreferenceReader = Pick<Storage, "getItem">;
+type PreferenceWriter = Pick<Storage, "setItem">;
+
+function preferenceStorage() {
     try {
-        return typeof globalThis.localStorage === "undefined" ? null : globalThis.localStorage.getItem(key);
+        return typeof globalThis.localStorage === "undefined" ? null : globalThis.localStorage;
     } catch {
         return null;
     }
 }
 
-function writePreference(key: string, value: string) {
+export function readCanvasSidePanelPreference(storage: PreferenceReader | null | undefined, key: string) {
     try {
-        globalThis.localStorage?.setItem(key, value);
+        return storage?.getItem(key) ?? null;
+    } catch {
+        return null;
+    }
+}
+
+export function writeCanvasSidePanelPreference(storage: PreferenceWriter | null | undefined, key: string, value: string) {
+    try {
+        storage?.setItem(key, value);
     } catch {
         // Browser privacy settings may disable local storage.
     }
+}
+
+function readPreference(key: string) {
+    return readCanvasSidePanelPreference(preferenceStorage(), key);
+}
+
+function writePreference(key: string, value: string) {
+    writeCanvasSidePanelPreference(preferenceStorage(), key, value);
 }
 
 function initialWidth() {
