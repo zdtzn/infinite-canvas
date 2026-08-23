@@ -20,6 +20,16 @@ export function planAssetLibraryHydration<T extends UpdatedRecord>({ local, remo
     return { assets, writeServer };
 }
 
+/**
+ * A paginated server response is not enough input for a full-library replace.
+ * During the one-time browser migration, fetch every server page first so a
+ * local legacy asset cannot accidentally overwrite records that were omitted
+ * from the first page.
+ */
+export function shouldFetchCompleteServerLibraryForMigration({ localCount, remoteInitialized, localAlreadyMigrated, remoteHasMore }: { localCount: number; remoteInitialized: boolean; localAlreadyMigrated: boolean; remoteHasMore: boolean }) {
+    return localCount > 0 && remoteInitialized && !localAlreadyMigrated && remoteHasMore;
+}
+
 export function mergeAssetRecords<T extends UpdatedRecord>(local: T[], remote: T[]) {
     const records = new Map(remote.map((item) => [item.id, item]));
     for (const item of local) {

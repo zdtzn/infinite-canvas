@@ -110,6 +110,12 @@ export function queryPromptIndex(database: Database, options: PromptIndexQuery =
   }
   const condition = where.join(" AND ");
   const totalRow = database.query(`SELECT COUNT(*) AS count FROM prompt_index WHERE ${condition}`).get(...params) as { count?: number };
+  // `total` describes the current filter result, while `indexed` describes whether
+  // the server has a usable index. A valid search can legitimately return zero
+  // rows and must not fall back to refetching every remote source in the browser.
+  const indexState = database
+    .query("SELECT CASE WHEN EXISTS (SELECT 1 FROM prompt_index) OR EXISTS (SELECT 1 FROM prompt_index_status WHERE last_success_at IS NOT NULL) THEN 1 ELSE 0 END AS indexed")
+    .get() as { indexed?: number };
   const rows = database.query(`SELECT * FROM prompt_index WHERE ${condition} ORDER BY indexed_at DESC, rowid DESC LIMIT ? OFFSET ?`).all(...params, pageSize, (page - 1) * pageSize) as PromptIndexRow[];
   const tagParams: Array<string | number> = [];
   const tagWhere = ["1 = 1"];
@@ -130,7 +136,7 @@ export function queryPromptIndex(database: Database, options: PromptIndexQuery =
     total: Number(totalRow?.count || 0),
     page,
     pageSize,
-    indexed: Number(totalRow?.count || 0) > 0,
+    indexed: Number(indexState?.indexed || 0) === 1,
   };
 }
 

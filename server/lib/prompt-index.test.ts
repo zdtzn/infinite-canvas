@@ -85,6 +85,11 @@ describe("prompt index", () => {
       expect(
         queryPromptIndex(store.raw!, { page: 2, pageSize: 2 }).items,
       ).toHaveLength(1);
+      expect(queryPromptIndex(store.raw!, { keyword: "不存在的内容" })).toMatchObject({
+        items: [],
+        total: 0,
+        indexed: true,
+      });
     } finally {
       store.close();
     }

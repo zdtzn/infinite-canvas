@@ -8,7 +8,7 @@ import { localForageStorage } from "@/lib/localforage-storage";
 import { deleteServerAssetLibraryItem, fetchServerAssetLibrary, replaceServerAssetLibrary, upsertServerAssetLibraryItem } from "@/services/server-api";
 import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { mergeAssetRecords, planAssetLibraryHydration } from "./asset-library-sync";
+import { mergeAssetRecords, planAssetLibraryHydration, shouldFetchCompleteServerLibraryForMigration } from "./asset-library-sync";
 import { normalizeAssetSource } from "./asset-source";
 
 export type AssetKind = "text" | "image" | "video";
@@ -149,9 +149,18 @@ export const useAssetStore = create<AssetStore>()(
 
                 const remote = await fetchServerAssetLibrary(userId, { page: 1, pageSize: 60 });
                 if (requestVersion !== assetHydrationVersion) return;
-                const remoteAssets = await Promise.all(remote.items.map(hydrateServerAsset));
                 const migration = localAlreadyMigrated ? { prepared: [] as Asset[], failed: [] as Asset[] } : await prepareAssetsForServer(localAssets, userId);
                 if (requestVersion !== assetHydrationVersion) return;
+                const remoteItems = shouldFetchCompleteServerLibraryForMigration({
+                    localCount: migration.prepared.length,
+                    remoteInitialized: remote.initialized,
+                    localAlreadyMigrated,
+                    remoteHasMore: Boolean(remote.hasMore),
+                })
+                    ? await fetchAllServerAssets(userId, remote, requestVersion)
+                    : remote.items;
+                if (!remoteItems || requestVersion !== assetHydrationVersion) return;
+                const remoteAssets = await Promise.all(remoteItems.map(hydrateServerAsset));
                 const plan = planAssetLibraryHydration({
                     local: migration.prepared,
                     remote: remoteAssets,
@@ -225,17 +234,36 @@ async function hydrateServerAsset(asset: Asset): Promise<Asset> {
 }
 
 async function hydrateRemainingServerAssets(userId: string, pageSize: number, requestVersion: number) {
-    let page = 2;
-    for (;;) {
-        const current = useAssetStore.getState();
-        if (assetHydrationVersion !== requestVersion || current.ownerUserId !== userId) return;
-        const remote = await fetchServerAssetLibrary(userId, { page, pageSize });
-        if (assetHydrationVersion !== requestVersion) return;
-        const assets = await Promise.all(remote.items.map(hydrateServerAsset));
-        useAssetStore.setState((state) => ({ assets: mergeAssetRecords(state.assets, assets) }));
-        if (!remote.hasMore) return;
-        page += 1;
+    try {
+        let page = 2;
+        for (;;) {
+            const current = useAssetStore.getState();
+            if (assetHydrationVersion !== requestVersion || current.ownerUserId !== userId) return;
+            const remote = await fetchServerAssetLibrary(userId, { page, pageSize });
+            if (assetHydrationVersion !== requestVersion) return;
+            const assets = await Promise.all(remote.items.map(hydrateServerAsset));
+            useAssetStore.setState((state) => ({ assets: mergeAssetRecords(state.assets, assets) }));
+            if (!remote.hasMore) return;
+            page += 1;
+        }
+    } catch (error) {
+        if (assetHydrationVersion === requestVersion) reportAssetSyncError(error);
     }
+}
+
+async function fetchAllServerAssets(userId: string, firstPage: Awaited<ReturnType<typeof fetchServerAssetLibrary>>, requestVersion: number) {
+    const items = [...firstPage.items];
+    let page = firstPage.page || 1;
+    let hasMore = Boolean(firstPage.hasMore);
+    const pageSize = firstPage.pageSize || 60;
+    while (hasMore) {
+        if (assetHydrationVersion !== requestVersion) return null;
+        page += 1;
+        const remote = await fetchServerAssetLibrary(userId, { page, pageSize });
+        items.push(...remote.items);
+        hasMore = Boolean(remote.hasMore);
+    }
+    return items;
 }
 
 function normalizeAssetRecord<T extends Asset>(asset: T): T {
