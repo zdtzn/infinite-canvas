@@ -9,6 +9,7 @@ import { serverRequest } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 
 export type Prompt = RawPrompt & {
+    sourceId?: string;
     category: string;
     githubUrl: string;
     sourceTags?: string[];
@@ -21,6 +22,8 @@ export type PromptListResponse = {
     tags: string[];
     categories: string[];
     total: number;
+    page: number;
+    pageSize: number;
     indexed?: boolean;
 };
 
@@ -78,7 +81,7 @@ function sourceSignature(source: PromptSource) {
 }
 
 function withSourceMeta(source: PromptSource, items: RawPrompt[]): Prompt[] {
-    return items.map((item) => ({ ...normalizePromptAssets(item), category: source.name, githubUrl: source.githubUrl }));
+    return items.map((item) => ({ ...normalizePromptAssets(item), sourceId: source.id, category: source.name, githubUrl: source.githubUrl }));
 }
 
 async function runSource(source: PromptSource): Promise<Prompt[]> {
@@ -155,27 +158,34 @@ async function getAllPrompts(): Promise<Prompt[]> {
     return settled.flat();
 }
 
-export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
-    const serverResult = await fetchPromptIndex({ keyword, tag, category, page, pageSize });
+export async function fetchPrompts({ sourceId = "", keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { sourceId?: string; keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
+    const serverResult = await fetchPromptIndex({ sourceId, keyword, tag, category, page, pageSize });
     if (serverResult) return { ...serverResult, items: serverResult.items.map(withPromptTaxonomy), tags: sortPromptTaxonomyTags(serverResult.tags.filter(isPromptTaxonomyTag)) };
     const items = (await getAllPrompts()).map(withPromptTaxonomy);
     const normalizedKeyword = keyword.trim().toLowerCase();
     const normalizedPage = Math.max(1, page);
     const normalizedPageSize = Math.max(1, Math.min(100, pageSize));
-    const withoutTagFilter = filterPrompts(items, { keyword: normalizedKeyword, category, tags: [] });
-    const filtered = filterPrompts(items, { keyword: normalizedKeyword, category, tags: tag });
+    const withoutTagFilter = filterPrompts(items, { sourceId, keyword: normalizedKeyword, category, tags: [] });
+    const filtered = filterPrompts(items, { sourceId, keyword: normalizedKeyword, category, tags: tag });
 
     return {
         items: filtered.slice((normalizedPage - 1) * normalizedPageSize, normalizedPage * normalizedPageSize),
         tags: collectTags(withoutTagFilter),
         categories: enabledSources().map((source) => source.name),
         total: filtered.length,
+        page: normalizedPage,
+        pageSize: normalizedPageSize,
     };
 }
 
-async function fetchPromptIndex({ sourceId = "", keyword, tag, category, page, pageSize }: { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number }) {
+export function buildPromptIndexQuery({ sourceId = "", keyword, tag, category, page, pageSize }: { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number }) {
     const params = new URLSearchParams({ sourceId, keyword, category, page: String(page), pageSize: String(pageSize) });
     for (const value of tag) params.append("tag", value);
+    return params;
+}
+
+async function fetchPromptIndex({ sourceId = "", keyword, tag, category, page, pageSize }: { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number }) {
+    const params = buildPromptIndexQuery({ sourceId, keyword, tag, category, page, pageSize });
     try {
         return await serverRequest<PromptListResponse>(`/api/prompt-index?${params.toString()}`, { timeoutMs: 5_000, expectedUserId: useUserStore.getState().user?.id });
     } catch {
@@ -284,8 +294,9 @@ export async function fetchPromptSourceStatuses(): Promise<Record<string, Prompt
     return Object.fromEntries(entries);
 }
 
-function filterPrompts(items: Prompt[], options: { keyword: string; category: string; tags: string[] }) {
+function filterPrompts(items: Prompt[], options: { sourceId: string; keyword: string; category: string; tags: string[] }) {
     return items.filter((item) => {
+        if (options.sourceId && item.sourceId !== options.sourceId) return false;
         if (isActiveOption(options.category) && item.category !== options.category) return false;
         if (options.tags.length && !options.tags.some((tag) => item.tags.includes(tag))) return false;
         if (!options.keyword) return true;

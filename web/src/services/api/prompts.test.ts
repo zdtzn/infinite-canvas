@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { DEFAULT_PROMPT_SOURCES } from "./prompt-source-presets";
-import { PROMPT_SOURCE_CACHE_TTL_MS, promptSourceCacheKey, promptSourceCacheRevision, promptSourceCacheState } from "./prompts";
+import { PROMPT_SOURCE_CACHE_TTL_MS, buildPromptIndexQuery, promptSourceCacheKey, promptSourceCacheRevision, promptSourceCacheState } from "./prompts";
 
 test("uses the current prompt parser cache version", () => {
     assert.equal(promptSourceCacheKey("source-id"), "prompt-source:v2:source-id");
@@ -29,4 +29,21 @@ test("keeps a valid expired source cache available while a refresh runs in the b
     };
 
     assert.equal(promptSourceCacheState(cached, "stable-source", 1_000 + PROMPT_SOURCE_CACHE_TTL_MS + 1), "stale");
+});
+
+test("builds a bounded server-side prompt query with source, primary category and pagination", () => {
+    const query = buildPromptIndexQuery({
+        sourceId: "youmind-gpt-image-2",
+        keyword: "商品 主图",
+        tag: ["商品商业"],
+        category: "全部",
+        page: 3,
+        pageSize: 30,
+    });
+
+    assert.equal(query.get("sourceId"), "youmind-gpt-image-2");
+    assert.equal(query.get("keyword"), "商品 主图");
+    assert.deepEqual(query.getAll("tag"), ["商品商业"]);
+    assert.equal(query.get("page"), "3");
+    assert.equal(query.get("pageSize"), "30");
 });

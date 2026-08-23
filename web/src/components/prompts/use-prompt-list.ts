@@ -5,7 +5,7 @@ import { ALL_PROMPTS_OPTION, fetchPrompts, PROMPT_LIBRARY_UPDATED_EVENT } from "
 
 export const PROMPT_PAGE_SIZE = 20;
 
-export function usePromptList({ keyword, tags, category, enabled = true }: { keyword: string; tags: string[]; category: string; enabled?: boolean }) {
+export function usePromptList({ sourceId = "", keyword, tags, category, pageSize = PROMPT_PAGE_SIZE, enabled = true }: { sourceId?: string; keyword: string; tags: string[]; category: string; pageSize?: number; enabled?: boolean }) {
     const [debouncedKeyword, setDebouncedKeyword] = useState(keyword);
     const queryClient = useQueryClient();
     useEffect(() => {
@@ -18,8 +18,8 @@ export function usePromptList({ keyword, tags, category, enabled = true }: { key
         return () => window.removeEventListener(PROMPT_LIBRARY_UPDATED_EVENT, refresh);
     }, [queryClient]);
     const query = useInfiniteQuery({
-        queryKey: ["prompts", debouncedKeyword, tags, category],
-        queryFn: ({ pageParam }) => fetchPrompts({ keyword: debouncedKeyword, tag: tags, category, page: pageParam, pageSize: PROMPT_PAGE_SIZE }),
+        queryKey: ["prompts", sourceId, debouncedKeyword, tags, category, pageSize],
+        queryFn: ({ pageParam }) => fetchPrompts({ sourceId, keyword: debouncedKeyword, tag: tags, category, page: pageParam, pageSize }),
         initialPageParam: 1,
         getNextPageParam: (lastPage, pages) => (pages.reduce((total, page) => total + page.items.length, 0) < lastPage.total ? pages.length + 1 : undefined),
         enabled,

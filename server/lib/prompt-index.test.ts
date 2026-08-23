@@ -138,6 +138,7 @@ describe("prompt index", () => {
       );
 
       expect(queryPromptIndex(store.raw!, { sourceId: "source-a" }).items.map((item) => item.id)).toEqual(["a-1"]);
+      expect(queryPromptIndex(store.raw!, { sourceId: "source-a" }).items[0]?.sourceId).toBe("source-a");
       expect(queryPromptIndex(store.raw!, { sourceId: "source-b" }).items.map((item) => item.id)).toEqual(["b-1"]);
       expect(queryPromptIndex(store.raw!, { category: "同名来源" }).total).toBe(2);
     } finally {

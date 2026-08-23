@@ -101,7 +101,6 @@ import type { ReferenceAudio } from "@/types/media";
 import { branchServerProject, cancelServerJob, waitForServerJob } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useCanvasProjectLock } from "@/pages/canvas/hooks/use-canvas-project-lock";
-import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
 
 // 内置节点注册到统一注册表(模块加载时执行一次)
 registerBuiltinNodes();
@@ -267,8 +266,6 @@ function InfiniteCanvasPage() {
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
     const snapshots = currentProject?.snapshots || [];
-    const setCanvasContext = useCanvasContextStore((state) => state.setSnapshot);
-    const clearCanvasContext = useCanvasContextStore((state) => state.clear);
     const colorTheme = useThemeStore((state) => state.theme);
     const canvasBackdropEnabled = useThemeStore((state) => state.canvasBackdropEnabled);
     const setCanvasBackdropEnabled = useThemeStore((state) => state.setCanvasBackdropEnabled);
@@ -333,30 +330,6 @@ function InfiniteCanvasPage() {
     const pendingImageUploadsRef = useRef(new Map<string, PendingImageUpload>());
     const restoreAbortRef = useRef<AbortController | null>(null);
     const snapshotRestoreAbortRef = useRef<AbortController | null>(null);
-
-    useEffect(() => {
-        if (!projectLoaded || !selectedNodeIds.size) {
-            clearCanvasContext();
-            return;
-        }
-        const contextNodes = nodes
-            .filter((node) => selectedNodeIds.has(node.id) && !node.metadata?.hidden)
-            .slice(0, 8)
-            .map((node) => ({
-                id: node.id,
-                type: String(node.type),
-                title: node.title || "未命名节点",
-                ...(node.metadata?.content && !node.metadata.content.startsWith("data:") ? { text: node.metadata.content.slice(0, 4_000) } : {}),
-                ...(node.metadata?.storageKey ? { storageKey: node.metadata.storageKey } : {}),
-            }));
-        if (!contextNodes.length) {
-            clearCanvasContext();
-            return;
-        }
-        setCanvasContext({ projectId, projectTitle: currentProject?.title || "未命名画布", nodes: contextNodes, updatedAt: Date.now() });
-    }, [clearCanvasContext, currentProject?.title, nodes, projectId, projectLoaded, selectedNodeIds, setCanvasContext]);
-
-    useEffect(() => () => clearCanvasContext(), [clearCanvasContext, projectId]);
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -3483,7 +3456,7 @@ function InfiniteCanvasPage() {
 
     return (
         <main className="relative flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} onOpenChat={() => navigate("/chat")} />
+            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasCinematicBackdrop enabled={canvasBackdropEnabled} colorTheme={colorTheme} />
                 <CanvasTopBar

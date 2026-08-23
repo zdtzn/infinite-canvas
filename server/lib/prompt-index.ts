@@ -5,6 +5,7 @@ const MAX_INDEX_ITEMS_PER_SOURCE = 20_000;
 const MAX_PROMPT_TEXT = 200_000;
 
 export type PromptIndexItem = {
+  sourceId?: string;
   id: string;
   title: string;
   coverUrl: string;
@@ -53,6 +54,7 @@ export function normalizePromptIndexItems(sourceId: string, input: unknown): Pro
     const sourceTags = Array.from(new Set((Array.isArray(record.tags) ? record.tags : []).map((tag) => String(tag || "").trim().slice(0, 80)).filter(Boolean))).slice(0, 40);
     const tags = classifyPromptTags({ title, prompt, tags: sourceTags });
     items.push({
+      sourceId: normalizedSourceId,
       id,
       title,
       prompt,
@@ -197,6 +199,7 @@ export function promptIndexStatuses(database: Database) {
 }
 
 type PromptIndexRow = {
+  source_id: string;
   prompt_id: string;
   title: string;
   prompt: string;
@@ -227,6 +230,7 @@ type StoredPromptTaxonomyRow = {
 function promptIndexRow(row: PromptIndexRow): PromptIndexItem {
   const tags = parseStoredTags(row.tags_json);
   return {
+    sourceId: row.source_id,
     id: row.prompt_id,
     title: row.title,
     prompt: row.prompt,
