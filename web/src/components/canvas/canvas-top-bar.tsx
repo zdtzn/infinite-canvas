@@ -6,6 +6,7 @@ import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { CultivationStatusPill } from "@/features/cultivation/status-pill";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
+import type { CanvasProjectSnapshot } from "@/stores/canvas/use-canvas-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { DOCS_URL } from "@/constant/env";
 
@@ -28,6 +29,9 @@ export function CanvasTopBar({
     onOpenPlugins,
     onUndo,
     onRedo,
+    snapshots = [],
+    onCreateSnapshot = () => undefined,
+    onRestoreSnapshot = () => undefined,
     agentOpen,
     compactAgentStatus,
     onToggleAgent,
@@ -50,6 +54,9 @@ export function CanvasTopBar({
     onOpenPlugins?: () => void;
     onUndo: () => void;
     onRedo: () => void;
+    snapshots?: CanvasProjectSnapshot[];
+    onCreateSnapshot?: () => void;
+    onRestoreSnapshot?: (snapshot: CanvasProjectSnapshot) => void;
     agentOpen: boolean;
     compactAgentStatus: { connected: boolean; enabled: boolean; activity: string };
     onToggleAgent: () => void;
@@ -113,6 +120,21 @@ export function CanvasTopBar({
                                 { type: "divider" },
                                 { key: "import", icon: <Upload className="size-4" />, label: "导入素材", onClick: onImportImage },
                                 { key: "export", icon: <Download className="size-4" />, label: "导出当前画布", onClick: onExportProject },
+                                { key: "snapshot-create", icon: <Plus className="size-4" />, label: "保存当前快照", onClick: onCreateSnapshot },
+                                ...(snapshots.length
+                                    ? [
+                                          {
+                                              key: "snapshots",
+                                              icon: <BookOpen className="size-4" />,
+                                              label: "恢复快照",
+                                              children: snapshots.slice(0, 8).map((snapshot) => ({
+                                                  key: snapshot.id,
+                                                  label: snapshot.title,
+                                                  onClick: () => onRestoreSnapshot(snapshot),
+                                              })),
+                                          },
+                                      ]
+                                    : []),
                                 { type: "divider" },
                                 { key: "undo", disabled: !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text="撤销" shortcut="⌘ Z" />, onClick: onUndo },
                                 { key: "redo", disabled: !canRedo, icon: <Redo2 className="size-4" />, label: <MenuLabel text="重做" shortcut="⌘ ⇧ Z / ⌘ Y" />, onClick: onRedo },

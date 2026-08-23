@@ -66,6 +66,10 @@ export type CanvasNodeMetadata = {
     batchUsesReferenceImages?: boolean;
     primaryImageId?: string;
     imageBatchExpanded?: boolean;
+    derivedFromNodeId?: string;
+    variantGroupId?: string;
+    versionLabel?: string;
+    isPrimaryVersion?: boolean;
     storageKey?: string;
     thumbnailKey?: string;
     thumbnailUrl?: string;

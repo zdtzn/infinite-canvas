@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Dropdown, Segmented, Switch } from "antd";
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, CircleDot, Eraser, Eye, EyeOff, Film, Grid2x2, Grid3X3, Group, Hand, Image as ImageIcon, Info, Lock, Moon, Music2, Palette, Plus, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Unlock, Upload, Video } from "lucide-react";
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, CircleDot, Columns2, Eraser, Eye, EyeOff, Film, Grid2x2, Grid3X3, Group, Hand, Image as ImageIcon, Info, Lock, Moon, Music2, Palette, Plus, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Unlock, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -36,6 +36,7 @@ export function CanvasToolbar({
     onToggleLock,
     onToggleHidden,
     onAlign,
+    onCompare,
 }: {
     selectedCount: number;
     canUndo: boolean;
@@ -64,6 +65,7 @@ export function CanvasToolbar({
     onToggleLock: () => void;
     onToggleHidden: () => void;
     onAlign: (mode: "left" | "center" | "right" | "top" | "middle" | "bottom" | "horizontal" | "vertical" | "grid") => void;
+    onCompare: () => void;
 }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const rootRef = useRef<HTMLDivElement>(null);
@@ -178,6 +180,11 @@ export function CanvasToolbar({
                                     </ToolbarButton>
                                 </span>
                             </Dropdown>
+                            {selectedCount === 2 ? (
+                                <ToolbarButton id="tool-compare" label="比较选中版本" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onCompare}>
+                                    <Columns2 className="size-4.5" />
+                                </ToolbarButton>
+                            ) : null}
                             <ToolbarButton id="tool-delete" label="删除选中" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onDelete} danger>
                                 <Trash2 className="size-4.5" />
                             </ToolbarButton>

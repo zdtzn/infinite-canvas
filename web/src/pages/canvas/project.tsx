@@ -40,13 +40,14 @@ import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
+import { CanvasVersionCompareDialog } from "@/components/canvas/canvas-version-compare-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { resolveImageSlotConcurrency } from "@/stores/model-capabilities";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useCanvasStore, type CanvasProjectSnapshot } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildCanvasResourceIndex, buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -148,6 +149,31 @@ function waitForCanvasThumbnailIdle() {
     });
 }
 
+function compactCanvasNodesForSnapshot(nodes: CanvasNodeData[]) {
+    return nodes.map((node) => {
+        if (!node.metadata?.storageKey) return node;
+        if (node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) return node;
+        return {
+            ...node,
+            metadata: {
+                ...node.metadata,
+                content: "",
+                ...(node.type === CanvasNodeType.Image && node.metadata.thumbnailKey ? { thumbnailUrl: "" } : {}),
+            },
+        };
+    });
+}
+
+function compactCanvasAssistantSessionsForSnapshot(sessions: CanvasAssistantSession[]) {
+    return sessions.map((session) => ({
+        ...session,
+        messages: session.messages.map((message) => ({
+            ...message,
+            references: message.references?.map((reference) => (reference.storageKey ? { ...reference, dataUrl: undefined } : reference)),
+        })),
+    }));
+}
+
 const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
 // 稳定的空引用数组:避免每次渲染 `... || []` 产生新数组引用而击穿 CanvasNode 的 React.memo
@@ -158,6 +184,7 @@ const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
+const MAX_CANVAS_SNAPSHOT_BYTES = 12 * 1024 * 1024;
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -232,9 +259,12 @@ function InfiniteCanvasPage() {
     const createProject = useCanvasStore((state) => state.createProject);
     const openProject = useCanvasStore((state) => state.openProject);
     const updateProject = useCanvasStore((state) => state.updateProject);
+    const createSnapshot = useCanvasStore((state) => state.createSnapshot);
+    const restoreSnapshot = useCanvasStore((state) => state.restoreSnapshot);
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
+    const snapshots = currentProject?.snapshots || [];
     const setCanvasContext = useCanvasContextStore((state) => state.setSnapshot);
     const clearCanvasContext = useCanvasContextStore((state) => state.clear);
     const colorTheme = useThemeStore((state) => state.theme);
@@ -264,6 +294,7 @@ function InfiniteCanvasPage() {
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [projectLoaded, setProjectLoaded] = useState(false);
+    const [versionCompareOpen, setVersionCompareOpen] = useState(false);
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
@@ -299,6 +330,7 @@ function InfiniteCanvasPage() {
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
     const pendingImageUploadsRef = useRef(new Map<string, PendingImageUpload>());
     const restoreAbortRef = useRef<AbortController | null>(null);
+    const snapshotRestoreAbortRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
         if (!projectLoaded || !selectedNodeIds.size) {
@@ -538,6 +570,8 @@ function InfiniteCanvasPage() {
 
     useEffect(
         () => () => {
+            snapshotRestoreAbortRef.current?.abort();
+            snapshotRestoreAbortRef.current = null;
             generationRequestsRef.current.forEach((request) => request.controller.abort());
             generationRequestsRef.current.clear();
             pendingImageUploadsRef.current.forEach((pending) => {
@@ -1215,6 +1249,97 @@ function InfiniteCanvasPage() {
         navigate(`/canvas/${id}`);
     }, [createProject, navigate]);
 
+    const handleCreateSnapshot = useCallback(() => {
+        const snapshotNodes = compactCanvasNodesForSnapshot(nodesRef.current);
+        const snapshotSessions = compactCanvasAssistantSessionsForSnapshot(chatSessions);
+        const snapshotSize = new Blob([
+            JSON.stringify({
+                nodes: snapshotNodes,
+                connections: connectionsRef.current,
+                chatSessions: snapshotSessions,
+                activeChatId,
+                backgroundMode,
+                showImageInfo,
+                viewport: viewportRef.current,
+            }),
+        ]).size;
+        if (snapshotSize > MAX_CANVAS_SNAPSHOT_BYTES) {
+            message.warning("当前画布数据较大，暂不保存快照。请先让图片完成上传，或减少未保存的大图素材。");
+            return;
+        }
+        const snapshot = createSnapshot(projectId, {
+            title: `快照 ${new Date().toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}`,
+            nodes: structuredClone(snapshotNodes),
+            connections: structuredClone(connectionsRef.current),
+            chatSessions: structuredClone(snapshotSessions),
+            activeChatId,
+            backgroundMode,
+            showImageInfo,
+            viewport: { ...viewportRef.current },
+        });
+        if (snapshot) message.success(`已保存“${snapshot.title}”`);
+    }, [activeChatId, backgroundMode, chatSessions, createSnapshot, message, projectId, showImageInfo]);
+
+    const openVersionCompare = useCallback(() => {
+        const selectedImages = nodesRef.current.filter((node) => selectedNodeIdsRef.current.has(node.id) && node.type === CanvasNodeType.Image && Boolean(node.metadata?.content));
+        if (selectedImages.length !== 2) {
+            message.info("请选择两张已生成的图片进行比较");
+            return;
+        }
+        setVersionCompareOpen(true);
+    }, [message]);
+
+    const handleRestoreSnapshot = useCallback(
+        (snapshot: CanvasProjectSnapshot) => {
+            modal.confirm({
+                title: "恢复画布快照？",
+                content: `当前画布会恢复到“${snapshot.title}”保存时的状态，之后的修改仍可通过撤销返回。`,
+                okText: "恢复",
+                cancelText: "取消",
+                onOk: async () => {
+                    snapshotRestoreAbortRef.current?.abort();
+                    const controller = new AbortController();
+                    snapshotRestoreAbortRef.current = controller;
+                    const restored = restoreSnapshot(projectId, snapshot.id);
+                    if (!restored) return;
+                    setProjectLoaded(false);
+                    try {
+                        const [restoredNodes, restoredSessions] = await Promise.all([
+                            hydrateCanvasImages(resetInterruptedGeneration(restored.nodes)),
+                            hydrateAssistantImages(restored.chatSessions || []),
+                        ]);
+                        if (controller.signal.aborted) return;
+                        setNodes(restoredNodes);
+                        setConnections(restored.connections);
+                        setChatSessions(restoredSessions);
+                        setActiveChatId(restored.activeChatId || null);
+                        setBackgroundMode(restored.backgroundMode);
+                        setShowImageInfo(restored.showImageInfo || false);
+                        setViewport(restored.viewport);
+                        historyRef.current = { past: [], future: [] };
+                        lastHistoryRef.current = {
+                            nodes: restoredNodes,
+                            connections: restored.connections,
+                            chatSessions: restoredSessions,
+                            activeChatId: restored.activeChatId || null,
+                            backgroundMode: restored.backgroundMode,
+                            showImageInfo: restored.showImageInfo || false,
+                        };
+                        setHistoryState({ canUndo: false, canRedo: false });
+                        setSelectedNodeIds(new Set());
+                        setSelectedConnectionId(null);
+                        setProjectLoaded(true);
+                        message.success(`已恢复“${restored.title}”`);
+                    } catch (error) {
+                        if (!controller.signal.aborted) message.error(error instanceof Error ? error.message : "快照恢复失败");
+                        setProjectLoaded(true);
+                    } finally {
+                        if (snapshotRestoreAbortRef.current === controller) snapshotRestoreAbortRef.current = null;
+                    }
+                },
+            });
+        }, [message, modal, projectId, restoreSnapshot]);
+
     const deleteCurrentProject = useCallback(() => {
         deleteProjects([projectId]);
         cleanupAssetImages();
@@ -1272,7 +1397,7 @@ function InfiniteCanvasPage() {
 
     // 仅处理「选中」的纯逻辑,供 body 冒泡拖拽入口与外层 capture 入口共用。
     // 返回本次点击后的单选目标 id(多选/取消时为 null),用于同步工具条。
-    const selectNodeByEvent = useCallback((event: Pick<ReactMouseEvent, "shiftKey" | "metaKey" | "ctrlKey">, nodeId: string) => {
+    const selectNodeByEvent = useCallback((event: Pick<ReactPointerEvent, "shiftKey" | "metaKey" | "ctrlKey">, nodeId: string) => {
         const nextSelected = new Set(selectedNodeIdsRef.current);
         if (event.shiftKey || event.metaKey || event.ctrlKey) {
             if (nextSelected.has(nodeId)) nextSelected.delete(nodeId);
@@ -1292,7 +1417,7 @@ function InfiniteCanvasPage() {
     // capture 必先于同一次事件的 body 冒泡触发,故把算好的选中集暂存,供紧随其后的拖拽入口复用,避免二次选中(shift 反选被抵消)。
     const pendingSelectionRef = useRef<Set<string> | null>(null);
     const handleNodeSelectCapture = useCallback(
-        (event: ReactMouseEvent, nodeId: string) => {
+        (event: ReactPointerEvent, nodeId: string) => {
             if (event.button !== 0) return;
             setContextMenu(null);
             setHoveredNodeId(null);
@@ -1303,7 +1428,7 @@ function InfiniteCanvasPage() {
         [selectNodeByEvent],
     );
 
-    const handleNodeMouseDown = useCallback((event: ReactMouseEvent, nodeId: string) => {
+    const handleNodePointerDown = useCallback((event: ReactPointerEvent, nodeId: string) => {
         event.stopPropagation();
         // 选中已由 capture 阶段完成;这里只负责建立拖拽。若因故没走 capture,则兜底再选一次。
         const currentNodes = nodesRef.current;
@@ -1786,7 +1911,7 @@ function InfiniteCanvasPage() {
     }, [copySelectedNodes, deleteConnection, deleteNodes, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas]);
 
     const handleConnectStart = useCallback(
-        (event: ReactMouseEvent, nodeId: string, handleType: "source" | "target") => {
+        (event: ReactPointerEvent, nodeId: string, handleType: "source" | "target") => {
             event.stopPropagation();
             setMouseWorld(screenToCanvas(event.clientX, event.clientY));
             setConnecting({ nodeId, handleType });
@@ -1912,25 +2037,29 @@ function InfiniteCanvasPage() {
 
     const setBatchPrimary = useCallback((child: CanvasNodeData) => {
         const rootId = child.metadata?.batchRootId;
-        if (!rootId || !child.metadata?.content) return;
+        const childMetadata = child.metadata;
+        if (!rootId || !childMetadata?.content) return;
+        const variantGroupId = childMetadata.variantGroupId || rootId;
         setNodes((prev) =>
-            prev.map((node) =>
-                node.id === rootId
-                    ? {
-                          ...node,
-                          width: child.width,
-                          height: child.height,
-                          metadata: {
-                              ...node.metadata,
-                              content: child.metadata?.content,
-                              primaryImageId: child.id,
-                              naturalWidth: child.metadata?.naturalWidth,
-                              naturalHeight: child.metadata?.naturalHeight,
-                              freeResize: child.metadata?.freeResize,
-                          },
-                      }
-                    : node,
-            ),
+            prev.map((node) => {
+                if (node.id === rootId) {
+                    return {
+                        ...node,
+                        width: child.width,
+                        height: child.height,
+                        metadata: {
+                            ...node.metadata,
+                            content: childMetadata.content,
+                            primaryImageId: child.id,
+                            naturalWidth: childMetadata.naturalWidth,
+                            naturalHeight: childMetadata.naturalHeight,
+                            freeResize: childMetadata.freeResize,
+                        },
+                    };
+                }
+                if (node.type !== CanvasNodeType.Image || node.metadata?.variantGroupId !== variantGroupId) return node;
+                return { ...node, metadata: { ...node.metadata, isPrimaryVersion: node.id === child.id } };
+            }),
         );
     }, []);
 
@@ -2221,7 +2350,12 @@ function InfiniteCanvasPage() {
             const prompt = `只修改蒙版透明区域，其他区域保持不变。${userPrompt}`;
             const childId = nanoid();
             const source = { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey };
-            const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [source]);
+            const generationMetadata = {
+                ...buildImageGenerationMetadata("edit", generationConfig, 1, [source]),
+                derivedFromNodeId: node.id,
+                variantGroupId: node.metadata?.variantGroupId || node.id,
+                versionLabel: "局部变体",
+            };
             const generationStartedAt = Date.now();
             setMaskEditNodeId(null);
             setRunningNodeId(childId);
@@ -2308,9 +2442,14 @@ function InfiniteCanvasPage() {
             const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
             const title = buildAngleLabel(params);
             const prompt = buildAnglePrompt(params);
-            const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [
-                { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey },
-            ]);
+            const generationMetadata = {
+                ...buildImageGenerationMetadata("edit", generationConfig, 1, [
+                    { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey },
+                ]),
+                derivedFromNodeId: node.id,
+                variantGroupId: node.metadata?.variantGroupId || node.id,
+                versionLabel: "角度变体",
+            };
             const generationStartedAt = Date.now();
             setAngleNodeId(null);
             setRunningNodeId(childId);
@@ -2607,7 +2746,11 @@ function InfiniteCanvasPage() {
                     const maxReferences = resolvedGenerationSettings.capabilities.maxReferences;
                     if (referenceImages.length > maxReferences) throw new Error(`当前模型最多支持 ${maxReferences} 张参考图，请移除多余连线后重试`);
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
-                    const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
+                    const generationMetadata = {
+                        ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages),
+                        derivedFromNodeId: nodeId,
+                        variantGroupId: nodeId,
+                    };
                     const generationStartedAt = Date.now();
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
@@ -2636,6 +2779,8 @@ function InfiniteCanvasPage() {
                             batchChildIds: count > 1 ? childIds : undefined,
                             batchUsesReferenceImages: referenceImages.length > 0,
                             ...generationMetadata,
+                            versionLabel: count > 1 ? "主版本" : "v1",
+                            isPrimaryVersion: true,
                             imageBatchExpanded: count > 1 ? true : undefined,
                         },
                     };
@@ -2649,7 +2794,7 @@ function InfiniteCanvasPage() {
                         },
                         width: imageConfig.width,
                         height: imageConfig.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, generationStartedAt, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata },
+                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, generationStartedAt, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata, versionLabel: `v${index + 1}`, isPrimaryVersion: index === 0 },
                     }));
                     const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
 
@@ -3068,19 +3213,25 @@ function InfiniteCanvasPage() {
                 const uploadedImage = await uploadImage(image.dataUrl, { outputFormat: generationConfig.imageOutputFormat });
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
-                const generationMetadata = savedImageMetadata?.generationType
-                    ? {
-                          generationType: savedImageMetadata.generationType,
-                          model: generationConfig.model,
-                          size: generationConfig.size,
-                          quality: generationConfig.quality,
-                          imageQuality: generationConfig.imageQuality,
-                          imageOutputFormat: generationConfig.imageOutputFormat,
-                          ...(generationConfig.background ? { background: generationConfig.background } : {}),
-                          count: savedImageMetadata.count || 1,
-                          references: savedImageMetadata.references,
-                      }
-                    : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryImages);
+                const generationMetadata = {
+                    ...(savedImageMetadata?.generationType
+                        ? {
+                              generationType: savedImageMetadata.generationType,
+                              model: generationConfig.model,
+                              size: generationConfig.size,
+                              quality: generationConfig.quality,
+                              imageQuality: generationConfig.imageQuality,
+                              imageOutputFormat: generationConfig.imageOutputFormat,
+                              ...(generationConfig.background ? { background: generationConfig.background } : {}),
+                              count: savedImageMetadata.count || 1,
+                              references: savedImageMetadata.references,
+                          }
+                        : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryImages)),
+                    ...(node.metadata?.derivedFromNodeId ? { derivedFromNodeId: node.metadata.derivedFromNodeId } : sourceNode.id !== node.id ? { derivedFromNodeId: sourceNode.id } : {}),
+                    ...(node.metadata?.variantGroupId ? { variantGroupId: node.metadata.variantGroupId } : {}),
+                    ...(node.metadata?.versionLabel ? { versionLabel: node.metadata.versionLabel } : {}),
+                    ...(node.metadata?.isPrimaryVersion !== undefined ? { isPrimaryVersion: node.metadata.isPrimaryVersion } : {}),
+                };
                 setNodes((prev) =>
                     prev.map((item) =>
                         item.id === node.id
@@ -3324,6 +3475,9 @@ function InfiniteCanvasPage() {
                     onOpenPlugins={PUBLIC_MODE ? undefined : () => setPluginManagerOpen(true)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
+                    snapshots={snapshots}
+                    onCreateSnapshot={handleCreateSnapshot}
+                    onRestoreSnapshot={handleRestoreSnapshot}
                     agentOpen={agentPanelOpen}
                     compactAgentStatus={{ connected: localAgentConnected, enabled: localAgentEnabled, activity: localAgentActivity }}
                     onToggleAgent={toggleAgentPanel}
@@ -3455,7 +3609,7 @@ function InfiniteCanvasPage() {
                             registryVersion={nodeRegistryVersion}
                             renderPanel={renderNodePanel}
                             renderNodeContent={renderNodeContentPanel}
-                            onMouseDown={handleNodeMouseDown}
+                            onPointerDown={handleNodePointerDown}
                             onSelectCapture={handleNodeSelectCapture}
                             onHoverStart={handleNodeHoverStart}
                             onHoverEnd={handleNodeHoverEnd}
@@ -3556,11 +3710,18 @@ function InfiniteCanvasPage() {
                     onToggleLock={() => toggleSelectedNodeFlag("locked")}
                     onToggleHidden={() => toggleSelectedNodeFlag("hidden")}
                     onAlign={alignSelectedNodes}
+                    onCompare={openVersionCompare}
                 />
 
                 {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
                 <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
+
+                <CanvasVersionCompareDialog
+                    nodes={nodes.filter((node) => selectedNodeIds.has(node.id) && node.type === CanvasNodeType.Image && Boolean(node.metadata?.content)).slice(0, 2)}
+                    open={versionCompareOpen}
+                    onClose={() => setVersionCompareOpen(false)}
+                />
 
                 {contextMenu ? (
                     <CanvasNodeContextMenu

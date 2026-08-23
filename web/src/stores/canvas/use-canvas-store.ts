@@ -19,6 +19,20 @@ export type CanvasProject = {
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
     viewport: ViewportTransform;
+    snapshots: CanvasProjectSnapshot[];
+};
+
+export type CanvasProjectSnapshot = {
+    id: string;
+    title: string;
+    createdAt: string;
+    nodes: CanvasNodeData[];
+    connections: CanvasConnection[];
+    chatSessions: CanvasAssistantSession[];
+    activeChatId: string | null;
+    backgroundMode: CanvasBackgroundMode;
+    showImageInfo: boolean;
+    viewport: ViewportTransform;
 };
 
 type CanvasStore = {
@@ -33,6 +47,9 @@ type CanvasStore = {
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[]) => void;
     setProjectServerRevision: (id: string, revision: number) => void;
+    createSnapshot: (projectId: string, snapshot: Omit<CanvasProjectSnapshot, "id" | "createdAt"> & Partial<Pick<CanvasProjectSnapshot, "id" | "createdAt">>) => CanvasProjectSnapshot | null;
+    deleteSnapshot: (projectId: string, snapshotId: string) => void;
+    restoreSnapshot: (projectId: string, snapshotId: string) => CanvasProjectSnapshot | null;
     updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
 };
 
@@ -119,6 +136,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     backgroundMode: "lines",
                     showImageInfo: false,
                     viewport: initialViewport,
+                    snapshots: [],
                 };
                 set((state) => ({ projects: [project, ...state.projects] }));
                 return id;
@@ -137,6 +155,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     backgroundMode: source.backgroundMode || "lines",
                     showImageInfo: source.showImageInfo || false,
                     viewport: source.viewport || initialViewport,
+                    snapshots: normalizeCanvasSnapshots(source.snapshots),
                 };
                 set((state) => ({ projects: [project, ...state.projects] }));
                 return project.id;
@@ -158,6 +177,61 @@ export const useCanvasStore = create<CanvasStore>()(
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, serverRevision: revision } : project)),
                 })),
+            createSnapshot: (projectId, input) => {
+                const project = get().projects.find((item) => item.id === projectId);
+                if (!project) return null;
+                const snapshot: CanvasProjectSnapshot = {
+                    id: input.id || nanoid(),
+                    title: input.title?.trim() || `快照 ${project.snapshots.length + 1}`,
+                    createdAt: input.createdAt || new Date().toISOString(),
+                    nodes: input.nodes,
+                    connections: input.connections,
+                    chatSessions: input.chatSessions,
+                    activeChatId: input.activeChatId,
+                    backgroundMode: input.backgroundMode,
+                    showImageInfo: input.showImageInfo,
+                    viewport: input.viewport,
+                };
+                set((state) => ({
+                    projects: state.projects.map((item) =>
+                        item.id === projectId
+                            ? { ...item, snapshots: [snapshot, ...item.snapshots].slice(0, 12), updatedAt: new Date().toISOString() }
+                            : item,
+                    ),
+                }));
+                return snapshot;
+            },
+            deleteSnapshot: (projectId, snapshotId) =>
+                set((state) => ({
+                    projects: state.projects.map((project) =>
+                        project.id === projectId
+                            ? { ...project, snapshots: project.snapshots.filter((snapshot) => snapshot.id !== snapshotId), updatedAt: new Date().toISOString() }
+                            : project,
+                    ),
+                })),
+            restoreSnapshot: (projectId, snapshotId) => {
+                const project = get().projects.find((item) => item.id === projectId);
+                const snapshot = project?.snapshots.find((item) => item.id === snapshotId);
+                if (!project || !snapshot) return null;
+                set((state) => ({
+                    projects: state.projects.map((item) =>
+                        item.id === projectId
+                            ? {
+                                  ...item,
+                                  nodes: snapshot.nodes,
+                                  connections: snapshot.connections,
+                                  chatSessions: snapshot.chatSessions,
+                                  activeChatId: snapshot.activeChatId,
+                                  backgroundMode: snapshot.backgroundMode,
+                                  showImageInfo: snapshot.showImageInfo,
+                                  viewport: snapshot.viewport,
+                                  updatedAt: new Date().toISOString(),
+                              }
+                            : item,
+                    ),
+                }));
+                return snapshot;
+            },
             updateProject: (id, patch) =>
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)),
@@ -206,7 +280,33 @@ export function normalizeCanvasProject(source: unknown): CanvasProject | null {
         backgroundMode: value.backgroundMode === "dots" || value.backgroundMode === "blank" ? value.backgroundMode : "lines",
         showImageInfo: Boolean(value.showImageInfo),
         viewport: { x: finiteNumber(viewport.x, 0), y: finiteNumber(viewport.y, 0), k: Math.max(0.1, finiteNumber(viewport.k, 1)) },
+        snapshots: normalizeCanvasSnapshots(value.snapshots),
     };
+}
+
+function normalizeCanvasSnapshots(value: unknown): CanvasProjectSnapshot[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .slice(0, 12)
+        .map((item, index) => {
+            if (!item || typeof item !== "object") return null;
+            const source = item as Partial<CanvasProjectSnapshot>;
+            const viewport = source.viewport && typeof source.viewport === "object" ? source.viewport : initialViewport;
+            const id = typeof source.id === "string" && source.id ? source.id : `snapshot-${index}`;
+            return {
+                id,
+                title: typeof source.title === "string" && source.title.trim() ? source.title.trim() : `快照 ${index + 1}`,
+                createdAt: validDate(source.createdAt) ? source.createdAt! : new Date().toISOString(),
+                nodes: Array.isArray(source.nodes) ? source.nodes.map(normalizeCanvasNode).filter((node): node is CanvasNodeData => Boolean(node)) : [],
+                connections: Array.isArray(source.connections) ? source.connections.filter(isCanvasConnection) : [],
+                chatSessions: Array.isArray(source.chatSessions) ? source.chatSessions : [],
+                activeChatId: typeof source.activeChatId === "string" ? source.activeChatId : null,
+                backgroundMode: source.backgroundMode === "dots" || source.backgroundMode === "blank" ? source.backgroundMode : "lines",
+                showImageInfo: Boolean(source.showImageInfo),
+                viewport: { x: finiteNumber(viewport.x, 0), y: finiteNumber(viewport.y, 0), k: Math.max(0.1, finiteNumber(viewport.k, 1)) },
+            } satisfies CanvasProjectSnapshot;
+        })
+        .filter((snapshot): snapshot is CanvasProjectSnapshot => Boolean(snapshot));
 }
 
 function normalizeCanvasNode(source: unknown, index: number): CanvasNodeData | null {

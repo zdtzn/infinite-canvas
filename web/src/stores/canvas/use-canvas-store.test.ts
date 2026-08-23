@@ -46,4 +46,36 @@ describe("canvas project schema migration", () => {
         assert.equal(useCanvasStore.getState().ownerUserId, "first-user");
         assert.equal(useCanvasStore.getState().projects[0]?.id, "legacy-private");
     });
+
+    test("keeps the newest twelve snapshots and restores project content without deleting snapshots", () => {
+        const project = normalizeCanvasProject({ id: "snapshot-project", nodes: [], connections: [] });
+        assert.ok(project);
+        useCanvasStore.setState({ hydrated: true, ownerUserId: "snapshot-user", projects: [project] });
+
+        for (let index = 0; index < 13; index += 1) {
+            useCanvasStore.getState().createSnapshot("snapshot-project", {
+                title: `版本 ${index + 1}`,
+                nodes: [{ id: `text-${index}`, type: "text", title: `版本 ${index + 1}`, position: { x: index, y: index }, width: 320, height: 220, metadata: { content: String(index) } }],
+                connections: [],
+                chatSessions: [],
+                activeChatId: null,
+                backgroundMode: "lines",
+                showImageInfo: false,
+                viewport: { x: index, y: index, k: 1 },
+            });
+        }
+
+        const beforeRestore = useCanvasStore.getState().projects[0];
+        assert.ok(beforeRestore);
+        assert.equal(beforeRestore.snapshots.length, 12);
+        assert.equal(beforeRestore.snapshots[0]?.title, "版本 13");
+        const oldestSnapshot = beforeRestore.snapshots[11];
+        assert.ok(oldestSnapshot);
+
+        const restored = useCanvasStore.getState().restoreSnapshot("snapshot-project", oldestSnapshot.id);
+        assert.equal(restored?.title, "版本 2");
+        const afterRestore = useCanvasStore.getState().projects[0];
+        assert.equal(afterRestore?.nodes[0]?.metadata?.content, "1");
+        assert.equal(afterRestore?.snapshots.length, 12);
+    });
 });
