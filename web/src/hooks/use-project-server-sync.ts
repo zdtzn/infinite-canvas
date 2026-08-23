@@ -1,6 +1,5 @@
 import { App, Button } from "antd";
 import { createElement, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteServerProject, fetchServerProjects, saveServerProject } from "@/services/server-api";
@@ -27,7 +26,6 @@ function isProjectConflict(error: unknown) {
 
 export function useProjectServerSync(userId?: string) {
     const { message, notification } = App.useApp();
-    const navigate = useNavigate();
 
     useEffect(() => {
         if (!PUBLIC_MODE || !userId) return;
@@ -104,8 +102,8 @@ export function useProjectServerSync(userId?: string) {
                 actions: createElement(
                     "div",
                     { className: "flex flex-wrap gap-2" },
-                    createElement(Button, { size: "small", type: "primary", onClick: () => { notification.destroy(key); navigate(`/canvas/${copy.id}`); } }, "打开本地副本"),
-                    createElement(Button, { size: "small", onClick: () => { notification.destroy(key); navigate(`/canvas/${originalProjectId}`); } }, "查看云端版本"),
+                    createElement(Button, { href: `/canvas/${copy.id}`, size: "small", type: "primary", onClick: () => notification.destroy(key) }, "打开本地副本"),
+                    createElement(Button, { href: `/canvas/${originalProjectId}`, size: "small", onClick: () => notification.destroy(key) }, "查看云端版本"),
                     createElement(
                         Button,
                         {
@@ -266,7 +264,7 @@ export function useProjectServerSync(userId?: string) {
             saveTimers.forEach((timer) => window.clearTimeout(timer));
             deletionRetryTimers.forEach((timer) => window.clearTimeout(timer));
         };
-    }, [message, navigate, notification, userId]);
+    }, [message, notification, userId]);
 }
 
 function waitForCanvasHydration(isActive: () => boolean) {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { shouldUploadLocalProject } from "./use-project-server-sync";
@@ -38,5 +39,10 @@ describe("project server sync", () => {
 
     test("keeps the remote project when its revision is newer", () => {
         assert.equal(shouldUploadLocalProject(project("2026-07-23T03:00:00.000Z", 3), remote, remote.project), false);
+    });
+
+    test("stays independent from router context because it runs above RouterProvider", () => {
+        const source = readFileSync(new URL("./use-project-server-sync.ts", import.meta.url), "utf8");
+        assert.doesNotMatch(source, /from ["']react-router-dom["']/);
     });
 });
