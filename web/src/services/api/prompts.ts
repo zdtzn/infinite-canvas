@@ -3,7 +3,7 @@ import localforage from "localforage";
 import { normalizePromptAssets, runPromptSource, runTrustedPromptSource, type RawPrompt } from "./prompt-source-runtime";
 import { isBuiltInPromptSource, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "./prompt-source-presets";
-import { classifyPromptTags, sortPromptTaxonomyTags } from "./prompt-taxonomy";
+import { classifyPromptTags, isPromptTaxonomyTag, sortPromptTaxonomyTags } from "./prompt-taxonomy";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { serverRequest } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
@@ -157,8 +157,8 @@ async function getAllPrompts(): Promise<Prompt[]> {
 
 export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
     const serverResult = await fetchPromptIndex({ keyword, tag, category, page, pageSize });
-    if (serverResult) return { ...serverResult, items: serverResult.items.map(withPromptTaxonomy) };
-    const items = await fetchAllPrompts();
+    if (serverResult) return { ...serverResult, items: serverResult.items.map(withPromptTaxonomy), tags: sortPromptTaxonomyTags(serverResult.tags.filter(isPromptTaxonomyTag)) };
+    const items = (await getAllPrompts()).map(withPromptTaxonomy);
     const normalizedKeyword = keyword.trim().toLowerCase();
     const normalizedPage = Math.max(1, page);
     const normalizedPageSize = Math.max(1, Math.min(100, pageSize));

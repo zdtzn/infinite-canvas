@@ -7,6 +7,7 @@ import { openAppDatabase } from "../db/database";
 import {
   normalizePromptIndexItems,
   normalizePromptSourceIndexItems,
+  normalizeStoredPromptIndexTaxonomy,
   queryPromptIndex,
   replacePromptIndex,
 } from "./prompt-index";
@@ -69,7 +70,7 @@ describe("prompt index", () => {
         indexed: true,
       });
       expect(
-        queryPromptIndex(store.raw!, { tags: ["国风"] })
+        queryPromptIndex(store.raw!, { tags: ["国风东方"] })
           .items.map((item) => item.id)
           .sort(),
       ).toEqual(["one", "three"]);
@@ -78,6 +79,7 @@ describe("prompt index", () => {
           (item) => item.id,
         ),
       ).toEqual(["two"]);
+      expect(queryPromptIndex(store.raw!).tags.sort()).toEqual(["国风东方", "商品商业"].sort());
       expect(
         queryPromptIndex(store.raw!, { keyword: "主图" }).items.map(
           (item) => item.id,
@@ -91,6 +93,23 @@ describe("prompt index", () => {
         total: 0,
         indexed: true,
       });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("migrates noisy stored tags to one stable primary theme", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-prompt-taxonomy-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      store.raw!
+        .query("INSERT INTO prompt_index(source_id, prompt_id, title, prompt, cover_url, preview, tags_json, category, github_url, created_at, updated_at, indexed_at) VALUES (?, ?, ?, ?, '', '', ?, ?, '', '', '', ?)")
+        .run("legacy", "one", "国风茶具电商主图", "commercial product photography with ink wash details", JSON.stringify(["gpt-image-2", "作者", "电商设计"]), "旧来源", Date.now());
+
+      expect(normalizeStoredPromptIndexTaxonomy(store.raw!)).toBe(1);
+      expect(queryPromptIndex(store.raw!).items[0]?.tags).toEqual(["商品商业"]);
+      expect(normalizeStoredPromptIndexTaxonomy(store.raw!)).toBe(0);
     } finally {
       store.close();
     }

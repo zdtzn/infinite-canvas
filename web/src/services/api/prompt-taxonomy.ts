@@ -69,6 +69,7 @@ const TAXONOMY_RULES: readonly TaxonomyRule[] = [
 ];
 
 const englishKeywordPattern = /^[a-z0-9][a-z0-9 -]*$/i;
+const taxonomyTags = new Set<string>(PROMPT_TAXONOMY);
 
 function includesKeyword(value: string, keyword: string) {
     if (!englishKeywordPattern.test(keyword)) return value.includes(keyword);
@@ -76,8 +77,14 @@ function includesKeyword(value: string, keyword: string) {
     return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "i").test(value);
 }
 
-/** Convert arbitrary repository metadata into at most two stable, user-facing themes. */
+export function isPromptTaxonomyTag(value: string): value is PromptTaxonomyTag {
+    return taxonomyTags.has(value);
+}
+
+/** Convert arbitrary repository metadata into one stable, user-facing primary theme. */
 export function classifyPromptTags(input: PromptTaxonomyInput): PromptTaxonomyTag[] {
+    const existing = input.tags.find(isPromptTaxonomyTag);
+    if (existing) return [existing];
     const prominentText = [input.title, ...input.tags].join(" ").toLowerCase();
     const fullText = `${prominentText} ${input.prompt}`.toLowerCase();
     const scored = TAXONOMY_RULES.map((rule, index) => {
@@ -88,8 +95,7 @@ export function classifyPromptTags(input: PromptTaxonomyInput): PromptTaxonomyTa
         .filter((item) => item.score > 0)
         .sort((left, right) => right.score - left.score || left.index - right.index);
 
-    if (!scored.length) return ["创意灵感"];
-    return scored.slice(0, 2).map((item) => item.tag);
+    return [scored[0]?.tag || "创意灵感"];
 }
 
 export function sortPromptTaxonomyTags(tags: readonly string[]) {

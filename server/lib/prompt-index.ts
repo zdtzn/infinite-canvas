@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { classifyPromptTags } from "./prompt-taxonomy";
 
 const MAX_INDEX_ITEMS_PER_SOURCE = 20_000;
 const MAX_PROMPT_TEXT = 200_000;
@@ -49,7 +50,8 @@ export function normalizePromptIndexItems(sourceId: string, input: unknown): Pro
     const prompt = String(record.prompt || "").trim().slice(0, MAX_PROMPT_TEXT);
     if (!id || !title || !prompt || seen.has(id)) continue;
     seen.add(id);
-    const tags = Array.from(new Set((Array.isArray(record.tags) ? record.tags : []).map((tag) => String(tag || "").trim().slice(0, 80)).filter(Boolean))).slice(0, 40);
+    const sourceTags = Array.from(new Set((Array.isArray(record.tags) ? record.tags : []).map((tag) => String(tag || "").trim().slice(0, 80)).filter(Boolean))).slice(0, 40);
+    const tags = classifyPromptTags({ title, prompt, tags: sourceTags });
     items.push({
       id,
       title,
@@ -64,6 +66,23 @@ export function normalizePromptIndexItems(sourceId: string, input: unknown): Pro
     });
   }
   return items;
+}
+
+export function normalizeStoredPromptIndexTaxonomy(database: Database) {
+  const rows = database.query("SELECT source_id, prompt_id, title, prompt, tags_json FROM prompt_index").all() as StoredPromptTaxonomyRow[];
+  if (!rows.length) return 0;
+  const update = database.query("UPDATE prompt_index SET tags_json = ? WHERE source_id = ? AND prompt_id = ?");
+  let updated = 0;
+  database.transaction(() => {
+    for (const row of rows) {
+      const sourceTags = parseStoredTags(row.tags_json);
+      const tagsJson = JSON.stringify(classifyPromptTags({ title: row.title, prompt: row.prompt, tags: sourceTags }));
+      if (tagsJson === JSON.stringify(sourceTags)) continue;
+      update.run(tagsJson, row.source_id, row.prompt_id);
+      updated += 1;
+    }
+  })();
+  return updated;
 }
 
 export function normalizePromptSourceIndexItems(
@@ -197,14 +216,16 @@ type PromptIndexStatusRow = {
   last_error: string;
 };
 
+type StoredPromptTaxonomyRow = {
+  source_id: string;
+  prompt_id: string;
+  title: string;
+  prompt: string;
+  tags_json: string;
+};
+
 function promptIndexRow(row: PromptIndexRow): PromptIndexItem {
-  let tags: string[] = [];
-  try {
-    const parsed = JSON.parse(row.tags_json);
-    if (Array.isArray(parsed)) tags = parsed.map(String).filter(Boolean);
-  } catch {
-    tags = [];
-  }
+  const tags = parseStoredTags(row.tags_json);
   return {
     id: row.prompt_id,
     title: row.title,
@@ -217,6 +238,15 @@ function promptIndexRow(row: PromptIndexRow): PromptIndexItem {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function parseStoredTags(value: string) {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
 }
 
 function safeUrl(value: unknown) {

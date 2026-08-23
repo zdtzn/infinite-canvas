@@ -82,7 +82,8 @@ import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstrea
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
-import { normalizePromptIndexItems, normalizePromptSourceIndexItems, promptIndexStatuses, queryPromptIndex, recordPromptIndexError, replacePromptIndex } from "./lib/prompt-index";
+import { normalizePromptIndexItems, normalizePromptSourceIndexItems, normalizeStoredPromptIndexTaxonomy, promptIndexStatuses, queryPromptIndex, recordPromptIndexError, replacePromptIndex } from "./lib/prompt-index";
+import { PROMPT_TAXONOMY_REVISION } from "./lib/prompt-taxonomy";
 import { runPromptSourceScript, type ServerPromptSourceItem } from "./lib/prompt-source-runtime";
 import { defaultUserChatPresetId, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserSystemPrompt, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserSystemPrompt, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
@@ -203,6 +204,11 @@ mkdirSync(PROMPT_CACHE_ROOT, { recursive: true });
 prunePromptCache();
 
 const appDatabase = openAppDatabase({ dataDir: DATA_DIR });
+if (appDatabase.raw && appDatabase.loadSetting("prompt_index_taxonomy_revision") !== PROMPT_TAXONOMY_REVISION) {
+    const updated = normalizeStoredPromptIndexTaxonomy(appDatabase.raw);
+    appDatabase.saveSetting("prompt_index_taxonomy_revision", PROMPT_TAXONOMY_REVISION);
+    console.info(JSON.stringify({ event: "prompt_index_taxonomy_migrated", revision: PROMPT_TAXONOMY_REVISION, updated }));
+}
 let state = appDatabase.loadState();
 const assetBytesByUser = new Map<string, number>();
 for (const asset of Object.values(state.assets)) assetBytesByUser.set(asset.userId, (assetBytesByUser.get(asset.userId) || 0) + asset.bytes);

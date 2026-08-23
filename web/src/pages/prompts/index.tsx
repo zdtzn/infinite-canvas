@@ -62,7 +62,7 @@ export default function PromptsPage() {
                         <aside className="thin-scrollbar max-h-72 overflow-y-auto border-b border-stone-200 pb-5 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-6rem)] lg:border-b-0 lg:border-r lg:pb-8 lg:pr-5 dark:border-stone-800">
                             <PromptFilter label="来源" options={promptCategoryOptions} selected={selectedCategory} onChange={setSelectedCategory} />
                             <div className="mt-6">
-                                <div className="mb-2 text-xs font-semibold text-stone-400 dark:text-stone-500">主题</div>
+                                <div className="mb-2 text-xs font-semibold text-stone-400 dark:text-stone-500">主分类</div>
                                 <div className="flex flex-wrap gap-1.5">
                                     {promptTags.map((tag) => {
                                         const active = tag === ALL_PROMPTS_OPTION ? selectedTags.length === 0 : selectedTags.includes(tag);
@@ -76,7 +76,7 @@ export default function PromptsPage() {
                             </div>
                         </aside>
                         <section className="min-w-0">
-                            <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder="搜索标题、内容或主题" onChange={(event) => setTitleKeyword(event.target.value)} />
+                            <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder="搜索标题、内容或主分类" onChange={(event) => setTitleKeyword(event.target.value)} />
                             {query.isLoading ? (
                                 <div className="flex h-60 items-center justify-center">
                                     <Spin />
