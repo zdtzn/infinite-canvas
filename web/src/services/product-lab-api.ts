@@ -134,6 +134,44 @@ export async function fetchProductBatch(batchId: string, expectedUserId?: string
     });
 }
 
+export async function cancelProductBatch(batchId: string, expectedUserId?: string) {
+    return serverRequest<{ batch: ProductBatch; items: ProductBatchItem[] }>(`/api/product-lab/batches/${encodeURIComponent(batchId)}/cancel`, {
+        method: "POST",
+        expectedUserId,
+        timeoutMs: 20_000,
+    });
+}
+
+export async function retryFailedProductBatch(
+    batchId: string,
+    input: {
+        channelId: string;
+        model: string;
+        quality?: string;
+        imageQuality?: string;
+        imageOutputFormat?: string;
+        background?: string;
+        items?: Array<{
+            generationId: string;
+            title?: string;
+            aspectRatio?: string;
+            size?: string;
+            quality?: string;
+            imageQuality?: string;
+            imageOutputFormat?: string;
+            background?: string;
+        }>;
+    },
+    expectedUserId?: string,
+) {
+    return serverRequest<{ batch: ProductBatch; items: ProductBatchItem[] }>(`/api/product-lab/batches/${encodeURIComponent(batchId)}/retry-failed`, {
+        method: "POST",
+        body: input,
+        timeoutMs: 60_000,
+        expectedUserId,
+    });
+}
+
 export async function fetchProductBatches(projectId: string, expectedUserId?: string) {
     return serverRequest<{ items: Array<{ batch: ProductBatch; items: ProductBatchItem[] }> }>(`/api/product-lab/projects/${encodeURIComponent(projectId)}/batches`, {
         timeoutMs: 20_000,

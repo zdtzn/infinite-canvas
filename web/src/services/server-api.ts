@@ -120,6 +120,7 @@ export type AdminChannelMetric = {
     successImages: number;
     failedImages: number;
     avgDurationMs: number;
+    p95DurationMs: number;
     lastUsedAt: number;
     lastError: string;
 };

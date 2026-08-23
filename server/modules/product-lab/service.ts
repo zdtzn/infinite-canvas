@@ -470,6 +470,69 @@ export function createProductLabService(
     return rows.map((row) => getBatch(userId, row.batch_id)!).filter(Boolean);
   }
 
+  function cancelBatch(userId: string, batchId: string) {
+    const id = validId(batchId, "商品批任务 ID");
+    const batch = getBatch(userId, id);
+    if (!batch) throw new ProductLabError("商品批任务不存在", 404, "BATCH_NOT_FOUND");
+    const activeItems = batch.items.filter((item) => ["pending", "running"].includes(item.status));
+    if (!activeItems.length) return batch;
+    const timestamp = now();
+    database.transaction(() => {
+      database
+        .query("UPDATE product_batch_items SET status = 'canceled', error = ?, updated_at = ? WHERE user_id = ? AND batch_id = ? AND status IN ('pending', 'running')")
+        .run("用户已取消商品套图", timestamp, userId, id);
+      database
+        .query("UPDATE product_generations SET status = 'canceled', error = ?, updated_at = ? WHERE user_id = ? AND generation_id IN (SELECT generation_id FROM product_batch_items WHERE user_id = ? AND batch_id = ? AND status = 'canceled')")
+        .run("用户已取消商品套图", timestamp, userId, userId, id);
+      const counts = database
+        .query("SELECT COUNT(*) AS total, SUM(status = 'succeeded') AS completed, SUM(status = 'failed') AS failed, SUM(status = 'canceled') AS canceled FROM product_batch_items WHERE user_id = ? AND batch_id = ?")
+        .get(userId, id) as { total: number; completed: number; failed: number; canceled: number };
+      database
+        .query("UPDATE product_batch_jobs SET status = 'canceled', total = ?, completed = ?, failed = ?, canceled = ?, updated_at = ? WHERE user_id = ? AND batch_id = ?")
+        .run(counts.total, counts.completed || 0, counts.failed || 0, counts.canceled || 0, timestamp, userId, id);
+    })();
+    return getBatch(userId, id)!;
+  }
+
+  function retryFailedBatch(userId: string, input: unknown) {
+    const source = inputRecord(input, "商品批任务重试内容无效");
+    const batchId = validId(source.batchId, "商品批任务 ID");
+    const batch = getBatch(userId, batchId);
+    if (!batch) throw new ProductLabError("商品批任务不存在", 404, "BATCH_NOT_FOUND");
+    const requestedItems = Array.isArray(source.items) ? source.items : [];
+    const failedItems = batch.items.filter((item) => item.status === "failed");
+    const selected = requestedItems.length
+      ? requestedItems.map((rawItem) => {
+          const item = inputRecord(rawItem, "商品批任务重试项目无效");
+          const generationId = validId(item.generationId, "商品生成记录 ID");
+          const current = failedItems.find((candidate) => candidate.generationId === generationId);
+          if (!current) throw new ProductLabError("只能重试当前批次中失败的商品画卷", 409, "BATCH_RETRY_ITEM_INVALID");
+          return { generationId, jobId: validId(item.jobId, "生成任务 ID") };
+        })
+      : failedItems.map((item) => ({ generationId: item.generationId, jobId: validId(item.jobId || "", "生成任务 ID") }));
+    if (!selected.length) throw new ProductLabError("当前批次没有可重试的失败画卷", 409, "BATCH_NOT_RETRYABLE");
+    const unique = new Set(selected.map((item) => item.generationId));
+    if (unique.size !== selected.length) throw new ProductLabError("商品批任务重试项目不能重复");
+    const timestamp = now();
+    database.transaction(() => {
+      for (const item of selected) {
+        database
+          .query("UPDATE product_batch_items SET job_id = ?, status = 'pending', error = '', updated_at = ? WHERE user_id = ? AND batch_id = ? AND generation_id = ? AND status = 'failed'")
+          .run(item.jobId, timestamp, userId, batchId, item.generationId);
+        database
+          .query("UPDATE product_generations SET job_id = ?, status = 'pending', asset_key = NULL, error = '', updated_at = ? WHERE user_id = ? AND generation_id = ?")
+          .run(item.jobId, timestamp, userId, item.generationId);
+      }
+      const counts = database
+        .query("SELECT COUNT(*) AS total, SUM(status = 'succeeded') AS completed, SUM(status = 'failed') AS failed, SUM(status = 'canceled') AS canceled FROM product_batch_items WHERE user_id = ? AND batch_id = ?")
+        .get(userId, batchId) as { total: number; completed: number; failed: number; canceled: number };
+      database
+        .query("UPDATE product_batch_jobs SET status = 'queued', total = ?, completed = ?, failed = ?, canceled = ?, updated_at = ? WHERE user_id = ? AND batch_id = ?")
+        .run(counts.total, counts.completed || 0, counts.failed || 0, counts.canceled || 0, timestamp, userId, batchId);
+    })();
+    return getBatch(userId, batchId)!;
+  }
+
   function updateBatchItem(userId: string, input: unknown) {
     const source = inputRecord(input, "商品批任务更新无效");
     const batchId = validId(source.batchId, "商品批任务 ID");
@@ -565,6 +628,8 @@ export function createProductLabService(
     createBatch,
     getBatch,
     listBatches,
+    cancelBatch,
+    retryFailedBatch,
     updateBatchItem,
     listTemplates,
     hasCapability,

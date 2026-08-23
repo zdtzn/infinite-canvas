@@ -1,5 +1,6 @@
-import { App } from "antd";
-import { useEffect } from "react";
+import { App, Button } from "antd";
+import { createElement, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteServerProject, fetchServerProjects, saveServerProject } from "@/services/server-api";
@@ -25,7 +26,8 @@ function isProjectConflict(error: unknown) {
 }
 
 export function useProjectServerSync(userId?: string) {
-    const { message } = App.useApp();
+    const { message, notification } = App.useApp();
+    const navigate = useNavigate();
 
     useEffect(() => {
         if (!PUBLIC_MODE || !userId) return;
@@ -90,6 +92,38 @@ export function useProjectServerSync(userId?: string) {
             }
         };
 
+        function showConflictActions(copy: CanvasProject, originalProjectId: string, remoteAligned: boolean) {
+            const key = `canvas-conflict-${originalProjectId}`;
+            notification.warning({
+                key,
+                duration: 0,
+                message: "检测到画布版本冲突",
+                description: remoteAligned
+                    ? `本地修改已保存为“${copy.title}”，原画布已对齐云端版本。`
+                    : `本地修改已保存为“${copy.title}”，云端版本将在网络恢复后重新同步。`,
+                actions: createElement(
+                    "div",
+                    { className: "flex flex-wrap gap-2" },
+                    createElement(Button, { size: "small", type: "primary", onClick: () => { notification.destroy(key); navigate(`/canvas/${copy.id}`); } }, "打开本地副本"),
+                    createElement(Button, { size: "small", onClick: () => { notification.destroy(key); navigate(`/canvas/${originalProjectId}`); } }, "查看云端版本"),
+                    createElement(
+                        Button,
+                        {
+                            size: "small",
+                            onClick: () => {
+                                notification.destroy(key);
+                                void import("@/lib/canvas/canvas-export")
+                                    .then(({ exportCanvasProjects }) => exportCanvasProjects([copy], copy.title))
+                                    .then(() => message.success("本地冲突副本已导出"))
+                                    .catch(() => message.error("导出冲突副本失败，请稍后重试"));
+                            },
+                        },
+                        "导出本地副本",
+                    ),
+                ),
+            });
+        }
+
         async function preserveConflictCopy(localProject: CanvasProject, originalProjectId: string) {
             if (!ownsCurrentStore()) return;
             const timestamp = new Date().toLocaleString("zh-CN", { hour12: false }).replace(/[/:]/g, "-");
@@ -117,9 +151,9 @@ export function useProjectServerSync(userId?: string) {
                 useCanvasStore.getState().replaceProjects(remoteProject ? [remoteProject, ...currentProjects] : currentProjects);
                 if (remote) revisions.set(originalProjectId, remote.revision);
                 else revisions.delete(originalProjectId);
-                if (active) message.warning(`检测到云端版本冲突，已保存为“${copy.title}”，原画布已对齐云端版本`);
+                if (active) showConflictActions(copy, originalProjectId, true);
             } catch {
-                if (active) message.warning(`检测到云端版本冲突，已先保存“${copy.title}”；原画布将在下次同步时对齐`);
+                if (active) showConflictActions(copy, originalProjectId, false);
             }
         }
 
@@ -232,7 +266,7 @@ export function useProjectServerSync(userId?: string) {
             saveTimers.forEach((timer) => window.clearTimeout(timer));
             deletionRetryTimers.forEach((timer) => window.clearTimeout(timer));
         };
-    }, [message, userId]);
+    }, [message, navigate, notification, userId]);
 }
 
 function waitForCanvasHydration(isActive: () => boolean) {

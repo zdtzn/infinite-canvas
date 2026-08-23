@@ -1181,6 +1181,7 @@ function MonitoringPanel() {
                             ),
                         },
                         { title: "平均耗时", dataIndex: "avgDurationMs", key: "avgDurationMs", width: 110, align: "right", render: (value) => (value ? formatDuration(value) : "-") },
+                        { title: "P95 耗时", dataIndex: "p95DurationMs", key: "p95DurationMs", width: 110, align: "right", render: (value) => (value ? formatDuration(value) : "-") },
                         { title: "运行中", dataIndex: "activeJobs", key: "activeJobs", width: 85, align: "right" },
                         { title: "最近使用", dataIndex: "lastUsedAt", key: "lastUsedAt", width: 170, render: (value) => (value ? formatTimestamp(value) : "尚未使用") },
                         {

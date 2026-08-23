@@ -1,7 +1,7 @@
 import { memo, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { App, Empty, Input, Popconfirm, Select, Spin, Tag } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
+import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, MessageCircle, Music2, Plus, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
 import { motion } from "motion/react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
@@ -32,6 +32,7 @@ type Props = {
     onFocusNode: (nodeId: string) => void;
     onPreviewNode: (nodeId: string) => void;
     onInsertAsset: (payload: InsertAssetPayload) => void;
+    onOpenChat: () => void;
 };
 
 const NODE_TYPE_ICON: Record<string, typeof Square> = {
@@ -50,7 +51,7 @@ const STATUS_COLOR: Record<string, string> = {
     idle: "transparent",
 };
 
-export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, onInsertAsset }: Props) {
+export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, onInsertAsset, onOpenChat }: Props) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [tab, setTab] = useState<PanelTab>("canvas");
     const width = useCanvasSidePanelStore((state) => state.width);
@@ -99,13 +100,13 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
                 data-canvas-no-zoom
             >
                 <div className="flex items-center gap-5 px-4 pt-3.5">
-                    <TabButton label="画布" active={tab === "canvas"} theme={theme} onClick={() => setTab("canvas")} />
+                    <TabButton label="图层" active={tab === "canvas"} theme={theme} onClick={() => setTab("canvas")} />
                     <TabButton label="藏卷阁" active={tab === "assets"} theme={theme} onClick={() => setTab("assets")} />
                     <TabButton label="提示词" active={tab === "prompts"} theme={theme} onClick={() => setTab("prompts")} />
                 </div>
                 <div className="mt-2 min-h-0 flex-1 overflow-hidden">
                     {tab === "canvas" ? (
-                        <CanvasNodesTab nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={onFocusNode} onPreviewNode={onPreviewNode} theme={theme} />
+                        <CanvasNodesTab nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={onFocusNode} onPreviewNode={onPreviewNode} onOpenChat={onOpenChat} theme={theme} />
                     ) : tab === "assets" ? (
                         <CanvasAssetsTab onInsert={onInsertAsset} theme={theme} />
                     ) : (
@@ -146,7 +147,7 @@ function nodePreviewText(node: CanvasNodeData) {
     return getNodeDefinition(node.type)?.title || node.type;
 }
 
-function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, theme }: { nodes: CanvasNodeData[]; selectedNodeIds: Set<string>; onFocusNode: (nodeId: string) => void; onPreviewNode: (nodeId: string) => void; theme: CanvasTheme }) {
+function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, onOpenChat, theme }: { nodes: CanvasNodeData[]; selectedNodeIds: Set<string>; onFocusNode: (nodeId: string) => void; onPreviewNode: (nodeId: string) => void; onOpenChat: () => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
     const [keyword, setKeyword] = useState("");
     const [typeFilter, setTypeFilter] = useState<string>("all");
@@ -193,12 +194,13 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, th
     return (
         <div className="flex h-full flex-col">
             <div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
-                <span className="text-xs font-medium opacity-60">画布元素</span>
+                <span className="text-xs font-medium opacity-60">图层 / 节点</span>
                 {filtered.length ? <span className="text-xs opacity-35">{filtered.length}</span> : null}
+                {selectedNodeIds.size ? <button type="button" onClick={onOpenChat} className="ml-auto flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium opacity-70 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10" title="把选中节点带入问道台"><MessageCircle className="size-3.5" />问道台</button> : null}
                 <button
                     type="button"
                     onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
-                    className="ml-auto flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium opacity-70 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+                    className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium opacity-70 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
                     style={selectMode ? { color: theme.toolbar.activeText, opacity: 1 } : undefined}
                 >
                     <ListChecks className="size-3.5" />

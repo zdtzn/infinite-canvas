@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, Menu } from "lucide-react";
+import { Bot, ChevronDown, LoaderCircle, Menu, MessageCircle } from "lucide-react";
 import { Button, Dropdown, Tooltip } from "antd";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
@@ -13,6 +13,7 @@ import { preloadRoute } from "@/lib/route-loaders";
 import { cn } from "@/lib/utils";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useAgentStore } from "@/stores/use-agent-store";
+import { useChatRuntimeStore } from "@/stores/use-chat-runtime-store";
 import { useConfigStore } from "@/stores/use-config-store";
 
 const AppConfigModal = lazyRoute(() => import("@/components/layout/app-config-modal").then(({ AppConfigModal: Component }) => ({ default: Component })));
@@ -46,10 +47,13 @@ export function AppTopNav() {
     const connectAgent = useAgentStore((state) => state.connectAgent);
     const togglePanel = useAgentStore((state) => state.togglePanel);
     const panelOpen = useAgentStore((state) => state.panelOpen);
+    const chatPending = useChatRuntimeStore((state) => state.pending);
+    const chatRuntimeStatus = useChatRuntimeStore((state) => state.status);
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
     const slug = pathname.split("/").filter(Boolean)[0];
     const activeToolSlug = [...primaryNavigationTools, ...secondaryNavigationTools].some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
     const secondaryActive = secondaryNavigationTools.some((tool) => tool.slug === activeToolSlug);
+    const chatRuntimeLabel = chatRuntimeStatus === "stopping" ? "正在停止问道台回答" : chatRuntimeStatus === "starting" ? "正在连接问道台" : "问道台正在回答";
 
     useEffect(() => {
         if (autoConnectRef.current || agentEnabled || agentConnected || !agentToken.trim()) return;
@@ -161,6 +165,17 @@ export function AppTopNav() {
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
                             <TaskCenter />
+                            {chatPending ? (
+                                <Tooltip title={`${chatRuntimeLabel}，点击返回问道台`}>
+                                    <Button
+                                        type="text"
+                                        className="!h-8 !w-8 !min-w-8"
+                                        icon={chatRuntimeStatus === "stopping" ? <LoaderCircle className="size-4 animate-spin" /> : <MessageCircle className="size-4 text-amber-600" />}
+                                        aria-label={chatRuntimeLabel}
+                                        onClick={() => navigate("/chat")}
+                                    />
+                                </Tooltip>
+                            ) : null}
                             <span className="hidden lg:inline-flex">
                                 <Tooltip title={panelOpen ? "收起 Agent" : "打开 Agent"}>
                                     <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label="打开 Agent" />

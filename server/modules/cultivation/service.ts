@@ -942,6 +942,18 @@ export function createCultivationService(
          ORDER BY last_used_at DESC`,
       )
       .all(since) as Array<Record<string, unknown>>;
+    const durationRows = database
+      .query("SELECT user_id, channel_id, duration_ms FROM generation_usage WHERE created_at >= ? AND status = 'settled' AND duration_ms > 0")
+      .all(since) as Array<Record<string, unknown>>;
+    const durationsByChannel = new Map<string, number[]>();
+    for (const durationRow of durationRows) {
+      const key = `${String(durationRow.user_id)}:${String(durationRow.channel_id)}`;
+      const duration = Number(durationRow.duration_ms || 0);
+      if (!Number.isFinite(duration) || duration <= 0) continue;
+      const durations = durationsByChannel.get(key) || [];
+      durations.push(duration);
+      durationsByChannel.set(key, durations);
+    }
     return rows.map((row) => ({
       userId: String(row.user_id),
       channelId: String(row.channel_id),
@@ -953,6 +965,7 @@ export function createCultivationService(
       successImages: Number(row.success_images || 0),
       failedImages: Number(row.failed_images || 0),
       avgDurationMs: Number(row.avg_duration_ms || 0),
+      p95DurationMs: percentile95(durationsByChannel.get(`${String(row.user_id)}:${String(row.channel_id)}`) || []),
       lastUsedAt: Number(row.last_used_at || 0),
     }));
   }
@@ -1411,6 +1424,12 @@ function maskIp(ip: string) {
   if (ip.includes(":")) return `${ip.split(":").slice(0, 3).join(":")}:*`;
   const parts = ip.split(".");
   return parts.length === 4 ? `${parts[0]}.${parts[1]}.*.*` : "unknown";
+}
+
+function percentile95(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = values.slice().sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)] || 0;
 }
 
 function profileRow(database: Database, userId: string) {

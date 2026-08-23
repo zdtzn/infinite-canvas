@@ -3483,7 +3483,7 @@ function InfiniteCanvasPage() {
 
     return (
         <main className="relative flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
+            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} onOpenChat={() => navigate("/chat")} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasCinematicBackdrop enabled={canvasBackdropEnabled} colorTheme={colorTheme} />
                 <CanvasTopBar

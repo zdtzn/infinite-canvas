@@ -532,6 +532,12 @@ async function route(request: Request, requestId: string) {
         const productBatchMatch = url.pathname.match(/^\/api\/product-lab\/batches\/([^/]+)$/);
         if (productBatchMatch && request.method === "GET")
             return getProductBatch(session, decodeRouteSegment(productBatchMatch[1], "商品批任务 ID"));
+        const productBatchCancelMatch = url.pathname.match(/^\/api\/product-lab\/batches\/([^/]+)\/cancel$/);
+        if (productBatchCancelMatch && request.method === "POST")
+            return cancelProductBatch(session, decodeRouteSegment(productBatchCancelMatch[1], "商品批任务 ID"));
+        const productBatchRetryMatch = url.pathname.match(/^\/api\/product-lab\/batches\/([^/]+)\/retry-failed$/);
+        if (productBatchRetryMatch && request.method === "POST")
+            return heavyRequestSemaphore.run(request.signal, () => retryProductBatch(request, session, decodeRouteSegment(productBatchRetryMatch[1], "商品批任务 ID")));
         const productProjectMatch = url.pathname.match(/^\/api\/product-lab\/projects\/([^/]+)$/);
         if (productProjectMatch && request.method === "GET")
             return getProductProject(session, decodeRouteSegment(productProjectMatch[1], "商品项目 ID"));
@@ -887,6 +893,7 @@ function adminChannelMetrics(url: URL, session: SessionPayload) {
         current.successImages += metric.successImages;
         current.failedImages += metric.failedImages;
         current.avgDurationMs = current.settledJobs ? Math.round(durationTotal / current.settledJobs) : 0;
+        current.p95DurationMs = Math.max(current.p95DurationMs || 0, metric.p95DurationMs || 0);
         current.lastUsedAt = Math.max(current.lastUsedAt, metric.lastUsedAt);
     }
     const cutoff = Date.now() - days * 24 * 60 * 60_000;
@@ -924,6 +931,7 @@ function adminChannelMetrics(url: URL, session: SessionPayload) {
                 successImages: metric?.successImages || 0,
                 failedImages: metric?.failedImages || 0,
                 avgDurationMs: metric?.avgDurationMs || 0,
+                p95DurationMs: metric?.p95DurationMs || 0,
                 lastUsedAt: metric?.lastUsedAt || 0,
                 lastError: recentErrors.get(key) || "",
             };
@@ -2533,6 +2541,126 @@ function getProductBatch(session: SessionPayload, batchId: string) {
     const batch = requireProductLab().getBatch(session.userId, batchId);
     if (!batch) throw new HttpError(404, "商品批任务不存在");
     return json(publicProductBatch(session.userId, batch));
+}
+
+async function cancelProductBatch(session: SessionPayload, batchId: string) {
+    const service = requireProductLab();
+    const current = service.getBatch(session.userId, batchId);
+    if (!current) throw new HttpError(404, "商品批任务不存在");
+    const jobIds = current.items
+        .filter((item) => ["pending", "running"].includes(item.status) && item.jobId)
+        .map((item) => item.jobId as string);
+    const canceled = service.cancelBatch(session.userId, batchId);
+    await Promise.all(
+        jobIds.map(async (jobId) => {
+            if (!imageQueue.get(jobId)) return;
+            try {
+                await deleteJob(new URL(`http://product-batch.internal/api/jobs/${encodeURIComponent(jobId)}`), session, jobId);
+            } catch (error) {
+                console.warn(
+                    JSON.stringify({
+                        event: "product_batch_cancel_job_failed",
+                        batchId,
+                        jobId,
+                        message: error instanceof Error ? error.message : "unknown error",
+                    }),
+                );
+            }
+        }),
+    );
+    return json(publicProductBatch(session.userId, canceled));
+}
+
+async function retryProductBatch(request: Request, session: SessionPayload, batchId: string) {
+    const service = requireProductLab();
+    const current = service.getBatch(session.userId, batchId);
+    if (!current) throw new HttpError(404, "商品批任务不存在");
+    const project = service.getProject(session.userId, current.batch.projectId);
+    if (!project) throw new HttpError(404, "商品项目不存在");
+    const body = await readJson<Record<string, unknown>>(request, 512 * 1024);
+    const channelId = String(body.channelId || "").trim();
+    const model = String(body.model || "").trim();
+    if (!channelId || !model) throw new HttpError(400, "请先选择生图渠道和模型");
+    platformChannel(channelId);
+    assertPlatformModelAllowed(channelId, model, "image");
+
+    const failedItems = current.items.filter((item) => item.status === "failed");
+    if (!failedItems.length) throw new HttpError(409, "当前批次没有可重试的失败画卷");
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    const selectedItems = rawItems.length
+        ? rawItems.map((rawItem) => {
+              if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) throw new HttpError(400, "商品批任务重试项目无效");
+              const input = rawItem as Record<string, unknown>;
+              const generationId = String(input.generationId || "").trim();
+              const currentItem = failedItems.find((item) => item.generationId === generationId);
+              if (!currentItem) throw new HttpError(409, "只能重试当前批次中失败的商品画卷");
+              return { currentItem, input };
+          })
+        : failedItems.map((currentItem) => ({ currentItem, input: {} as Record<string, unknown> }));
+    const capabilities = selectedItems.map(({ currentItem }) => productOutputCapability(currentItem.generation.outputKind));
+    for (const capability of new Set(capabilities)) if (capability) requireProductCapability(session.userId, capability);
+    const retryNonce = randomUUID();
+    const preparedItems = selectedItems.map(({ currentItem, input }, index) => {
+        const generationId = currentItem.generationId;
+        const idempotencyKey = `product-batch-${batchId}-${generationId}-retry-${retryNonce}-${index}`;
+        const jobId = createHash("sha256").update(`${session.userId}:${idempotencyKey}`).digest("hex");
+        return {
+            generationId,
+            jobId,
+            idempotencyKey,
+            outputKind: currentItem.generation.outputKind,
+            pageIndex: currentItem.generation.pageIndex,
+            title: input.title,
+            prompt: currentItem.generation.prompt,
+            aspectRatio: input.aspectRatio,
+            size: input.size,
+            quality: input.quality ?? body.quality,
+            imageQuality: input.imageQuality ?? body.imageQuality,
+            imageOutputFormat: input.imageOutputFormat ?? body.imageOutputFormat,
+            background: input.background ?? body.background,
+        };
+    });
+    service.retryFailedBatch(session.userId, {
+        batchId,
+        items: preparedItems.map((item) => ({ generationId: item.generationId, jobId: item.jobId })),
+    });
+    for (const item of preparedItems) {
+        try {
+            const jobRequest = new Request("http://product-batch.internal/api/jobs/images", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Idempotency-Key": item.idempotencyKey },
+                body: JSON.stringify({
+                    channelId,
+                    model,
+                    prompt: item.prompt,
+                    count: 1,
+                    quality: item.quality,
+                    imageQuality: item.imageQuality,
+                    imageOutputFormat: item.imageOutputFormat,
+                    size: item.size ?? item.aspectRatio,
+                    background: item.background,
+                    references: [{ assetKey: project.sourceAssetKey }],
+                    source: {
+                        route: "/product-lab-batch",
+                        projectId: project.id,
+                        productBatchId: batchId,
+                        productGenerationId: item.generationId,
+                        label: `商品幻境 · ${String(item.title || "商品画卷")}`,
+                    },
+                }),
+            });
+            await createImageJob(jobRequest, session);
+        } catch (error) {
+            service.updateBatchItem(session.userId, {
+                batchId,
+                generationId: item.generationId,
+                jobId: item.jobId,
+                status: "failed",
+                error: error instanceof Error ? error.message : "商品画卷重试提交失败",
+            });
+        }
+    }
+    return json(publicProductBatch(session.userId, service.getBatch(session.userId, batchId)!), 202);
 }
 
 async function analyzeProductImage(request: Request, session: SessionPayload, requestId: string) {

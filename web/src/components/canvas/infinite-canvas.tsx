@@ -33,6 +33,13 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
     const scaleRef = useRef(viewport.k);
     const frameRef = useRef<number | null>(null);
     const nextViewportRef = useRef<ViewportTransform | null>(null);
+    const touchPointsRef = useRef(new Map<number, { x: number; y: number }>());
+    const pinchStateRef = useRef<{
+        initialDistance: number;
+        initialScale: number;
+        worldCenterX: number;
+        worldCenterY: number;
+    } | null>(null);
     const [isSpacePressed, setIsSpacePressed] = useState(false);
     const [isPanning, setIsPanning] = useState(false);
 
@@ -102,6 +109,31 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
     };
 
     const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+        if (event.pointerType === "touch") {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            touchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (touchPointsRef.current.size >= 2) {
+                const points = [...touchPointsRef.current.values()];
+                const first = points[0];
+                const second = points[1];
+                const centerX = (first.x + second.x) / 2;
+                const centerY = (first.y + second.y) / 2;
+                const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
+                const rect = containerRef.current?.getBoundingClientRect();
+                if (rect) {
+                    pinchStateRef.current = {
+                        initialDistance: distance,
+                        initialScale: viewport.k,
+                        worldCenterX: (centerX - rect.left - viewport.x) / viewport.k,
+                        worldCenterY: (centerY - rect.top - viewport.y) / viewport.k,
+                    };
+                    panState.current.isPanning = false;
+                    setIsPanning(true);
+                }
+                return;
+            }
+        }
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest("[data-canvas-no-zoom]")) return;
         if (target?.closest("[data-connection-create-menu]")) return;
@@ -140,6 +172,33 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
 
     useEffect(() => {
         const handlePointerMove = (event: PointerEvent) => {
+            if (event.pointerType === "touch" && touchPointsRef.current.has(event.pointerId)) {
+                touchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+                const pinch = pinchStateRef.current;
+                if (pinch && touchPointsRef.current.size >= 2) {
+                    const points = [...touchPointsRef.current.values()];
+                    const first = points[0];
+                    const second = points[1];
+                    const centerX = (first.x + second.x) / 2;
+                    const centerY = (first.y + second.y) / 2;
+                    const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
+                    const newScale = Math.min(Math.max(pinch.initialScale * (distance / pinch.initialDistance), 0.05), 5);
+                    const rect = containerRef.current?.getBoundingClientRect();
+                    if (rect) {
+                        nextViewportRef.current = {
+                            x: centerX - rect.left - pinch.worldCenterX * newScale,
+                            y: centerY - rect.top - pinch.worldCenterY * newScale,
+                            k: newScale,
+                        };
+                        if (frameRef.current) return;
+                        frameRef.current = requestAnimationFrame(() => {
+                            frameRef.current = null;
+                            if (nextViewportRef.current) onViewportChange(nextViewportRef.current);
+                        });
+                    }
+                    return;
+                }
+            }
             if (!panState.current.isPanning) return;
 
             const dx = event.clientX - panState.current.startX;
@@ -160,7 +219,14 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
             });
         };
 
-        const handlePointerUp = () => {
+        const handlePointerUp = (event: PointerEvent) => {
+            if (event.pointerType === "touch") {
+                touchPointsRef.current.delete(event.pointerId);
+                if (touchPointsRef.current.size < 2) {
+                    pinchStateRef.current = null;
+                    if (!panState.current.isPanning) setIsPanning(false);
+                }
+            }
             if (!panState.current.isPanning) return;
 
             if (shouldDeselectAfterCanvasPan(panState.current)) {
@@ -178,6 +244,8 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
             window.removeEventListener("pointermove", handlePointerMove);
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", handlePointerUp);
+            touchPointsRef.current.clear();
+            pinchStateRef.current = null;
             document.body.style.cursor = "";
         };
     }, [onCanvasDeselect, onViewportChange]);
@@ -200,7 +268,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         <div
             ref={containerRef}
             className="relative z-10 h-full w-full cursor-grab select-none overflow-hidden"
-            style={{ background: transparentBackground ? "transparent" : theme.canvas.background, cursor: isPanning ? "grabbing" : undefined }}
+            style={{ background: transparentBackground ? "transparent" : theme.canvas.background, cursor: isPanning ? "grabbing" : undefined, touchAction: "none" }}
             onPointerDown={handlePointerDown}
             onDoubleClick={handleDoubleClick}
             onWheel={handleWheel}

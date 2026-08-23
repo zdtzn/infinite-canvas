@@ -651,6 +651,7 @@ describe("cultivation quota and settlement", () => {
           successImages: 1,
           failedImages: 2,
           avgDurationMs: 2_000,
+          p95DurationMs: 2_000,
           lastUsedAt: new Date("2026-07-22T08:00:00+08:00").getTime(),
         });
       expect(metrics.find((item) => item.channelId === "channel-b")).toEqual({
@@ -664,6 +665,7 @@ describe("cultivation quota and settlement", () => {
           successImages: 0,
           failedImages: 0,
           avgDurationMs: 0,
+          p95DurationMs: 0,
           lastUsedAt: new Date("2026-07-22T08:00:00+08:00").getTime(),
         });
     } finally {

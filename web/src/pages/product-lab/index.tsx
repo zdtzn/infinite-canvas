@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, ArrowRight, Box, Check, ChevronRight, FolderPlus, ImagePlus, LoaderCircle, PackageSearch, RefreshCw, Settings2, Sparkles, Trash2, Upload } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, Box, Check, ChevronRight, FolderPlus, ImagePlus, LoaderCircle, PackageSearch, RefreshCw, Settings2, Sparkles, Trash2, Upload, XCircle } from "lucide-react";
 import { App, Button, Checkbox, Empty, Input, Popconfirm, Progress, Select, Skeleton, Tag, Tooltip } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { getImageBlob, uploadImage } from "@/services/image-storage";
 import {
     analyzeProduct,
+    cancelProductBatch,
     createProductBatch,
     createProductProject,
     deleteProductProject,
@@ -45,6 +46,7 @@ import {
     fetchProductGenerations,
     fetchProductLabContext,
     fetchProductProjects,
+    retryFailedProductBatch,
     updateProductProject,
     type ProductGeneration,
     type ProductProject,
@@ -94,6 +96,7 @@ export default function ProductLabPage() {
     const [savingArchiveIds, setSavingArchiveIds] = useState<string[]>([]);
     const [generating, setGenerating] = useState(false);
     const [activeBatchId, setActiveBatchId] = useState("");
+    const [lastBatchId, setLastBatchId] = useState("");
     const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
     const [imperialEntryVisible, setImperialEntryVisible] = useState(false);
     const [draftAnalysis, setDraftAnalysis] = useState<ProductAnalysisDraft>(emptyProductAnalysis());
@@ -206,6 +209,7 @@ export default function ProductLabPage() {
         let canceled = false;
         setGenerations([]);
         setActiveBatchId("");
+        setLastBatchId("");
         void Promise.all([fetchProductGenerations(activeProject.id, userId), fetchProductBatches(activeProject.id, userId)])
             .then(([generationResponse, batchResponse]) => {
                 if (canceled) return;
@@ -213,6 +217,7 @@ export default function ProductLabPage() {
                 const latestActive = batchResponse.items.find((item) => ["queued", "running"].includes(item.batch.status));
                 if (latestActive) {
                     setActiveBatchId(latestActive.batch.id);
+                    setLastBatchId(latestActive.batch.id);
                     setGenerations(latestActive.items.map((item) => item.generation));
                 }
             })
@@ -566,6 +571,28 @@ export default function ProductLabPage() {
             return;
         }
         const batchId = crypto.randomUUID();
+        const buildItems = (sourceItems: ProductPlanItem[], generationIds?: Map<string, string>) =>
+            sourceItems.map((item) => {
+                const configured = resolveImageModelSettings(
+                    { ...effectiveConfig, model, imageModel: model, size: item.aspectRatio, count: "1" },
+                    model,
+                    1,
+                ).config;
+                return {
+                    itemId: item.id,
+                    generationId: generationIds?.get(item.id),
+                    outputKind: item.kind,
+                    pageIndex: item.pageIndex,
+                    title: item.title,
+                    prompt: item.prompt,
+                    aspectRatio: item.aspectRatio,
+                    size: configured.size,
+                    quality: configured.quality,
+                    imageQuality: configured.imageQuality,
+                    imageOutputFormat: configured.imageOutputFormat,
+                    background: configured.background,
+                };
+            });
         setGenerating(true);
         setGenerationProgress({ completed: 0, total: items.length, title: "正在解析商品灵韵...", failed: 0, itemId: items[0]?.id });
         try {
@@ -575,30 +602,12 @@ export default function ProductLabPage() {
                     projectId: activeProject.id,
                     channelId: resolvedImageSettings.channel.id,
                     model: modelOptionName(model),
-                    items: items.map((item) => {
-                        const configured = resolveImageModelSettings(
-                            { ...effectiveConfig, model, imageModel: model, size: item.aspectRatio, count: "1" },
-                            model,
-                            1,
-                        ).config;
-                        return {
-                            itemId: item.id,
-                            outputKind: item.kind,
-                            pageIndex: item.pageIndex,
-                            title: item.title,
-                            prompt: item.prompt,
-                            aspectRatio: item.aspectRatio,
-                            size: configured.size,
-                            quality: configured.quality,
-                            imageQuality: configured.imageQuality,
-                            imageOutputFormat: configured.imageOutputFormat,
-                            background: configured.background,
-                        };
-                    }),
+                    items: buildItems(items),
                 },
                 userId,
             );
             setActiveBatchId(response.batch.id);
+            setLastBatchId(response.batch.id);
             setGenerations(response.items.map((item) => item.generation));
             setWorkflowStep("generate");
             message.info("套图已提交到后台，离开页面也会继续生成");
@@ -612,6 +621,74 @@ export default function ProductLabPage() {
 
     const generateSelectedPlan = () => generatePlanItems(selectedPlanItems);
     const retryPlanItem = (item: ProductPlanItem) => generatePlanItems([item]);
+
+    const cancelActiveBatch = async () => {
+        if (!activeBatchId || !generating) return;
+        try {
+            const response = await cancelProductBatch(activeBatchId, userId);
+            setGenerations(response.items.map((item) => item.generation));
+            setGenerating(false);
+            setActiveBatchId("");
+            setGenerationProgress(null);
+            message.info("商品套图已取消，尚未开始的任务不会继续消耗额度");
+            void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "商品套图取消失败");
+        }
+    };
+
+    const retryFailedBatch = async () => {
+        if (!lastBatchId || generating) return;
+        const latestBySlot = new Map<string, ProductGeneration>();
+        for (const generation of generations.slice().sort((left, right) => right.createdAt - left.createdAt)) {
+            const key = `${generation.outputKind}:${generation.pageIndex}`;
+            if (!latestBySlot.has(key)) latestBySlot.set(key, generation);
+        }
+        const failedItems = selectedPlanItems
+            .map((item) => ({ item, generation: latestBySlot.get(`${item.kind}:${item.pageIndex}`) }))
+            .filter((entry): entry is { item: ProductPlanItem; generation: ProductGeneration } => entry.generation?.status === "failed");
+        if (!failedItems.length) {
+            message.info("当前没有可重试的失败画卷");
+            return;
+        }
+        setGenerating(true);
+        setGenerationProgress({ completed: 0, total: failedItems.length, title: "正在重新凝聚失败画卷...", failed: 0, itemId: failedItems[0]?.generation.id });
+        try {
+            const response = await retryFailedProductBatch(
+                lastBatchId,
+                {
+                    channelId: resolvedImageSettings.channel.id,
+                    model: modelOptionName(model),
+                    items: failedItems.map(({ item, generation }) => {
+                        const configured = resolveImageModelSettings(
+                            { ...effectiveConfig, model, imageModel: model, size: item.aspectRatio, count: "1" },
+                            model,
+                            1,
+                        ).config;
+                        return {
+                            generationId: generation.id,
+                            title: item.title,
+                            aspectRatio: item.aspectRatio,
+                            size: configured.size,
+                            quality: configured.quality,
+                            imageQuality: configured.imageQuality,
+                            imageOutputFormat: configured.imageOutputFormat,
+                            background: configured.background,
+                        };
+                    }),
+                },
+                userId,
+            );
+            setActiveBatchId(response.batch.id);
+            setLastBatchId(response.batch.id);
+            setGenerations(response.items.map((item) => item.generation));
+            message.info(`已重新提交 ${failedItems.length} 幅失败画卷`);
+        } catch (error) {
+            setGenerating(false);
+            setGenerationProgress(null);
+            message.error(error instanceof Error ? error.message : "失败画卷重试提交失败");
+        }
+    };
 
     const archiveGeneration = async (generation: ProductGeneration, silent = false) => {
         if (!activeProject || !generation.assetKey || !generation.assetUrl) {
@@ -1243,6 +1320,8 @@ export default function ProductLabPage() {
                                     onArchive={archiveGeneration}
                                     onArchiveAll={archiveAllGenerations}
                                     onRetryPlanItem={retryPlanItem}
+                                    onCancelBatch={cancelActiveBatch}
+                                    onRetryFailed={retryFailedBatch}
                                     onBack={() => setWorkflowStep("plan")}
                                 />
                             )}
@@ -1289,6 +1368,8 @@ function GenerationWorkbench({
     onArchive,
     onArchiveAll,
     onRetryPlanItem,
+    onCancelBatch,
+    onRetryFailed,
     onBack,
 }: {
     plan: ProductPlanItem[];
@@ -1309,6 +1390,8 @@ function GenerationWorkbench({
     onArchive: (generation: ProductGeneration) => Promise<unknown>;
     onArchiveAll: (generations: ProductGeneration[]) => Promise<void>;
     onRetryPlanItem: (item: ProductPlanItem) => Promise<void>;
+    onCancelBatch: () => Promise<void>;
+    onRetryFailed: () => Promise<void>;
     onBack: () => void;
 }) {
     const succeededGenerations = generations
@@ -1341,6 +1424,8 @@ function GenerationWorkbench({
                     onArchive={onArchive}
                     onArchiveAll={onArchiveAll}
                     onRetryPlanItem={onRetryPlanItem}
+                    onCancelBatch={onCancelBatch}
+                    onRetryFailed={onRetryFailed}
                 />
             ) : succeededGenerations.length ? (
                 <GenerationResults generations={succeededGenerations} archivedAssetKeys={archivedAssetKeys} savingArchiveIds={savingArchiveIds} onArchive={onArchive} />
@@ -1397,9 +1482,12 @@ function GenerationWorkbench({
 
             <section className="sticky bottom-0 z-20 border-t border-stone-200 bg-[#f7f7f5]/95 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-[#101110]/95">
                 {generationBlockReason ? <div className="mb-3 text-xs leading-5 text-amber-700 dark:text-amber-300">{generationBlockReason}</div> : null}
-                <Button type="primary" size="large" block loading={generating} disabled={!selectedPlanIds.length || Boolean(generationBlockReason)} icon={generating ? undefined : <Sparkles className="size-4" />} onClick={onGenerate}>
-                    {generating ? "天地法则正在演化..." : `${actionLabel} · ${selectedPlanIds.length} 幅`}
-                </Button>
+                <div className="flex gap-2">
+                    <Button type="primary" size="large" block loading={generating} disabled={!selectedPlanIds.length || Boolean(generationBlockReason)} icon={generating ? undefined : <Sparkles className="size-4" />} onClick={onGenerate}>
+                        {generating ? "天地法则正在演化..." : `${actionLabel} · ${selectedPlanIds.length} 幅`}
+                    </Button>
+                    {generating ? <Button size="large" danger icon={<XCircle className="size-4" />} onClick={() => void onCancelBatch()}>取消生成</Button> : null}
+                </div>
             </section>
         </div>
     );
@@ -1415,6 +1503,8 @@ function ProductSuiteResults({
     onArchive,
     onArchiveAll,
     onRetryPlanItem,
+    onCancelBatch,
+    onRetryFailed,
 }: {
     items: ProductPlanItem[];
     generations: ProductGeneration[];
@@ -1425,6 +1515,8 @@ function ProductSuiteResults({
     onArchive: (generation: ProductGeneration) => Promise<unknown>;
     onArchiveAll: (generations: ProductGeneration[]) => Promise<void>;
     onRetryPlanItem: (item: ProductPlanItem) => Promise<void>;
+    onCancelBatch: () => Promise<void>;
+    onRetryFailed: () => Promise<void>;
 }) {
     const latestBySlot = new Map<string, ProductGeneration>();
     for (const generation of generations.slice().sort((left, right) => right.createdAt - left.createdAt)) {
@@ -1433,6 +1525,7 @@ function ProductSuiteResults({
     }
     const resultGenerations = items.map((item) => latestBySlot.get(`${item.kind}:${item.pageIndex}`) || null);
     const succeededGenerations = resultGenerations.filter((generation): generation is ProductGeneration => Boolean(generation?.status === "succeeded" && generation.assetUrl));
+    const failedGenerations = resultGenerations.filter((generation): generation is ProductGeneration => generation?.status === "failed");
     const unarchivedCount = succeededGenerations.filter((generation) => generation.assetKey && !archivedAssetKeys.has(generation.assetKey)).length;
 
     return (
@@ -1441,11 +1534,14 @@ function ProductSuiteResults({
                 icon={<Archive className="size-4" />}
                 title={`套图生成结果 · ${succeededGenerations.length}/${items.length}`}
                 action={
-                    succeededGenerations.length ? (
-                        <Button size="small" icon={<FolderPlus className="size-3.5" />} disabled={!unarchivedCount || savingArchiveIds.length > 0} onClick={() => void onArchiveAll(succeededGenerations)}>
-                            {unarchivedCount ? `全部入藏 (${unarchivedCount})` : "已全部入藏"}
-                        </Button>
-                    ) : null
+                    <div className="flex flex-wrap justify-end gap-2">
+                        {failedGenerations.length ? <Button size="small" icon={<RefreshCw className="size-3.5" />} disabled={generating} onClick={() => void onRetryFailed()}>重试失败项 ({failedGenerations.length})</Button> : null}
+                        {succeededGenerations.length ? (
+                            <Button size="small" icon={<FolderPlus className="size-3.5" />} disabled={!unarchivedCount || savingArchiveIds.length > 0} onClick={() => void onArchiveAll(succeededGenerations)}>
+                                {unarchivedCount ? `全部入藏 (${unarchivedCount})` : "已全部入藏"}
+                            </Button>
+                        ) : null}
+                    </div>
                 }
             />
             <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">

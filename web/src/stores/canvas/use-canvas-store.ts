@@ -74,7 +74,7 @@ async function flushCanvasPersistence() {
     await localForageStorage.setItem(name, JSON.stringify(value));
 }
 
-if (typeof window !== "undefined") {
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
     const flushOnBackground = () => void flushCanvasPersistence().catch(() => undefined);
     window.addEventListener("pagehide", flushOnBackground);
     document.addEventListener("visibilitychange", () => {

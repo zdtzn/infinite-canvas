@@ -9,6 +9,7 @@ import { cancelChatMessage, createChatConversation, createChatMemory, deleteChat
 import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
+import { useChatRuntimeStore } from "@/stores/use-chat-runtime-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId, type ChatPresetOption } from "./chat-presets";
 
 const DouQiLifeView = lazyRoute(() => import("./dou-qi-life-view"));
@@ -245,6 +246,7 @@ export default function ChatPage() {
         if (!pending) return;
         if (!pending.terminal) {
             pending.stopped = true;
+            useChatRuntimeStore.getState().setRuntime({ pending: true, status: "stopping", conversationId: pending.conversationId });
             const stoppedMessage = "本次回答已停止";
             if (activeConversationIdRef.current === pending.conversationId) {
                 setMessages((current) => {
@@ -444,6 +446,7 @@ export default function ChatPage() {
         const controller = new AbortController();
         abortRef.current = controller;
         setSending(true);
+        useChatRuntimeStore.getState().setRuntime({ pending: true, status: "starting", conversationId: input.conversationId, startedAt: createdAt });
         if (input.showOptimisticUser) {
             setDraft("");
             setAttachments([]);
@@ -474,6 +477,7 @@ export default function ChatPage() {
                 signal: controller.signal,
                 onStarted: ({ conversation, userMessage, assistantMessage }) => {
                     pending.started = true;
+                    useChatRuntimeStore.getState().setRuntime({ pending: true, status: "streaming", conversationId: input.conversationId, startedAt: createdAt });
                     pending.userMessageId = userMessage.id;
                     pending.assistantMessageId = assistantMessage.id;
                     setConversations((current) => upsertConversation(current, conversation));
@@ -537,6 +541,7 @@ export default function ChatPage() {
             abortRef.current = null;
             if (pendingTurnRef.current === pending) pendingTurnRef.current = null;
             sendingRef.current = false;
+            useChatRuntimeStore.getState().clearRuntime(input.conversationId);
             if (input.editUserMessageId) setEditingMessageId("");
             resolveCompletion();
         }
@@ -719,6 +724,22 @@ export default function ChatPage() {
         }
     }
 
+    async function handleRememberMessage(item: ChatMessage) {
+        const content = item.content.trim();
+        if (!content || item.status !== "completed") return;
+        if (memories.some((memory) => memory.content.trim() === content)) {
+            message.info("这段内容已经在长期记忆中");
+            return;
+        }
+        try {
+            const response = await createChatMemory({ kind: "fact", content: content.slice(0, 4_000), sourceConversationId: item.conversationId, pinned: true }, userId);
+            setMemories((current) => [response.memory, ...current]);
+            message.success("已加入长期记忆");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存长期记忆失败");
+        }
+    }
+
     async function handleDeleteMemory(id: string) {
         try {
             await deleteChatMemory(id, userId);
@@ -868,7 +889,7 @@ export default function ChatPage() {
                         {!detailLoading && !messages.length ? <WelcomeEmpty preset={activePreset} /> : null}
                         <div className="space-y-5">
                             {messages.map((item, index) => (
-                                <ChatBubble key={item.id} item={item} isLatest={index === messages.length - 1} onRetry={handleRetry} onContinue={handleContinue} onEdit={handleEdit} onDelete={handleDeleteMessage} />
+                                <ChatBubble key={item.id} item={item} isLatest={index === messages.length - 1} onRetry={handleRetry} onContinue={handleContinue} onEdit={handleEdit} onDelete={handleDeleteMessage} onRemember={handleRememberMessage} />
                             ))}
                             {sending ? (
                                 <div className="flex items-center gap-2 text-xs text-stone-500">
@@ -1147,13 +1168,14 @@ function createOptimisticAssistantMessage(pending: PendingChatTurn, error: strin
     };
 }
 
-function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete }: { item: ChatMessage; isLatest: boolean; onRetry: (item: ChatMessage) => void; onContinue: (item: ChatMessage) => void; onEdit: (item: ChatMessage) => void; onDelete: (item: ChatMessage) => void }) {
+function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete, onRemember }: { item: ChatMessage; isLatest: boolean; onRetry: (item: ChatMessage) => void; onContinue: (item: ChatMessage) => void; onEdit: (item: ChatMessage) => void; onDelete: (item: ChatMessage) => void; onRemember: (item: ChatMessage) => void }) {
     const isUser = item.role === "user";
     const copyText = useCopyText();
     const markdownContent = item.content;
     const copyValue = item.status === "streaming" ? "" : item.content.trim() || (item.status === "failed" ? item.error?.trim() || "" : "");
     const canDelete = !item.id.startsWith("optimistic-") && item.status !== "streaming";
     const menuItems = [
+        ...(item.status === "completed" && item.content.trim() ? [{ key: "remember", label: "记住这句话", icon: <Brain className="size-3.5" /> }] : []),
         ...(isUser && item.status === "completed" ? [{ key: "edit", label: "编辑问题", icon: <Pencil className="size-3.5" /> }] : []),
         ...(!isUser && isLatest && item.status === "completed" ? [{ key: "continue", label: "继续生成", icon: <MoreHorizontal className="size-3.5" /> }, { key: "retry", label: "重新生成", icon: <RotateCcw className="size-3.5" /> }] : []),
         ...(!isUser && isLatest && item.status === "failed" ? [{ key: "retry", label: "重试回答", icon: <RotateCcw className="size-3.5" /> }] : []),
@@ -1218,6 +1240,7 @@ function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete }: {
                                         if (key === "continue") onContinue(item);
                                         if (key === "retry") onRetry(item);
                                         if (key === "delete") onDelete(item);
+                                        if (key === "remember") onRemember(item);
                                     },
                                 }}
                             >
