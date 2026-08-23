@@ -182,6 +182,12 @@ export async function changePersonalPassword(currentPassword: string, newPasswor
     });
 }
 
+export async function downloadAccountExport(expectedUserId?: string) {
+    const response = await fetch("/api/account/export", { headers: expectedUserHeaders(undefined, expectedUserId), credentials: "same-origin" });
+    if (!response.ok) await throwResponseError(response);
+    return response.blob();
+}
+
 export type ServerUserPreferences = {
     systemPrompt: string;
     systemPromptConfigured?: boolean;
@@ -319,8 +325,12 @@ export async function deleteServerAssetLibraryItem(id: string, expectedUserId?: 
     await serverRequest(`/api/library-assets/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
 }
 
-export async function fetchServerGenerationHistory(kind: "image" | "video", expectedUserId?: string) {
-    return serverRequest<{ items: Record<string, unknown>[] }>(`/api/generation-history/${kind}`, { timeoutMs: 20_000, expectedUserId });
+export async function fetchServerGenerationHistory(kind: "image" | "video", expectedUserId?: string, options: { page?: number; pageSize?: number } = {}) {
+    const params = new URLSearchParams();
+    if (options.page) params.set("page", String(options.page));
+    if (options.pageSize) params.set("pageSize", String(options.pageSize));
+    const query = params.toString();
+    return serverRequest<{ items: Record<string, unknown>[]; page?: number; pageSize?: number; total?: number; hasMore?: boolean }>(`/api/generation-history/${kind}${query ? `?${query}` : ""}`, { timeoutMs: 20_000, expectedUserId });
 }
 
 export async function mergeServerGenerationHistory(kind: "image" | "video", items: Record<string, unknown>[], expectedUserId?: string) {
@@ -531,6 +541,15 @@ export async function waitForServerJob(id: string, options?: { signal?: AbortSig
 export async function saveServerProject(project: Record<string, unknown>, revision: number, expectedUserId?: string) {
     const id = String(project.id || "");
     return serverRequest<{ project: Record<string, unknown>; revision: number; updatedAt: number }>(`/api/projects/${encodeURIComponent(id)}`, { method: "PUT", body: { project, revision }, timeoutMs: 20_000, expectedUserId });
+}
+
+export async function branchServerProject(projectId: string, project?: Record<string, unknown>, revision = 0, expectedUserId?: string) {
+    return serverRequest<{ project: Record<string, unknown>; revision: number; updatedAt: number }>(`/api/projects/${encodeURIComponent(projectId)}/branch`, {
+        method: "POST",
+        body: project ? { project, revision } : undefined,
+        timeoutMs: 30_000,
+        expectedUserId,
+    });
 }
 
 export async function fetchServerProjects(expectedUserId?: string) {

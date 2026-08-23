@@ -112,7 +112,16 @@ async function synchronizeNow<T extends GenerationHistoryRecord>(options: Histor
 
     let remote: T[];
     try {
-        remote = (await fetchServerGenerationHistory(options.kind, options.userId)).items as T[];
+        const pages: T[] = [];
+        let page = 1;
+        for (;;) {
+            const response = await fetchServerGenerationHistory(options.kind, options.userId, { page, pageSize: 200 });
+            pages.push(...(response.items as T[]));
+            if (!response.hasMore) break;
+            page += 1;
+            if (page > 25) break;
+        }
+        remote = pages;
     } catch (error) {
         reportHistorySyncError(error);
         return Promise.all(local.map(options.hydrate));

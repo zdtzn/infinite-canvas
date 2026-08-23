@@ -42,6 +42,7 @@ type CanvasStore = {
     prepareForUser: (userId: string) => void;
     createProject: (title?: string) => string;
     importProject: (project: Partial<CanvasProject>) => string;
+    insertProject: (project: CanvasProject) => void;
     openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
@@ -159,6 +160,11 @@ export const useCanvasStore = create<CanvasStore>()(
                 };
                 set((state) => ({ projects: [project, ...state.projects] }));
                 return project.id;
+            },
+            insertProject: (source) => {
+                const project = normalizeCanvasProject(source);
+                if (!project) return;
+                set((state) => ({ projects: [project, ...state.projects.filter((item) => item.id !== project.id)] }));
             },
             openProject: (id) => {
                 return get().projects.find((item) => item.id === id) || null;

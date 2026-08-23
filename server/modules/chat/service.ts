@@ -91,7 +91,7 @@ export function createChatService(
     .query(
       "UPDATE chat_messages SET status = 'failed', error = ?, updated_at = ? WHERE status = 'streaming'",
     )
-    .run("服务重启，本次回答已中断", now());
+    .run("服务重启导致回答中断，已保留已生成内容，可点击重试", now());
 
   function listConversations(userId: string) {
     return (

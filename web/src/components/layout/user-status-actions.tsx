@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { BookOpen, CircleUserRound, Crown, Keyboard, LogOut, Moon, MoreHorizontal, Puzzle, ShieldCheck, Sun } from "lucide-react";
+import { BookOpen, CircleUserRound, Crown, Download, Keyboard, LogOut, Moon, MoreHorizontal, Puzzle, ShieldCheck, Sun } from "lucide-react";
 import { App, Dropdown, Input, Modal, type MenuProps } from "antd";
 import { useState } from "react";
 
@@ -9,7 +9,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { TaskCenter } from "@/components/layout/task-center";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
-import { changePersonalPassword, logoutAccess, revokeAllServerSessions } from "@/services/server-api";
+import { changePersonalPassword, downloadAccountExport, logoutAccess, revokeAllServerSessions } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cn } from "@/lib/utils";
@@ -88,6 +88,22 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
     const { isDouEmperor, isImperialMode } = useImperialMode();
     const canvasTheme = canvasThemes[theme];
     const versionStyle: CSSProperties | undefined = variant === "canvas" ? { color: canvasTheme.node.text } : undefined;
+    const exportAccount = async () => {
+        try {
+            const blob = await downloadAccountExport(user?.id);
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "infinite-canvas-account-export.json";
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 0);
+            message.success("账户数据已导出");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "账户数据导出失败");
+        }
+    };
     const accountMenuItems: MenuProps["items"] = PUBLIC_MODE
         ? [
               {
@@ -118,6 +134,12 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
                   icon: <ShieldCheck className="size-4" />,
                   label: "修改个人密码",
                   onClick: () => setPasswordOpen(true),
+              },
+              {
+                  key: "export-data",
+                  icon: <Download className="size-4" />,
+                  label: "导出我的数据",
+                  onClick: () => void exportAccount(),
               },
               {
                   key: "logout",

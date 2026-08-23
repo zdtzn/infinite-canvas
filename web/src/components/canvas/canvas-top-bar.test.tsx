@@ -41,6 +41,7 @@ test("canvas header exposes direct home and canvas-list navigation", async () =>
             onHome={noop}
             onProjects={noop}
             onCreateProject={noop}
+            onCreateBranch={noop}
             onDeleteProject={noop}
             onExportProject={noop}
             onImportImage={noop}
@@ -55,6 +56,6 @@ test("canvas header exposes direct home and canvas-list navigation", async () =>
     expect(html).toContain('aria-label="返回洞天列表"');
     expect(html).toContain(">洞天</span>");
     expect(html).toContain('aria-label="返回首页"');
-    expect(html).toContain('data-menu-labels="文档|新建画布|删除当前画布|导入素材|导出当前画布|保存当前快照"');
+    expect(html).toContain('data-menu-labels="文档|新建画布|从当前画布创建分支|删除当前画布|导入素材|导出当前画布|保存当前快照"');
     expect(html).not.toContain('data-menu-labels="返回首页');
 });

@@ -4,11 +4,14 @@ import { App, Button, Drawer, Empty, Form, Image, Input, Modal, Pagination, Sele
 import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { assetCardImageUrl, assetNeedsThumbnail, assetOriginalImageUrl } from "@/lib/asset-image";
 import { createThumbnailFromImageElement, deleteStoredImages, fitImageWithinEdge, uploadImage } from "@/services/image-storage";
+import { fetchServerAssetLibrary, type ServerAssetLibrary } from "@/services/server-api";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
+import { useUserStore } from "@/stores/use-user-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { DeferredImage } from "@/components/ui/deferred-image";
 
@@ -91,6 +94,7 @@ export default function AssetsPage() {
     const coverInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const assetInputRef = useRef<HTMLInputElement>(null);
+    const userId = useUserStore((state) => state.user?.id || "");
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const updateAsset = useAssetStore((state) => state.updateAsset);
@@ -105,11 +109,14 @@ export default function AssetsPage() {
     const [deletingAsset, setDeletingAsset] = useState<Asset | null>(null);
     const [formKind, setFormKind] = useState<AssetKind>("text");
     const [imageDraft, setImageDraft] = useState<ImageDraft>(null);
+    const [remoteLibrary, setRemoteLibrary] = useState<ServerAssetLibrary | null>(null);
+    const [remoteRefresh, setRemoteRefresh] = useState(0);
     const coverUrl = Form.useWatch("coverUrl", form) || "";
     const title = Form.useWatch("title", form) || "";
     const tags = Form.useWatch("tags", form) || [];
     const content = Form.useWatch("content", form) || "";
     const validAssets = useMemo(() => assets.filter((asset) => asset.kind === "text" || asset.kind === "image" || asset.kind === "video"), [assets]);
+    const useRemoteLibrary = PUBLIC_MODE && Boolean(userId);
 
     const filteredAssets = useMemo(() => {
         const query = keyword.trim().toLowerCase();
@@ -124,6 +131,34 @@ export default function AssetsPage() {
         const start = (page - 1) * pageSize;
         return filteredAssets.slice(start, start + pageSize);
     }, [filteredAssets, page, pageSize]);
+
+    useEffect(() => {
+        if (!useRemoteLibrary) {
+            setRemoteLibrary(null);
+            return;
+        }
+        let active = true;
+        void fetchServerAssetLibrary(userId, {
+            page,
+            pageSize,
+            keyword,
+            kind: kindFilter,
+        })
+            .then((result) => {
+                if (active) setRemoteLibrary(result);
+            })
+            .catch(() => {
+                if (active) setRemoteLibrary(null);
+            });
+        return () => {
+            active = false;
+        };
+    }, [kindFilter, keyword, page, pageSize, remoteRefresh, useRemoteLibrary, userId]);
+
+    const serverLibraryReady = Boolean(useRemoteLibrary && remoteLibrary?.initialized);
+    const displayedAssets = serverLibraryReady ? remoteLibrary!.items : visibleAssets;
+    const displayedTotal = serverLibraryReady ? remoteLibrary!.total || 0 : filteredAssets.length;
+    const displayedCount = serverLibraryReady ? remoteLibrary!.total || 0 : validAssets.length;
 
     useEffect(() => {
         const maxPage = Math.max(1, Math.ceil(filteredAssets.length / pageSize));
@@ -214,6 +249,7 @@ export default function AssetsPage() {
         }
 
         message.success(editingAsset ? "资产已更新" : "资产已保存");
+        window.setTimeout(() => setRemoteRefresh((value) => value + 1), 250);
         setIsAssetOpen(false);
     };
 
@@ -261,6 +297,7 @@ export default function AssetsPage() {
                 delete payload.updatedAt;
                 addAsset(payload as Parameters<typeof addAsset>[0]);
             });
+            window.setTimeout(() => setRemoteRefresh((value) => value + 1), 400);
             message.success(`已导入 ${importedAssets.length} 个资产`);
         } catch (error) {
             message.error(error instanceof Error ? `导入失败：${error.message}` : "导入失败，请选择有效的资产压缩包");
@@ -272,6 +309,7 @@ export default function AssetsPage() {
     const confirmDelete = () => {
         if (!deletingAsset) return;
         removeAsset(deletingAsset.id);
+        window.setTimeout(() => setRemoteRefresh((value) => value + 1), 250);
         message.success("资产已删除");
         setDeletingAsset(null);
     };
@@ -286,7 +324,7 @@ export default function AssetsPage() {
                     <div className="relative mx-auto max-w-7xl px-6 pb-12 pt-14">
                         <p className="shj-hero-eyebrow">Cang Juan Ge</p>
                         <h1 className="font-brush mt-4 text-5xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:text-6xl">藏卷阁</h1>
-                        <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">珍藏 {validAssets.length} 卷 · 每一卷,都是一次万象落笔</p>
+                        <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">珍藏 {displayedCount} 卷 · 每一卷,都是一次万象落笔</p>
                     </div>
                 </section>
 
@@ -356,13 +394,13 @@ export default function AssetsPage() {
                 {/* ── 画轴瀑布 ── */}
                 <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 pb-12">
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {visibleAssets.map((asset) => (
+                        {displayedAssets.map((asset) => (
                             <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                         ))}
                     </div>
 
-                    {!visibleAssets.length &&
-                        (validAssets.length === 0 ? (
+                    {!displayedAssets.length &&
+                        (displayedCount === 0 ? (
                             <div className="flex flex-col items-center justify-center gap-5 py-24 text-center">
                                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="font-display text-sm tracking-[0.1em] text-[#8a8a96]">阁中尚无一卷,落笔即是开山之作</span>} />
                                 <button
@@ -387,12 +425,12 @@ export default function AssetsPage() {
                             </div>
                         ))}
 
-                    {filteredAssets.length > pageSize ? (
+                    {displayedTotal > pageSize ? (
                         <div className="flex justify-center">
                             <Pagination
                                 current={page}
                                 pageSize={pageSize}
-                                total={filteredAssets.length}
+                                total={displayedTotal}
                                 showSizeChanger
                                 pageSizeOptions={[10, 20, 50, 100]}
                                 onChange={(nextPage, nextPageSize) => {

@@ -83,7 +83,7 @@ import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
 import { normalizePromptIndexItems, promptIndexStatuses, queryPromptIndex, replacePromptIndex } from "./lib/prompt-index";
-import { runPromptSourceScript } from "./lib/prompt-source-runtime";
+import { runPromptSourceScript, type ServerPromptSourceItem } from "./lib/prompt-source-runtime";
 import { defaultUserChatPresetId, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserSystemPrompt, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserSystemPrompt, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
@@ -291,6 +291,16 @@ const promptAssetProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
 const promptThumbnailProxySemaphore = new AsyncSemaphore(PROMPT_THUMBNAIL_PROXY_CONCURRENCY);
 const promptOptimizeSemaphore = new AsyncSemaphore(PROMPT_OPTIMIZE_CONCURRENCY);
 const heavyRequestSemaphore = new AsyncSemaphore(HEAVY_REQUEST_CONCURRENCY);
+const promptSourceRuntimeCache = new Map<string, {
+    signature: string;
+    items: ServerPromptSourceItem[];
+    expiresAt: number;
+    staleUntil: number;
+    inFlight?: Promise<ServerPromptSourceItem[]>;
+    lastError?: string;
+}>();
+const PROMPT_SOURCE_CACHE_TTL_MS = 5 * 60_000;
+const PROMPT_SOURCE_STALE_MS = 30 * 60_000;
 
 const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
     concurrency: JOB_CONCURRENCY,
@@ -422,6 +432,7 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/profile/avatar" && request.method === "DELETE") return deleteProfileAvatar(session);
         if (url.pathname === "/api/auth/sessions/revoke" && request.method === "POST") return revokeAllSessions(session);
         if (url.pathname === "/api/auth/password" && request.method === "POST") return changePersonalPassword(request, session);
+        if (url.pathname === "/api/account/export" && request.method === "GET") return exportAccountData(session);
         const seenBreakthroughMatch = url.pathname.match(/^\/api\/cultivation\/breakthroughs\/([^/]+)\/seen$/);
         if (seenBreakthroughMatch && request.method === "POST") return markCultivationBreakthroughSeen(session, seenBreakthroughMatch[1]);
         if (url.pathname === "/api/admin/cultivation/users" && request.method === "GET") return adminCultivationUsers(url, session);
@@ -534,7 +545,7 @@ async function route(request: Request, requestId: string) {
         if (libraryAssetMatch && request.method === "PUT") return saveLibraryAsset(request, session, decodeRouteSegment(libraryAssetMatch[1], "资产记录 ID"));
         if (libraryAssetMatch && request.method === "DELETE") return deleteLibraryAsset(session, decodeRouteSegment(libraryAssetMatch[1], "资产记录 ID"));
         const generationHistoryMatch = url.pathname.match(/^\/api\/generation-history\/(image|video)$/);
-        if (generationHistoryMatch && request.method === "GET") return listGenerationHistory(session, generationHistoryMatch[1] as GenerationHistoryKind);
+        if (generationHistoryMatch && request.method === "GET") return listGenerationHistory(url, session, generationHistoryMatch[1] as GenerationHistoryKind);
         if (generationHistoryMatch && request.method === "PUT")
             return heavyRequestSemaphore.run(request.signal, () => mergeGenerationHistory(request, session, generationHistoryMatch[1] as GenerationHistoryKind));
         if (generationHistoryMatch && request.method === "DELETE") return deleteGenerationHistoryItems(request, session, generationHistoryMatch[1] as GenerationHistoryKind);
@@ -566,6 +577,8 @@ async function route(request: Request, requestId: string) {
                 items: Object.values(state.projects[session.userId] || {}),
                 deleted: Object.entries(state.projectTombstones[session.userId] || {}).map(([projectId, tombstone]) => ({ projectId, ...tombstone })),
             });
+        const projectBranchMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/branch$/);
+        if (projectBranchMatch && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => branchProject(request, session, decodeRouteSegment(projectBranchMatch[1], "项目 ID")));
         const projectMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
         if (projectMatch && request.method === "PUT") return heavyRequestSemaphore.run(request.signal, () => saveProject(request, session, decodeRouteSegment(projectMatch[1], "项目 ID")));
         if (projectMatch && request.method === "DELETE") return deleteProject(url, session, decodeRouteSegment(projectMatch[1], "项目 ID"));
@@ -1228,10 +1241,43 @@ function listPromptSources(session: SessionPayload) {
 async function runPromptSourceItems(request: Request, session: SessionPayload, sourceId: string) {
     const source = loadManagedPromptSources(appDatabase).find((item) => item.id === sourceId);
     if (!source) throw new HttpError(404, "提示词来源不存在");
+    const signature = createHash("sha256").update(`${source.name}\n${source.githubUrl}\n${source.script}`).digest("hex");
+    const cached = promptSourceRuntimeCache.get(source.id);
+    const now = Date.now();
+    if (cached?.signature === signature && cached.items.length && cached.expiresAt > now) {
+        return json({ sourceId: source.id, items: cached.items, cached: true }, 200, { "Cache-Control": "private, max-age=300, stale-while-revalidate=1800", "X-Prompt-Cache": "hit" });
+    }
+    const inFlight = cached?.signature === signature ? cached.inFlight : undefined;
+    const task = inFlight || runPromptSourceScript(source.script).then((items) => {
+        const entry = promptSourceRuntimeCache.get(source.id);
+        if (entry) {
+            entry.items = items;
+            entry.expiresAt = Date.now() + PROMPT_SOURCE_CACHE_TTL_MS;
+            entry.staleUntil = Date.now() + PROMPT_SOURCE_STALE_MS;
+            entry.lastError = undefined;
+        }
+        return items;
+    });
+    promptSourceRuntimeCache.set(source.id, {
+        signature,
+        items: cached?.signature === signature ? cached.items : [],
+        expiresAt: cached?.signature === signature ? cached.expiresAt : 0,
+        staleUntil: cached?.signature === signature ? cached.staleUntil : 0,
+        inFlight: task,
+        lastError: cached?.lastError,
+    });
     try {
-        const items = await runPromptSourceScript(source.script, request.signal);
-        return json({ sourceId: source.id, items }, 200, { "Cache-Control": "private, max-age=300, stale-while-revalidate=3600" });
+        const items = await task;
+        const entry = promptSourceRuntimeCache.get(source.id);
+        if (entry) delete entry.inFlight;
+        return json({ sourceId: source.id, items, cached: false }, 200, { "Cache-Control": "private, max-age=300, stale-while-revalidate=1800", "X-Prompt-Cache": inFlight ? "coalesced" : "miss" });
     } catch (error) {
+        const entry = promptSourceRuntimeCache.get(source.id);
+        if (entry) {
+            delete entry.inFlight;
+            entry.lastError = error instanceof Error ? error.message : String(error);
+            if (entry.items.length && entry.staleUntil > Date.now()) return json({ sourceId: source.id, items: entry.items, cached: true, stale: true }, 200, { "Cache-Control": "private, max-age=60, stale-while-revalidate=300", "X-Prompt-Cache": "stale" });
+        }
         if (request.signal.aborted) throw error;
         throw new HttpError(502, error instanceof Error ? error.message : "提示词来源执行失败");
     }
@@ -1283,6 +1329,7 @@ async function savePromptSource(request: Request, session: SessionPayload, id: s
     }
     const sources = loadManagedPromptSources(appDatabase).filter((item) => item.id !== id);
     saveManagedPromptSources(appDatabase, [...sources, source]);
+    promptSourceRuntimeCache.delete(source.id);
     console.info(JSON.stringify({ event: "prompt_source_updated", adminUserId: session.userId, sourceId: source.id }));
     return json({ ok: true, source: publicPromptSource(source) });
 }
@@ -1291,6 +1338,7 @@ function deletePromptSource(session: SessionPayload, id: string) {
     requireAdmin(session);
     const sources = loadManagedPromptSources(appDatabase);
     saveManagedPromptSources(appDatabase, sources.filter((item) => item.id !== id));
+    promptSourceRuntimeCache.delete(id);
     console.info(JSON.stringify({ event: "prompt_source_deleted", adminUserId: session.userId, sourceId: id }));
     return new Response(null, { status: 204 });
 }
@@ -2079,6 +2127,56 @@ function prepareChatAttachments(userId: string, attachments: ChatAttachment[], m
     });
 }
 
+function exportAccountData(session: SessionPayload) {
+    const userId = session.userId;
+    const user = state.users[userId];
+    const conversations = chat
+        ? chat.listConversations(userId).map((conversation) => chat.getConversationWithMessages(userId, conversation.id)).filter(Boolean)
+        : [];
+    const projects = Object.values(state.projects[userId] || {});
+    const jobs = imageQueue.list().filter((job) => job.input.userId === userId).map(publicJob);
+    const library = appDatabase.loadAssetLibrary(userId).items.map((item) => ({
+        id: item.id,
+        updatedAt: item.updatedAt,
+        payload: exportAssetPayload(item.payload),
+    }));
+    const assets = Object.values(state.assets)
+        .filter((asset) => asset.userId === userId)
+        .map((asset) => ({ key: asset.key, mimeType: asset.mimeType, bytes: asset.bytes, createdAt: asset.createdAt }));
+    const payload = {
+        format: "infinite-canvas.account-export",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        user: user ? { userId: user.userId, displayName: user.displayName, createdAt: user.createdAt } : { userId },
+        preferences: {
+            systemPrompt: appDatabase.loadUserPreference(userId, USER_SYSTEM_PROMPT_KEY),
+            chatPresetId: appDatabase.loadUserPreference(userId, USER_CHAT_PRESET_KEY),
+            chatPersona: appDatabase.loadUserPreference(userId, USER_CHAT_PERSONA_KEY),
+        },
+        projects,
+        conversations,
+        memories: chat?.listMemories(userId) || [],
+        imageHistory: appDatabase.loadGenerationHistory(userId, "image").map((item) => item.payload),
+        videoHistory: appDatabase.loadGenerationHistory(userId, "video").map((item) => item.payload),
+        jobs,
+        assets,
+        library,
+        note: "导出文件不包含渠道 API Key 和素材二进制文件；资产清单中的 key 可用于服务端重新关联素材。",
+    };
+    return json(payload, 200, {
+        "Cache-Control": "no-store",
+        "Content-Disposition": 'attachment; filename="infinite-canvas-account-export.json"',
+    });
+}
+
+function exportAssetPayload(payload: Record<string, unknown>) {
+    if (payload.kind !== "image" || !payload.data || typeof payload.data !== "object" || Array.isArray(payload.data)) return payload;
+    const data = { ...(payload.data as Record<string, unknown>) };
+    delete data.dataUrl;
+    delete data.thumbnailUrl;
+    return { ...payload, coverUrl: "", data };
+}
+
 function cancelChatMessage(session: SessionPayload, conversationId: string, messageId: string) {
     const service = requireChat();
     const conversation = service.getConversation(session.userId, conversationId);
@@ -2679,34 +2777,19 @@ function jobImagePath(userId: string, jobId: string, dataUrl: string) {
 }
 
 function listLibraryAssets(url: URL, session: SessionPayload) {
-    const library = appDatabase.loadAssetLibrary(session.userId);
     const pageSize = Math.max(1, Math.min(100, Math.floor(Number(url.searchParams.get("pageSize") || 24)) || 24));
     const requestedPage = Math.max(1, Math.floor(Number(url.searchParams.get("page") || 1)) || 1);
     const keyword = (url.searchParams.get("keyword") || "").trim().toLowerCase();
     const kind = (url.searchParams.get("kind") || "").trim().toLowerCase();
     const tags = url.searchParams.getAll("tag").map((tag) => tag.trim()).filter(Boolean);
-    const filtered = library.items.filter((item) => {
-        const payload = item.payload;
-        const payloadKind = String(payload.kind || "").toLowerCase();
-        if (kind && kind !== "all" && payloadKind !== kind) return false;
-        const payloadTags = Array.isArray(payload.tags) ? payload.tags.map((tag) => String(tag).toLowerCase()) : [];
-        if (tags.some((tag) => !payloadTags.includes(tag.toLowerCase()))) return false;
-        if (!keyword) return true;
-        return [payload.title, payload.note, payload.source, payloadKind, ...payloadTags]
-            .map((value) => String(value || "").toLowerCase())
-            .join(" ")
-            .includes(keyword);
-    });
-    const total = filtered.length;
-    const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
-    const items = filtered.slice((page - 1) * pageSize, page * pageSize);
+    const library = appDatabase.queryAssetLibrary(session.userId, { page: requestedPage, pageSize, keyword, kind, tags });
     return json({
         initialized: library.initialized,
-        items: items.map((item) => publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl)),
-        total,
-        page,
-        pageSize,
-        hasMore: page * pageSize < total,
+        items: library.items.map((item) => publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl)),
+        total: library.total,
+        page: library.page,
+        pageSize: library.pageSize,
+        hasMore: library.hasMore,
     }, 200, { "Cache-Control": "private, max-age=5, stale-while-revalidate=30" });
 }
 
@@ -2737,15 +2820,21 @@ function deleteLibraryAsset(session: SessionPayload, id: string) {
     return new Response(null, { status: 204 });
 }
 
-function listGenerationHistory(session: SessionPayload, kind: GenerationHistoryKind) {
-    const tombstones = appDatabase.loadGenerationHistoryTombstones(session.userId, kind).map((item) => ({
-        id: item.id,
-        createdAt: item.deletedAt,
-        updatedAt: item.deletedAt,
-        deletedAt: item.deletedAt,
-    }));
+function listGenerationHistory(url: URL, session: SessionPayload, kind: GenerationHistoryKind) {
+    const pageSize = Math.max(1, Math.min(200, Math.floor(Number(url.searchParams.get("pageSize") || 100)) || 100));
+    const page = Math.max(1, Math.floor(Number(url.searchParams.get("page") || 1)) || 1);
+    const result = appDatabase.queryGenerationHistory(session.userId, kind, { page, pageSize });
     return json({
-        items: [...appDatabase.loadGenerationHistory(session.userId, kind).map((item) => item.payload), ...tombstones].sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0)),
+        items: result.records.map((record) => record.type === "item" ? record.item.payload : {
+            id: record.tombstone.id,
+            createdAt: record.tombstone.deletedAt,
+            updatedAt: record.tombstone.deletedAt,
+            deletedAt: record.tombstone.deletedAt,
+        }),
+        page: result.page,
+        pageSize: result.pageSize,
+        total: result.total,
+        hasMore: result.hasMore,
     });
 }
 
@@ -2753,7 +2842,7 @@ async function mergeGenerationHistory(request: Request, session: SessionPayload,
     const body = await readJson<{ items?: unknown }>(request, 16 * 1024 * 1024);
     const items = normalizeGenerationHistory(kind, body.items, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
     appDatabase.upsertGenerationHistoryItems(session.userId, kind, items);
-    return listGenerationHistory(session, kind);
+    return listGenerationHistory(new URL(request.url), session, kind);
 }
 
 async function deleteGenerationHistoryItems(request: Request, session: SessionPayload, kind: GenerationHistoryKind) {
@@ -4298,6 +4387,38 @@ async function saveProject(request: Request, session: SessionPayload, id: string
     appDatabase.saveProject(session.userId, id, next);
     projects[id] = next;
     return json(next);
+}
+
+async function branchProject(request: Request, session: SessionPayload, sourceId: string) {
+    const body = await readJson<{ project?: Record<string, unknown>; revision?: number }>(request, 8 * 1024 * 1024);
+    const projects = (state.projects[session.userId] ||= {});
+    const source = projects[sourceId];
+    if (!source) throw new HttpError(404, "源画布不存在");
+    if (body.project !== undefined) {
+        if (Number(body.revision) !== source.revision) {
+            return json({ error: { message: "源画布已在其他位置更新", code: "REVISION_CONFLICT" }, current: source }, 409);
+        }
+        if (!isValidProjectPayload(body.project, sourceId)) throw new HttpError(400, "源画布数据无效");
+    }
+    if (Object.keys(projects).length >= MAX_PROJECTS_PER_USER) throw new HttpError(413, `每个用户最多保存 ${MAX_PROJECTS_PER_USER} 个画布`);
+    const branchId = randomUUID();
+    const branchProject = JSON.parse(JSON.stringify(body.project || source.project)) as Record<string, unknown>;
+    const sourceTitle = String(branchProject.title || "未命名画布").trim() || "未命名画布";
+    branchProject.id = branchId;
+    branchProject.title = `${sourceTitle.slice(0, 150)} · 分支`;
+    branchProject.createdAt = new Date().toISOString();
+    branchProject.updatedAt = new Date().toISOString();
+    delete branchProject.serverRevision;
+    if (!isValidProjectPayload(branchProject, branchId)) throw new HttpError(400, "分支数据无效");
+    const projectBytes = Buffer.byteLength(JSON.stringify(branchProject), "utf8");
+    if (projectBytes > MAX_JSON_BYTES) throw new HttpError(413, "单个画布数据不能超过 8 MB");
+    const totalBytes = Object.values(projects).reduce((total, item) => total + Buffer.byteLength(JSON.stringify(item.project), "utf8"), 0);
+    if (totalBytes + projectBytes > MAX_PROJECT_BYTES_PER_USER) throw new HttpError(413, `个人画布数据总量不能超过 ${Math.floor(MAX_PROJECT_BYTES_PER_USER / 1024 / 1024)} MB`);
+    assertDiskCapacity(projectBytes);
+    const next = { project: branchProject, revision: 1, updatedAt: Date.now() };
+    appDatabase.saveProject(session.userId, branchId, next);
+    projects[branchId] = next;
+    return json(next, 201);
 }
 
 function deleteProject(url: URL, session: SessionPayload, id: string) {

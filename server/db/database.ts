@@ -40,6 +40,23 @@ export type AppDatabase = {
     initialized: boolean;
     items: StoredLibraryAsset[];
   };
+  queryAssetLibrary(
+    userId: string,
+    options: {
+      page: number;
+      pageSize: number;
+      keyword?: string;
+      kind?: string;
+      tags?: string[];
+    },
+  ): {
+    initialized: boolean;
+    items: StoredLibraryAsset[];
+    page: number;
+    pageSize: number;
+    total: number;
+    hasMore: boolean;
+  };
   replaceAssetLibrary(userId: string, items: StoredLibraryAsset[]): void;
   upsertAssetLibraryItem(userId: string, item: StoredLibraryAsset): void;
   deleteAssetLibraryItem(userId: string, assetId: string): void;
@@ -47,6 +64,20 @@ export type AppDatabase = {
     userId: string,
     kind: GenerationHistoryKind,
   ): StoredGenerationHistoryItem[];
+  queryGenerationHistory(
+    userId: string,
+    kind: GenerationHistoryKind,
+    options: { page: number; pageSize: number },
+  ): {
+    records: Array<
+      | { type: "item"; item: StoredGenerationHistoryItem }
+      | { type: "tombstone"; tombstone: StoredGenerationHistoryTombstone }
+    >;
+    page: number;
+    pageSize: number;
+    total: number;
+    hasMore: boolean;
+  };
   upsertGenerationHistoryItems(
     userId: string,
     kind: GenerationHistoryKind,
@@ -1060,6 +1091,48 @@ function sqliteStore(database: Database): AppDatabase {
         })),
       };
     },
+    queryAssetLibrary: (userId, options) => {
+      const initialized = Boolean(
+        database
+          .query("SELECT 1 FROM asset_library_state WHERE user_id = ?")
+          .get(userId),
+      );
+      const pageSize = Math.max(1, Math.min(100, Math.floor(options.pageSize) || 24));
+      const requestedPage = Math.max(1, Math.floor(options.page) || 1);
+      const conditions = ["user_id = ?"];
+      const params: Array<string | number> = [userId];
+      const kind = String(options.kind || "").trim().toLowerCase();
+      const keyword = String(options.keyword || "").trim().toLowerCase();
+      const tags = Array.from(new Set((options.tags || []).map((tag) => String(tag).trim().toLowerCase()).filter(Boolean)));
+      if (kind && kind !== "all") {
+        conditions.push("json_extract(payload_json, '$.kind') = ?");
+        params.push(kind);
+      }
+      if (keyword) {
+        conditions.push("LOWER(payload_json) LIKE ?");
+        params.push(`%${keyword}%`);
+      }
+      for (const tag of tags) {
+        conditions.push("EXISTS (SELECT 1 FROM json_each(COALESCE(json_extract(payload_json, '$.tags'), '[]')) WHERE LOWER(value) = ?)");
+        params.push(tag);
+      }
+      const where = conditions.join(" AND ");
+      const totalRow = database.query(`SELECT COUNT(*) AS count FROM asset_library_items WHERE ${where}`).get(...params) as { count?: number } | null;
+      const total = Number(totalRow?.count || 0);
+      const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
+      const offset = (page - 1) * pageSize;
+      const rows = database
+        .query(`SELECT asset_id, payload_json, updated_at FROM asset_library_items WHERE ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`)
+        .all(...params, pageSize, offset) as Array<{ asset_id: string; payload_json: string; updated_at: number }>;
+      return {
+        initialized,
+        items: rows.map((item) => ({ id: item.asset_id, payload: JSON.parse(item.payload_json), updatedAt: Number(item.updated_at) })),
+        page,
+        pageSize,
+        total,
+        hasMore: page * pageSize < total,
+      };
+    },
     replaceAssetLibrary: (userId, items) =>
       database.transaction(() => {
         const now = Date.now();
@@ -1129,6 +1202,54 @@ function sqliteStore(database: Database): AppDatabase {
         createdAt: Number(item.created_at),
         updatedAt: Number(item.updated_at),
       })),
+    queryGenerationHistory: (userId, kind, options) => {
+      const pageSize = Math.max(1, Math.min(200, Math.floor(options.pageSize) || 100));
+      const requestedPage = Math.max(1, Math.floor(options.page) || 1);
+      const totalRow = database
+        .query(
+          "SELECT (SELECT COUNT(*) FROM generation_history_items WHERE user_id = ? AND history_kind = ?) + (SELECT COUNT(*) FROM generation_history_tombstones WHERE user_id = ? AND history_kind = ?) AS count",
+        )
+        .get(userId, kind, userId, kind) as { count?: number } | null;
+      const total = Number(totalRow?.count || 0);
+      const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
+      const offset = (page - 1) * pageSize;
+      const rows = database
+        .query(
+          `SELECT record_id, payload_json, created_at, updated_at, 0 AS is_tombstone
+           FROM generation_history_items WHERE user_id = ? AND history_kind = ?
+           UNION ALL
+           SELECT record_id, NULL AS payload_json, deleted_at AS created_at, deleted_at AS updated_at, 1 AS is_tombstone
+           FROM generation_history_tombstones WHERE user_id = ? AND history_kind = ?
+           ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+        )
+        .all(userId, kind, userId, kind, pageSize, offset) as Array<{
+        record_id: string;
+        payload_json: string | null;
+        created_at: number;
+        updated_at: number;
+        is_tombstone: number;
+      }>;
+      return {
+        records: rows.map((row) =>
+          row.is_tombstone
+            ? { type: "tombstone" as const, tombstone: { id: row.record_id, kind, deletedAt: Number(row.updated_at), jobIds: [] } }
+            : {
+                type: "item" as const,
+                item: {
+                  id: row.record_id,
+                  kind,
+                  payload: JSON.parse(row.payload_json || "{}"),
+                  createdAt: Number(row.created_at),
+                  updatedAt: Number(row.updated_at),
+                },
+              },
+        ),
+        page,
+        pageSize,
+        total,
+        hasMore: page * pageSize < total,
+      };
+    },
     loadGenerationHistoryTombstones: (userId, kind) =>
       (
         database

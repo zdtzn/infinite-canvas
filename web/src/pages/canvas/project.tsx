@@ -47,7 +47,7 @@ import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { resolveImageSlotConcurrency } from "@/stores/model-capabilities";
-import { useCanvasStore, type CanvasProjectSnapshot } from "@/stores/canvas/use-canvas-store";
+import { normalizeCanvasProject, useCanvasStore, type CanvasProjectSnapshot } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildCanvasResourceIndex, buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -98,7 +98,7 @@ import {
 } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio } from "@/types/media";
-import { cancelServerJob, waitForServerJob } from "@/services/server-api";
+import { branchServerProject, cancelServerJob, waitForServerJob } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useCanvasProjectLock } from "@/pages/canvas/hooks/use-canvas-project-lock";
 import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
@@ -257,6 +257,8 @@ function InfiniteCanvasPage() {
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
     const hydrated = useCanvasStore((state) => state.hydrated);
     const createProject = useCanvasStore((state) => state.createProject);
+    const importProject = useCanvasStore((state) => state.importProject);
+    const insertProject = useCanvasStore((state) => state.insertProject);
     const openProject = useCanvasStore((state) => state.openProject);
     const updateProject = useCanvasStore((state) => state.updateProject);
     const createSnapshot = useCanvasStore((state) => state.createSnapshot);
@@ -1248,6 +1250,34 @@ function InfiniteCanvasPage() {
         const id = createProject(`无限画布 ${useCanvasStore.getState().projects.length + 1}`);
         navigate(`/canvas/${id}`);
     }, [createProject, navigate]);
+
+    const createProjectBranch = useCallback(async () => {
+        const source = useCanvasStore.getState().projects.find((project) => project.id === projectId);
+        if (!source) {
+            message.error("未找到当前画布");
+            return;
+        }
+        const branchTitle = `${source.title || "未命名画布"} · 分支`;
+        const hide = message.loading("正在创建画布分支…", 0);
+        try {
+            if (!PUBLIC_MODE || source.serverRevision === undefined) {
+                const id = importProject({ ...source, title: branchTitle, serverRevision: undefined });
+                message.success("已创建本地画布分支");
+                navigate(`/canvas/${id}`);
+                return;
+            }
+            const response = await branchServerProject(projectId, source as unknown as Record<string, unknown>, source.serverRevision);
+            const branch = normalizeCanvasProject({ ...response.project, serverRevision: response.revision });
+            if (!branch) throw new Error("服务器返回的分支数据无效");
+            insertProject(branch);
+            message.success("已创建画布分支");
+            navigate(`/canvas/${branch.id}`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "创建画布分支失败");
+        } finally {
+            hide();
+        }
+    }, [importProject, insertProject, message, navigate, projectId]);
 
     const handleCreateSnapshot = useCallback(() => {
         const snapshotNodes = compactCanvasNodesForSnapshot(nodesRef.current);
@@ -3469,6 +3499,7 @@ function InfiniteCanvasPage() {
                     onHome={() => navigate("/")}
                     onProjects={() => navigate("/canvas")}
                     onCreateProject={createAndOpenProject}
+                    onCreateBranch={() => void createProjectBranch()}
                     onDeleteProject={deleteCurrentProject}
                     onExportProject={exportCurrentProject}
                     onImportImage={() => handleUploadRequest()}

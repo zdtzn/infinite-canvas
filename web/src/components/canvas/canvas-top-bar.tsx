@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, BookOpen, Bot, Download, Home, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
+import { ArrowLeft, BookOpen, Bot, Download, GitBranch, Home, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
 import { Button, Dropdown, Modal, Tooltip } from "antd";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
@@ -23,6 +23,7 @@ export function CanvasTopBar({
     onHome,
     onProjects,
     onCreateProject,
+    onCreateBranch,
     onDeleteProject,
     onExportProject,
     onImportImage,
@@ -48,6 +49,7 @@ export function CanvasTopBar({
     onHome: () => void;
     onProjects: () => void;
     onCreateProject: () => void;
+    onCreateBranch: () => void;
     onDeleteProject: () => void;
     onExportProject: () => void;
     onImportImage: () => void;
@@ -116,6 +118,7 @@ export function CanvasTopBar({
                                 { key: "docs", icon: <BookOpen className="size-4" />, label: "文档", onClick: () => window.open(DOCS_URL, "_blank", "noopener,noreferrer") },
                                 { type: "divider" },
                                 { key: "new", icon: <Plus className="size-4" />, label: "新建画布", onClick: onCreateProject },
+                                { key: "branch", icon: <GitBranch className="size-4" />, label: "从当前画布创建分支", onClick: onCreateBranch },
                                 { key: "delete", danger: true, icon: <Trash2 className="size-4" />, label: "删除当前画布", onClick: onDeleteProject },
                                 { type: "divider" },
                                 { key: "import", icon: <Upload className="size-4" />, label: "导入素材", onClick: onImportImage },
