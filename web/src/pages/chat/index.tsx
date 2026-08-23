@@ -5,7 +5,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { lazyRoute } from "@/lib/lazy-route";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { createChatConversation, createChatMemory, deleteChatConversation, deleteChatMemory, fetchChatConversation, fetchChatConversations, fetchChatMemories, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, updateChatMemory, uploadChatImage, type ChatAttachment, type ChatCanvasContext, type ChatConversation, type ChatMemory, type ChatMessage } from "@/services/chat-api";
+import { cancelChatMessage, createChatConversation, createChatMemory, deleteChatConversation, deleteChatMemory, fetchChatConversation, fetchChatConversations, fetchChatMemories, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, updateChatMemory, uploadChatImage, type ChatAttachment, type ChatCanvasContext, type ChatConversation, type ChatMemory, type ChatMessage } from "@/services/chat-api";
 import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
@@ -81,6 +81,7 @@ export default function ChatPage() {
     const activeConversation = conversations.find((item) => item.id === activeConversationId) || null;
     const activePresetId = activeConversation?.presetId || presetId;
     const activePreset = chatPresetOption(activePresetId as ChatPresetId);
+    const activeHasStreamingMessage = messages.some((item) => item.status === "streaming");
 
     useEffect(() => {
         activeConversationIdRef.current = activeConversationId;
@@ -192,6 +193,42 @@ export default function ChatPage() {
     }, [activeConversationId, message, userId]);
 
     useEffect(() => {
+        if (!activeConversationId || !userId || !activeHasStreamingMessage) return;
+        let canceled = false;
+        let timer: number | undefined;
+
+        const poll = async () => {
+            try {
+                const detail = await fetchChatConversation(activeConversationId, userId);
+                if (canceled) return;
+                setMessages((current) => {
+                    const pending = pendingTurnRef.current;
+                    if (pending?.conversationId !== activeConversationId) return detail.messages;
+                    const transientIds = new Set(
+                        [pending.optimisticUserId, pending.optimisticAssistantId, pending.userMessageId, pending.assistantMessageId].filter(
+                            (id): id is string => Boolean(id),
+                        ),
+                    );
+                    const transientMessages = current.filter(
+                        (item) => transientIds.has(item.id) && !detail.messages.some((message) => message.id === item.id),
+                    );
+                    return [...detail.messages, ...transientMessages].sort((left, right) => left.createdAt - right.createdAt);
+                });
+                setConversations((current) => upsertConversation(current, detail.conversation));
+                if (detail.messages.some((item) => item.status === "streaming")) timer = window.setTimeout(() => void poll(), 1_200);
+            } catch {
+                if (!canceled) timer = window.setTimeout(() => void poll(), 2_000);
+            }
+        };
+
+        timer = window.setTimeout(() => void poll(), 1_000);
+        return () => {
+            canceled = true;
+            if (timer !== undefined) window.clearTimeout(timer);
+        };
+    }, [activeConversationId, activeHasStreamingMessage, userId]);
+
+    useEffect(() => {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: sending ? "smooth" : "auto" });
     }, [messages, sending]);
 
@@ -217,6 +254,13 @@ export default function ChatPage() {
                     }
                     return [...current, createOptimisticAssistantMessage(pending, stoppedMessage)];
                 });
+            }
+            if (pending.assistantMessageId) {
+                try {
+                    await cancelChatMessage(pending.conversationId, pending.assistantMessageId, userId);
+                } catch (error) {
+                    message.error(error instanceof Error ? error.message : "停止回答失败");
+                }
             }
             abortRef.current?.abort();
         }

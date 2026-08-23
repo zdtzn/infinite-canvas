@@ -71,6 +71,55 @@ describe("chat service", () => {
     }
   });
 
+  test("keeps a rolling conversation summary after older messages leave the context window", () => {
+    const { store, service } = setup();
+    try {
+      const conversation = service.createConversation("user-a");
+      const first = service.beginTurn("user-a", conversation.id, {
+        content: "第一轮讨论项目定位",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+      });
+      service.completeAssistant("user-a", first.assistantMessage.id, "确定以 AI 创作工具为核心。");
+
+      const second = service.beginTurn("user-a", conversation.id, {
+        content: "第二轮确认上线观察指标",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+      });
+      service.completeAssistant("user-a", second.assistantMessage.id, "重点观察任务成功率和延迟。");
+
+      const context = service.memoryContext("user-a", conversation.id);
+      expect(context).toContain("第一轮讨论项目定位");
+      expect(context).toContain("第二轮确认上线观察指标");
+      expect(context).toContain("任务成功率和延迟");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("persists partial assistant output without charging it as a completed answer", () => {
+    const { store, service } = setup();
+    try {
+      const conversation = service.createConversation("user-a");
+      const turn = service.beginTurn("user-a", conversation.id, {
+        content: "后台继续回答",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+      });
+      service.updateAssistantProgress("user-a", turn.assistantMessage.id, "已经生成一部分");
+
+      const current = service.getConversationWithMessages("user-a", conversation.id)?.messages.find((item) => item.id === turn.assistantMessage.id);
+      expect(current).toMatchObject({ status: "streaming", content: "已经生成一部分" });
+      expect(service.getChatUsage("user-a")).toMatchObject({ usedToday: 1, outputCharacters: 0 });
+    } finally {
+      store.close();
+    }
+  });
+
   test("binds a preset to the conversation and persists explicit switches", () => {
     const { store, service } = setup();
     try {

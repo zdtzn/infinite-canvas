@@ -168,11 +168,25 @@ export function createChatService(
     return Number(result.changes) > 0;
   }
 
-  function memoryContext(userId: string) {
+  function memoryContext(userId: string, conversationId = "") {
     const memories = listMemories(userId);
+    const prioritized = [
+      ...(conversationId
+        ? memories.filter(
+            (memory) =>
+              memory.kind === "summary" &&
+              memory.sourceConversationId === conversationId,
+          )
+        : []),
+      ...memories.filter((memory) => memory.pinned),
+      ...memories,
+    ];
+    const seen = new Set<string>();
     const lines: string[] = [];
     let characters = 0;
-    for (const memory of memories) {
+    for (const memory of prioritized) {
+      if (seen.has(memory.id)) continue;
+      seen.add(memory.id);
       const line = `- [${memoryKindLabel(memory.kind)}] ${memory.content}`;
       if (lines.length && characters + line.length > MEMORY_CONTEXT_CHARACTER_BUDGET) break;
       lines.push(line);
@@ -752,6 +766,17 @@ export function createChatService(
     return getMessage(userId, messageId)!;
   }
 
+  function updateAssistantProgress(userId: string, messageId: string, content: string) {
+    const text = optionalText(content, 100_000);
+    const timestamp = now();
+    database
+      .query(
+        "UPDATE chat_messages SET content = ?, updated_at = ? WHERE user_id = ? AND message_id = ? AND role = 'assistant' AND status = 'streaming'",
+      )
+      .run(text, timestamp, userId, validId(messageId, "消息 ID"));
+    return getMessage(userId, messageId);
+  }
+
   function captureConversationMemory(userId: string, assistantMessageId: string) {
     const assistant = database.query(
       "SELECT conversation_id, content FROM chat_messages WHERE user_id = ? AND message_id = ? AND role = 'assistant'",
@@ -762,8 +787,14 @@ export function createChatService(
     ).get(userId, assistant.conversation_id, userId, assistantMessageId) as { content: string } | null;
     if (!user?.content.trim()) return;
 
-    const summary = `用户问题：${user.content.trim().slice(0, 720)}\n最近结论：${assistant.content.trim().slice(0, 720)}`;
-    upsertAutomaticMemory(userId, `summary-${assistant.conversation_id}`, "summary", summary, assistant.conversation_id);
+    const summaryId = `summary-${assistant.conversation_id}`;
+    const previous = getMemory(userId, summaryId)?.content || "";
+    const summary = rollingConversationSummary(
+      previous,
+      user.content.trim().slice(0, 720),
+      assistant.content.trim().slice(0, 720),
+    );
+    upsertAutomaticMemory(userId, summaryId, "summary", summary, assistant.conversation_id);
     for (const fact of extractExplicitMemories(user.content)) {
       const duplicate = database.query("SELECT 1 FROM chat_memories WHERE user_id = ? AND content = ? LIMIT 1").get(userId, fact);
       if (!duplicate) {
@@ -854,6 +885,7 @@ export function createChatService(
     contextMessages,
     getChatUsage,
     completeAssistant,
+    updateAssistantProgress,
     failAssistant,
     assetReferenceRoots,
   };
@@ -1030,6 +1062,23 @@ function normalizeMemoryKind(value: unknown): ChatMemoryKind {
 
 function memoryKindLabel(kind: ChatMemoryKind) {
   return ({ summary: "摘要", fact: "事实", preference: "偏好", goal: "目标" })[kind];
+}
+
+function rollingConversationSummary(previous: string, question: string, answer: string) {
+  const normalizedPrevious = previous
+    .replace(/^对话滚动摘要：\s*/u, "")
+    .trim();
+  const next = [
+    normalizedPrevious,
+    `用户：${question}`,
+    `助手：${answer}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  if (next.length <= MAX_MEMORY_CHARACTERS) return `对话滚动摘要：\n${next}`;
+
+  const budget = MAX_MEMORY_CHARACTERS - "对话滚动摘要：\n[较早内容已压缩]\n".length;
+  return `对话滚动摘要：\n[较早内容已压缩]\n${next.slice(-Math.max(1, budget))}`;
 }
 
 function extractExplicitMemories(content: string) {

@@ -81,7 +81,11 @@ function withSourceMeta(source: PromptSource, items: RawPrompt[]): Prompt[] {
 }
 
 async function runSource(source: PromptSource): Promise<Prompt[]> {
-    const items = PUBLIC_MODE && isBuiltInPromptSource(source) ? await runTrustedPromptSource(source.id) : await runPromptSource(source.script);
+    const items = PUBLIC_MODE && !isBuiltInPromptSource(source)
+        ? (await serverRequest<{ items: RawPrompt[] }>(`/api/prompt-sources/${encodeURIComponent(source.id)}/items`, { timeoutMs: 20_000, expectedUserId: useUserStore.getState().user?.id })).items
+        : PUBLIC_MODE
+          ? await runTrustedPromptSource(source.id)
+          : await runPromptSource(source.script);
     const prompts = withSourceMeta(source, items);
     const fetchedAt = Date.now();
     await promptCacheStore.setItem<SourceCache>(promptSourceCacheKey(source.id), {

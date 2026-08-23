@@ -83,6 +83,7 @@ import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
 import { normalizePromptIndexItems, promptIndexStatuses, queryPromptIndex, replacePromptIndex } from "./lib/prompt-index";
+import { runPromptSourceScript } from "./lib/prompt-source-runtime";
 import { defaultUserChatPresetId, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserSystemPrompt, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserSystemPrompt, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
@@ -252,6 +253,12 @@ const activeMediaProxyRequests = new Map<string, number>();
 const activeMediaProxyUsageIds = new Set<string>();
 const activeChatRequestsByUser = new Map<string, number>();
 let activeChatRequests = 0;
+type ActiveChatTask = {
+    userId: string;
+    conversationId: string;
+    controller: AbortController;
+};
+const activeChatTasks = new Map<string, ActiveChatTask>();
 type ImageRecoveryResult = { recovered: number; remaining: number; lastError?: string };
 const imageRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const imageRecoveryRuns = new Map<string, Promise<ImageRecoveryResult>>();
@@ -396,7 +403,9 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/channels/metrics" && request.method === "GET") return adminChannelMetrics(url, session);
         if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "GET") return adminPromptOptimizationConfiguration(session);
         if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "PUT") return adminUpdatePromptOptimizationConfiguration(request, session);
-        if (url.pathname === "/api/prompt-sources" && request.method === "GET") return listPromptSources();
+        if (url.pathname === "/api/prompt-sources" && request.method === "GET") return listPromptSources(session);
+        const promptSourceItemsMatch = url.pathname.match(/^\/api\/prompt-sources\/([^/]+)\/items$/);
+        if (promptSourceItemsMatch && request.method === "GET") return runPromptSourceItems(request, session, decodeRouteSegment(promptSourceItemsMatch[1], "提示词来源 ID"));
         if (url.pathname === "/api/prompt-index" && request.method === "GET") return listPromptIndex(url);
         if (url.pathname === "/api/prompt-index" && request.method === "PUT") return savePromptIndex(request, session);
         if (url.pathname === "/api/admin/prompt-index/status" && request.method === "GET") return listPromptIndexStatus(session);
@@ -453,6 +462,10 @@ async function route(request: Request, requestId: string) {
         if (chatMemoryMatch && request.method === "PATCH") return updateChatMemory(request, session, decodeRouteSegment(chatMemoryMatch[1], "记忆 ID"));
         if (chatMemoryMatch && request.method === "DELETE") return deleteChatMemory(session, decodeRouteSegment(chatMemoryMatch[1], "记忆 ID"));
         if (url.pathname === "/api/chat/usage" && request.method === "GET") return chatUsage(session);
+        const chatCancelMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages\/([^/]+)\/cancel$/);
+        if (chatCancelMatch && request.method === "POST") {
+            return cancelChatMessage(session, decodeRouteSegment(chatCancelMatch[1], "对话 ID"), decodeRouteSegment(chatCancelMatch[2], "消息 ID"));
+        }
         const chatMessageActionMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages\/([^/]+)\/truncate$/);
         if (chatMessageActionMatch && request.method === "POST") {
             return truncateChatMessages(session, decodeRouteSegment(chatMessageActionMatch[1], "对话 ID"), decodeRouteSegment(chatMessageActionMatch[2], "消息 ID"));
@@ -1208,8 +1221,20 @@ function promptOptimizationPreferredTarget() {
     return platformPromptOptimizationTarget(state) || {};
 }
 
-function listPromptSources() {
-    return json({ items: loadManagedPromptSources(appDatabase).map(publicPromptSource) });
+function listPromptSources(session: SessionPayload) {
+    return json({ items: loadManagedPromptSources(appDatabase).map((source) => publicPromptSource(source, Boolean(state.users[session.userId]?.admin))) });
+}
+
+async function runPromptSourceItems(request: Request, session: SessionPayload, sourceId: string) {
+    const source = loadManagedPromptSources(appDatabase).find((item) => item.id === sourceId);
+    if (!source) throw new HttpError(404, "提示词来源不存在");
+    try {
+        const items = await runPromptSourceScript(source.script, request.signal);
+        return json({ sourceId: source.id, items }, 200, { "Cache-Control": "private, max-age=300, stale-while-revalidate=3600" });
+    } catch (error) {
+        if (request.signal.aborted) throw error;
+        throw new HttpError(502, error instanceof Error ? error.message : "提示词来源执行失败");
+    }
 }
 
 function listPromptIndex(url: URL) {
@@ -1270,8 +1295,8 @@ function deletePromptSource(session: SessionPayload, id: string) {
     return new Response(null, { status: 204 });
 }
 
-function publicPromptSource(source: ManagedPromptSource) {
-    return { ...source, trusted: true as const };
+function publicPromptSource(source: ManagedPromptSource, includeScript = true) {
+    return { ...source, script: includeScript ? source.script : "", trusted: true as const };
 }
 
 async function optimizeImagePrompt(request: Request, session: SessionPayload, requestId: string) {
@@ -1718,11 +1743,13 @@ function getChatConversation(session: SessionPayload, conversationId: string) {
 }
 
 function deleteChatConversation(session: SessionPayload, conversationId: string) {
+    cancelActiveChatTasks(session.userId, conversationId);
     if (!requireChat().deleteConversation(session.userId, conversationId)) throw new HttpError(404, "对话不存在");
     return new Response(null, { status: 204 });
 }
 
 function truncateChatMessages(session: SessionPayload, conversationId: string, messageId: string) {
+    cancelActiveChatTasks(session.userId, conversationId);
     const detail = requireChat().deleteMessagesFrom(session.userId, conversationId, messageId);
     return json(
         {
@@ -1865,7 +1892,9 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
     reserveChatRequest(session.userId);
 
     const abortController = new AbortController();
-    const signal = AbortSignal.any([request.signal, abortController.signal]);
+    // The upstream task belongs to the server, not to the browser's SSE subscription.
+    // A closed tab may cancel the response stream, but it must not cancel a submitted turn.
+    const signal = abortController.signal;
     let releasePending = true;
     const release = () => {
         if (!releasePending) return;
@@ -1886,6 +1915,11 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                 ...(retryAssistantMessageId ? { retryAssistantMessageId } : {}),
                 ...(editUserMessageId ? { editUserMessageId } : {}),
             });
+        activeChatTasks.set(turn.assistantMessage.id, {
+            userId: session.userId,
+            conversationId,
+            controller: abortController,
+        });
         continuationPrefix = "contextMessages" in turn ? turn.assistantMessage.content : "";
         const preset = resolveChatPreset(turn.conversation.presetId);
         const preparedAttachments = "contextMessages" in turn ? [] : prepareChatAttachments(session.userId, turn.userMessage.attachments);
@@ -1912,13 +1946,14 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
         const channel = platformChannel(channelId);
         const apiKey = decryptChannelApiKey(channel);
         const chatPersona = readStoredUserChatPersona(appDatabase.loadUserPreference(session.userId, USER_CHAT_PERSONA_KEY)) || "";
-        const memoryContext = requireChat().memoryContext(session.userId);
+        const memoryContext = requireChat().memoryContext(session.userId, conversationId);
         const upstream = await openChatUpstream(channel, apiKey, model, messages, signal, requestId, preset, chatPersona, memoryContext);
         const publicUserMessage = publicChatMessage(session.userId, turn.userMessage);
         const publicAssistantMessage = publicChatMessage(session.userId, turn.assistantMessage);
 
         if (!upstream.stream) {
             const completed = requireChat().completeAssistant(session.userId, turn.assistantMessage.id, `${continuationPrefix}${upstream.text}`, upstream.text.length);
+            if (activeChatTasks.get(turn.assistantMessage.id)?.controller === abortController) activeChatTasks.delete(turn.assistantMessage.id);
             release();
             return chatEventResponse([
                 ["started", { conversation: turn.conversation, userMessage: publicUserMessage, assistantMessage: publicAssistantMessage }],
@@ -1937,6 +1972,16 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                     const reader = upstream.response.body!.getReader();
                     const decoder = new TextDecoder();
                     const state: ChatStreamState = { buffer: "", text: "", completed: false };
+                    let lastPersistedAt = 0;
+                    let lastPersistedCharacters = 0;
+                    const persistProgress = (force = false) => {
+                        const content = `${continuationPrefix}${state.text}`;
+                        const now = Date.now();
+                        if (!force && content.length - lastPersistedCharacters < 160 && now - lastPersistedAt < 800) return;
+                        requireChat().updateAssistantProgress(session.userId, turn!.assistantMessage.id, content);
+                        lastPersistedAt = now;
+                        lastPersistedCharacters = content.length;
+                    };
                     try {
                         for (;;) {
                             const next = await reader.read();
@@ -1944,6 +1989,7 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                             consumeChatStream(upstream.protocol, state, decoder.decode(next.value, { stream: true }), (delta) => {
                                 if (!canceled) controller.enqueue(encoder.encode(chatEvent("delta", { messageId: turn!.assistantMessage.id, delta })));
                             });
+                            persistProgress();
                             if (state.error) throw new Error(state.error);
                         }
                         consumeChatStream(upstream.protocol, state, decoder.decode(), (delta) => {
@@ -1952,6 +1998,7 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                         if (state.error) throw new Error(state.error);
                         if (!state.completed) throw new Error("上游流式回应提前中断，请重试");
                         if (!state.text.trim()) throw new Error("文本模型没有返回可用内容");
+                        persistProgress(true);
                         const completed = requireChat().completeAssistant(session.userId, turn!.assistantMessage.id, `${continuationPrefix}${state.text}`, state.text.length);
                         completedMessage = completed;
                         if (!canceled) {
@@ -1978,17 +2025,18 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                         try {
                             reader.releaseLock();
                         } catch {}
+                        if (activeChatTasks.get(turn!.assistantMessage.id)?.controller === abortController) activeChatTasks.delete(turn!.assistantMessage.id);
                         release();
                     }
                 })();
             },
             cancel(reason) {
                 canceled = true;
-                abortController.abort(reason instanceof Error ? reason : new DOMException("回答已停止", "AbortError"));
             },
         });
         return new Response(stream, { headers: chatStreamHeaders() });
     } catch (error) {
+        if (turn && activeChatTasks.get(turn.assistantMessage.id)?.controller === abortController) activeChatTasks.delete(turn.assistantMessage.id);
         if (turn && !signal.aborted) {
             const failureMessage = chatFailureMessage(undefined, error);
             const failed = requireChat().failAssistant(session.userId, turn.assistantMessage.id, continuationPrefix, failureMessage, 0);
@@ -2029,6 +2077,36 @@ function prepareChatAttachments(userId: string, attachments: ChatAttachment[], m
         if (totalBytes > maxBytes) throw new HttpError(413, `图片附件总量不能超过 ${Math.floor(maxBytes / 1024 / 1024)} MB`);
         return { assetKey: asset.key, mimeType: asset.mimeType, name: attachment.name.slice(0, 160), bytes: bytes.byteLength, base64: bytes.toString("base64") };
     });
+}
+
+function cancelChatMessage(session: SessionPayload, conversationId: string, messageId: string) {
+    const service = requireChat();
+    const conversation = service.getConversation(session.userId, conversationId);
+    if (!conversation) throw new HttpError(404, "对话不存在");
+    const task = activeChatTasks.get(messageId);
+    if (task && task.userId === session.userId && task.conversationId === conversationId) {
+        task.controller.abort(new DOMException("回答已停止", "AbortError"));
+        markChatTaskCanceled(messageId, task);
+        return json({ ok: true });
+    }
+    const message = service.getConversationWithMessages(session.userId, conversationId)?.messages.find((item) => item.id === messageId);
+    if (!message) throw new HttpError(404, "回答消息不存在");
+    if (message.status === "streaming") service.failAssistant(session.userId, messageId, message.content, "本次回答已停止", message.content.length);
+    return json({ ok: true });
+}
+
+function cancelActiveChatTasks(userId: string, conversationId: string) {
+    for (const [messageId, task] of activeChatTasks) {
+        if (task.userId !== userId || task.conversationId !== conversationId) continue;
+        task.controller.abort(new DOMException("回答已停止", "AbortError"));
+        markChatTaskCanceled(messageId, task);
+        activeChatTasks.delete(messageId);
+    }
+}
+
+function markChatTaskCanceled(messageId: string, task: ActiveChatTask) {
+    const message = requireChat().getConversationWithMessages(task.userId, task.conversationId)?.messages.find((item) => item.id === messageId);
+    if (message?.status === "streaming") requireChat().failAssistant(task.userId, messageId, message.content, "本次回答已停止", message.content.length);
 }
 
 function prepareChatCanvasAttachments(userId: string, context: ChatCanvasContext | undefined, maxBytes = MAX_CHAT_CONTEXT_ATTACHMENT_BYTES) {

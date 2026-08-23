@@ -150,6 +150,13 @@ export function truncateChatMessages(conversationId: string, messageId: string, 
     );
 }
 
+export function cancelChatMessage(conversationId: string, messageId: string, expectedUserId?: string) {
+    return serverRequest<{ ok: true }>(
+        `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/cancel`,
+        { method: "POST", expectedUserId },
+    );
+}
+
 export function fetchChatUsage(expectedUserId?: string) {
     return serverRequest<{ usage: ChatUsage }>("/api/chat/usage", { timeoutMs: 12_000, expectedUserId });
 }
