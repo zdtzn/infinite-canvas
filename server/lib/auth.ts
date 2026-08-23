@@ -10,6 +10,30 @@ export type SessionPayload = {
     sessionVersion?: number;
 };
 
+const COMMON_PERSONAL_PASSWORDS = new Set([
+    "12345678",
+    "123456789",
+    "1234567890",
+    "password",
+    "password1",
+    "qwertyui",
+    "abcdefgh",
+    "11111111",
+    "00000000",
+]);
+
+export function personalPasswordIssue(value: string, minimumLength = 8) {
+    const password = String(value || "").trim();
+    if (password.length < minimumLength) return `个人密码至少 ${minimumLength} 位`;
+    if (password.length > 128) return "个人密码不能超过 128 位";
+    if (/\p{C}/u.test(password)) return "个人密码不能包含控制字符";
+    const normalized = password.toLowerCase();
+    if (COMMON_PERSONAL_PASSWORDS.has(normalized)) return "个人密码过于简单，请避免使用常见口令";
+    if (/^(.)\1+$/.test(password)) return "个人密码过于简单，请不要重复使用同一个字符";
+    if (/^(?:0123456789|1234567890|9876543210|0987654321)/.test(password)) return "个人密码过于简单，请避免使用连续数字";
+    return null;
+}
+
 export async function hashAccessCode(value: string) {
     const salt = randomBytes(16);
     const derived = (await scrypt(value, salt, 32)) as Buffer;

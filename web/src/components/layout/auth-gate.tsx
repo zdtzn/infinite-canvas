@@ -147,7 +147,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                                 />
                             </Form.Item>
                             <Form.Item
-                                label={configured ? "个人密码" : "设置个人密码"}
+                                label={configured ? "个人密码（兼容旧账号）" : "设置个人密码"}
                                 name="personalCode"
                                 rules={[{ required: true, min: configured ? 6 : 10, message: `个人密码至少 ${configured ? 6 : 10} 位` }]}
                             >
@@ -156,7 +156,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                                     prefix={<ShieldCheck className="size-4 text-[#777984]" />}
                                     autoComplete={configured ? "current-password" : "new-password"}
                                     maxLength={128}
-                                    placeholder={configured ? "用于进入你的个人账号" : "管理员个人密码至少 10 位"}
+                                    placeholder={configured ? "用于进入你的个人账号；新密码至少 8 位" : "管理员个人密码至少 10 位"}
                                 />
                             </Form.Item>
                             <Button className="login-realm-submit mt-1 !h-12" type="primary" htmlType="submit" block size="large" loading={submitting} icon={submitting ? undefined : <ArrowRight className="size-4" />}>

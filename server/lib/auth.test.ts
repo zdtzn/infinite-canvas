@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { createIdentityToken, createSessionToken, hashAccessCode, readCookie, readIdentityToken, readSessionToken, verifyAccessCode } from "./auth";
+import { createIdentityToken, createSessionToken, hashAccessCode, personalPasswordIssue, readCookie, readIdentityToken, readSessionToken, verifyAccessCode } from "./auth";
 
 describe("server authentication", () => {
     test("hashes access codes without storing the original value", async () => {
@@ -27,5 +27,12 @@ describe("server authentication", () => {
     test("treats malformed cookie encoding as an invalid cookie", () => {
         const request = new Request("https://canvas.example", { headers: { cookie: "canvas_session=%E0%A4%A" } });
         expect(readCookie(request, "canvas_session")).toBe("");
+    });
+
+    test("rejects weak passwords for new credentials while allowing a strong password", () => {
+        expect(personalPasswordIssue("12345678")).toContain("过于简单");
+        expect(personalPasswordIssue("aaaaaaaa")).toContain("过于简单");
+        expect(personalPasswordIssue("Moxuan!2026")).toBeNull();
+        expect(personalPasswordIssue("short")).toContain("至少 8");
     });
 });

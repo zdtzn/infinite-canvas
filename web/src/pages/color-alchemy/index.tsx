@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { App, ConfigProvider, Drawer, Modal, Segmented, Slider, Tooltip, theme as antdTheme } from "antd";
-import { ArrowLeft, ClipboardCopy, ClipboardPaste, Download, FileImage, ImagePlus, Images, Layers3, PanelLeft, PanelRight, Redo2, RotateCcw, Save, Undo2 } from "lucide-react";
+import { ArrowLeft, ClipboardCopy, ClipboardPaste, Download, FileImage, ImagePlus, Images, Layers3, PanelLeft, PanelRight, Redo2, RotateCcw, Save, Undo2, X } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useNavigate } from "react-router-dom";
 
@@ -18,7 +18,7 @@ import { ColorSourceDialog } from "@/features/color-alchemy/color-source-dialog"
 import { ColorSourcePanel, type ColorSourcePanelTab } from "@/features/color-alchemy/color-source-panel";
 import { deriveBorrowedColorSettings, recommendColorSettings } from "@/features/color-alchemy/color-engine";
 import { applyColorPreset } from "@/features/color-alchemy/presets";
-import { analyzeColorSource, colorExportExtension, renderColorBlob } from "@/features/color-alchemy/renderer";
+import { analyzeColorSource, colorExportExtension, renderColorBlob, type ColorRenderOptions } from "@/features/color-alchemy/renderer";
 import { normalizeColorSettings } from "@/features/color-alchemy/settings";
 import { prepareColorAlchemyForUser, useColorAlchemyStore } from "@/features/color-alchemy/use-color-alchemy-store";
 import type { AnalyzedColor, ColorAlchemySource, ColorExportFormat, ColorPreset, ColorSettings } from "@/features/color-alchemy/types";
@@ -56,6 +56,7 @@ export default function ColorAlchemyPage() {
     const [returning, setReturning] = useState(false);
     const [exportOpen, setExportOpen] = useState(false);
     const [exporting, setExporting] = useState(false);
+    const [exportProgress, setExportProgress] = useState(0);
     const [exportFormat, setExportFormat] = useState<ColorExportFormat>("png");
     const [exportQuality, setExportQuality] = useState(92);
     const [pickedColor, setPickedColor] = useState<AnalyzedColor | null>(null);
@@ -68,6 +69,7 @@ export default function ColorAlchemyPage() {
     const deletedDocumentIdsRef = useRef(new Map<string, string>());
     const syncRetryAfterRef = useRef(new Map<string, number>());
     const syncRetryTimersRef = useRef(new Map<string, number>());
+    const exportAbortRef = useRef<AbortController | null>(null);
 
     useEffect(() => prepareColorAlchemyForUser(userId), [userId]);
 
@@ -253,9 +255,9 @@ export default function ColorAlchemyPage() {
         message.success("已借取参考图的色彩关系，主体与构图保持不变");
     };
 
-    const createRenderedImage = async (format: ColorExportFormat = "webp", quality = 0.92, fitUploadLimit = false) => {
+    const createRenderedImage = async (format: ColorExportFormat = "webp", quality = 0.92, fitUploadLimit = false, renderOptions?: ColorRenderOptions) => {
         if (!document) throw new Error("请先添加图片");
-        const rendered = await renderColorBlob(document.source, document.settings, format, quality);
+        const rendered = await renderColorBlob(document.source, document.settings, format, quality, undefined, renderOptions);
         return fitUploadLimit ? fitColorUploadBlob(document.source, document.settings, rendered) : { blob: rendered, compressed: false };
     };
 
@@ -284,16 +286,22 @@ export default function ColorAlchemyPage() {
 
     const exportImage = async () => {
         if (!document || exporting) return;
+        const controller = new AbortController();
+        exportAbortRef.current = controller;
         setExporting(true);
+        setExportProgress(0);
         try {
-            const { blob } = await createRenderedImage(exportFormat, exportQuality / 100);
+            const { blob } = await createRenderedImage(exportFormat, exportQuality / 100, false, { signal: controller.signal, onProgress: ({ progress }) => setExportProgress(progress) });
             saveAs(blob, `${safeFileName(document.source.title)}-灵彩.${colorExportExtension(exportFormat)}`);
             setExportOpen(false);
             message.success("调色结果已导出");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "导出失败，请重试");
+            if (error instanceof DOMException && error.name === "AbortError") message.info("已取消导出");
+            else message.error(error instanceof Error ? error.message : "导出失败，请重试");
         } finally {
+            exportAbortRef.current = null;
             setExporting(false);
+            setExportProgress(0);
         }
     };
 
@@ -546,8 +554,34 @@ export default function ColorAlchemyPage() {
                         </Drawer>
                     </>
                 ) : null}
-                <Modal title="导出调色作品" open={exportOpen} okText={exporting ? "导出中…" : "导出"} cancelText="取消" confirmLoading={exporting} onOk={() => void exportImage()} onCancel={() => setExportOpen(false)}>
+                <Modal
+                    title="导出调色作品"
+                    open={exportOpen}
+                    okText={exporting ? "导出中…" : "导出"}
+                    cancelText={exporting ? "取消导出" : "取消"}
+                    confirmLoading={exporting}
+                    onOk={() => void exportImage()}
+                    onCancel={() => {
+                        if (exporting) exportAbortRef.current?.abort();
+                        else setExportOpen(false);
+                    }}
+                >
                     <div className="space-y-6 py-2">
+                        {exporting ? (
+                            <div className="rounded-md border border-[#d7b46a]/20 bg-[#d7b46a]/6 p-3">
+                                <div className="flex items-center justify-between gap-3 text-xs text-white/62">
+                                    <span>{exportProgress >= 0.9 ? "正在编码文件…" : exportProgress >= 0.12 ? "正在处理像素…" : "正在准备图片…"}</span>
+                                    <span>{Math.round(exportProgress * 100)}%</span>
+                                </div>
+                                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                                    <div className="h-full rounded-full bg-[#d7b46a] transition-[width] duration-150" style={{ width: `${Math.max(4, exportProgress * 100)}%` }} />
+                                </div>
+                                <button type="button" className="mt-3 inline-flex items-center gap-1.5 text-xs text-white/55 transition hover:text-white" onClick={() => exportAbortRef.current?.abort()}>
+                                    <X className="size-3.5" />
+                                    取消导出
+                                </button>
+                            </div>
+                        ) : null}
                         <div>
                             <div className="mb-2 text-sm text-white/65">格式</div>
                             <Segmented

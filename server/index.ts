@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { isIP } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
-import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
+import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, personalPasswordIssue, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./lib/asset-library";
 import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
 import { AsyncSemaphore } from "./lib/async-semaphore";
@@ -616,7 +616,7 @@ async function setupAuth(request: Request) {
     }>(request);
     const accessCode = String(body.accessCode || "").trim();
     const displayName = normalizeDisplayName(body.displayName);
-    const personalCode = normalizePersonalCode(body.personalCode, 10);
+    const personalCode = normalizeNewPersonalCode(body.personalCode, 10);
     if (accessCode.length < 8) return json({ error: { message: "访问口令至少 8 位" } }, 400);
     return withAuthMutation(async () => {
         if (state.auth.accessCodeHash) return json({ error: { message: "访问口令已经设置" } }, 409);
@@ -805,7 +805,7 @@ async function changePersonalPassword(request: Request, session: SessionPayload)
     enforceRateLimit(`password:${session.userId}:${clientIp(request)}`, 8);
     const body = await readJson<{ currentPassword?: unknown; newPassword?: unknown }>(request, 16 * 1024);
     const currentPassword = normalizePersonalCode(body.currentPassword);
-    const newPassword = normalizePersonalCode(body.newPassword);
+    const newPassword = normalizeNewPersonalCode(body.newPassword, 8);
     if (currentPassword === newPassword) throw new HttpError(400, "新密码不能与当前密码相同");
     return withAuthMutation(async () => {
         const user = state.users[session.userId];
@@ -1275,7 +1275,7 @@ async function runPromptSourceItems(request: Request, session: SessionPayload, s
         lastError: cached?.lastError,
     });
     try {
-        const items = await task;
+        const items = await awaitWithRequestAbort(task, request.signal);
         const entry = promptSourceRuntimeCache.get(source.id);
         if (entry) delete entry.inFlight;
         return json({ sourceId: source.id, items, cached: false }, 200, { "Cache-Control": "private, max-age=300, stale-while-revalidate=1800", "X-Prompt-Cache": inFlight ? "coalesced" : "miss" });
@@ -1289,6 +1289,28 @@ async function runPromptSourceItems(request: Request, session: SessionPayload, s
         if (request.signal.aborted) throw error;
         throw new HttpError(502, error instanceof Error ? error.message : "提示词来源执行失败");
     }
+}
+
+function awaitWithRequestAbort<T>(task: Promise<T>, signal: AbortSignal) {
+    if (signal.aborted) return Promise.reject(signal.reason || new DOMException("请求已取消", "AbortError"));
+    return new Promise<T>((resolve, reject) => {
+        const cleanup = () => signal.removeEventListener("abort", onAbort);
+        const onAbort = () => {
+            cleanup();
+            reject(signal.reason || new DOMException("请求已取消", "AbortError"));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        void task.then(
+            (value) => {
+                cleanup();
+                resolve(value);
+            },
+            (error) => {
+                cleanup();
+                reject(error);
+            },
+        );
+    });
 }
 
 function listPromptIndex(url: URL) {
@@ -5337,6 +5359,13 @@ function normalizeDisplayName(value: unknown) {
 function normalizePersonalCode(value: unknown, minimumLength = 6) {
     const personalCode = String(value || "").trim();
     if (personalCode.length < minimumLength || personalCode.length > 128) throw new HttpError(400, `个人密码需为 ${minimumLength} 到 128 位`);
+    return personalCode;
+}
+
+function normalizeNewPersonalCode(value: unknown, minimumLength = 8) {
+    const personalCode = String(value || "").trim();
+    const issue = personalPasswordIssue(personalCode, minimumLength);
+    if (issue) throw new HttpError(400, issue);
     return personalCode;
 }
 

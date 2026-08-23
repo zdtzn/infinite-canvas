@@ -196,8 +196,8 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
                 if (!passwordSaving) setPasswordOpen(false);
             }}
             onOk={async () => {
-                if (newPassword.length < 6) {
-                    message.error("新密码至少 6 位");
+                if (newPassword.length < 8) {
+                    message.error("新密码至少 8 位");
                     return;
                 }
                 if (newPassword !== confirmPassword) {
@@ -221,7 +221,7 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
         >
             <div className="space-y-3">
                 <Input.Password value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} placeholder="当前密码" autoComplete="current-password" />
-                <Input.Password value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="新密码（至少 6 位）" autoComplete="new-password" />
+                <Input.Password value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="新密码（至少 8 位）" autoComplete="new-password" />
                 <Input.Password value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="再次输入新密码" autoComplete="new-password" />
             </div>
         </Modal>
