@@ -843,7 +843,7 @@ export default function ImagePage() {
                                                 onPointerDown={preloadAssetPickerModal}
                                                 onClick={() => setAssetPickerOpen(true)}
                                             >
-                                                我的资产
+                                                藏卷阁
                                             </Button>
                                         </div>
                                     </div>
