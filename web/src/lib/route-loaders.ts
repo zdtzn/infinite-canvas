@@ -23,10 +23,10 @@ type PreloadRouteOptions = {
     fromWarmup?: boolean;
 };
 
-// Warm the most likely next workspace before the first navigation. Color Alchemy
-// has its own lazy chunk and IndexedDB hydration, so loading it on demand makes
-// the first click feel slower than the subsequent visits.
-const routeWarmupOrder = ["/color-alchemy", "/chat", "/image"] as const;
+// Warm the most likely next workspace before the first navigation. The image
+// workbench has the widest lazy import graph, so it benefits most from getting
+// the first idle network slot instead of waiting behind other workspaces.
+const routeWarmupOrder = ["/image", "/color-alchemy", "/chat", "/product-lab", "/assets", "/canvas", "/video", "/prompts", "/cultivation"] as const;
 
 export function preloadRoute(path: string, options: PreloadRouteOptions = {}) {
     const routeKey = routeKeyForPath(path);

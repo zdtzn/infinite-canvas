@@ -1,23 +1,19 @@
 import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { App, Button, Checkbox, Input, Modal, Tag, Tooltip, Typography } from "antd";
-import localforage from "localforage";
-import { saveAs } from "file-saver";
+import { App, Button, Checkbox, Input, Modal, Tag, Tooltip } from "antd";
 
-import { ImageSettingsPanel, imageGenerationQualityLabel, imageOutputFormatLabel, imageResolutionLabel, imageSizeLabel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { ImagePromptOptimizer } from "@/components/prompts/image-prompt-optimizer";
-import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
-import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { DeferredImage } from "@/components/ui/deferred-image";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
+import { imageGenerationQualityLabel, imageOutputFormatLabel, imageResolutionLabel, imageSizeLabel } from "@/lib/image-setting-labels";
 import { normalizeImageSizeSelection, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatDuration } from "@/lib/image-utils";
-import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { settleWithConcurrency } from "@/lib/async-pool";
 import { getClipboardImageFiles } from "@/lib/image-clipboard";
 import { convertImageOutput, resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -38,7 +34,18 @@ import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, persist
 import { mergePersistedImagesIntoHistoryRecord, mergeServerJobsIntoImageHistory, serverJobModelValue } from "@/services/image-generation-history";
 import { archiveDeferredServerJob, fetchServerJobs, type ServerJob } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
-import { ResultImageCard } from "./result-image-card";
+import { lazyRoute } from "@/lib/lazy-route";
+
+const loadPromptSelectDialog = () => import("@/components/prompts/prompt-select-dialog").then((module) => ({ default: module.PromptSelectDialog }));
+const loadAssetPickerModal = () => import("@/components/canvas/asset-picker-modal").then((module) => ({ default: module.AssetPickerModal }));
+const PromptSelectDialog = lazyRoute(loadPromptSelectDialog);
+const AssetPickerModal = lazyRoute(loadAssetPickerModal);
+const ResultImageCard = lazyRoute(() => import("./result-image-card").then((module) => ({ default: module.ResultImageCard })));
+const FailedImageCard = lazyRoute(() => import("./failed-image-card").then((module) => ({ default: module.FailedImageCard })));
+const ImageSettingsPanel = lazyRoute(() => import("@/components/image-settings-panel").then((module) => ({ default: module.ImageSettingsPanel })));
+
+const preloadPromptSelectDialog = () => void loadPromptSelectDialog().catch(() => undefined);
+const preloadAssetPickerModal = () => void loadAssetPickerModal().catch(() => undefined);
 
 type GenerationLog = {
     id: string;
@@ -67,7 +74,14 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
+let logStorePromise: Promise<ReturnType<(typeof import("localforage"))["createInstance"]>> | undefined;
+
+function getLogStore() {
+    if (!logStorePromise) {
+        logStorePromise = import("localforage").then(({ default: localforage }) => localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" }));
+    }
+    return logStorePromise;
+}
 
 export default function ImagePage() {
     const { message } = App.useApp();
@@ -97,9 +111,12 @@ export default function ImagePage() {
     const [previewReference, setPreviewReference] = useState<ReferenceImage | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [deletingLogs, setDeletingLogs] = useState(false);
+    const [logsLoading, setLogsLoading] = useState(false);
+    const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
     const savingAssetIdsRef = useRef(new Set<string>());
     const historyArchiveRunsRef = useRef(new Set<string>());
+    const historyRefreshRef = useRef<Promise<GenerationLog[]> | null>(null);
     const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
     const clearImageCommand = useWorkbenchAgentStore((state) => state.clearImageCommand);
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
@@ -144,10 +161,6 @@ export default function ImagePage() {
         return result.status === "success" && image?.persisted !== false && image?.serverJobId ? [image] : [];
     });
     const archivedResultSignature = archivedGenerationImages.map((image) => `${image.id}:${image.dataUrl}`).join("|");
-
-    useEffect(() => {
-        void refreshLogs();
-    }, [historyUserId]);
 
     useEffect(() => {
         if (!generationJob) return;
@@ -352,6 +365,7 @@ export default function ImagePage() {
         try {
             const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
             const blob = await convertImageOutput(image.dataUrl, outputFormat);
+            const { saveAs } = await import("file-saver");
             saveAs(blob, `image-${index + 1}.${imageFileExtension(blob.type)}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "下载图片失败");
@@ -455,6 +469,7 @@ export default function ImagePage() {
         const serverJobIds = Array.from(new Set(selected.flatMap((log) => log.serverJobIds || [])));
         setDeletingLogs(true);
         try {
+            const logStore = await getLogStore();
             await deleteGenerationHistoryRecords({ kind: "image", userId: historyUserId, store: logStore }, deletingIds, serverJobIds);
             await refreshLogs();
             if (previewLog && deletingIds.includes(previewLog.id)) setPreviewLog(null);
@@ -470,33 +485,69 @@ export default function ImagePage() {
     };
 
     const saveLog = (log: GenerationLog) => {
-        void persistGenerationHistoryRecord({ kind: "image", userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareImageLogForServer }, { ...serializeLog(log), updatedAt: Date.now() }).then(refreshLogs);
+        void getLogStore()
+            .then((logStore) => persistGenerationHistoryRecord({ kind: "image", userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareImageLogForServer }, { ...serializeLog(log), updatedAt: Date.now() }))
+            .then(refreshLogs);
     };
 
-    const refreshLogs = async () => {
-        const options = { kind: "image" as const, userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareImageLogForServer };
-        let nextLogs = await synchronizeGenerationHistory(options);
-        if (PUBLIC_MODE && historyUserId) {
-            try {
-                const jobs = (await fetchServerJobs(historyUserId)).items;
-                const merged = mergeServerJobsIntoImageHistory(nextLogs, jobs, buildLogFromServerJob);
-                if (imageHistoryChanged(nextLogs, merged)) nextLogs = await persistGenerationHistoryRecords(options, merged);
-                else nextLogs = merged;
-                const pendingJobs = jobs.filter((job) => job.status === "succeeded" && job.result?.recoveryPending && !historyArchiveRunsRef.current.has(job.id));
-                if (pendingJobs.length) {
-                    pendingJobs.forEach((job) => historyArchiveRunsRef.current.add(job.id));
-                    void settleWithConcurrency(pendingJobs, 2, (job) => archiveDeferredServerJob(job, historyUserId)).then((outcomes) => {
-                        pendingJobs.forEach((job) => historyArchiveRunsRef.current.delete(job.id));
-                        if (outcomes.some((outcome) => outcome.status === "fulfilled" && !outcome.value.result?.recoveryPending)) void refreshLogs();
-                    });
+    const refreshLogs = () => {
+        if (historyRefreshRef.current) return historyRefreshRef.current;
+        setLogsLoading(true);
+        const pending = (async () => {
+            const logStore = await getLogStore();
+            const options = { kind: "image" as const, userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareImageLogForServer };
+            let nextLogs = await synchronizeGenerationHistory(options);
+            if (PUBLIC_MODE && historyUserId) {
+                try {
+                    const jobs = (await fetchServerJobs(historyUserId)).items;
+                    const merged = mergeServerJobsIntoImageHistory(nextLogs, jobs, buildLogFromServerJob);
+                    if (imageHistoryChanged(nextLogs, merged)) nextLogs = await persistGenerationHistoryRecords(options, merged);
+                    else nextLogs = merged;
+                    const pendingJobs = jobs.filter((job) => job.status === "succeeded" && job.result?.recoveryPending && !historyArchiveRunsRef.current.has(job.id));
+                    if (pendingJobs.length) {
+                        pendingJobs.forEach((job) => historyArchiveRunsRef.current.add(job.id));
+                        void settleWithConcurrency(pendingJobs, 2, (job) => archiveDeferredServerJob(job, historyUserId)).then((outcomes) => {
+                            pendingJobs.forEach((job) => historyArchiveRunsRef.current.delete(job.id));
+                            if (outcomes.some((outcome) => outcome.status === "fulfilled" && !outcome.value.result?.recoveryPending)) void refreshLogs();
+                        });
+                    }
+                } catch {
+                    // The account history remains usable even if task recovery is temporarily unavailable.
                 }
-            } catch {
-                // The account history remains usable even if task recovery is temporarily unavailable.
             }
-        }
-        setLogs(nextLogs);
-        return nextLogs;
+            setLogs(nextLogs);
+            return nextLogs;
+        })().finally(() => {
+            historyRefreshRef.current = null;
+            setLogsLoading(false);
+        });
+        historyRefreshRef.current = pending;
+        return pending;
     };
+
+    useEffect(() => {
+        let canceled = false;
+        let idleHandle: number | undefined;
+        const idleWindow = window as Window & {
+            requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+            cancelIdleCallback?: (handle: number) => void;
+        };
+        const run = () => {
+            if (!canceled) void refreshLogs().catch((error) => console.error("Failed to refresh image generation history", error));
+        };
+        const delayHandle = window.setTimeout(() => {
+            if (idleWindow.requestIdleCallback) idleHandle = idleWindow.requestIdleCallback(run, { timeout: 1_500 });
+            else run();
+        }, 800);
+        return () => {
+            canceled = true;
+            window.clearTimeout(delayHandle);
+            if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle);
+        };
+        // Refreshing history is intentionally delayed so it cannot compete with
+        // the first workbench paint. An explicit history open still refreshes it.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [historyUserId]);
 
     useEffect(() => {
         if (!archivedResultSignature || !logs.length) return;
@@ -642,10 +693,26 @@ export default function ImagePage() {
                                                 }}
                                                 onAdopt={setPrompt}
                                             />
-                                            <Button className="min-w-0" size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
+                                            <Button
+                                                className="min-w-0"
+                                                size="small"
+                                                icon={<BookOpen className="size-3.5" />}
+                                                onPointerEnter={preloadPromptSelectDialog}
+                                                onFocus={preloadPromptSelectDialog}
+                                                onPointerDown={preloadPromptSelectDialog}
+                                                onClick={() => setPromptDialogOpen(true)}
+                                            >
                                                 提示词库
                                             </Button>
-                                            <Button className="min-w-0" size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
+                                            <Button
+                                                className="min-w-0"
+                                                size="small"
+                                                icon={<FolderPlus className="size-3.5" />}
+                                                onPointerEnter={preloadAssetPickerModal}
+                                                onFocus={preloadAssetPickerModal}
+                                                onPointerDown={preloadAssetPickerModal}
+                                                onClick={() => setAssetPickerOpen(true)}
+                                            >
                                                 我的资产
                                             </Button>
                                         </div>
@@ -743,7 +810,7 @@ export default function ImagePage() {
                                 </div>
 
                                 <div className="rounded-lg border border-stone-200 dark:border-stone-800">
-                                    <details className="group">
+                                    <details className="group" onToggle={(event) => setAdvancedSettingsOpen(event.currentTarget.open)}>
                                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium marker:content-none">
                                             <span className="inline-flex shrink-0 items-center gap-2">
                                                 <SlidersHorizontal className="size-4 text-stone-500" />
@@ -757,9 +824,11 @@ export default function ImagePage() {
                                                 <ChevronDown className="size-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
                                             </span>
                                         </summary>
-                                        <div className="border-t border-stone-200 p-3 dark:border-stone-800">
-                                            <GenerationSettings config={requestImageConfig} updateConfig={updateConfig} />
-                                        </div>
+                                        {advancedSettingsOpen ? (
+                                            <div className="border-t border-stone-200 p-3 dark:border-stone-800">
+                                                <GenerationSettings config={requestImageConfig} updateConfig={updateConfig} />
+                                            </div>
+                                        ) : null}
                                     </details>
                                 </div>
                             </div>
@@ -820,7 +889,14 @@ export default function ImagePage() {
                                             返回生成结果
                                         </Button>
                                     ) : (
-                                        <Button size="small" icon={<Archive className="size-3.5" />} onClick={() => setResultView("history")}>
+                                        <Button
+                                            size="small"
+                                            icon={<Archive className="size-3.5" />}
+                                            onClick={() => {
+                                                setResultView("history");
+                                                void refreshLogs().catch((error) => console.error("Failed to refresh image generation history", error));
+                                            }}
+                                        >
                                             太古遗迹
                                         </Button>
                                     )}
@@ -829,7 +905,9 @@ export default function ImagePage() {
                                     </Tooltip>
                                 </div>
                             </div>
-                            {resultView === "history" ? (
+                            {resultView === "history" && logsLoading && !logs.length ? (
+                                <HistoryLoading />
+                            ) : resultView === "history" ? (
                                 <LogPanel
                                     logs={logs}
                                     selectedLogIds={selectedLogIds}
@@ -843,17 +921,13 @@ export default function ImagePage() {
                                 <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                     {results.map((result, index) =>
                                         result.status === "success" && result.image ? (
-                                            <ResultImageCard
-                                                key={result.id}
-                                                image={result.image}
-                                                index={index}
-                                                savingAsset={savingAssetIds.includes(result.image.id)}
-                                                onEdit={addResultToReferences}
-                                                onDownload={downloadImage}
-                                                onSaveAsset={saveResultToAssets}
-                                            />
+                                            <Suspense key={result.id} fallback={<ResultImageCardLoading />}>
+                                                <ResultImageCard image={result.image} index={index} savingAsset={savingAssetIds.includes(result.image.id)} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
+                                            </Suspense>
                                         ) : result.status === "failed" ? (
-                                            <FailedImageCard key={result.id} id={result.id} error={result.error} isDouEmperor={isDouEmperor} onRetry={() => retryResult(index)} />
+                                            <Suspense key={result.id} fallback={<ResultImageCardLoading />}>
+                                                <FailedImageCard id={result.id} error={result.error} isDouEmperor={isDouEmperor} onRetry={() => retryResult(index)} />
+                                            </Suspense>
                                         ) : (
                                             <PendingImageCard key={result.id} />
                                         ),
@@ -907,8 +981,16 @@ export default function ImagePage() {
                     event.target.value = "";
                 }}
             />
-            <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
-            <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            {promptDialogOpen ? (
+                <Suspense fallback={<DeferredDialogLoading title="提示词库" />}>
+                    <PromptSelectDialog open onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
+                </Suspense>
+            ) : null}
+            {assetPickerOpen ? (
+                <Suspense fallback={<DeferredDialogLoading title="选择藏卷阁内容" />}>
+                    <AssetPickerModal open defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+                </Suspense>
+            ) : null}
             <Modal
                 title="移除太古遗迹记录"
                 open={deleteConfirmOpen}
@@ -954,10 +1036,60 @@ export default function ImagePage() {
     );
 }
 
+function DeferredDialogLoading({ title }: { title: string }) {
+    return (
+        <Modal title={title} open footer={null} width={860}>
+            <div className="grid min-h-48 place-items-center text-sm text-stone-500 dark:text-stone-400">
+                <span className="inline-flex items-center gap-2">
+                    <LoaderCircle className="size-4 animate-spin" />
+                    正在打开…
+                </span>
+            </div>
+        </Modal>
+    );
+}
+
+function HistoryLoading() {
+    return (
+        <div className="grid min-h-56 place-items-center rounded-lg border border-dashed border-stone-300 text-sm text-stone-500 dark:border-stone-700 dark:text-stone-400">
+            <span className="inline-flex items-center gap-2">
+                <LoaderCircle className="size-4 animate-spin" />
+                正在整理太古遗迹…
+            </span>
+        </div>
+    );
+}
+
+function ResultImageCardLoading() {
+    return (
+        <div className="relative aspect-square overflow-hidden rounded-lg border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900">
+            <div className="absolute inset-0 grid place-items-center text-sm text-stone-500 dark:text-stone-400">
+                <span className="inline-flex items-center gap-2">
+                    <LoaderCircle className="size-4 animate-spin" />
+                    正在载入结果…
+                </span>
+            </div>
+        </div>
+    );
+}
+
 function GenerationSettings({ config, updateConfig }: { config: AiConfig; updateConfig: UpdateAiConfig }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
-    return <ImageSettingsPanel config={config} selectedModel={config.imageModel || config.model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />;
+    return (
+        <Suspense
+            fallback={
+                <div className="grid min-h-32 place-items-center text-sm text-stone-500 dark:text-stone-400">
+                    <span className="inline-flex items-center gap-2">
+                        <LoaderCircle className="size-4 animate-spin" />
+                        正在载入参数…
+                    </span>
+                </div>
+            }
+        >
+            <ImageSettingsPanel config={config} selectedModel={config.imageModel || config.model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
+        </Suspense>
+    );
 }
 
 function PendingImageCard() {
@@ -973,31 +1105,6 @@ function PendingImageCard() {
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
                 <span>生成中</span>
-            </div>
-        </div>
-    );
-}
-
-function FailedImageCard({ id, error, isDouEmperor, onRetry }: { id: string; error?: string; isDouEmperor: boolean; onRetry: () => void }) {
-    const feedback = generationFailureFeedback(error, { isDouEmperor, seed: `${id}:${error || ""}` });
-    const errorDetail = friendlyErrorMessage(error);
-
-    return (
-        <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
-            <div className="flex aspect-square flex-col items-center justify-center gap-3 p-5 text-center">
-                <div className="text-sm font-medium text-red-600 dark:text-red-300">{feedback.title}</div>
-                <Typography.Paragraph ellipsis={{ rows: 2 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
-                    {feedback.description}
-                </Typography.Paragraph>
-                <Typography.Paragraph ellipsis={{ rows: 3 }} className="!mb-0 max-w-full rounded-md bg-red-100/70 px-3 py-2 !text-xs !leading-5 !text-red-700 dark:bg-red-950/50 dark:!text-red-200">
-                    {errorDetail}
-                </Typography.Paragraph>
-                {feedback.reference ? <div className="text-[11px] text-red-400 dark:text-red-400">{feedback.reference}</div> : null}
-            </div>
-            <div className="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
-                <Button size="small" danger onClick={onRetry}>
-                    重试
-                </Button>
             </div>
         </div>
     );

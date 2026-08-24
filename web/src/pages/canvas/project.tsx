@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Group, ImagePlus, Sparkles, Type, Video } from "lucide-react";
-import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
@@ -18,7 +17,6 @@ import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { collectMovableCanvasNodeIds } from "@/lib/canvas/canvas-interaction";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { buildSplitLayout, cropImageBlob, IMAGE_SPLIT_CONCURRENCY, splitImageBlobs, upscaleImageBlob } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { CANVAS_THUMBNAIL_MAX_EDGE, needsCanvasImageThumbnail } from "@/lib/canvas/canvas-image-loading";
 import { App, Button, Modal } from "antd";
@@ -28,20 +26,18 @@ import { CanvasCinematicBackdrop } from "@/components/canvas/canvas-cinematic-ba
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
-import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
-import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
-import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
-import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
-import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "@/components/canvas/canvas-node-upscale-dialog";
+import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
+import type { CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
+import type { CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
+import type { CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
+import type { CanvasImageUpscaleParams } from "@/components/canvas/canvas-node-upscale-dialog";
 import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-hover-toolbar";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
-import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
-import { CanvasVersionCompareDialog } from "@/components/canvas/canvas-version-compare-dialog";
-import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
@@ -51,7 +47,6 @@ import { normalizeCanvasProject, useCanvasStore, type CanvasProjectSnapshot } fr
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildCanvasResourceIndex, buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, createPendingImageUploadNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { findContainingGroupId, findGroupDropTarget, getConnectionTargetAnchor, isHiddenBatchChild, isHiddenBatchConnectionEndpoint, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
@@ -74,13 +69,13 @@ import {
 } from "@/lib/canvas/canvas-generation-helpers";
 import { getNodeDefinition, isBuiltinNodeType as isBuiltinType, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
-import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { GenerationFailureToast, generationFailureFeedback } from "@/features/cultivation/generation-messages";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
 import { runWithConcurrency } from "@/lib/async-pool";
+import { lazyRoute } from "@/lib/lazy-route";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
 import {
     CanvasNodeType,
@@ -96,11 +91,22 @@ import {
     type SelectionBox,
     type ViewportTransform,
 } from "@/types/canvas";
+
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio } from "@/types/media";
 import { branchServerProject, cancelServerJob, waitForServerJob } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useCanvasProjectLock } from "@/pages/canvas/hooks/use-canvas-project-lock";
+
+const CanvasVersionCompareDialog = lazyRoute(() => import("@/components/canvas/canvas-version-compare-dialog").then(({ CanvasVersionCompareDialog: Component }) => ({ default: Component })));
+const Minimap = lazyRoute(() => import("@/components/canvas/canvas-mini-map").then(({ Minimap: Component }) => ({ default: Component })));
+const CanvasPluginManagerModal = lazyRoute(() => import("@/components/canvas/canvas-plugin-manager-modal").then(({ CanvasPluginManagerModal: Component }) => ({ default: Component })));
+const CanvasNodeCropDialog = lazyRoute(() => import("@/components/canvas/canvas-node-crop-dialog").then(({ CanvasNodeCropDialog: Component }) => ({ default: Component })));
+const CanvasNodeMaskEditDialog = lazyRoute(() => import("@/components/canvas/canvas-node-mask-edit-dialog").then(({ CanvasNodeMaskEditDialog: Component }) => ({ default: Component })));
+const CanvasNodeSplitDialog = lazyRoute(() => import("@/components/canvas/canvas-node-split-dialog").then(({ CanvasNodeSplitDialog: Component }) => ({ default: Component })));
+const CanvasNodeUpscaleDialog = lazyRoute(() => import("@/components/canvas/canvas-node-upscale-dialog").then(({ CanvasNodeUpscaleDialog: Component }) => ({ default: Component })));
+const CanvasNodeAngleDialog = lazyRoute(() => import("@/components/canvas/canvas-node-angle-dialog").then(({ CanvasNodeAngleDialog: Component }) => ({ default: Component })));
+const AssetPickerModal = lazyRoute(() => import("@/components/canvas/asset-picker-modal").then(({ AssetPickerModal: Component }) => ({ default: Component })));
 
 // 内置节点注册到统一注册表(模块加载时执行一次)
 registerBuiltinNodes();
@@ -1307,10 +1313,7 @@ function InfiniteCanvasPage() {
                     if (!restored) return;
                     setProjectLoaded(false);
                     try {
-                        const [restoredNodes, restoredSessions] = await Promise.all([
-                            hydrateCanvasImages(resetInterruptedGeneration(restored.nodes)),
-                            hydrateAssistantImages(restored.chatSessions || []),
-                        ]);
+                        const [restoredNodes, restoredSessions] = await Promise.all([hydrateCanvasImages(resetInterruptedGeneration(restored.nodes)), hydrateAssistantImages(restored.chatSessions || [])]);
                         if (controller.signal.aborted) return;
                         setNodes(restoredNodes);
                         setConnections(restored.connections);
@@ -1341,7 +1344,9 @@ function InfiniteCanvasPage() {
                     }
                 },
             });
-        }, [message, modal, projectId, restoreSnapshot]);
+        },
+        [message, modal, projectId, restoreSnapshot],
+    );
 
     const deleteCurrentProject = useCallback(() => {
         deleteProjects([projectId]);
@@ -1354,6 +1359,7 @@ function InfiniteCanvasPage() {
         if (!project) return message.error("未找到当前画布");
         const hide = message.loading("正在导出当前画布…", 0);
         try {
+            const { exportCanvasProjects } = await import("@/lib/canvas/canvas-export");
             await exportCanvasProjects([project], project.title || "无限画布");
             message.success("已导出当前画布");
         } catch (error) {
@@ -2083,13 +2089,21 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
     }, []);
 
-    const downloadNodeImage = useCallback((node: CanvasNodeData) => {
-        if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
-        saveAs(
-            node.metadata.content,
-            `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.mimeType || node.metadata.content)}`,
-        );
-    }, []);
+    const downloadNodeImage = useCallback(
+        async (node: CanvasNodeData) => {
+            if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
+            try {
+                const { saveAs } = await import("file-saver");
+                saveAs(
+                    node.metadata.content,
+                    `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.mimeType || node.metadata.content)}`,
+                );
+            } catch {
+                message.error("下载组件加载失败，请刷新后重试");
+            }
+        },
+        [message],
+    );
 
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
@@ -2186,6 +2200,7 @@ function InfiniteCanvasPage() {
             const messageKey = `crop-image-${node.id}`;
             message.open({ key: messageKey, type: "loading", content: "正在裁剪并保存图片...", duration: 0 });
             try {
+                const { cropImageBlob } = await import("@/lib/canvas/canvas-image-data");
                 const cropped = await cropImageBlob(node.metadata.content, crop);
                 const image = await uploadImage(cropped.blob, { imageMeta: { width: cropped.width, height: cropped.height } });
                 const width = Math.min(node.width, Math.max(220, image.width));
@@ -2222,6 +2237,7 @@ function InfiniteCanvasPage() {
             const messageKey = `split-image-${node.id}`;
             message.open({ key: messageKey, type: "loading", content: "正在切分并保存图片...", duration: 0 });
             try {
+                const { buildSplitLayout, IMAGE_SPLIT_CONCURRENCY, splitImageBlobs } = await import("@/lib/canvas/canvas-image-data");
                 const pieces = await splitImageBlobs(node.metadata.content, params);
                 const gap = 16;
                 const startX = node.position.x + node.width + 96;
@@ -2404,6 +2420,7 @@ function InfiniteCanvasPage() {
             const messageKey = `upscale-image-${node.id}`;
             message.open({ key: messageKey, type: "loading", content: "正在放大并保存图片...", duration: 0 });
             try {
+                const { upscaleImageBlob } = await import("@/lib/canvas/canvas-image-data");
                 const upscaled = await upscaleImageBlob(node.metadata.content, params);
                 const image = await uploadImage(upscaled.blob, { imageMeta: { width: upscaled.width, height: upscaled.height } });
                 const size = fitNodeSize(image.width, image.height);
@@ -2446,9 +2463,7 @@ function InfiniteCanvasPage() {
             const title = buildAngleLabel(params);
             const prompt = buildAnglePrompt(params);
             const generationMetadata = {
-                ...buildImageGenerationMetadata("edit", generationConfig, 1, [
-                    { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey },
-                ]),
+                ...buildImageGenerationMetadata("edit", generationConfig, 1, [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey }]),
                 derivedFromNodeId: node.id,
                 variantGroupId: node.metadata?.variantGroupId || node.id,
                 versionLabel: "角度变体",
@@ -3717,15 +3732,19 @@ function InfiniteCanvasPage() {
                     onCompare={openVersionCompare}
                 />
 
-                {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
+                {isMiniMapOpen ? (
+                    <Suspense fallback={null}>
+                        <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} />
+                    </Suspense>
+                ) : null}
 
                 <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
 
-                <CanvasVersionCompareDialog
-                    nodes={nodes.filter((node) => selectedNodeIds.has(node.id) && node.type === CanvasNodeType.Image && Boolean(node.metadata?.content)).slice(0, 2)}
-                    open={versionCompareOpen}
-                    onClose={() => setVersionCompareOpen(false)}
-                />
+                {versionCompareOpen ? (
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <CanvasVersionCompareDialog nodes={nodes.filter((node) => selectedNodeIds.has(node.id) && node.type === CanvasNodeType.Image && Boolean(node.metadata?.content)).slice(0, 2)} open onClose={() => setVersionCompareOpen(false)} />
+                    </Suspense>
+                ) : null}
 
                 {contextMenu ? (
                     <CanvasNodeContextMenu
@@ -3750,53 +3769,69 @@ function InfiniteCanvasPage() {
                 <input ref={imageInputRef} type="file" multiple accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleImageInputChange} />
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
-                <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
+                {pluginManagerOpen ? (
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <CanvasPluginManagerModal open onClose={() => setPluginManagerOpen(false)} />
+                    </Suspense>
+                ) : null}
 
                 {cropNode?.metadata?.content ? (
-                    <CanvasNodeCropDialog
-                        dataUrl={cropNode.metadata.content}
-                        imageWidth={cropNode.metadata.naturalWidth}
-                        imageHeight={cropNode.metadata.naturalHeight}
-                        open={Boolean(cropNode)}
-                        onClose={() => setCropNodeId(null)}
-                        onConfirm={(crop) => void cropImageNode(cropNode!, crop)}
-                    />
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <CanvasNodeCropDialog
+                            dataUrl={cropNode.metadata.content}
+                            imageWidth={cropNode.metadata.naturalWidth}
+                            imageHeight={cropNode.metadata.naturalHeight}
+                            open
+                            onClose={() => setCropNodeId(null)}
+                            onConfirm={(crop) => void cropImageNode(cropNode!, crop)}
+                        />
+                    </Suspense>
                 ) : null}
 
                 {maskEditNode?.metadata?.content ? (
-                    <CanvasNodeMaskEditDialog
-                        dataUrl={maskEditNode.metadata.content}
-                        imageWidth={maskEditNode.metadata.naturalWidth}
-                        imageHeight={maskEditNode.metadata.naturalHeight}
-                        open={Boolean(maskEditNode)}
-                        onClose={() => setMaskEditNodeId(null)}
-                        onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)}
-                    />
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <CanvasNodeMaskEditDialog
+                            dataUrl={maskEditNode.metadata.content}
+                            imageWidth={maskEditNode.metadata.naturalWidth}
+                            imageHeight={maskEditNode.metadata.naturalHeight}
+                            open
+                            onClose={() => setMaskEditNodeId(null)}
+                            onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)}
+                        />
+                    </Suspense>
                 ) : null}
 
                 {splitNode?.metadata?.content ? (
-                    <CanvasNodeSplitDialog
-                        dataUrl={splitNode.metadata.content}
-                        imageWidth={splitNode.metadata.naturalWidth}
-                        imageHeight={splitNode.metadata.naturalHeight}
-                        open={Boolean(splitNode)}
-                        onClose={() => setSplitNodeId(null)}
-                        onConfirm={(params) => void splitImageNode(splitNode!, params)}
-                    />
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <CanvasNodeSplitDialog
+                            dataUrl={splitNode.metadata.content}
+                            imageWidth={splitNode.metadata.naturalWidth}
+                            imageHeight={splitNode.metadata.naturalHeight}
+                            open
+                            onClose={() => setSplitNodeId(null)}
+                            onConfirm={(params) => void splitImageNode(splitNode!, params)}
+                        />
+                    </Suspense>
                 ) : null}
 
                 {upscaleNode?.metadata?.content ? (
-                    <CanvasNodeUpscaleDialog
-                        dataUrl={upscaleNode.metadata.content}
-                        imageWidth={upscaleNode.metadata.naturalWidth}
-                        imageHeight={upscaleNode.metadata.naturalHeight}
-                        open={Boolean(upscaleNode)}
-                        onClose={() => setUpscaleNodeId(null)}
-                        onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)}
-                    />
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <CanvasNodeUpscaleDialog
+                            dataUrl={upscaleNode.metadata.content}
+                            imageWidth={upscaleNode.metadata.naturalWidth}
+                            imageHeight={upscaleNode.metadata.naturalHeight}
+                            open
+                            onClose={() => setUpscaleNodeId(null)}
+                            onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)}
+                        />
+                    </Suspense>
                 ) : null}
 
-                {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
+                {angleNode?.metadata?.content ? (
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} />
+                    </Suspense>
+                ) : null}
 
                 <Modal
                     title="图片详情"
@@ -3827,8 +3862,20 @@ function InfiniteCanvasPage() {
                     <p className="text-sm opacity-60">这会删除当前画布上的所有节点和连线。</p>
                 </Modal>
 
-                <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
+                {assetPickerOpen ? (
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <AssetPickerModal open onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
+                    </Suspense>
+                ) : null}
             </section>
         </main>
+    );
+}
+
+function CanvasToolLoading() {
+    return (
+        <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/10 backdrop-blur-[1px]" aria-live="polite">
+            <span className="rounded border border-stone-200 bg-background px-4 py-2 text-sm text-stone-600 shadow-xl dark:border-stone-700 dark:text-stone-300">正在打开工具...</span>
+        </div>
     );
 }

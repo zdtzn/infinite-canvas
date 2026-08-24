@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 
-import { readZip } from "@/lib/zip";
 import { setMediaBlob } from "@/services/file-storage";
 import { setImageBlob } from "@/services/image-storage";
 import { CanvasDeleteProjectsDialog } from "@/components/canvas/canvas-delete-projects-dialog";
@@ -11,7 +10,6 @@ import { CanvasProjectCard } from "@/components/canvas/canvas-project-card";
 import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
-import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 
 export default function CanvasPage() {
@@ -38,6 +36,7 @@ export default function CanvasPage() {
     const importCanvas = async (file?: File) => {
         if (!file) return;
         try {
+            const { readZip } = await import("@/lib/zip");
             const zip = await readZip(file);
             const projectFile = zip.get("projects.json");
             if (!projectFile) throw new Error("missing projects.json");
@@ -59,6 +58,14 @@ export default function CanvasPage() {
         } finally {
             if (inputRef.current) inputRef.current.value = "";
         }
+    };
+
+    const exportSelectedProjects = async () => {
+        const { exportCanvasProjects } = await import("@/lib/canvas/canvas-export");
+        await exportCanvasProjects(
+            projects.filter((project) => selectedIds.includes(project.id)),
+            `无限画布-${selectedIds.length}个项目`,
+        );
     };
 
     useEffect(() => {
@@ -84,16 +91,7 @@ export default function CanvasPage() {
                     <div className="flex items-center gap-2">
                         {selectedIds.length ? (
                             <>
-                                <Button
-                                    disabled={!hydrated}
-                                    icon={<Download className="size-4" />}
-                                    onClick={() =>
-                                        void exportCanvasProjects(
-                                            projects.filter((project) => selectedIds.includes(project.id)),
-                                            `无限画布-${selectedIds.length}个项目`,
-                                        )
-                                    }
-                                >
+                                <Button disabled={!hydrated} icon={<Download className="size-4" />} onClick={() => void exportSelectedProjects()}>
                                     导出选中
                                 </Button>
                                 <Button disabled={!hydrated} onClick={() => setDeleteIds(selectedIds)}>

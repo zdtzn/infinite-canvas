@@ -57,8 +57,26 @@ export function AppTopNav() {
 
     useEffect(() => {
         if (autoConnectRef.current || agentEnabled || agentConnected || !agentToken.trim()) return;
-        autoConnectRef.current = true;
-        connectAgent({ silent: true });
+        let disposed = false;
+        let idleHandle: number | undefined;
+        const idleWindow = window as Window & {
+            requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+            cancelIdleCallback?: (handle: number) => void;
+        };
+        const connect = () => {
+            if (disposed || autoConnectRef.current || agentEnabled || agentConnected) return;
+            autoConnectRef.current = true;
+            connectAgent({ silent: true });
+        };
+        const delayHandle = window.setTimeout(() => {
+            if (idleWindow.requestIdleCallback) idleHandle = idleWindow.requestIdleCallback(connect, { timeout: 1_500 });
+            else connect();
+        }, 1_200);
+        return () => {
+            disposed = true;
+            window.clearTimeout(delayHandle);
+            if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle);
+        };
     }, [agentConnected, agentEnabled, agentToken, connectAgent]);
 
     return (
@@ -172,7 +190,10 @@ export function AppTopNav() {
                                         className="!h-8 !w-8 !min-w-8"
                                         icon={chatRuntimeStatus === "stopping" ? <LoaderCircle className="size-4 animate-spin" /> : <MessageCircle className="size-4 text-amber-600" />}
                                         aria-label={chatRuntimeLabel}
-                                        onClick={() => navigate("/chat")}
+                                        onClick={() => {
+                                            void preloadRoute("/chat");
+                                            navigate("/chat");
+                                        }}
                                     />
                                 </Tooltip>
                             ) : null}

@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { App, ConfigProvider, Drawer, Modal, Segmented, Slider, Tooltip, theme as antdTheme } from "antd";
 import { ArrowLeft, ClipboardCopy, ClipboardPaste, Download, FileImage, ImagePlus, Images, Layers3, PanelLeft, PanelRight, Redo2, RotateCcw, Save, Undo2, X } from "lucide-react";
-import { saveAs } from "file-saver";
 import { useNavigate } from "react-router-dom";
 
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
@@ -14,7 +13,6 @@ import { CanvasNodeType } from "@/types/canvas";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { ColorControlPanel } from "@/features/color-alchemy/color-control-panel";
 import { ColorPreviewStage } from "@/features/color-alchemy/color-preview-stage";
-import { ColorSourceDialog } from "@/features/color-alchemy/color-source-dialog";
 import { ColorSourcePanel, type ColorSourcePanelTab } from "@/features/color-alchemy/color-source-panel";
 import { deriveBorrowedColorSettings, recommendColorSettings } from "@/features/color-alchemy/color-engine";
 import { applyColorPreset } from "@/features/color-alchemy/presets";
@@ -23,8 +21,10 @@ import { normalizeColorSettings } from "@/features/color-alchemy/settings";
 import { prepareColorAlchemyForUser, useColorAlchemyStore } from "@/features/color-alchemy/use-color-alchemy-store";
 import type { AnalyzedColor, ColorAlchemySource, ColorExportFormat, ColorPreset, ColorSettings } from "@/features/color-alchemy/types";
 import { deleteColorAlchemyDocument, fetchColorAlchemyDocuments, saveColorAlchemyDocument, type ColorAlchemyDocumentTombstone } from "@/services/color-alchemy-api";
+import { lazyRoute } from "@/lib/lazy-route";
 
 const SETTINGS_CLIPBOARD_KEY = "infinite-canvas:color-alchemy:clipboard";
+const ColorSourceDialog = lazyRoute(() => import("@/features/color-alchemy/color-source-dialog").then(({ ColorSourceDialog: Component }) => ({ default: Component })));
 
 export default function ColorAlchemyPage() {
     const { message } = App.useApp();
@@ -292,6 +292,7 @@ export default function ColorAlchemyPage() {
         setExportProgress(0);
         try {
             const { blob } = await createRenderedImage(exportFormat, exportQuality / 100, false, { signal: controller.signal, onProgress: ({ progress }) => setExportProgress(progress) });
+            const { saveAs } = await import("file-saver");
             saveAs(blob, `${safeFileName(document.source.title)}-灵彩.${colorExportExtension(exportFormat)}`);
             setExportOpen(false);
             message.success("调色结果已导出");
@@ -452,12 +453,7 @@ export default function ColorAlchemyPage() {
                                     <span className="hidden sm:inline">导出</span>
                                 </button>
                                 <Tooltip title="专业调色">
-                                    <button
-                                        type="button"
-                                        className="ml-1 grid size-8 place-items-center rounded text-white/55 hover:bg-white/8 hover:text-white lg:hidden"
-                                        onClick={() => setMobilePanel("controls")}
-                                        aria-label="打开专业调色"
-                                    >
+                                    <button type="button" className="ml-1 grid size-8 place-items-center rounded text-white/55 hover:bg-white/8 hover:text-white lg:hidden" onClick={() => setMobilePanel("controls")} aria-label="打开专业调色">
                                         <PanelRight className="size-4" />
                                     </button>
                                 </Tooltip>
@@ -508,7 +504,11 @@ export default function ColorAlchemyPage() {
                     />
                 )}
 
-                <ColorSourceDialog open={Boolean(sourceDialog)} initialTab={sourceDialog || "assets"} onSelect={openSource} onClose={() => setSourceDialog(null)} />
+                {sourceDialog ? (
+                    <Suspense fallback={<DeferredToolLoading label="正在打开素材..." />}>
+                        <ColorSourceDialog open initialTab={sourceDialog} onSelect={openSource} onClose={() => setSourceDialog(null)} />
+                    </Suspense>
+                ) : null}
                 {document ? (
                     <>
                         <Drawer title="灵彩素材与工具" placement="left" size={290} open={mobilePanel === "sources"} onClose={() => setMobilePanel(null)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
@@ -533,14 +533,7 @@ export default function ColorAlchemyPage() {
                                 onTabChange={setSourcePanelTab}
                             />
                         </Drawer>
-                        <Drawer
-                            title="专业调色"
-                            placement="right"
-                            size="min(340px, calc(100vw - 12px))"
-                            open={mobilePanel === "controls"}
-                            onClose={() => setMobilePanel(null)}
-                            styles={{ body: { padding: 0, overflow: "hidden" } }}
-                        >
+                        <Drawer title="专业调色" placement="right" size="min(340px, calc(100vw - 12px))" open={mobilePanel === "controls"} onClose={() => setMobilePanel(null)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
                             <ColorControlPanel
                                 document={document}
                                 analyzing={!document.analysis}
@@ -608,6 +601,14 @@ export default function ColorAlchemyPage() {
                 </Modal>
             </main>
         </ConfigProvider>
+    );
+}
+
+function DeferredToolLoading({ label }: { label: string }) {
+    return (
+        <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/20 backdrop-blur-[1px]" aria-live="polite">
+            <span className="rounded border border-white/10 bg-[#17181d] px-4 py-2 text-sm text-white/70 shadow-xl">{label}</span>
+        </div>
     );
 }
 

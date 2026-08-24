@@ -1,14 +1,16 @@
 import { FolderPlus, Search } from "lucide-react";
-import { type ReactNode, type UIEvent, useEffect, useState } from "react";
+import { Suspense, type ReactNode, type UIEvent, useEffect, useState } from "react";
 import { App, Button, Empty, Input, Spin, Tag } from "antd";
 
 import { PromptCard } from "@/components/prompts/prompt-card";
 import { usePromptList } from "@/components/prompts/use-prompt-list";
-import { PromptDetailDialog } from "./components/prompt-detail-dialog";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { lazyRoute } from "@/lib/lazy-route";
 import { cn } from "@/lib/utils";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
+
+const PromptDetailDialog = lazyRoute(() => import("./components/prompt-detail-dialog").then(({ PromptDetailDialog: Component }) => ({ default: Component })));
 
 export default function PromptsPage() {
     const { message } = App.useApp();
@@ -102,7 +104,17 @@ export default function PromptsPage() {
                 </div>
             </main>
 
-            <PromptDetailDialog prompt={selectedPrompt} onClose={() => setSelectedPrompt(null)} onCopy={(prompt) => copyText(prompt, "提示词已复制")} onSaveAsset={savePromptAsset} />
+            {selectedPrompt ? (
+                <Suspense
+                    fallback={
+                        <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/10 backdrop-blur-[1px]" aria-live="polite">
+                            <Spin />
+                        </div>
+                    }
+                >
+                    <PromptDetailDialog prompt={selectedPrompt} onClose={() => setSelectedPrompt(null)} onCopy={(prompt) => copyText(prompt, "提示词已复制")} onSaveAsset={savePromptAsset} />
+                </Suspense>
+            ) : null}
         </div>
     );
 }

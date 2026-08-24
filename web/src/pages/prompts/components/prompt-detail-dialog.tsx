@@ -1,6 +1,5 @@
 import { Copy, Download, FolderPlus } from "lucide-react";
 import { App, Button, Modal, Space, Tag } from "antd";
-import { saveAs } from "file-saver";
 import { useEffect, useRef, useState } from "react";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
@@ -36,6 +35,7 @@ async function downloadPromptCover(prompt: Prompt, signal: AbortSignal) {
             if (!blob) continue;
             const extension = blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
             const fileName = (prompt.title || "prompt-image").replace(/[\\/:*?"<>|]/g, "_");
+            const { saveAs } = await import("file-saver");
             saveAs(blob, `${fileName}.${extension}`);
             return;
         } catch {
@@ -93,7 +93,14 @@ export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { p
                     <>
                         <div className="grid gap-5 md:grid-cols-[minmax(360px,1fr)_minmax(0,1fr)]">
                             <div className="space-y-3">
-                                <PromptCover key={prompt.id} sources={promptImageCandidates(prompt.coverUrl)} alt={prompt.title} loading="eager" fetchPriority="high" className="aspect-[4/3] w-full rounded-lg bg-stone-100 object-contain p-1 dark:bg-stone-900" />
+                                <PromptCover
+                                    key={prompt.id}
+                                    sources={promptImageCandidates(prompt.coverUrl)}
+                                    alt={prompt.title}
+                                    loading="eager"
+                                    fetchPriority="high"
+                                    className="aspect-[4/3] w-full rounded-lg bg-stone-100 object-contain p-1 dark:bg-stone-900"
+                                />
                                 {prompt.preview ? <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded-lg bg-stone-100 p-3 text-xs leading-5 text-stone-600 dark:bg-stone-900 dark:text-stone-300">{prompt.preview}</pre> : null}
                             </div>
                             <div className="min-w-0">

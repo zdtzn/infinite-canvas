@@ -1,7 +1,6 @@
 import { Copy, Download, Eye, PencilLine, Search, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
-import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -12,7 +11,6 @@ import { fetchServerAssetLibrary, type ServerAssetLibrary } from "@/services/ser
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { DeferredImage } from "@/components/ui/deferred-image";
 
 type AssetFormValues = {
@@ -273,9 +271,14 @@ export default function AssetsPage() {
         copyText(asset.data.content, "文本已复制");
     };
 
-    const downloadImage = (asset: Asset) => {
+    const downloadImage = async (asset: Asset) => {
         if (asset.kind !== "image" && asset.kind !== "video") return;
-        saveAs(asset.kind === "video" ? asset.data.url : asset.data.dataUrl, `${asset.title || "asset"}.${asset.data.mimeType.split("/")[1] || "png"}`);
+        try {
+            const { saveAs } = await import("file-saver");
+            saveAs(asset.kind === "video" ? asset.data.url : asset.data.dataUrl, `${asset.title || "asset"}.${asset.data.mimeType.split("/")[1] || "png"}`);
+        } catch {
+            message.error("下载组件加载失败，请刷新后重试");
+        }
     };
 
     const exportAllAssets = async () => {
@@ -283,12 +286,14 @@ export default function AssetsPage() {
             message.warning("暂无资产可导出");
             return;
         }
+        const { exportAssets } = await import("./asset-transfer");
         await exportAssets(validAssets);
     };
 
     const importAssetZip = async (file?: File) => {
         if (!file) return;
         try {
+            const { readAssetPackage } = await import("./asset-transfer");
             const importedAssets = await readAssetPackage(file);
             importedAssets.forEach((asset) => {
                 const payload = { ...asset } as Record<string, unknown>;

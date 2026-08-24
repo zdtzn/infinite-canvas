@@ -12,6 +12,7 @@ import { cultivationStageLabel, quotaText } from "@/features/cultivation/utils";
 import { promptImageCandidates, promptOriginalUrl } from "@/components/prompts/prompt-cover";
 import { SpecularButton } from "@/components/ui/specular-button";
 import { fetchAllPrompts, type Prompt } from "@/services/api/prompts";
+import { preloadRoute } from "@/lib/route-loaders";
 import { cn } from "@/lib/utils";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 
@@ -158,6 +159,10 @@ export default function IndexPage() {
                     <motion.div variants={heroRise} className="mt-14 flex flex-wrap items-center justify-center gap-4">
                         <SpecularButton
                             onClick={() => navigate("/canvas?mode=new")}
+                            onPointerEnter={() => void preloadRoute("/canvas")}
+                            onFocus={() => void preloadRoute("/canvas")}
+                            onPointerDown={() => void preloadRoute("/canvas")}
+                            onTouchStart={() => void preloadRoute("/canvas")}
                             radius={8}
                             tint="#d8402a"
                             tintOpacity={0.96}
@@ -175,7 +180,15 @@ export default function IndexPage() {
                             起笔 · 新建画布
                             <ArrowRight className="size-5 transition-transform duration-300 group-hover:translate-x-0.5" />
                         </SpecularButton>
-                        <button type="button" onClick={() => navigate("/canvas?mode=recent")} className="shj-btn-ghost">
+                        <button
+                            type="button"
+                            onClick={() => navigate("/canvas?mode=recent")}
+                            onPointerEnter={() => void preloadRoute("/canvas")}
+                            onFocus={() => void preloadRoute("/canvas")}
+                            onPointerDown={() => void preloadRoute("/canvas")}
+                            onTouchStart={() => void preloadRoute("/canvas")}
+                            className="shj-btn-ghost"
+                        >
                             继续最近项目
                         </button>
                     </motion.div>
@@ -197,7 +210,14 @@ export default function IndexPage() {
                                 <span className="text-xs text-[#8a8a96]">{quotaText(cultivation.remainingToday, cultivation.unlimited)} · 笔耕不辍,境界自现</span>
                             </div>
                         </div>
-                        <Link to="/cultivation" className="group inline-flex items-center gap-2 text-sm tracking-[0.1em] text-[#c9a86a] transition-colors hover:text-[#edede6]">
+                        <Link
+                            to="/cultivation"
+                            onPointerEnter={() => void preloadRoute("/cultivation")}
+                            onFocus={() => void preloadRoute("/cultivation")}
+                            onPointerDown={() => void preloadRoute("/cultivation")}
+                            onTouchStart={() => void preloadRoute("/cultivation")}
+                            className="group inline-flex items-center gap-2 text-sm tracking-[0.1em] text-[#c9a86a] transition-colors hover:text-[#edede6]"
+                        >
                             入命宫修行
                             <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-0.5" />
                         </Link>
@@ -212,7 +232,15 @@ export default function IndexPage() {
                         <h2 className="font-display text-3xl text-[#edede6] sm:text-4xl">功法精选</h2>
                         <p className="mt-3 max-w-xl text-sm leading-6 text-[#8a8a96]">稳定出图的提示词,皆藏于此楼。收藏风格与结果,让下一次创作从已有经验开始。</p>
                     </div>
-                    <button type="button" onClick={() => navigate("/prompts")} className="group inline-flex items-center gap-2 text-sm text-[#c9a86a] transition-colors hover:text-[#edede6]">
+                    <button
+                        type="button"
+                        onClick={() => navigate("/prompts")}
+                        onPointerEnter={() => void preloadRoute("/prompts")}
+                        onFocus={() => void preloadRoute("/prompts")}
+                        onPointerDown={() => void preloadRoute("/prompts")}
+                        onTouchStart={() => void preloadRoute("/prompts")}
+                        className="group inline-flex items-center gap-2 text-sm text-[#c9a86a] transition-colors hover:text-[#edede6]"
+                    >
                         查看功法楼
                         <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-0.5" />
                     </button>

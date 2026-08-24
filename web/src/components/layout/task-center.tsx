@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { formatDuration } from "@/lib/image-utils";
+import { preloadRoute } from "@/lib/route-loaders";
 import { cancelServerJob, fetchServerJobs, retryServerJob, type ServerJob } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { taskProgressProps } from "./task-progress";
@@ -78,7 +79,10 @@ export function TaskCenter() {
             if (!document.hidden) void poll();
         };
         document.addEventListener("visibilitychange", handleVisibilityChange);
-        if (!document.hidden) void poll();
+        if (!document.hidden) {
+            if (open) void poll();
+            else timer = window.setTimeout(() => void poll(), 1_000);
+        }
         return () => {
             disposed = true;
             if (timer) window.clearTimeout(timer);
@@ -112,7 +116,10 @@ export function TaskCenter() {
     };
 
     const openJob = (job: ServerJob) => {
-        if (job.source?.route) navigate(job.source.route);
+        if (job.source?.route) {
+            void preloadRoute(job.source.route);
+            navigate(job.source.route);
+        }
         setOpen(false);
     };
     const sections = [

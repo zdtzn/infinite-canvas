@@ -3,6 +3,7 @@ import { ConfigProvider, Select, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
+import { imageResolutionLabel } from "@/lib/image-setting-labels";
 import { modelOptionName, normalizeImageSizeSelection, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { isSadaiImage2Model, isUuAsyncGptImageModel } from "@/stores/model-capabilities";
@@ -52,6 +53,7 @@ export const imageResolutionOptions = resolutionOptions.map((item) => ({ value: 
 export const imageGenerationQualityOptions = generationQualityOptions.map((item) => ({ value: item.value, label: item.label }));
 export const imageOutputFormatOptions = outputFormatOptions.map((item) => ({ value: item.value, label: item.label }));
 export const imageAspectOptions = aspectOptions.map((item) => ({ value: item.value, label: `${item.name} (${item.label})` }));
+export { imageGenerationQualityLabel, imageOutputFormatLabel, imageQualityLabel, imageResolutionLabel, imageSizeLabel } from "@/lib/image-setting-labels";
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
@@ -129,7 +131,11 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <SettingTitle color={theme.node.muted}>构图比例</SettingTitle>
-                        {customSizeActive ? <span className="text-xs" style={{ color: theme.node.muted }}>当前为自定义尺寸</span> : null}
+                        {customSizeActive ? (
+                            <span className="text-xs" style={{ color: theme.node.muted }}>
+                                当前为自定义尺寸
+                            </span>
+                        ) : null}
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                         {ratioAspects.map((item) => (
@@ -211,13 +217,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                         <div className="space-y-0.5">
                             <SettingTitle color={theme.node.muted}>实际请求尺寸</SettingTitle>
                             <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                                {isSadaiModel
-                                    ? "生图分组按比例与分辨率档位映射；默认分组可能由上游决定"
-                                    : automaticResolution
-                                      ? "构图比例仍会生效，像素尺寸由模型决定"
-                                      : customSizeActive
-                                        ? "自定义尺寸会覆盖比例和分辨率"
-                                        : "按比例和分辨率精确换算"}
+                                {isSadaiModel ? "生图分组按比例与分辨率档位映射；默认分组可能由上游决定" : automaticResolution ? "构图比例仍会生效，像素尺寸由模型决定" : customSizeActive ? "自定义尺寸会覆盖比例和分辨率" : "按比例和分辨率精确换算"}
                             </div>
                         </div>
                         {capabilities.customSize ? (
@@ -261,11 +261,13 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
                     <div className="grid grid-cols-4 gap-2">
-                        {[1, 2, 4].filter((value) => value <= Math.min(quickCount, effectiveMaxCount)).map((value) => (
-                            <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
-                                {value} 张
-                            </OptionPill>
-                        ))}
+                        {[1, 2, 4]
+                            .filter((value) => value <= Math.min(quickCount, effectiveMaxCount))
+                            .map((value) => (
+                                <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
+                                    {value} 张
+                                </OptionPill>
+                            ))}
                         <CountInput value={count} max={effectiveMaxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
                     </div>
                 </div>
@@ -285,29 +287,6 @@ export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; ch
             {children}
         </ConfigProvider>
     );
-}
-
-export function imageResolutionLabel(value: string) {
-    return ({ auto: "自动", high: "4K", medium: "2K", low: "1K" } as Record<string, string>)[value] || value;
-}
-
-/** Kept for existing canvas summary callers; it represents output resolution. */
-export function imageQualityLabel(value: string) {
-    return imageResolutionLabel(value);
-}
-
-export function imageGenerationQualityLabel(value: string) {
-    return ({ auto: "自动", low: "低", medium: "中", high: "高", standard: "标准", hd: "高清" } as Record<string, string>)[value] || value;
-}
-
-export function imageOutputFormatLabel(value: string) {
-    return ({ auto: "自动", png: "PNG", jpeg: "JPEG", webp: "WebP" } as Record<string, string>)[value] || value;
-}
-
-export function imageSizeLabel(size: string) {
-    const normalizedSize = normalizeImageSizeSelection(size);
-    const option = aspectOptions.find((item) => item.value === normalizedSize);
-    return option ? `${option.name} ${option.label}` : normalizedSize;
 }
 
 function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {

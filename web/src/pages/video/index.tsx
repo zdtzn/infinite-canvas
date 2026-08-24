@@ -1,13 +1,10 @@
 import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, Eye, FolderPlus, LoaderCircle, Music2, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Tooltip, Typography } from "antd";
-import localforage from "localforage";
 import { nanoid } from "nanoid";
-import { saveAs } from "file-saver";
 
-import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
-import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -26,6 +23,7 @@ import { cultivationGenerationBlockReason, quotaText, requiredCultivationCapabil
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, synchronizeGenerationHistory } from "@/services/generation-history";
 import { useUserStore } from "@/stores/use-user-store";
+import { lazyRoute } from "@/lib/lazy-route";
 
 type GeneratedVideo = {
     id: string;
@@ -72,7 +70,17 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vqu
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const PromptSelectDialog = lazyRoute(() => import("@/components/prompts/prompt-select-dialog").then(({ PromptSelectDialog: Component }) => ({ default: Component })));
+const AssetPickerModal = lazyRoute(() => import("@/components/canvas/asset-picker-modal").then(({ AssetPickerModal: Component }) => ({ default: Component })));
+
+let logStorePromise: Promise<ReturnType<(typeof import("localforage"))["createInstance"]>> | undefined;
+
+function getLogStore() {
+    if (!logStorePromise) {
+        logStorePromise = import("localforage").then(({ default: localforage }) => localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" }));
+    }
+    return logStorePromise;
+}
 
 export default function VideoPage() {
     const { message } = App.useApp();
@@ -85,6 +93,7 @@ export default function VideoPage() {
     const resultPanelRef = useRef<HTMLDivElement>(null);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
     const deletedLogIdsRef = useRef<Set<string>>(new Set());
+    const historyRefreshRef = useRef<Promise<GenerationLog[]> | null>(null);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -97,6 +106,7 @@ export default function VideoPage() {
     const [audioReferences, setAudioReferences] = useState<ReferenceAudio[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
+    const [logsLoading, setLogsLoading] = useState(false);
     const [running, setRunning] = useState(false);
     const [resultView, setResultView] = useState<"results" | "history">("results");
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -138,7 +148,26 @@ export default function VideoPage() {
     }, [running, startedAt]);
 
     useEffect(() => {
-        void refreshLogs();
+        let canceled = false;
+        let idleHandle: number | undefined;
+        const idleWindow = window as Window & {
+            requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+            cancelIdleCallback?: (handle: number) => void;
+        };
+        const run = () => {
+            if (!canceled) void refreshLogs().catch((error) => console.error("Failed to refresh video generation history", error));
+        };
+        const delayHandle = window.setTimeout(() => {
+            if (idleWindow.requestIdleCallback) idleHandle = idleWindow.requestIdleCallback(run, { timeout: 1_500 });
+            else run();
+        }, 800);
+        return () => {
+            canceled = true;
+            window.clearTimeout(delayHandle);
+            if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle);
+        };
+        // Keep account-history synchronization out of the first workbench paint.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [historyUserId]);
 
     const addReferences = async (files?: FileList | null) => {
@@ -286,7 +315,7 @@ export default function VideoPage() {
         void generate();
     };
 
-    const downloadVideo = (video: GeneratedVideo) => {
+    const downloadVideo = async (video: GeneratedVideo) => {
         const ext = video.mimeType ? video.mimeType.split("/")[1]?.split(";")[0] || "mp4" : "mp4";
         const safeExt = ["mp4", "webm", "mov", "avi"].includes(ext) ? ext : "mp4";
         const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
@@ -296,7 +325,12 @@ export default function VideoPage() {
                 .slice(0, 40)
                 .replace(/\s+/g, "_")
                 .replace(/[^\w一-鿿-]/g, "") || "video";
-        saveAs(video.url, `${slug}_${ts}.${safeExt}`);
+        try {
+            const { saveAs } = await import("file-saver");
+            saveAs(video.url, `${slug}_${ts}.${safeExt}`);
+        } catch {
+            message.error("下载组件加载失败，请刷新后重试");
+        }
     };
 
     const saveResultToAssets = (video: GeneratedVideo) => {
@@ -348,6 +382,7 @@ export default function VideoPage() {
         deletingIds.forEach((id) => deletedLogIdsRef.current.add(id));
         setDeletingLogs(true);
         try {
+            const logStore = await getLogStore();
             await deleteGenerationHistoryRecords({ kind: "video", userId: historyUserId, store: logStore }, deletingIds);
             await refreshLogs();
             if (previewLog && deletingIds.includes(previewLog.id)) setPreviewLog(null);
@@ -370,21 +405,37 @@ export default function VideoPage() {
     };
 
     const saveLog = async (log: GenerationLog, resumePending = true) => {
+        const logStore = await getLogStore();
         await persistGenerationHistoryRecord({ kind: "video", userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareVideoLogForServer }, { ...serializeLog(log), updatedAt: Date.now() });
         await refreshLogs(resumePending);
     };
 
-    const refreshLogs = async (resumePending = true) => {
-        const nextLogs = await synchronizeGenerationHistory({
-            kind: "video",
-            userId: historyUserId,
-            store: logStore,
-            hydrate: normalizeLog,
-            prepare: prepareVideoLogForServer,
+    const refreshLogs = (resumePending = true) => {
+        if (historyRefreshRef.current) return historyRefreshRef.current;
+        setLogsLoading(true);
+        const pending = (async () => {
+            const logStore = await getLogStore();
+            const nextLogs = await synchronizeGenerationHistory({
+                kind: "video",
+                userId: historyUserId,
+                store: logStore,
+                hydrate: normalizeLog,
+                prepare: prepareVideoLogForServer,
+            });
+            setLogs(nextLogs);
+            if (resumePending) resumePendingLogs(nextLogs);
+            return nextLogs;
+        })().finally(() => {
+            historyRefreshRef.current = null;
+            setLogsLoading(false);
         });
-        setLogs(nextLogs);
-        if (resumePending) resumePendingLogs(nextLogs);
-        return nextLogs;
+        historyRefreshRef.current = pending;
+        return pending;
+    };
+
+    const openHistory = () => {
+        setResultView("history");
+        void refreshLogs().catch((error) => console.error("Failed to refresh video generation history", error));
     };
 
     const resumePendingLogs = (items: GenerationLog[]) => {
@@ -488,7 +539,7 @@ export default function VideoPage() {
                                         className="min-w-0"
                                         icon={<Archive className="size-4" />}
                                         onClick={() => {
-                                            setResultView("history");
+                                            openHistory();
                                             window.setTimeout(() => resultPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
                                         }}
                                     >
@@ -704,7 +755,7 @@ export default function VideoPage() {
                                         返回生成结果
                                     </Button>
                                 ) : (
-                                    <Button size="small" icon={<Archive className="size-3.5" />} onClick={() => setResultView("history")}>
+                                    <Button size="small" icon={<Archive className="size-3.5" />} onClick={openHistory}>
                                         太古遗迹
                                     </Button>
                                 )}
@@ -713,7 +764,9 @@ export default function VideoPage() {
                                 </Tooltip>
                             </div>
                         </div>
-                        {resultView === "history" ? (
+                        {resultView === "history" && logsLoading && !logs.length ? (
+                            <HistoryLoading />
+                        ) : resultView === "history" ? (
                             <LogPanel
                                 logs={logs}
                                 selectedLogIds={selectedLogIds}
@@ -782,8 +835,16 @@ export default function VideoPage() {
                     <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 </div>
             </Drawer>
-            <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
-            <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            {promptDialogOpen ? (
+                <Suspense fallback={<DeferredVideoToolLoading label="正在打开提示词库..." />}>
+                    <PromptSelectDialog open onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
+                </Suspense>
+            ) : null}
+            {assetPickerOpen ? (
+                <Suspense fallback={<DeferredVideoToolLoading label="正在打开资产..." />}>
+                    <AssetPickerModal open defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+                </Suspense>
+            ) : null}
             <Modal
                 title="移除太古遗迹记录"
                 open={deleteConfirmOpen}
@@ -1134,6 +1195,23 @@ function filterAudioReferencesByDuration(existing: ReferenceAudio[], next: Refer
     }
     if (skipped) warn("已忽略不符合时长要求的参考音频：单个 2-15 秒，总时长不超过 15 秒");
     return accepted;
+}
+
+function DeferredVideoToolLoading({ label }: { label: string }) {
+    return (
+        <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/10 backdrop-blur-[1px]" aria-live="polite">
+            <span className="rounded border border-stone-200 bg-background px-4 py-2 text-sm text-stone-600 shadow-xl dark:border-stone-700 dark:text-stone-300">{label}</span>
+        </div>
+    );
+}
+
+function HistoryLoading() {
+    return (
+        <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 text-sm text-stone-500 dark:text-stone-400 lg:min-h-[560px]" aria-live="polite">
+            <LoaderCircle className="size-5 animate-spin" />
+            <span>正在同步太古遗迹...</span>
+        </div>
+    );
 }
 
 function moveListItem<T>(items: T[], index: number, offset: number) {
