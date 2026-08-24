@@ -5,8 +5,9 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { lazyRoute } from "@/lib/lazy-route";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { cancelChatMessage, createChatConversation, createChatMemory, deleteChatConversation, deleteChatMemory, fetchChatConversation, fetchChatConversations, fetchChatMemories, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, updateChatMemory, uploadChatImage, type ChatAttachment, type ChatCanvasContext, type ChatConversation, type ChatMemory, type ChatMessage } from "@/services/chat-api";
-import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
+import { cancelChatMessage, createChatConversation, createChatMemory, deleteChatConversation, deleteChatMemory, fetchChatConversation, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, updateChatMemory, uploadChatImage, type ChatAttachment, type ChatCanvasContext, type ChatConversation, type ChatMemory, type ChatMessage } from "@/services/chat-api";
+import { clearChatBootstrapCache, getChatBootstrapRequests } from "@/services/chat-bootstrap-cache";
+import { saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
 import { useChatRuntimeStore } from "@/stores/use-chat-runtime-store";
@@ -102,8 +103,8 @@ export default function ChatPage() {
                 canceled = true;
             };
 
-        void fetchServerUserPreferences(userId)
-            .then((preferences) => {
+        void getChatBootstrapRequests(userId)
+            .preferences.then((preferences) => {
                 if (canceled) return;
                 const serverPresetId = chatPresetOptions.some((preset) => preset.id === preferences.chatPresetId) ? (preferences.chatPresetId as ChatPresetId) : defaultChatPresetId;
                 const nextPresetId = presetEditedDuringHydration.current ? presetIdRef.current : serverPresetId;
@@ -134,8 +135,8 @@ export default function ChatPage() {
             return;
         }
         let canceled = false;
-        void fetchChatMemories(userId)
-            .then((response) => {
+        void getChatBootstrapRequests(userId)
+            .memories.then((response) => {
                 if (!canceled) setMemories(response.items);
             })
             .catch((error) => {
@@ -150,8 +151,8 @@ export default function ChatPage() {
         if (!userId) return;
         let canceled = false;
         setLoading(true);
-        void fetchChatConversations(userId)
-            .then((response) => {
+        void getChatBootstrapRequests(userId)
+            .conversations.then((response) => {
                 if (canceled) return;
                 setConversations(response.items);
                 setActiveConversationId((current) => {
@@ -174,7 +175,9 @@ export default function ChatPage() {
         }
         let canceled = false;
         setDetailLoading(true);
-        void fetchChatConversation(activeConversationId, userId)
+        void getChatBootstrapRequests(userId)
+            .firstConversation.catch(() => null)
+            .then((prefetched) => (prefetched?.conversation.id === activeConversationId ? prefetched : fetchChatConversation(activeConversationId, userId)))
             .then((detail) => {
                 if (canceled) return;
                 setMessages((current) => {
@@ -232,6 +235,13 @@ export default function ChatPage() {
     useEffect(() => {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: sending ? "smooth" : "auto" });
     }, [messages, sending]);
+
+    useEffect(
+        () => () => {
+            if (userId) clearChatBootstrapCache(userId);
+        },
+        [userId],
+    );
 
     const canSend = Boolean((draft.trim() || attachments.length) && !sending && !uploading);
 
