@@ -1,6 +1,7 @@
 import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { App, Button, Checkbox, Input, Modal, Tag, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -35,6 +36,9 @@ import { mergePersistedImagesIntoHistoryRecord, mergeServerJobsIntoImageHistory,
 import { archiveDeferredServerJob, fetchServerJobs, type ServerJob } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { lazyRoute } from "@/lib/lazy-route";
+import { creativeImageTransferState, type CreativeImageTransfer } from "@/lib/creative-image-transfer";
+import { preloadRoute } from "@/lib/route-loaders";
+import type { ResultContinueAction } from "./result-image-card";
 
 const loadPromptSelectDialog = () => import("@/components/prompts/prompt-select-dialog").then((module) => ({ default: module.PromptSelectDialog }));
 const loadAssetPickerModal = () => import("@/components/canvas/asset-picker-modal").then((module) => ({ default: module.AssetPickerModal }));
@@ -85,6 +89,7 @@ function getLogStore() {
 
 export default function ImagePage() {
     const { message } = App.useApp();
+    const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { data: cultivationProfile } = useCultivationProfile();
     const { generationSuccessMessage, isDouEmperor } = useImperialMode();
@@ -372,27 +377,145 @@ export default function ImagePage() {
         }
     };
 
-    const addResultToReferences = async (image: GeneratedImage, index: number) => {
-        const limited = limitImageReferenceAdditions(references, [image], activeImageCapabilities.maxReferences);
-        if (!limited.added) {
-            message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图`);
-            return;
-        }
+    const ensureStoredResult = async (image: GeneratedImage) => {
+        if (image.persisted === false) throw new Error("图片仍在处理中，请稍候");
+        if (image.storageKey) return image;
         const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
-        const stored = image.storageKey
-            ? { url: image.dataUrl, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey, thumbnailUrl: image.thumbnailUrl, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
-            : await uploadImage(image.dataUrl, { outputFormat, thumbnailMaxEdge: 1280 });
-        const reference = {
-            id: nanoid(),
-            name: `result-${index + 1}.${imageFileExtension(stored.mimeType)}`,
-            type: stored.mimeType,
+        const stored = await uploadImage(image.dataUrl, { outputFormat, thumbnailMaxEdge: 1280 });
+        const nextImage = {
+            ...image,
             dataUrl: stored.url,
             storageKey: stored.storageKey,
             thumbnailKey: stored.thumbnailKey,
             thumbnailUrl: stored.thumbnailUrl,
+            width: stored.width,
+            height: stored.height,
+            bytes: stored.bytes,
+            mimeType: stored.mimeType,
         };
+        replaceImageGenerationResult(nextImage);
+        setPreviewLog((log) => (log ? { ...log, images: log.images.map((item) => (item.id === image.id ? nextImage : item)) } : log));
+        return nextImage;
+    };
+
+    const resultReference = async (image: GeneratedImage, index: number): Promise<ReferenceImage> => {
+        const stored = await ensureStoredResult(image);
+        return {
+            id: nanoid(),
+            name: `result-${index + 1}.${imageFileExtension(stored.mimeType || "image/png")}`,
+            type: stored.mimeType || "image/*",
+            dataUrl: stored.dataUrl,
+            storageKey: stored.storageKey,
+            thumbnailKey: stored.thumbnailKey,
+            thumbnailUrl: stored.thumbnailUrl,
+        };
+    };
+
+    const addResultToReferences = async (image: GeneratedImage, index: number) => {
+        if (references.length >= activeImageCapabilities.maxReferences) {
+            message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图`);
+            return;
+        }
+        const reference = await resultReference(image, index);
         setReferences((value) => limitImageReferenceAdditions(value, [reference], activeImageCapabilities.maxReferences).items as ReferenceImage[]);
-        message.success("已加入参考图");
+        message.success("已追加为参考图");
+    };
+
+    const restartFromResult = async (image: GeneratedImage, index: number) => {
+        if (running) {
+            message.warning("当前任务仍在生成，请等待完成后再开始新作");
+            return;
+        }
+        if (activeImageCapabilities.maxReferences < 1) {
+            message.warning("当前模型不支持参考图，请先切换支持图生图的模型");
+            return;
+        }
+        const reference = await resultReference(image, index);
+        clearImageGenerationJob();
+        setPrompt("");
+        setReferences([reference]);
+        setSelectedLogIds([]);
+        setPreviewLog(null);
+        setResultView("results");
+        updateConfig("count", "1");
+        message.success("已清空旧内容并将当前图片设为唯一参考图");
+    };
+
+    const buildResultTransfer = async (image: GeneratedImage, index: number): Promise<CreativeImageTransfer> => {
+        const stored = await ensureStoredResult(image);
+        const sourcePrompt = previewLog ? generationUserPrompt(previewLog.prompt) : generationJob?.snapshot?.text || prompt;
+        return {
+            id: `${stored.id}:${Date.now()}`,
+            source: "image-workbench",
+            title: `丹青台生成结果 ${index + 1}`,
+            prompt: sourcePrompt,
+            dataUrl: stored.dataUrl,
+            storageKey: stored.storageKey,
+            thumbnailKey: stored.thumbnailKey,
+            thumbnailUrl: stored.thumbnailUrl,
+            width: stored.width,
+            height: stored.height,
+            bytes: stored.bytes,
+            mimeType: stored.mimeType,
+        };
+    };
+
+    const sendResultToCanvas = async (image: GeneratedImage, index: number) => {
+        const transfer = await buildResultTransfer(image, index);
+        void preloadRoute("/canvas");
+        navigate("/canvas?mode=transfer", { state: creativeImageTransferState(transfer) });
+    };
+
+    const sendResultToColorAlchemy = async (image: GeneratedImage, index: number) => {
+        const transfer = await buildResultTransfer(image, index);
+        void preloadRoute("/color-alchemy");
+        navigate("/color-alchemy", { state: creativeImageTransferState(transfer) });
+    };
+
+    const repeatOriginalGeneration = () => {
+        if (running) {
+            message.warning("当前任务仍在生成，请等待完成后再生成一组");
+            return;
+        }
+        if (previewLog) {
+            continueFromGenerationLog(previewLog);
+            setAutoRunToken((value) => value + 1);
+            message.info("正在按太古遗迹中的原参数再次生成");
+            return;
+        }
+        const snapshot = generationJob?.snapshot;
+        if (!snapshot) {
+            message.warning("未找到本次生成参数");
+            return;
+        }
+        const selectedModel = snapshot.config.imageModel || snapshot.config.model;
+        const repeatCount = Math.max(1, generationJob?.results.length || Number(snapshot.config.count) || 1);
+        const restored = resolveImageModelSettings({ ...effectiveConfig, ...snapshot.config, model: selectedModel, imageModel: selectedModel, count: String(repeatCount) }, selectedModel, 10).config;
+        setPrompt(snapshot.text);
+        setReferences(snapshot.references);
+        updateConfig("imageModel", restored.imageModel);
+        updateConfig("quality", restored.quality);
+        updateConfig("imageQuality", restored.imageQuality);
+        updateConfig("imageOutputFormat", restored.imageOutputFormat);
+        updateConfig("size", restored.size);
+        updateConfig("count", restored.count);
+        updateConfig("background", restored.background);
+        setPreviewLog(null);
+        setResultView("results");
+        setAutoRunToken((value) => value + 1);
+        message.info("正在按原参数再次生成");
+    };
+
+    const continueFromResult = async (action: ResultContinueAction, image: GeneratedImage, index: number) => {
+        try {
+            if (action === "restart") await restartFromResult(image, index);
+            else if (action === "append-reference") await addResultToReferences(image, index);
+            else if (action === "canvas") await sendResultToCanvas(image, index);
+            else if (action === "color-alchemy") await sendResultToColorAlchemy(image, index);
+            else repeatOriginalGeneration();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "继续创作失败，请重试");
+        }
     };
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
@@ -402,16 +525,23 @@ export default function ImagePage() {
         try {
             // Generated results are already persisted by the job flow. Reusing that asset avoids a
             // duplicate upload and prevents upstream MIME headers from affecting asset registration.
-            const stored = image.storageKey
-                ? { url: image.dataUrl, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey, thumbnailUrl: image.thumbnailUrl, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/*" }
-                : await uploadImage(image.dataUrl, { outputFormat: previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat });
+            const result = await ensureStoredResult(image);
             addAsset({
                 kind: "image",
                 title: `生成结果 ${index + 1}`,
-                coverUrl: stored.thumbnailUrl || stored.url,
+                coverUrl: result.thumbnailUrl || result.dataUrl,
                 tags: [],
                 source: IMAGE_WORKBENCH_ASSET_SOURCE,
-                data: { dataUrl: stored.url, storageKey: stored.storageKey, thumbnailKey: stored.thumbnailKey, thumbnailUrl: stored.thumbnailUrl, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
+                data: {
+                    dataUrl: result.dataUrl,
+                    storageKey: result.storageKey,
+                    thumbnailKey: result.thumbnailKey,
+                    thumbnailUrl: result.thumbnailUrl,
+                    width: result.width,
+                    height: result.height,
+                    bytes: result.bytes,
+                    mimeType: result.mimeType || "image/*",
+                },
                 metadata: { source: "image-page", prompt },
             });
             message.success("已入藏卷阁");
@@ -922,7 +1052,7 @@ export default function ImagePage() {
                                     {results.map((result, index) =>
                                         result.status === "success" && result.image ? (
                                             <Suspense key={result.id} fallback={<ResultImageCardLoading />}>
-                                                <ResultImageCard image={result.image} index={index} savingAsset={savingAssetIds.includes(result.image.id)} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
+                                                <ResultImageCard image={result.image} index={index} savingAsset={savingAssetIds.includes(result.image.id)} onContinue={continueFromResult} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
                                             </Suspense>
                                         ) : result.status === "failed" ? (
                                             <Suspense key={result.id} fallback={<ResultImageCardLoading />}>

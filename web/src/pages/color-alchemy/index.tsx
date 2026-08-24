@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { App, ConfigProvider, Drawer, Modal, Segmented, Slider, Tooltip, theme as antdTheme } from "antd";
 import { ArrowLeft, ClipboardCopy, ClipboardPaste, Download, FileImage, ImagePlus, Images, Layers3, PanelLeft, PanelRight, Redo2, RotateCcw, Save, Undo2, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { createCanvasNode, imageMetadata } from "@/lib/canvas/canvas-node-factory";
@@ -22,12 +22,14 @@ import { prepareColorAlchemyForUser, useColorAlchemyStore } from "@/features/col
 import type { AnalyzedColor, ColorAlchemySource, ColorExportFormat, ColorPreset, ColorSettings } from "@/features/color-alchemy/types";
 import { deleteColorAlchemyDocument, fetchColorAlchemyDocuments, saveColorAlchemyDocument, type ColorAlchemyDocumentTombstone } from "@/services/color-alchemy-api";
 import { lazyRoute } from "@/lib/lazy-route";
+import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
 
 const SETTINGS_CLIPBOARD_KEY = "infinite-canvas:color-alchemy:clipboard";
 const ColorSourceDialog = lazyRoute(() => import("@/features/color-alchemy/color-source-dialog").then(({ ColorSourceDialog: Component }) => ({ default: Component })));
 
 export default function ColorAlchemyPage() {
     const { message } = App.useApp();
+    const location = useLocation();
     const navigate = useNavigate();
     const userId = useUserStore((state) => state.user?.id || "");
     const hydrated = useColorAlchemyStore((state) => state.hydrated);
@@ -70,8 +72,26 @@ export default function ColorAlchemyPage() {
     const syncRetryAfterRef = useRef(new Map<string, number>());
     const syncRetryTimersRef = useRef(new Map<string, number>());
     const exportAbortRef = useRef<AbortController | null>(null);
+    const consumedImageTransferRef = useRef<string | null>(null);
 
     useEffect(() => prepareColorAlchemyForUser(userId), [userId]);
+
+    useEffect(() => {
+        const transfer = readCreativeImageTransfer(location.state);
+        if (!hydrated || !transfer || consumedImageTransferRef.current === transfer.id) return;
+        consumedImageTransferRef.current = transfer.id;
+        openSource({
+            key: transfer.storageKey || `image-workbench:${transfer.id}`,
+            title: transfer.title,
+            url: transfer.dataUrl,
+            storageKey: transfer.storageKey,
+            width: transfer.width,
+            height: transfer.height,
+            mimeType: transfer.mimeType,
+        });
+        message.success("已将丹青台图片载入灵彩");
+        navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+    }, [hydrated, location.pathname, location.search, location.state, message, navigate, openSource]);
 
     useEffect(() => {
         if (!userId) setCloudReadyUserId("");

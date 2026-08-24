@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 
@@ -11,9 +11,11 @@ import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
+import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
 
 export default function CanvasPage() {
     const { message } = App.useApp();
+    const location = useLocation();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const inputRef = useRef<HTMLInputElement>(null);
@@ -27,10 +29,12 @@ export default function CanvasPage() {
     const loadingLabel = useImperialLoadingText("正在加载画布...", "canvas-list");
 
     const mode = searchParams.get("mode");
+    const imageTransfer = readCreativeImageTransfer(location.state);
+    const transferMode = mode === "transfer" && Boolean(imageTransfer);
     const agentMode = mode === "new" || mode === "recent" || mode === "choose";
     const agentQuery = agentMode ? `?${searchParams.toString()}` : "";
     const enterProject = (id: string) => {
-        navigate(`/canvas/${id}${agentQuery}`);
+        navigate(`/canvas/${id}${agentQuery}`, imageTransfer ? { state: location.state } : undefined);
     };
     const createAndEnter = () => enterProject(createProject(`无限画布 ${projects.length + 1}`));
     const importCanvas = async (file?: File) => {
@@ -69,12 +73,12 @@ export default function CanvasPage() {
     };
 
     useEffect(() => {
-        if (!hydrated || autoOpenRef.current || (mode !== "new" && mode !== "recent")) return;
+        if (!hydrated || autoOpenRef.current || (mode !== "new" && mode !== "recent" && !transferMode)) return;
         autoOpenRef.current = true;
         enterProject(mode === "new" ? createProject(`无限画布 ${projects.length + 1}`) : projects[0]?.id || createProject(`无限画布 ${projects.length + 1}`));
-    }, [createProject, hydrated, mode, projects]);
+    }, [createProject, hydrated, mode, projects, transferMode]);
 
-    if (hydrated && (mode === "new" || mode === "recent")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
+    if (hydrated && (mode === "new" || mode === "recent" || transferMode)) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
 
     return (
         <main className="h-full overflow-auto bg-background text-foreground">

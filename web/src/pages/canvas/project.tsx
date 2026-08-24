@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Group, ImagePlus, Sparkles, Type, Video } from "lucide-react";
 
@@ -97,6 +97,7 @@ import type { ReferenceAudio } from "@/types/media";
 import { branchServerProject, cancelServerJob, waitForServerJob } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useCanvasProjectLock } from "@/pages/canvas/hooks/use-canvas-project-lock";
+import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
 
 const CanvasVersionCompareDialog = lazyRoute(() => import("@/components/canvas/canvas-version-compare-dialog").then(({ CanvasVersionCompareDialog: Component }) => ({ default: Component })));
 const Minimap = lazyRoute(() => import("@/components/canvas/canvas-mini-map").then(({ Minimap: Component }) => ({ default: Component })));
@@ -217,6 +218,7 @@ function InfiniteCanvasPage() {
     // 订阅节点注册表版本,插件动态注册/卸载后驱动画布重渲染
     const nodeRegistryVersion = useNodeRegistryVersion((state) => state.version);
     const params = useParams<{ id: string }>();
+    const location = useLocation();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const projectId = params.id || "";
@@ -336,6 +338,7 @@ function InfiniteCanvasPage() {
     const pendingImageUploadsRef = useRef(new Map<string, PendingImageUpload>());
     const restoreAbortRef = useRef<AbortController | null>(null);
     const snapshotRestoreAbortRef = useRef<AbortController | null>(null);
+    const consumedImageTransferRef = useRef<string | null>(null);
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -3338,6 +3341,16 @@ function InfiniteCanvasPage() {
         },
         [screenToCanvas, size.height, size.width],
     );
+
+    useEffect(() => {
+        const transfer = readCreativeImageTransfer(location.state);
+        if (!projectLoaded || !transfer || consumedImageTransferRef.current === transfer.id) return;
+        consumedImageTransferRef.current = transfer.id;
+        void insertAssistantImage({ id: transfer.id, prompt: transfer.prompt || transfer.title, dataUrl: transfer.dataUrl, storageKey: transfer.storageKey })
+            .then(() => message.success("已将丹青台图片加入当前画布"))
+            .catch((error) => message.error(error instanceof Error ? `图片加入画布失败：${error.message}` : "图片加入画布失败"))
+            .finally(() => navigate(`${location.pathname}${location.search}`, { replace: true, state: null }));
+    }, [insertAssistantImage, location.pathname, location.search, location.state, message, navigate, projectLoaded]);
 
     const insertAssistantText = useCallback(
         (text: string) => {
