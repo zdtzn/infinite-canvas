@@ -72,6 +72,58 @@ for (const match of markdown.matchAll(casePattern)) {
 }
 return items;`;
 
+const evolinkGptImage2CommercialScript = `// EvoLink GPT Image 2：只读取电商与广告创意分类，并排除现有图库中的重复案例。
+const base = "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main";
+const sources = [
+  { slug: "ecommerce", file: "cases/ecommerce_zh-CN.md", label: "电商设计", taxonomy: "商品商业" },
+  { slug: "ad-creative", file: "cases/ad-creative_zh-CN.md", label: "广告创意", taxonomy: "平面设计" },
+];
+const duplicateCaseKeys = new Set(["ad-creative:0107", "ad-creative:0108", "ad-creative:0109", "ad-creative:0112", "ad-creative:0171"]);
+const items = [];
+const seenIds = new Set();
+const documents = await Promise.all(sources.map(async (source) => {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return { source, markdown: await fetchText(\`\${base}/\${source.file}\`) };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}));
+
+for (const { source, markdown } of documents) {
+  for (const block of splitSections(markdown, "### ")) {
+    const heading = block.match(/^###\\s+Case\\s+(\\d+):\\s+\\[([^\\]]+)]\\(([^)]+)\\)\\s+\\(by\\s+\\[@([^\\]]+)]\\(([^)]+)\\)\\)\\s*$/m);
+    if (!heading) continue;
+    const prompt = firstMatch(block, /\\*\\*提示词[：:]\\*\\*\\s*\\r?\\n\\s*\`\`\`[^\\r\\n]*\\r?\\n([\\s\\S]*?)\\r?\\n\`\`\`/).trim();
+    const normalizedBlock = block.replace(/\.\.\/\.\.\/images\//g, "../images/");
+    const images = extractImages(\`\${base}/cases\`, normalizedBlock);
+    const coverUrl = images.find((image) => /\\/output(?:[-_.\\d]|$)/i.test(image)) || images[0] || "";
+    if (!prompt || !coverUrl) continue;
+    const assetCaseId = firstMatch(coverUrl, /_case(\\d+)\\//i) || heading[1];
+    const caseKey = \`\${source.slug}:\${leftPad(Number(assetCaseId))}\`;
+    if (duplicateCaseKeys.has(caseKey)) continue;
+    const id = \`evolink-gpt-image-2-commercial-\${source.slug}-\${leftPad(Number(assetCaseId))}\`;
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    const tags = ["gpt-image-2", source.taxonomy];
+    if (/上传|uploaded image|provided reference|reference image|use the uploaded image/i.test(prompt)) tags.push("需要参考图");
+    const attribution = [\`原作者：@\${heading[4]}\`, \`原始案例：\${heading[3]}\`].join("\\n");
+    items.push(makePrompt({
+      id,
+      title: \`\${source.label} · \${heading[2].trim()}\`,
+      prompt,
+      coverUrl,
+      tags,
+      preview: [attribution, markdownPreview(images.slice(0, 4))].filter(Boolean).join("\\n\\n"),
+    }));
+  }
+}
+
+return items;`;
+
 function youMindScript(base: string, idPrefix: string, modelTag: string) {
     return `// YouMind 系列：README_zh.md 里 "### No.N: 标题" + "#### ...提示词" 代码块。
 const base = "${base}";
@@ -166,6 +218,14 @@ export const DEFAULT_PROMPT_SOURCES: PromptSource[] = [
     { id: "freestylefly-awesome-gpt-image-2", name: "freestylefly/awesome-gpt-image-2", githubUrl: "https://github.com/freestylefly/awesome-gpt-image-2", enabled: true, trusted: true, script: freestyleflyAwesomeGptImage2Script },
     { id: "awesome-gpt-image", name: "awesome-gpt-image", githubUrl: "https://github.com/ZeroLu/awesome-gpt-image", enabled: true, trusted: true, script: awesomeGptImageScript },
     { id: "awesome-gpt4o-image-prompts", name: "awesome-gpt4o-image-prompts", githubUrl: "https://github.com/ImgEdify/Awesome-GPT4o-Image-Prompts", enabled: true, trusted: true, script: awesomeGpt4oImageScript },
+    {
+        id: "evolink-gpt-image-2-commercial",
+        name: "GPT Image 2 商业创意精选",
+        githubUrl: "https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts",
+        enabled: true,
+        trusted: true,
+        script: evolinkGptImage2CommercialScript,
+    },
     {
         id: "jamez-bondos-awesome-gpt4o-images",
         name: "GPT-4o 图像案例精选",

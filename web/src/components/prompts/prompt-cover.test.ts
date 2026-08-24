@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { PROMPT_COVER_FALLBACK_TIMEOUT_MS, promptImageCandidates, promptOriginalCandidates, promptOriginalUrl, promptThumbnailUrl } from "./prompt-cover";
+import { PROMPT_COVER_FALLBACK_TIMEOUT_MS, promptImageCandidates, promptOriginalCandidates, promptOriginalUrl, promptThumbnailUrl, shouldArmPromptCoverFallbackTimer } from "./prompt-cover";
 
 describe("prompt image URLs", () => {
     test("allows the server thumbnail proxy to finish before falling back", () => {
         assert.ok(PROMPT_COVER_FALLBACK_TIMEOUT_MS >= 8_500);
+    });
+
+    test("does not time out a lazy cover before it approaches the viewport", () => {
+        assert.equal(shouldArmPromptCoverFallbackTimer("lazy", false), false);
+        assert.equal(shouldArmPromptCoverFallbackTimer("lazy", true), true);
+        assert.equal(shouldArmPromptCoverFallbackTimer("eager", false), true);
     });
 
     test("routes GitHub originals directly through jsDelivr", () => {

@@ -28,6 +28,15 @@ test("includes the attributed GPT-4o image gallery as a trusted source", () => {
     assert.match(source?.script || "", /README\.md/);
 });
 
+test("includes the deduped GPT Image 2 commercial gallery as a trusted source", () => {
+    const source = DEFAULT_PROMPT_SOURCES.find((item) => item.id === "evolink-gpt-image-2-commercial");
+    assert.equal(source?.name, "GPT Image 2 商业创意精选");
+    assert.equal(source?.trusted, true);
+    assert.equal(source?.githubUrl, "https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts");
+    assert.match(source?.script || "", /ecommerce_zh-CN\.md/);
+    assert.match(source?.script || "", /ad-creative_zh-CN\.md/);
+});
+
 test("keeps a valid expired source cache available while a refresh runs in the background", () => {
     const cached = {
         items: [{ id: "prompt-1" }],

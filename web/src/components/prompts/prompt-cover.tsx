@@ -1,5 +1,5 @@
 import { ImageOff, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const PROXY_SOURCE_HOSTS: Record<string, string> = {
     pbs: "pbs.twimg.com",
@@ -7,6 +7,10 @@ const PROXY_SOURCE_HOSTS: Record<string, string> = {
     atomgit: "atomgit.com",
 };
 export const PROMPT_COVER_FALLBACK_TIMEOUT_MS = 9_000;
+
+export function shouldArmPromptCoverFallbackTimer(loading: "eager" | "lazy", nearViewport: boolean) {
+    return loading === "eager" || nearViewport;
+}
 
 export function promptOriginalUrl(value?: string) {
     const input = String(value || "").trim();
@@ -84,6 +88,8 @@ export function PromptCover({
     const [status, setStatus] = useState<CoverStatus>(() => initialCoverStatus(sourceKey));
     const activeStatus = status.sourceKey === sourceKey ? status : initialCoverStatus(sourceKey);
     const currentSrc = candidates[activeStatus.index];
+    const imageRef = useRef<HTMLImageElement>(null);
+    const [nearViewport, setNearViewport] = useState(loading === "eager");
     const advanceSource = useCallback(() => {
         setStatus((current) => {
             const next = current.sourceKey === sourceKey ? current : initialCoverStatus(sourceKey);
@@ -93,10 +99,34 @@ export function PromptCover({
     }, [candidates.length, sourceKey]);
 
     useEffect(() => {
-        if (!currentSrc || activeStatus.failed || activeStatus.loaded) return;
+        if (activeStatus.failed) return;
+        if (loading === "eager") {
+            setNearViewport(true);
+            return;
+        }
+        setNearViewport(false);
+        const image = imageRef.current;
+        if (!image || typeof IntersectionObserver === "undefined") {
+            setNearViewport(true);
+            return;
+        }
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (!entries.some((entry) => entry.isIntersecting)) return;
+                setNearViewport(true);
+                observer.disconnect();
+            },
+            { rootMargin: "600px 0px" },
+        );
+        observer.observe(image);
+        return () => observer.disconnect();
+    }, [activeStatus.failed, activeStatus.retry, loading, sourceKey]);
+
+    useEffect(() => {
+        if (!currentSrc || activeStatus.failed || activeStatus.loaded || !shouldArmPromptCoverFallbackTimer(loading, nearViewport)) return;
         const timeout = window.setTimeout(advanceSource, timeoutMs);
         return () => window.clearTimeout(timeout);
-    }, [activeStatus.failed, activeStatus.index, activeStatus.loaded, advanceSource, currentSrc, timeoutMs]);
+    }, [activeStatus.failed, activeStatus.index, activeStatus.loaded, advanceSource, currentSrc, loading, nearViewport, timeoutMs]);
 
     if (!currentSrc) {
         return (
@@ -132,6 +162,7 @@ export function PromptCover({
     return (
         <img
             key={`${sourceKey}:${activeStatus.index}:${activeStatus.retry}`}
+            ref={imageRef}
             src={currentSrc}
             alt={alt}
             className={className}

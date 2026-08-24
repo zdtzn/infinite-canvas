@@ -223,6 +223,7 @@ export async function runTrustedPromptSource(sourceId: string, options?: RunOpti
     if (sourceId === "freestylefly-awesome-gpt-image-2") return parseFreestylefly(options);
     if (sourceId === "awesome-gpt-image") return parseAwesomeGptImage(options);
     if (sourceId === "awesome-gpt4o-image-prompts") return parseAwesomeGpt4o(options);
+    if (sourceId === "evolink-gpt-image-2-commercial") return parseEvolinkGptImage2Commercial(options);
     if (sourceId === "jamez-bondos-awesome-gpt4o-images") return parseJamezBondosAwesomeGpt4oImages(options);
     if (sourceId === "youmind-gpt-image-2") return parseYouMind("https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main", "youmind-gpt-image-2", "gpt-image-2", options);
     if (sourceId === "youmind-nano-banana-pro") return parseYouMind("https://raw.githubusercontent.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts/main", "youmind-nano-banana-pro", "nano-banana-pro", options);
@@ -314,6 +315,66 @@ async function parseAwesomeGpt4o(options?: RunOptions) {
         if (!title || !prompt) continue;
         const images = extractImages(base, block);
         items.push(makePrompt({ id: `awesome-gpt4o-image-prompts-${leftPad(items.length + 1)}`, title, prompt, coverUrl: images[0] || "", tags: ["gpt4o"], preview: markdownPreview(images) }));
+    }
+    return items;
+}
+
+const EVOLINK_GPT_IMAGE_2_BASE = "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main";
+const EVOLINK_DUPLICATE_CASE_KEYS = new Set(["ad-creative:0107", "ad-creative:0108", "ad-creative:0109", "ad-creative:0112", "ad-creative:0171"]);
+
+async function parseEvolinkGptImage2Commercial(options?: RunOptions) {
+    const categories = [
+        { slug: "ecommerce" as const, file: "cases/ecommerce_zh-CN.md" },
+        { slug: "ad-creative" as const, file: "cases/ad-creative_zh-CN.md" },
+    ];
+    const documents = await Promise.all(
+        categories.map(async (category) => {
+            let lastError: unknown;
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                try {
+                    return { category, markdown: await fetchText(`${EVOLINK_GPT_IMAGE_2_BASE}/${category.file}`, options?.signal) };
+                } catch (error) {
+                    if (error instanceof DOMException && error.name === "AbortError") throw error;
+                    lastError = error;
+                }
+            }
+            throw lastError;
+        }),
+    );
+    return documents.flatMap(({ category, markdown }) => parseEvolinkGptImage2CommercialMarkdown(markdown, category.slug));
+}
+
+export function parseEvolinkGptImage2CommercialMarkdown(markdown: string, category: "ecommerce" | "ad-creative", base = EVOLINK_GPT_IMAGE_2_BASE) {
+    const meta = category === "ecommerce" ? { label: "电商设计", taxonomy: "商品商业" } : { label: "广告创意", taxonomy: "平面设计" };
+    const items: RawPrompt[] = [];
+    const seenIds = new Set<string>();
+    for (const block of splitSections(markdown, "### ")) {
+        const heading = block.match(/^###\s+Case\s+(\d+):\s+\[([^\]]+)]\(([^)]+)\)\s+\(by\s+\[@([^\]]+)]\(([^)]+)\)\)\s*$/m);
+        if (!heading) continue;
+        const prompt = firstMatch(block, /\*\*提示词[：:]\*\*\s*\r?\n\s*```[^\r\n]*\r?\n([\s\S]*?)\r?\n```/).trim();
+        const normalizedBlock = block.replace(/\.\.\/\.\.\/images\//g, "../images/");
+        const images = extractImages(`${base}/cases`, normalizedBlock);
+        const coverUrl = images.find((image) => /\/output(?:[-_.\d]|$)/i.test(image)) || images[0] || "";
+        if (!prompt || !coverUrl) continue;
+        const assetCaseId = firstMatch(coverUrl, /_case(\d+)\//i) || heading[1];
+        const caseKey = `${category}:${leftPad(Number(assetCaseId))}`;
+        if (EVOLINK_DUPLICATE_CASE_KEYS.has(caseKey)) continue;
+        const id = `evolink-gpt-image-2-commercial-${category}-${leftPad(Number(assetCaseId))}`;
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+        const tags = ["gpt-image-2", meta.taxonomy];
+        if (/上传|uploaded image|provided reference|reference image|use the uploaded image/i.test(prompt)) tags.push("需要参考图");
+        const attribution = [`原作者：@${heading[4]}`, `原始案例：${heading[3]}`].join("\n");
+        items.push(
+            makePrompt({
+                id,
+                title: `${meta.label} · ${heading[2].trim()}`,
+                prompt,
+                coverUrl,
+                tags,
+                preview: [attribution, markdownPreview(images.slice(0, 4))].filter(Boolean).join("\n\n"),
+            }),
+        );
     }
     return items;
 }
