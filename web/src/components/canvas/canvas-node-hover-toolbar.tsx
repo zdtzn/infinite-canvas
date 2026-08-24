@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
 import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Palette, Pencil, Plus, RefreshCw, Settings2, Trash2, Upload, Video } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -7,12 +7,14 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { preloadRoute } from "@/lib/route-loaders";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { fetchServerUserPreferences, saveServerUserPreferences } from "@/services/server-api";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useUserStore } from "@/stores/use-user-store";
 import { useColorAlchemyStore } from "@/features/color-alchemy/use-color-alchemy-store";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
 import type { CanvasNodeToolbarItem } from "@/types/canvas-plugin";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
-import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
+import { buildImageToolbarTools, defaultImageQuickToolIds, loadImageQuickToolsConfig, readImageQuickToolsConfig, writeImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
@@ -82,24 +84,46 @@ export function CanvasNodeHoverToolbar({
     const [draftImageToolIds, setDraftImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
     const [draftShowImageToolLabels, setDraftShowImageToolLabels] = useState(false);
     const [imageToolSettingsOpen, setImageToolSettingsOpen] = useState(false);
+    const toolbarPreferenceRevision = useRef(0);
     const location = useLocation();
     const navigate = useNavigate();
     const { message } = App.useApp();
     const copyText = useCopyText();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const userId = useUserStore((state) => state.user?.id || "");
 
     useEffect(() => {
-        try {
-            const stored = window.localStorage.getItem(IMAGE_QUICK_TOOLS_STORAGE_KEY);
-            if (!stored) return;
-            const parsed = JSON.parse(stored) as unknown;
-            const config = readImageQuickToolsConfig(parsed);
-            setQuickImageToolIds(config.ids);
-            setShowImageToolLabels(config.showLabels);
-        } catch {
-            window.localStorage.removeItem(IMAGE_QUICK_TOOLS_STORAGE_KEY);
-        }
-    }, []);
+        const revision = toolbarPreferenceRevision.current;
+        const localPreference = loadImageQuickToolsConfig(browserStorage(), userId);
+        setQuickImageToolIds(localPreference.config.ids);
+        setShowImageToolLabels(localPreference.config.showLabels);
+        if (!userId) return;
+
+        let active = true;
+        void fetchServerUserPreferences(userId)
+            .then(async (preferences) => {
+                if (!active || toolbarPreferenceRevision.current !== revision || useUserStore.getState().user?.id !== userId) return;
+                if (preferences.canvasImageToolbarConfigured && preferences.canvasImageToolbar) {
+                    const config = readImageQuickToolsConfig(preferences.canvasImageToolbar);
+                    setQuickImageToolIds(config.ids);
+                    setShowImageToolLabels(config.showLabels);
+                    writeImageQuickToolsConfig(browserStorage(), userId, config);
+                    return;
+                }
+                if (!localPreference.configured) return;
+                const saved = await saveServerUserPreferences({ canvasImageToolbar: localPreference.config }, userId);
+                if (!active || toolbarPreferenceRevision.current !== revision || useUserStore.getState().user?.id !== userId || !saved.canvasImageToolbar) return;
+                const config = readImageQuickToolsConfig(saved.canvasImageToolbar);
+                setQuickImageToolIds(config.ids);
+                setShowImageToolLabels(config.showLabels);
+                writeImageQuickToolsConfig(browserStorage(), userId, config);
+            })
+            .catch(() => undefined);
+
+        return () => {
+            active = false;
+        };
+    }, [userId]);
 
     useEffect(() => {
         setImageToolSettingsOpen(false);
@@ -198,10 +222,25 @@ export function CanvasNodeHoverToolbar({
     };
 
     const saveImageToolSettings = () => {
-        const config = { ids: draftImageToolIds, showLabels: draftShowImageToolLabels };
+        const config = readImageQuickToolsConfig({ ids: draftImageToolIds, showLabels: draftShowImageToolLabels });
+        const revision = toolbarPreferenceRevision.current + 1;
+        toolbarPreferenceRevision.current = revision;
         setQuickImageToolIds(config.ids);
         setShowImageToolLabels(config.showLabels);
-        window.localStorage.setItem(IMAGE_QUICK_TOOLS_STORAGE_KEY, JSON.stringify(config));
+        writeImageQuickToolsConfig(browserStorage(), userId, config);
+        if (userId) {
+            void saveServerUserPreferences({ canvasImageToolbar: config }, userId)
+                .then((saved) => {
+                    if (toolbarPreferenceRevision.current !== revision || useUserStore.getState().user?.id !== userId || !saved.canvasImageToolbar) return;
+                    const persisted = readImageQuickToolsConfig(saved.canvasImageToolbar);
+                    setQuickImageToolIds(persisted.ids);
+                    setShowImageToolLabels(persisted.showLabels);
+                    writeImageQuickToolsConfig(browserStorage(), userId, persisted);
+                })
+                .catch(() => {
+                    if (toolbarPreferenceRevision.current === revision && useUserStore.getState().user?.id === userId) message.warning("工具栏偏好已保存在本机，但账号同步失败");
+                });
+        }
         closeImageToolSettings();
     };
 
@@ -352,4 +391,12 @@ function InfoRow({ label, value }: { label: string; value: ReactNode }) {
             <span className="min-w-0 whitespace-pre-wrap break-words">{value}</span>
         </div>
     );
+}
+
+function browserStorage() {
+    try {
+        return typeof window === "undefined" ? null : window.localStorage;
+    } catch {
+        return null;
+    }
 }

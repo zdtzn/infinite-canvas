@@ -9,7 +9,7 @@ import { ensurePromptIndexReady } from "@/services/api/prompts";
 import { fetchServerChannels, fetchServerPromptSources, fetchServerUserPreferences, saveServerChannel, saveServerPromptSource, saveServerUserPreferences, type ServerChannel } from "@/services/server-api";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { isBuiltInPromptSource, usePromptSourceStore } from "@/stores/use-prompt-source-store";
-import { createModelChannel, normalizeChannelModels, useConfigStore, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, generationPreferencesEqual, generationPreferencesFromConfig, normalizeChannelModels, normalizeGenerationPreferences, useConfigStore, type GenerationPreferences, type ModelChannel } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
 const SYSTEM_PROMPT_OWNER_KEY = "infinite-canvas:system-prompt-owner";
@@ -23,11 +23,15 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const userPreferencesReady = useRef("");
     const [userPreferencesReadyUser, setUserPreferencesReadyUser] = useState("");
     const lastSyncedSystemPrompt = useRef<string | null>(null);
+    const lastSyncedGenerationPreferences = useRef<GenerationPreferences | null>(null);
     const systemPromptSaveTimer = useRef<number | null>(null);
+    const generationPreferencesSaveTimer = useRef<number | null>(null);
     const user = useUserStore((state) => state.user);
     const config = useConfigStore((state) => state.config);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const replaceSystemPrompt = useConfigStore((state) => state.replaceSystemPrompt);
+    const replaceGenerationPreferences = useConfigStore((state) => state.replaceGenerationPreferences);
+    const snapDimensionToStep = useConfigStore((state) => state.snapDimensionToStep);
     const setPlatformChannels = useConfigStore((state) => state.setPlatformChannels);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const localAssetsHydrated = useAssetStore((state) => state.hydrated);
@@ -36,6 +40,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const promptSources = usePromptSourceStore((state) => state.sources);
     const promptSourcesHydrated = usePromptSourceStore((state) => state.hydrated);
     const setSharedPromptSources = usePromptSourceStore((state) => state.setSharedSources);
+    const generationPreferencesSignature = JSON.stringify(generationPreferencesFromConfig(config, snapDimensionToStep));
 
     usePromptSourceScheduler();
     useProjectServerSync(user?.id);
@@ -46,53 +51,83 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             userPreferencesReady.current = "";
             setUserPreferencesReadyUser("");
             lastSyncedSystemPrompt.current = null;
+            lastSyncedGenerationPreferences.current = null;
             if (systemPromptSaveTimer.current !== null) window.clearTimeout(systemPromptSaveTimer.current);
+            if (generationPreferencesSaveTimer.current !== null) window.clearTimeout(generationPreferencesSaveTimer.current);
             systemPromptSaveTimer.current = null;
+            generationPreferencesSaveTimer.current = null;
             return;
         }
         if (!PUBLIC_MODE || syncedUserPreferencesUser.current === user.id) return;
         let active = true;
-        const initialSystemPrompt = useConfigStore.getState().config.systemPrompt;
+        const initialConfigState = useConfigStore.getState();
+        const initialSystemPrompt = initialConfigState.config.systemPrompt;
+        const initialGenerationPreferences = generationPreferencesFromConfig(initialConfigState.config, initialConfigState.snapDimensionToStep);
         syncedUserPreferencesUser.current = user.id;
         setUserPreferencesReadyUser("");
 
         void fetchServerUserPreferences(user.id)
             .then(async (preferences) => {
                 if (!active) return;
-                const currentSystemPrompt = useConfigStore.getState().config.systemPrompt;
+                const currentConfigState = useConfigStore.getState();
+                const currentSystemPrompt = currentConfigState.config.systemPrompt;
+                const currentGenerationPreferences = generationPreferencesFromConfig(currentConfigState.config, currentConfigState.snapDimensionToStep);
                 const ownedBy = readSystemPromptOwner();
-                const changedDuringSync = currentSystemPrompt !== initialSystemPrompt;
+                const systemPromptChangedDuringSync = currentSystemPrompt !== initialSystemPrompt;
+                const generationPreferencesChangedDuringSync = !generationPreferencesEqual(currentGenerationPreferences, initialGenerationPreferences);
                 let syncedSystemPrompt = currentSystemPrompt;
-                let shouldSave = changedDuringSync;
+                let syncedGenerationPreferences = currentGenerationPreferences;
+                let shouldSaveSystemPrompt = systemPromptChangedDuringSync;
+                let shouldSaveGenerationPreferences = generationPreferencesChangedDuringSync;
 
-                if (preferences.systemPromptConfigured && !changedDuringSync) {
+                if (preferences.systemPromptConfigured && !systemPromptChangedDuringSync) {
                     replaceSystemPrompt(preferences.systemPrompt);
                     syncedSystemPrompt = preferences.systemPrompt;
-                } else if (!preferences.systemPromptConfigured && !changedDuringSync && ownedBy && ownedBy !== user.id) {
+                } else if (!preferences.systemPromptConfigured && !systemPromptChangedDuringSync && ownedBy && ownedBy !== user.id) {
                     replaceSystemPrompt("");
                     syncedSystemPrompt = "";
                 } else if (!preferences.systemPromptConfigured && !currentSystemPrompt.trim()) {
                     syncedSystemPrompt = "";
-                    shouldSave = changedDuringSync;
+                    shouldSaveSystemPrompt = systemPromptChangedDuringSync;
                 } else if (!preferences.systemPromptConfigured) {
-                    shouldSave = true;
+                    shouldSaveSystemPrompt = true;
                 }
 
-                if (shouldSave) {
+                if (preferences.generationPreferencesConfigured && preferences.generationPreferences && !generationPreferencesChangedDuringSync) {
+                    syncedGenerationPreferences = normalizeGenerationPreferences(preferences.generationPreferences);
+                    replaceGenerationPreferences(syncedGenerationPreferences);
+                    shouldSaveGenerationPreferences = false;
+                } else if (!preferences.generationPreferencesConfigured || !preferences.generationPreferences) {
+                    shouldSaveGenerationPreferences = true;
+                }
+
+                if (shouldSaveSystemPrompt || shouldSaveGenerationPreferences) {
                     const systemPromptToSave = currentSystemPrompt;
-                    const saved = await saveServerUserPreferences({ systemPrompt: systemPromptToSave }, user.id);
+                    const generationPreferencesToSave = currentGenerationPreferences;
+                    const saved = await saveServerUserPreferences(
+                        {
+                            ...(shouldSaveSystemPrompt ? { systemPrompt: systemPromptToSave } : {}),
+                            ...(shouldSaveGenerationPreferences ? { generationPreferences: generationPreferencesToSave } : {}),
+                        },
+                        user.id,
+                    );
                     if (!active) return;
-                    if (useConfigStore.getState().config.systemPrompt === systemPromptToSave) {
-                        replaceSystemPrompt(saved.systemPrompt);
+                    if (shouldSaveSystemPrompt) {
+                        if (useConfigStore.getState().config.systemPrompt === systemPromptToSave) replaceSystemPrompt(saved.systemPrompt);
+                        // If the user edited while this request was in flight, the ready-state
+                        // effect below persists the newer local value.
                         syncedSystemPrompt = saved.systemPrompt;
-                    } else {
-                        // The user edited while the first save was in flight. Keep the
-                        // last server value here; the ready-state effect will persist the
-                        // newer local value after initialization completes.
-                        syncedSystemPrompt = saved.systemPrompt;
+                    }
+                    if (shouldSaveGenerationPreferences && saved.generationPreferences) {
+                        const savedGenerationPreferences = normalizeGenerationPreferences(saved.generationPreferences);
+                        const latest = useConfigStore.getState();
+                        const latestGenerationPreferences = generationPreferencesFromConfig(latest.config, latest.snapDimensionToStep);
+                        if (generationPreferencesEqual(latestGenerationPreferences, generationPreferencesToSave)) replaceGenerationPreferences(savedGenerationPreferences);
+                        syncedGenerationPreferences = savedGenerationPreferences;
                     }
                 }
                 lastSyncedSystemPrompt.current = syncedSystemPrompt;
+                lastSyncedGenerationPreferences.current = syncedGenerationPreferences;
                 writeSystemPromptOwner(user.id);
                 userPreferencesReady.current = user.id;
                 setUserPreferencesReadyUser(user.id);
@@ -108,7 +143,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         return () => {
             active = false;
         };
-    }, [message, replaceSystemPrompt, user?.id]);
+    }, [message, replaceGenerationPreferences, replaceSystemPrompt, user?.id]);
 
     useEffect(() => {
         if (!PUBLIC_MODE || !user?.id || userPreferencesReadyUser !== user.id || userPreferencesReady.current !== user.id || lastSyncedSystemPrompt.current === config.systemPrompt) return;
@@ -135,6 +170,35 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             systemPromptSaveTimer.current = null;
         };
     }, [config.systemPrompt, message, replaceSystemPrompt, user?.id, userPreferencesReadyUser]);
+
+    useEffect(() => {
+        if (!PUBLIC_MODE || !user?.id || userPreferencesReadyUser !== user.id || userPreferencesReady.current !== user.id) return;
+        const value = normalizeGenerationPreferences(JSON.parse(generationPreferencesSignature));
+        if (lastSyncedGenerationPreferences.current && generationPreferencesEqual(lastSyncedGenerationPreferences.current, value)) return;
+        if (generationPreferencesSaveTimer.current !== null) window.clearTimeout(generationPreferencesSaveTimer.current);
+        let active = true;
+        generationPreferencesSaveTimer.current = window.setTimeout(() => {
+            generationPreferencesSaveTimer.current = null;
+            const userId = user.id;
+            void saveServerUserPreferences({ generationPreferences: value }, userId)
+                .then((saved) => {
+                    if (!active || userPreferencesReady.current !== userId || useUserStore.getState().user?.id !== userId || !saved.generationPreferences) return;
+                    const persisted = normalizeGenerationPreferences(saved.generationPreferences);
+                    lastSyncedGenerationPreferences.current = persisted;
+                    const current = useConfigStore.getState();
+                    const currentPreferences = generationPreferencesFromConfig(current.config, current.snapDimensionToStep);
+                    if (generationPreferencesEqual(currentPreferences, value)) replaceGenerationPreferences(persisted);
+                })
+                .catch((error) => {
+                    if (userPreferencesReady.current === userId) message.error(error instanceof Error ? error.message : "生成偏好保存失败");
+                });
+        }, 700);
+        return () => {
+            active = false;
+            if (generationPreferencesSaveTimer.current !== null) window.clearTimeout(generationPreferencesSaveTimer.current);
+            generationPreferencesSaveTimer.current = null;
+        };
+    }, [generationPreferencesSignature, message, replaceGenerationPreferences, user?.id, userPreferencesReadyUser]);
 
     useEffect(() => {
         if (!user?.id) {

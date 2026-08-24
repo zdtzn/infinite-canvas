@@ -18,6 +18,7 @@ export function AccountSessionController() {
     useLayoutEffect(() => {
         const previous = previousUserId.current;
         if (previous === userId) return;
+        if (previous === null && !userId) return;
         previousUserId.current = userId;
 
         if (previous !== null) {
@@ -28,6 +29,7 @@ export function AccountSessionController() {
             useConfigStore.getState().clearAccountScopedPreferences();
         }
 
+        useConfigStore.getState().prepareAccountPreferences(userId);
         prepareImageGenerationRuntimeForUser(userId);
         prepareColorAlchemyForUser(userId);
         useCanvasStore.getState().prepareForUser(userId);

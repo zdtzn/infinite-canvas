@@ -1,6 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyPlatformChannels, createModelChannel, defaultConfig, encodeChannelModel, normalizeChannelModels, normalizeImageSizeSelection, resolveModelForCapability, resolveModelRequestConfig, useConfigStore } from "./use-config-store";
+import {
+    applyPlatformChannels,
+    createModelChannel,
+    defaultConfig,
+    defaultGenerationPreferences,
+    defaultWebdavSyncConfig,
+    encodeChannelModel,
+    normalizeChannelModels,
+    normalizeImageSizeSelection,
+    resolveModelForCapability,
+    resolveModelRequestConfig,
+    useConfigStore,
+} from "./use-config-store";
 
 test("legacy automatic image ratios migrate to an explicit square ratio", () => {
     expect(normalizeImageSizeSelection("auto")).toBe("1:1");
@@ -108,4 +120,65 @@ describe("sensitive browser configuration", () => {
         expect(state.config.apiKey).toBe("");
         expect(state.config.channels[0]?.apiKey).toBe("");
     });
+
+    test("keeps generation and WebDAV preferences isolated between browser accounts", () => {
+        const storage = new MemoryStorage();
+        const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+        Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: storage } });
+
+        try {
+            useConfigStore.setState({
+                config: { ...defaultConfig, quality: "high", count: "4" },
+                webdav: { ...defaultWebdavSyncConfig, url: "https://dav.example.com", username: "alice" },
+                snapDimensionToStep: false,
+            });
+            useConfigStore.getState().prepareAccountPreferences("user-a");
+            useConfigStore.getState().updateConfig("count", "2");
+
+            useConfigStore.getState().prepareAccountPreferences("user-b");
+            expect(useConfigStore.getState().config.count).toBe(defaultGenerationPreferences.count);
+            expect(useConfigStore.getState().config.quality).toBe(defaultGenerationPreferences.quality);
+            expect(useConfigStore.getState().webdav.url).toBe("");
+            expect(useConfigStore.getState().snapDimensionToStep).toBe(true);
+
+            useConfigStore.getState().updateConfig("count", "3");
+            useConfigStore.getState().prepareAccountPreferences("user-a");
+            expect(useConfigStore.getState().config.count).toBe("2");
+            expect(useConfigStore.getState().config.quality).toBe("high");
+            expect(useConfigStore.getState().webdav).toMatchObject({ url: "https://dav.example.com", username: "alice", password: "" });
+            expect(useConfigStore.getState().snapDimensionToStep).toBe(false);
+        } finally {
+            useConfigStore.getState().prepareAccountPreferences("");
+            if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+            else delete (globalThis as typeof globalThis & { window?: Window }).window;
+        }
+    });
 });
+
+class MemoryStorage implements Storage {
+    private readonly values = new Map<string, string>();
+
+    get length() {
+        return this.values.size;
+    }
+
+    clear() {
+        this.values.clear();
+    }
+
+    getItem(key: string) {
+        return this.values.get(key) ?? null;
+    }
+
+    key(index: number) {
+        return Array.from(this.values.keys())[index] ?? null;
+    }
+
+    removeItem(key: string) {
+        this.values.delete(key);
+    }
+
+    setItem(key: string, value: string) {
+        this.values.set(key, value);
+    }
+}

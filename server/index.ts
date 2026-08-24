@@ -85,7 +85,7 @@ import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedProm
 import { normalizePromptIndexItems, normalizePromptSourceIndexItems, normalizeStoredPromptIndexTaxonomy, promptIndexStatuses, queryPromptIndex, recordPromptIndexError, replacePromptIndex } from "./lib/prompt-index";
 import { PROMPT_TAXONOMY_REVISION } from "./lib/prompt-taxonomy";
 import { runPromptSourceScript, type ServerPromptSourceItem } from "./lib/prompt-source-runtime";
-import { defaultUserChatPresetId, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserSystemPrompt, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserSystemPrompt, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
+import { defaultUserChatPresetId, normalizeUserCanvasImageToolbar, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserGenerationPreferences, normalizeUserSystemPrompt, readStoredUserCanvasImageToolbar, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserGenerationPreferences, readStoredUserSystemPrompt, USER_CANVAS_IMAGE_TOOLBAR_KEY, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_GENERATION_PREFERENCES_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
 import { createColorAlchemyService, ColorAlchemyError } from "./modules/color-alchemy/service";
@@ -1883,8 +1883,12 @@ function userPreferences(session: SessionPayload) {
     const storedSystemPrompt = appDatabase.loadUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY);
     const storedChatPresetId = appDatabase.loadUserPreference(session.userId, USER_CHAT_PRESET_KEY);
     const storedChatPersona = appDatabase.loadUserPreference(session.userId, USER_CHAT_PERSONA_KEY);
+    const storedCanvasImageToolbar = appDatabase.loadUserPreference(session.userId, USER_CANVAS_IMAGE_TOOLBAR_KEY);
+    const storedGenerationPreferences = appDatabase.loadUserPreference(session.userId, USER_GENERATION_PREFERENCES_KEY);
     const chatPresetId = readStoredUserChatPresetId(storedChatPresetId);
     const chatPersona = readStoredUserChatPersona(storedChatPersona) || "";
+    const canvasImageToolbar = readStoredUserCanvasImageToolbar(storedCanvasImageToolbar);
+    const generationPreferences = readStoredUserGenerationPreferences(storedGenerationPreferences);
     return json(
         {
             systemPrompt: readStoredUserSystemPrompt(storedSystemPrompt) || "",
@@ -1893,6 +1897,10 @@ function userPreferences(session: SessionPayload) {
             chatPresetConfigured: Boolean(chatPresetId),
             chatPersona,
             chatPersonaConfigured: typeof storedChatPersona === "string" && chatPersona.length > 0,
+            canvasImageToolbar,
+            canvasImageToolbarConfigured: Boolean(canvasImageToolbar),
+            generationPreferences,
+            generationPreferencesConfigured: Boolean(generationPreferences),
         },
         200,
         { "Cache-Control": "no-store" },
@@ -1900,22 +1908,30 @@ function userPreferences(session: SessionPayload) {
 }
 
 async function updateUserPreferences(request: Request, session: SessionPayload) {
-    const body = await readJson<{ systemPrompt?: unknown; chatPresetId?: unknown; chatPersona?: unknown }>(request, 64 * 1024);
+    const body = await readJson<{ systemPrompt?: unknown; chatPresetId?: unknown; chatPersona?: unknown; canvasImageToolbar?: unknown; generationPreferences?: unknown }>(request, 64 * 1024);
     const source = body && typeof body === "object" ? body : {};
     const hasSystemPrompt = Object.prototype.hasOwnProperty.call(source, "systemPrompt");
     const hasChatPresetId = Object.prototype.hasOwnProperty.call(source, "chatPresetId");
     const hasChatPersona = Object.prototype.hasOwnProperty.call(source, "chatPersona");
+    const hasCanvasImageToolbar = Object.prototype.hasOwnProperty.call(source, "canvasImageToolbar");
+    const hasGenerationPreferences = Object.prototype.hasOwnProperty.call(source, "generationPreferences");
     const storedSystemPrompt = appDatabase.loadUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY);
     const storedChatPresetId = appDatabase.loadUserPreference(session.userId, USER_CHAT_PRESET_KEY);
     const storedChatPersona = appDatabase.loadUserPreference(session.userId, USER_CHAT_PERSONA_KEY);
+    const storedCanvasImageToolbar = appDatabase.loadUserPreference(session.userId, USER_CANVAS_IMAGE_TOOLBAR_KEY);
+    const storedGenerationPreferences = appDatabase.loadUserPreference(session.userId, USER_GENERATION_PREFERENCES_KEY);
     let systemPrompt = readStoredUserSystemPrompt(storedSystemPrompt) || "";
     let chatPresetId = readStoredUserChatPresetId(storedChatPresetId) || defaultUserChatPresetId();
     let chatPersona = readStoredUserChatPersona(storedChatPersona) || "";
+    let canvasImageToolbar = readStoredUserCanvasImageToolbar(storedCanvasImageToolbar);
+    let generationPreferences = readStoredUserGenerationPreferences(storedGenerationPreferences);
 
     try {
         if (hasSystemPrompt) systemPrompt = normalizeUserSystemPrompt(source.systemPrompt);
         if (hasChatPresetId) chatPresetId = normalizeUserChatPresetId(source.chatPresetId);
         if (hasChatPersona) chatPersona = normalizeUserChatPersona(source.chatPersona);
+        if (hasCanvasImageToolbar) canvasImageToolbar = normalizeUserCanvasImageToolbar(source.canvasImageToolbar);
+        if (hasGenerationPreferences) generationPreferences = normalizeUserGenerationPreferences(source.generationPreferences);
     } catch (error) {
         throw new HttpError(400, error instanceof Error ? error.message : "用户偏好无效");
     }
@@ -1923,6 +1939,8 @@ async function updateUserPreferences(request: Request, session: SessionPayload) 
     if (hasSystemPrompt) appDatabase.saveUserPreference(session.userId, USER_SYSTEM_PROMPT_KEY, systemPrompt);
     if (hasChatPresetId) appDatabase.saveUserPreference(session.userId, USER_CHAT_PRESET_KEY, chatPresetId);
     if (hasChatPersona) appDatabase.saveUserPreference(session.userId, USER_CHAT_PERSONA_KEY, chatPersona);
+    if (hasCanvasImageToolbar) appDatabase.saveUserPreference(session.userId, USER_CANVAS_IMAGE_TOOLBAR_KEY, canvasImageToolbar);
+    if (hasGenerationPreferences) appDatabase.saveUserPreference(session.userId, USER_GENERATION_PREFERENCES_KEY, generationPreferences);
     return json(
         {
             systemPrompt,
@@ -1931,6 +1949,10 @@ async function updateUserPreferences(request: Request, session: SessionPayload) 
             chatPresetConfigured: hasChatPresetId || Boolean(readStoredUserChatPresetId(storedChatPresetId)),
             chatPersona,
             chatPersonaConfigured: hasChatPersona ? chatPersona.length > 0 : Boolean(readStoredUserChatPersona(storedChatPersona)),
+            canvasImageToolbar,
+            canvasImageToolbarConfigured: hasCanvasImageToolbar || Boolean(readStoredUserCanvasImageToolbar(storedCanvasImageToolbar)),
+            generationPreferences,
+            generationPreferencesConfigured: hasGenerationPreferences || Boolean(readStoredUserGenerationPreferences(storedGenerationPreferences)),
         },
         200,
         { "Cache-Control": "no-store" },
@@ -2222,6 +2244,8 @@ function exportAccountData(session: SessionPayload) {
             systemPrompt: appDatabase.loadUserPreference(userId, USER_SYSTEM_PROMPT_KEY),
             chatPresetId: appDatabase.loadUserPreference(userId, USER_CHAT_PRESET_KEY),
             chatPersona: appDatabase.loadUserPreference(userId, USER_CHAT_PERSONA_KEY),
+            canvasImageToolbar: appDatabase.loadUserPreference(userId, USER_CANVAS_IMAGE_TOOLBAR_KEY),
+            generationPreferences: appDatabase.loadUserPreference(userId, USER_GENERATION_PREFERENCES_KEY),
         },
         projects,
         conversations,

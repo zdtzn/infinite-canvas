@@ -2,7 +2,7 @@ import { nanoid } from "nanoid";
 
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import type { Asset } from "@/stores/use-asset-store";
-import type { ApiCallFormat, ModelChannel } from "@/stores/use-config-store";
+import type { ApiCallFormat, GenerationPreferences, ModelChannel } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
@@ -196,6 +196,10 @@ export type ServerUserPreferences = {
     chatPresetConfigured?: boolean;
     chatPersona: string;
     chatPersonaConfigured?: boolean;
+    canvasImageToolbar: { ids: string[]; showLabels: boolean } | null;
+    canvasImageToolbarConfigured?: boolean;
+    generationPreferences: GenerationPreferences | null;
+    generationPreferencesConfigured?: boolean;
 };
 
 export async function fetchServerUserPreferences(expectedUserId?: string) {
@@ -363,21 +367,25 @@ export async function deleteProfileAvatar() {
     return serverRequest<{ avatarUrl: string }>("/api/profile/avatar", { method: "DELETE" });
 }
 
-export async function submitImageJob(input: {
-    channelId: string;
-    apiFormat: ApiCallFormat;
-    model: string;
-    prompt: string;
-    count: number;
-    quality?: string;
-    imageQuality?: string;
-    imageOutputFormat?: string;
-    size?: string;
-    background?: string;
-    references: ServerImageReferenceInput[];
-    mask?: ServerImageReferenceInput;
-    source?: ServerJob["source"];
-}, expectedUserId?: string, idempotencyKey = nanoid()) {
+export async function submitImageJob(
+    input: {
+        channelId: string;
+        apiFormat: ApiCallFormat;
+        model: string;
+        prompt: string;
+        count: number;
+        quality?: string;
+        imageQuality?: string;
+        imageOutputFormat?: string;
+        size?: string;
+        background?: string;
+        references: ServerImageReferenceInput[];
+        mask?: ServerImageReferenceInput;
+        source?: ServerJob["source"];
+    },
+    expectedUserId?: string,
+    idempotencyKey = nanoid(),
+) {
     return serverRequest<{ job: ServerJob }>("/api/jobs/images", { method: "POST", body: input, headers: { "Idempotency-Key": idempotencyKey }, timeoutMs: 60_000, expectedUserId });
 }
 

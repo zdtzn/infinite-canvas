@@ -80,6 +80,7 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
             name: PROMPT_SOURCE_STORE_KEY,
             version: 2,
             partialize: (state) => ({ sources: state.sources, schedule: state.schedule }),
+            migrate: migratePromptSourceState,
             onRehydrateStorage: () => () => usePromptSourceStore.setState({ hydrated: true }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<PromptSourceStore>;
@@ -93,3 +94,12 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
         },
     ),
 );
+
+export function migratePromptSourceState(persisted: unknown) {
+    const value = (persisted || {}) as Partial<PromptSourceStore>;
+    return {
+        sources: mergePromptSources(Array.isArray(value.sources) ? value.sources : []),
+        schedule: { ...defaultSchedule, ...(value.schedule || {}) },
+        hydrated: false,
+    } as PromptSourceStore;
+}

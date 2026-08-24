@@ -66,14 +66,7 @@ export type ImageGenerationCompletion = {
 };
 
 type CompletionHandler = (completion: ImageGenerationCompletion) => void | Promise<void>;
-type SlotRunner = (
-    snapshot: ImageGenerationSnapshot,
-    index: number,
-    onServerJobCreated?: (jobId: string) => void,
-    expectedUserId?: string,
-    idempotencyKey?: string,
-    onServerJobArchived?: (job: ServerJob) => void,
-) => Promise<GeneratedImage>;
+type SlotRunner = (snapshot: ImageGenerationSnapshot, index: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string, idempotencyKey?: string, onServerJobArchived?: (job: ServerJob) => void) => Promise<GeneratedImage>;
 
 let currentJob: ImageGenerationJob | null = null;
 let elapsedTimer: ReturnType<typeof setInterval> | undefined;
@@ -179,21 +172,11 @@ export function replaceImageGenerationResult(image: GeneratedImage) {
     return true;
 }
 
-async function runGeneration(
-    jobId: string,
-    snapshot: ImageGenerationSnapshot,
-    onComplete: CompletionHandler | undefined,
-    slotRunner: SlotRunner,
-    ownerUserId: string,
-    ownerVersion: number,
-    slotConcurrency: number,
-) {
+async function runGeneration(jobId: string, snapshot: ImageGenerationSnapshot, onComplete: CompletionHandler | undefined, slotRunner: SlotRunner, ownerUserId: string, ownerVersion: number, slotConcurrency: number) {
     const job = currentJob;
     if (!job || job.id !== jobId) return;
 
-    const settled = await settleWithConcurrency(job.results, slotConcurrency, (result, index) =>
-        result.status === "success" ? Promise.resolve(result.image!) : runGenerationSlot(jobId, index, snapshot, slotRunner, ownerUserId),
-    );
+    const settled = await settleWithConcurrency(job.results, slotConcurrency, (result, index) => (result.status === "success" ? Promise.resolve(result.image!) : runGenerationSlot(jobId, index, snapshot, slotRunner, ownerUserId)));
     const successImages = settled.filter((item): item is PromiseFulfilledResult<GeneratedImage> => item.status === "fulfilled").map((item) => item.value);
     const successCount = successImages.length;
     const failCount = settled.length - successCount;
@@ -223,14 +206,7 @@ async function runGeneration(
     }
 }
 
-async function runGenerationSlot(
-    jobId: string,
-    index: number,
-    snapshot: ImageGenerationSnapshot,
-    slotRunner: SlotRunner = requestImageSlot,
-    expectedUserId = runtimeOwnerUserId,
-    retryExistingServerJob = false,
-) {
+async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGenerationSnapshot, slotRunner: SlotRunner = requestImageSlot, expectedUserId = runtimeOwnerUserId, retryExistingServerJob = false) {
     try {
         const currentResult = currentJob?.id === jobId ? currentJob.results[index] : undefined;
         const existingServerJobId = currentResult?.serverJobId;
@@ -251,15 +227,28 @@ async function runGenerationSlot(
         };
         const nextImage = existingServerJobId
             ? retryExistingServerJob && PUBLIC_MODE
-                ? await retryServerImage(existingServerJobId, idempotencyKey, expectedUserId, (createdJobId) => {
+                ? await retryServerImage(
+                      existingServerJobId,
+                      idempotencyKey,
+                      expectedUserId,
+                      (createdJobId) => {
+                          serverJobId = createdJobId;
+                          updateResult(jobId, index, { serverJobId: createdJobId });
+                      },
+                      onServerJobArchived,
+                  )
+                : await restoreServerImage(existingServerJobId, expectedUserId, onServerJobArchived)
+            : await slotRunner(
+                  snapshot,
+                  index,
+                  (createdJobId) => {
                       serverJobId = createdJobId;
                       updateResult(jobId, index, { serverJobId: createdJobId });
-                  }, onServerJobArchived)
-                : await restoreServerImage(existingServerJobId, expectedUserId, onServerJobArchived)
-            : await slotRunner(snapshot, index, (createdJobId) => {
-                  serverJobId = createdJobId;
-                  updateResult(jobId, index, { serverJobId: createdJobId });
-              }, expectedUserId, idempotencyKey, onServerJobArchived);
+                  },
+                  expectedUserId,
+                  idempotencyKey,
+                  onServerJobArchived,
+              );
         const persistedImage = archivedImage || (serverJobId ? { ...nextImage, serverJobId } : nextImage);
         updateResult(jobId, index, { status: "success", image: persistedImage });
         return persistedImage;
@@ -269,14 +258,7 @@ async function runGenerationSlot(
     }
 }
 
-async function requestImageSlot(
-    snapshot: ImageGenerationSnapshot,
-    _index?: number,
-    onServerJobCreated?: (jobId: string) => void,
-    expectedUserId?: string,
-    idempotencyKey?: string,
-    onServerJobArchived?: (job: ServerJob) => void,
-) {
+async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string, idempotencyKey?: string, onServerJobArchived?: (job: ServerJob) => void) {
     const itemStartedAt = Date.now();
     const result = snapshot.references.length
         ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, { onJobCreated: onServerJobCreated, onJobArchived: onServerJobArchived, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey })
@@ -352,13 +334,7 @@ export async function generatedImageFromServerImage(image: ServerJobImage, serve
     };
 }
 
-async function retryServerImage(
-    serverJobId: string,
-    idempotencyKey: string,
-    expectedUserId: string,
-    onServerJobCreated: (jobId: string) => void,
-    onServerJobArchived?: (job: ServerJob) => void,
-) {
+async function retryServerImage(serverJobId: string, idempotencyKey: string, expectedUserId: string, onServerJobCreated: (jobId: string) => void, onServerJobArchived?: (job: ServerJob) => void) {
     const { job } = await retryServerJob(serverJobId, expectedUserId, idempotencyKey);
     onServerJobCreated(job.id);
     return restoreServerImage(job.id, expectedUserId, onServerJobArchived);
@@ -376,15 +352,17 @@ function hydrateRuntime() {
     hydrationStarted = true;
     const ownerUserId = runtimeOwnerUserId;
     const version = hydrationVersion;
-    void runtimeStore.getItem<ImageGenerationJob>(runtimeJobKey(ownerUserId)).then((saved) => {
-        if (version !== hydrationVersion || ownerUserId !== runtimeOwnerUserId || !saved || currentJob) return;
-        currentJob = saved;
-        emit();
-        if (saved.status === "running" && saved.snapshot) {
-            startElapsedTimer();
-            void runGeneration(saved.id, saved.snapshot, undefined, requestImageSlot, ownerUserId, version, saved.slotConcurrency || saved.results.length);
-        }
-    });
+    void loadPersistedImageGenerationJob(runtimeStore, ownerUserId)
+        .then((saved) => {
+            if (version !== hydrationVersion || ownerUserId !== runtimeOwnerUserId || !saved || currentJob) return;
+            currentJob = saved;
+            emit();
+            if (saved.status === "running" && saved.snapshot) {
+                startElapsedTimer();
+                void runGeneration(saved.id, saved.snapshot, undefined, requestImageSlot, ownerUserId, version, saved.slotConcurrency || saved.results.length);
+            }
+        })
+        .catch(() => undefined);
 }
 
 function persistCurrentJob() {
@@ -412,6 +390,25 @@ function persistCurrentJob() {
 
 function runtimeJobKey(ownerUserId = runtimeOwnerUserId) {
     return PUBLIC_MODE ? `${RUNTIME_JOB_KEY_PREFIX}${encodeURIComponent(ownerUserId)}` : RUNTIME_JOB_KEY;
+}
+
+type ImageGenerationRuntimeStorage = {
+    getItem: <T>(key: string) => Promise<T | null>;
+    setItem: <T>(key: string, value: T) => Promise<T>;
+    removeItem: (key: string) => Promise<void>;
+};
+
+export async function loadPersistedImageGenerationJob(storage: ImageGenerationRuntimeStorage, ownerUserId: string, publicMode = PUBLIC_MODE) {
+    const currentKey = publicMode ? `${RUNTIME_JOB_KEY_PREFIX}${encodeURIComponent(ownerUserId)}` : RUNTIME_JOB_KEY;
+    let saved = await storage.getItem<ImageGenerationJob>(currentKey);
+    if (saved || !publicMode) return saved;
+
+    const legacy = await storage.getItem<ImageGenerationJob>(RUNTIME_JOB_KEY);
+    if (!legacy) return null;
+    await storage.setItem(currentKey, legacy);
+    await storage.removeItem(RUNTIME_JOB_KEY);
+    saved = legacy;
+    return saved;
 }
 
 function stripReferenceData(reference: ReferenceImage): ReferenceImage {

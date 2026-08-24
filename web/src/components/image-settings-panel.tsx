@@ -1,10 +1,10 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode } from "react";
 import { ConfigProvider, Select, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { imageResolutionLabel } from "@/lib/image-setting-labels";
-import { modelOptionName, normalizeImageSizeSelection, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, normalizeImageSizeSelection, useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { isSadaiImage2Model, isUuAsyncGptImageModel } from "@/stores/model-capabilities";
 
@@ -67,7 +67,8 @@ type ImageSettingsPanelProps = {
 };
 
 export function ImageSettingsPanel({ config, selectedModel, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
-    const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
+    const snapDimensionToStep = useConfigStore((state) => state.snapDimensionToStep);
+    const setSnapDimensionToStep = useConfigStore((state) => state.setSnapDimensionToStep);
     const resolved = resolveImageModelSettings(config, selectedModel, maxCount);
     const channel = resolved.channel;
     const capabilities = resolved.capabilities;

@@ -5,13 +5,49 @@ import {
     clearImageGenerationJob,
     generatedImageFromServerImage,
     getImageGenerationSnapshot,
+    loadPersistedImageGenerationJob,
     replaceImageGenerationResult,
     startImageGeneration,
     subscribeImageGeneration,
     type GeneratedImage,
     type ImageGenerationCompletion,
+    type ImageGenerationJob,
     type ImageGenerationSnapshot,
 } from "./image-generation-runtime";
+
+test("migrates the legacy active image task into the authenticated account key", async () => {
+    const values = new Map<string, unknown>();
+    const legacy: ImageGenerationJob = {
+        id: "legacy-job",
+        prompt: "legacy",
+        references: [],
+        status: "succeeded",
+        results: [],
+        startedAt: 1,
+        elapsedMs: 1,
+        successCount: 0,
+        failCount: 0,
+    };
+    values.set("active-image-job:v1", legacy);
+    const storage = {
+        async getItem<T>(key: string) {
+            return (values.get(key) as T | undefined) ?? null;
+        },
+        async setItem<T>(key: string, value: T) {
+            values.set(key, value);
+            return value;
+        },
+        async removeItem(key: string) {
+            values.delete(key);
+        },
+    };
+
+    const restored = await loadPersistedImageGenerationJob(storage, "user-a", true);
+
+    assert.equal(restored?.id, "legacy-job");
+    assert.equal(values.has("active-image-job:v1"), false);
+    assert.equal((values.get("active-image-job:v2:user-a") as { id: string })?.id, "legacy-job");
+});
 
 test("preserves temporary persistence metadata from a completed server job", async () => {
     const image = await generatedImageFromServerImage(
@@ -171,7 +207,10 @@ test("limits parallel image slots without dropping failures or later work", asyn
     assert.equal(maximum, 2);
     assert.equal(result.successCount, 3);
     assert.equal(result.failCount, 1);
-    assert.deepEqual(getImageGenerationSnapshot()?.results.map((item) => item.status), ["success", "failed", "success", "success"]);
+    assert.deepEqual(
+        getImageGenerationSnapshot()?.results.map((item) => item.status),
+        ["success", "failed", "success", "success"],
+    );
     assert.equal(clearImageGenerationJob(), true);
 });
 

@@ -35,8 +35,12 @@ export type ImageQuickToolsConfig = {
     showLabels: boolean;
 };
 
-export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v7";
+type ImageQuickToolsStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
+export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools";
+const LEGACY_IMAGE_QUICK_TOOLS_STORAGE_KEYS = ["canvas-image-quick-tools-v7", "canvas-image-quick-tools-v6"];
+
+const imageBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download", "edit"];
 const defaultBaseToolIds: ImageQuickToolId[] = ["download", "edit"];
 
 export const imageToolDefinitions: ImageToolDefinition[] = [
@@ -147,7 +151,7 @@ export function buildImageToolbarTools(node: CanvasNodeData, handlers: ImageTool
 }
 
 export function normalizeImageQuickToolIds(value: unknown[]) {
-    const allIds: ImageQuickToolId[] = [...defaultBaseToolIds, ...imageToolDefinitions.map((tool) => tool.id)];
+    const allIds: ImageQuickToolId[] = [...imageBaseToolIds, ...imageToolDefinitions.map((tool) => tool.id)];
     const ids = new Set(allIds);
     return allIds.filter((id) => value.includes(id) && ids.has(id));
 }
@@ -160,6 +164,64 @@ export function readImageQuickToolsConfig(value: unknown): ImageQuickToolsConfig
         ids: Array.isArray(data.ids) ? normalizeImageQuickToolIds(data.ids) : defaultImageQuickToolIds,
         showLabels: data.showLabels === true,
     };
+}
+
+export function imageQuickToolsStorageKey(userId: string) {
+    return `${IMAGE_QUICK_TOOLS_STORAGE_KEY}:${encodeURIComponent(userId.trim() || "local")}`;
+}
+
+export function loadImageQuickToolsConfig(storage: ImageQuickToolsStorage | null | undefined, userId: string): { config: ImageQuickToolsConfig; configured: boolean } {
+    const accountId = userId.trim();
+    const storageKey = imageQuickToolsStorageKey(userId);
+    const stored = readStorageValue(storage, storageKey);
+    if (stored !== null) return { config: parseStoredImageQuickToolsConfig(storage, storageKey, stored), configured: true };
+
+    for (const legacyKey of LEGACY_IMAGE_QUICK_TOOLS_STORAGE_KEYS) {
+        const legacy = readStorageValue(storage, legacyKey);
+        if (legacy === null) continue;
+        const config = parseStoredImageQuickToolsConfig(storage, legacyKey, legacy);
+        if (!accountId) return { config, configured: true };
+        if (writeImageQuickToolsConfig(storage, userId, config)) {
+            LEGACY_IMAGE_QUICK_TOOLS_STORAGE_KEYS.forEach((key) => removeStorageValue(storage, key));
+        }
+        return { config, configured: true };
+    }
+
+    return { config: readImageQuickToolsConfig(null), configured: false };
+}
+
+export function writeImageQuickToolsConfig(storage: ImageQuickToolsStorage | null | undefined, userId: string, value: ImageQuickToolsConfig) {
+    try {
+        storage?.setItem(imageQuickToolsStorageKey(userId), JSON.stringify(readImageQuickToolsConfig(value)));
+        return Boolean(storage);
+    } catch {
+        return false;
+    }
+}
+
+function parseStoredImageQuickToolsConfig(storage: ImageQuickToolsStorage | null | undefined, key: string, value: string) {
+    try {
+        return readImageQuickToolsConfig(JSON.parse(value) as unknown);
+    } catch {
+        removeStorageValue(storage, key);
+        return readImageQuickToolsConfig(null);
+    }
+}
+
+function readStorageValue(storage: ImageQuickToolsStorage | null | undefined, key: string) {
+    try {
+        return storage?.getItem(key) ?? null;
+    } catch {
+        return null;
+    }
+}
+
+function removeStorageValue(storage: ImageQuickToolsStorage | null | undefined, key: string) {
+    try {
+        storage?.removeItem(key);
+    } catch {
+        // Browser privacy settings may disable local storage.
+    }
 }
 
 function resolveToolText(value: string | ((node: CanvasNodeData) => string), node: CanvasNodeData) {

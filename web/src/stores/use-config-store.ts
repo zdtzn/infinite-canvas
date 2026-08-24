@@ -68,12 +68,38 @@ export type WebdavSyncConfig = {
     directory: string;
     lastSyncedAt: string;
 };
+
+export type GenerationPreferences = {
+    imageModel: string;
+    videoModel: string;
+    audioModel: string;
+    audioVoice: string;
+    audioFormat: string;
+    audioSpeed: string;
+    audioInstructions: string;
+    videoSeconds: string;
+    vquality: string;
+    videoGenerateAudio: string;
+    videoWatermark: string;
+    quality: string;
+    imageQuality: string;
+    imageOutputFormat: string;
+    size: string;
+    background: string;
+    count: string;
+    canvasImageCount: string;
+    snapDimensionToStep: boolean;
+};
 export type ConfigTabKey = "channels" | "preferences" | "prompt-sources" | "webdav" | "local-storage" | "members";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
+export const CONFIG_PREFERENCE_OWNER_KEY = "infinite-canvas:config-preference-owner";
+export const GENERATION_PREFERENCE_KEY_PREFIX = "infinite-canvas:generation-preferences:";
+export const WEBDAV_PREFERENCE_KEY_PREFIX = "infinite-canvas:webdav-preferences:";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
+let activeConfigPreferenceUserId = "";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -130,15 +156,42 @@ export const defaultWebdavSyncConfig: WebdavSyncConfig = {
     lastSyncedAt: "",
 };
 
+const generationPreferenceConfigKeys = new Set<keyof AiConfig>([
+    "imageModel",
+    "videoModel",
+    "audioModel",
+    "audioVoice",
+    "audioFormat",
+    "audioSpeed",
+    "audioInstructions",
+    "videoSeconds",
+    "vquality",
+    "videoGenerateAudio",
+    "videoWatermark",
+    "quality",
+    "imageQuality",
+    "imageOutputFormat",
+    "size",
+    "background",
+    "count",
+    "canvasImageCount",
+]);
+
+export const defaultGenerationPreferences: GenerationPreferences = generationPreferencesFromConfig(defaultConfig, true);
+
 type ConfigStore = {
     config: AiConfig;
     webdav: WebdavSyncConfig;
+    snapDimensionToStep: boolean;
     isConfigOpen: boolean;
     configTab: ConfigTabKey;
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
     setPlatformChannels: (channels: ModelChannel[]) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
+    prepareAccountPreferences: (userId: string) => void;
+    replaceGenerationPreferences: (preferences: GenerationPreferences) => void;
+    setSnapDimensionToStep: (enabled: boolean) => void;
     clearSensitiveSession: () => void;
     clearAccountScopedPreferences: () => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
@@ -207,27 +260,73 @@ export const useConfigStore = create<ConfigStore>()(
         (set, get) => ({
             config: defaultConfig,
             webdav: defaultWebdavSyncConfig,
+            snapDimensionToStep: true,
             isConfigOpen: false,
             configTab: "channels",
             shouldPromptContinue: false,
             updateConfig: (key, value) =>
-                set((state) => ({
-                    config: {
-                        ...state.config,
-                        [key]: value,
-                    },
-                })),
+                set((state) => {
+                    const config = { ...state.config, [key]: value };
+                    if (generationPreferenceConfigKeys.has(key)) persistLocalGenerationPreferences(config, state.snapDimensionToStep);
+                    return { config };
+                }),
             setPlatformChannels: (channels) =>
-                set((state) => ({
-                    config: applyPlatformChannels(state.config, channels),
-                })),
+                set((state) => {
+                    const config = applyPlatformChannels(state.config, channels);
+                    persistLocalGenerationPreferences(config, state.snapDimensionToStep);
+                    return { config };
+                }),
             updateWebdavConfig: (key, value) =>
-                set((state) => ({
-                    webdav: {
-                        ...state.webdav,
-                        [key]: value,
-                    },
-                })),
+                set((state) => {
+                    const webdav = { ...state.webdav, [key]: value };
+                    persistLocalWebdavPreferences(webdav);
+                    return { webdav };
+                }),
+            prepareAccountPreferences: (userId) => {
+                const nextUserId = userId.trim();
+                const current = get();
+                activeConfigPreferenceUserId = nextUserId;
+                if (!nextUserId) {
+                    set({
+                        config: applyGenerationPreferences({ ...current.config, systemPrompt: "" }, defaultGenerationPreferences),
+                        webdav: defaultWebdavSyncConfig,
+                        snapDimensionToStep: defaultGenerationPreferences.snapDimensionToStep,
+                    });
+                    return;
+                }
+
+                const storage = preferenceStorage();
+                const previousOwner = readStorageItem(storage, CONFIG_PREFERENCE_OWNER_KEY);
+                let generationPreferences = readLocalGenerationPreferences(storage, nextUserId);
+                let webdav = readLocalWebdavPreferences(storage, nextUserId);
+                const canMigrateLegacy = !previousOwner || previousOwner === nextUserId;
+                if (!generationPreferences && canMigrateLegacy) {
+                    generationPreferences = generationPreferencesFromConfig(current.config, current.snapDimensionToStep);
+                    writeLocalGenerationPreferences(storage, nextUserId, generationPreferences);
+                }
+                if (!webdav && canMigrateLegacy) {
+                    webdav = sanitizeWebdavPreferences(current.webdav);
+                    writeLocalWebdavPreferences(storage, nextUserId, webdav);
+                }
+                writeStorageItem(storage, CONFIG_PREFERENCE_OWNER_KEY, nextUserId);
+                set({
+                    config: applyGenerationPreferences({ ...current.config, systemPrompt: "" }, generationPreferences || defaultGenerationPreferences),
+                    webdav: webdav || defaultWebdavSyncConfig,
+                    snapDimensionToStep: generationPreferences?.snapDimensionToStep ?? defaultGenerationPreferences.snapDimensionToStep,
+                });
+            },
+            replaceGenerationPreferences: (preferences) =>
+                set((state) => {
+                    const normalized = normalizeGenerationPreferences(preferences);
+                    const config = applyGenerationPreferences(state.config, normalized);
+                    writeLocalGenerationPreferences(preferenceStorage(), activeConfigPreferenceUserId, normalized);
+                    return { config, snapDimensionToStep: normalized.snapDimensionToStep };
+                }),
+            setSnapDimensionToStep: (snapDimensionToStep) =>
+                set((state) => {
+                    persistLocalGenerationPreferences(state.config, snapDimensionToStep);
+                    return { snapDimensionToStep };
+                }),
             clearSensitiveSession: () =>
                 set((state) => ({
                     config: {
@@ -252,7 +351,7 @@ export const useConfigStore = create<ConfigStore>()(
         }),
         {
             name: CONFIG_STORE_KEY,
-            version: 3,
+            version: 4,
             partialize: (state) => ({
                 config: {
                     ...state.config,
@@ -260,11 +359,12 @@ export const useConfigStore = create<ConfigStore>()(
                     channels: state.config.channels.map((channel) => ({ ...channel, apiKey: "" })),
                 },
                 webdav: { ...state.webdav, password: "" },
+                snapDimensionToStep: state.snapDimensionToStep,
             }),
             migrate: (persisted) => {
                 const value = (persisted || {}) as Partial<ConfigStore>;
                 const webdav = (value.webdav || {}) as Partial<WebdavSyncConfig>;
-                return { ...value, webdav: { ...webdav, password: "" } } as ConfigStore;
+                return { ...value, webdav: { ...webdav, password: "" }, snapDimensionToStep: value.snapDimensionToStep !== false } as ConfigStore;
             },
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
@@ -277,6 +377,7 @@ export const useConfigStore = create<ConfigStore>()(
                 return {
                     ...current,
                     webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav, password: "" },
+                    snapDimensionToStep: persistedState.snapDimensionToStep !== false,
                     config: {
                         ...config,
                         channelMode: "local",
@@ -310,6 +411,204 @@ export const useConfigStore = create<ConfigStore>()(
 export function useEffectiveConfig() {
     const config = useConfigStore((state) => state.config);
     return useMemo(() => ({ ...config, channelMode: "local" as const }), [config]);
+}
+
+export function generationPreferencesFromConfig(config: AiConfig, snapDimensionToStep: boolean): GenerationPreferences {
+    return normalizeGenerationPreferences({
+        imageModel: config.imageModel,
+        videoModel: config.videoModel,
+        audioModel: config.audioModel,
+        audioVoice: config.audioVoice,
+        audioFormat: config.audioFormat,
+        audioSpeed: config.audioSpeed,
+        audioInstructions: config.audioInstructions,
+        videoSeconds: config.videoSeconds,
+        vquality: config.vquality,
+        videoGenerateAudio: config.videoGenerateAudio,
+        videoWatermark: config.videoWatermark,
+        quality: config.quality,
+        imageQuality: config.imageQuality,
+        imageOutputFormat: config.imageOutputFormat,
+        size: config.size,
+        background: config.background,
+        count: config.count,
+        canvasImageCount: config.canvasImageCount,
+        snapDimensionToStep,
+    });
+}
+
+export function normalizeGenerationPreferences(value: unknown): GenerationPreferences {
+    const source = value && typeof value === "object" && !Array.isArray(value) ? (value as Partial<GenerationPreferences>) : {};
+    return {
+        imageModel: optionalPreferenceString(source.imageModel, defaultConfig.imageModel, 300),
+        videoModel: optionalPreferenceString(source.videoModel, defaultConfig.videoModel, 300),
+        audioModel: optionalPreferenceString(source.audioModel, defaultConfig.audioModel, 300),
+        audioVoice: preferenceString(source.audioVoice, defaultConfig.audioVoice, 80),
+        audioFormat: preferenceString(source.audioFormat, defaultConfig.audioFormat, 32),
+        audioSpeed: normalizePreferenceAudioSpeed(source.audioSpeed),
+        audioInstructions: preferenceString(source.audioInstructions, "", 2_000, true),
+        videoSeconds: normalizePreferenceVideoSeconds(source.videoSeconds),
+        vquality: preferenceString(source.vquality, defaultConfig.vquality, 32),
+        videoGenerateAudio: booleanPreferenceString(source.videoGenerateAudio, true),
+        videoWatermark: booleanPreferenceString(source.videoWatermark, false),
+        quality: enumPreference(source.quality, ["low", "medium", "high"], defaultConfig.quality),
+        imageQuality: normalizeImageQuality(source.imageQuality),
+        imageOutputFormat: normalizeImageOutputFormat(source.imageOutputFormat),
+        size: preferenceString(source.size, defaultConfig.size, 32),
+        background: enumPreference(source.background, ["", "transparent"], defaultConfig.background),
+        count: normalizePreferenceCount(source.count, defaultConfig.count),
+        canvasImageCount: normalizePreferenceCount(source.canvasImageCount, defaultConfig.canvasImageCount),
+        snapDimensionToStep: source.snapDimensionToStep !== false,
+    };
+}
+
+export function applyGenerationPreferences(config: AiConfig, value: GenerationPreferences): AiConfig {
+    const preferences = normalizeGenerationPreferences(value);
+    return {
+        ...config,
+        model: preferences.imageModel || config.model,
+        imageModel: preferences.imageModel,
+        videoModel: preferences.videoModel,
+        audioModel: preferences.audioModel,
+        audioVoice: preferences.audioVoice,
+        audioFormat: preferences.audioFormat,
+        audioSpeed: preferences.audioSpeed,
+        audioInstructions: preferences.audioInstructions,
+        videoSeconds: preferences.videoSeconds,
+        vquality: preferences.vquality,
+        videoGenerateAudio: preferences.videoGenerateAudio,
+        videoWatermark: preferences.videoWatermark,
+        quality: preferences.quality,
+        imageQuality: preferences.imageQuality,
+        imageOutputFormat: preferences.imageOutputFormat,
+        size: preferences.size,
+        background: preferences.background,
+        count: preferences.count,
+        canvasImageCount: preferences.canvasImageCount,
+    };
+}
+
+export function generationPreferencesEqual(left: GenerationPreferences, right: GenerationPreferences) {
+    return JSON.stringify(normalizeGenerationPreferences(left)) === JSON.stringify(normalizeGenerationPreferences(right));
+}
+
+export function readLocalGenerationPreferences(storage: Pick<Storage, "getItem"> | null | undefined, userId: string) {
+    const value = readStorageItem(storage, generationPreferenceStorageKey(userId));
+    if (!value) return null;
+    try {
+        return normalizeGenerationPreferences(JSON.parse(value));
+    } catch {
+        return null;
+    }
+}
+
+export function writeLocalGenerationPreferences(storage: Pick<Storage, "setItem"> | null | undefined, userId: string, preferences: GenerationPreferences) {
+    if (!userId) return;
+    writeStorageItem(storage, generationPreferenceStorageKey(userId), JSON.stringify(normalizeGenerationPreferences(preferences)));
+}
+
+export function readLocalWebdavPreferences(storage: Pick<Storage, "getItem"> | null | undefined, userId: string) {
+    const value = readStorageItem(storage, webdavPreferenceStorageKey(userId));
+    if (!value) return null;
+    try {
+        return sanitizeWebdavPreferences(JSON.parse(value));
+    } catch {
+        return null;
+    }
+}
+
+export function writeLocalWebdavPreferences(storage: Pick<Storage, "setItem"> | null | undefined, userId: string, webdav: WebdavSyncConfig) {
+    if (!userId) return;
+    writeStorageItem(storage, webdavPreferenceStorageKey(userId), JSON.stringify(sanitizeWebdavPreferences(webdav)));
+}
+
+function persistLocalGenerationPreferences(config: AiConfig, snapDimensionToStep: boolean) {
+    writeLocalGenerationPreferences(preferenceStorage(), activeConfigPreferenceUserId, generationPreferencesFromConfig(config, snapDimensionToStep));
+}
+
+function persistLocalWebdavPreferences(webdav: WebdavSyncConfig) {
+    writeLocalWebdavPreferences(preferenceStorage(), activeConfigPreferenceUserId, webdav);
+}
+
+function generationPreferenceStorageKey(userId: string) {
+    return `${GENERATION_PREFERENCE_KEY_PREFIX}${encodeURIComponent(userId)}`;
+}
+
+function webdavPreferenceStorageKey(userId: string) {
+    return `${WEBDAV_PREFERENCE_KEY_PREFIX}${encodeURIComponent(userId)}`;
+}
+
+function preferenceStorage() {
+    try {
+        return typeof window === "undefined" ? null : window.localStorage;
+    } catch {
+        return null;
+    }
+}
+
+function readStorageItem(storage: Pick<Storage, "getItem"> | null | undefined, key: string) {
+    try {
+        return storage?.getItem(key) ?? null;
+    } catch {
+        return null;
+    }
+}
+
+function writeStorageItem(storage: Pick<Storage, "setItem"> | null | undefined, key: string, value: string) {
+    try {
+        storage?.setItem(key, value);
+    } catch {
+        // Browser privacy settings may disable local storage.
+    }
+}
+
+function sanitizeWebdavPreferences(value: Partial<WebdavSyncConfig> | null | undefined): WebdavSyncConfig {
+    return {
+        url: preferenceString(value?.url, "", 2_000),
+        username: preferenceString(value?.username, "", 300),
+        password: "",
+        directory: preferenceString(value?.directory, defaultWebdavSyncConfig.directory, 300),
+        lastSyncedAt: preferenceString(value?.lastSyncedAt, "", 80),
+    };
+}
+
+function preferenceString(value: unknown, fallback: string, maxLength: number, preserveWhitespace = false) {
+    if (typeof value !== "string" || value.length > maxLength || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value)) return fallback;
+    const normalized = preserveWhitespace ? value : value.trim();
+    return normalized || (preserveWhitespace ? "" : fallback);
+}
+
+function optionalPreferenceString(value: unknown, fallback: string, maxLength: number) {
+    if (typeof value !== "string" || value.length > maxLength || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value)) return fallback;
+    return value.trim();
+}
+
+function enumPreference(value: unknown, options: readonly string[], fallback: string) {
+    const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+    return options.includes(normalized) ? normalized : fallback;
+}
+
+function booleanPreferenceString(value: unknown, fallback: boolean) {
+    if (value === "true" || value === true) return "true";
+    if (value === "false" || value === false) return "false";
+    return String(fallback);
+}
+
+function normalizePreferenceCount(value: unknown, fallback: string) {
+    const count = Math.floor(Number(value));
+    return Number.isFinite(count) ? String(Math.max(1, Math.min(15, count))) : fallback;
+}
+
+function normalizePreferenceVideoSeconds(value: unknown) {
+    if (String(value).trim() === "-1") return "-1";
+    const seconds = Math.floor(Number(value));
+    return Number.isFinite(seconds) ? String(Math.max(1, Math.min(20, seconds))) : defaultConfig.videoSeconds;
+}
+
+function normalizePreferenceAudioSpeed(value: unknown) {
+    const speed = Number(value);
+    if (!Number.isFinite(speed)) return defaultConfig.audioSpeed;
+    return String(Math.max(0.25, Math.min(4, speed)));
 }
 
 /** Normalize a mixed list of raw model names or model objects into deduped ChannelModel entries. */
