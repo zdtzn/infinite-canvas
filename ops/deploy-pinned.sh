@@ -125,7 +125,9 @@ assert_no_active_jobs() {
 }
 
 assert_no_active_jobs
-pull_image "$IMAGE_REF"
+if ! docker image inspect "$IMAGE_REF" >/dev/null 2>&1; then
+  pull_image "$IMAGE_REF"
+fi
 
 if [ -f "$ENV_FILE" ]; then
   docker run --rm \

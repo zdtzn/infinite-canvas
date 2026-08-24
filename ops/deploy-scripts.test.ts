@@ -11,9 +11,7 @@ test("remote deployment uploads local scripts instead of downloading GitHub Raw 
   expect(script).toContain("$scpPath");
   expect(script).toContain("[Text.UTF8Encoding]::new($false)");
   expect(script).toContain("IMAGE_TAG=$Commit");
-  expect(script).toContain(
-    "ops/deploy-pinned.sh ops/deploy-remote.ps1",
-  );
+  expect(script).toContain("ops/deploy-pinned.sh ops/deploy-remote.ps1");
   expect(script).not.toContain("raw.githubusercontent.com");
 });
 
@@ -33,5 +31,23 @@ test("Docker publishing exposes a full commit tag and shell scripts use LF check
   const attributes = read("../.gitattributes");
 
   expect(workflow).toContain("type=sha,prefix=,format=long");
+  expect(workflow).toContain("Install dependencies with retry");
+  expect(workflow).toContain("for attempt in 1 2 3");
+  expect(workflow).not.toContain("Install server dependencies");
   expect(attributes).toContain("*.sh text eol=lf");
+});
+
+test("main pushes use one release verification workflow", () => {
+  const qualityWorkflow = read("../.github/workflows/quality.yml");
+
+  expect(qualityWorkflow).toContain("pull_request:");
+  expect(qualityWorkflow).toContain("workflow_dispatch:");
+  expect(qualityWorkflow).not.toContain('branches: ["main"]');
+});
+
+test("pinned deployment reuses an image already pulled by commit resolution", () => {
+  const script = read("./deploy-pinned.sh");
+
+  expect(script).toContain('docker image inspect "$IMAGE_REF"');
+  expect(script).toContain('pull_image "$IMAGE_REF"');
 });
