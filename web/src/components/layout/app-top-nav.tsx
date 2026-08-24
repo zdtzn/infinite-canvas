@@ -152,8 +152,8 @@ export function AppTopNav() {
                                                         onPointerDown={() => void preloadRoute(`/${tool.slug}`)}
                                                         onTouchStart={() => void preloadRoute(`/${tool.slug}`)}
                                                     >
-                                                        <span>{tool.label}</span>
-                                                        <span className="text-xs text-stone-400">{navigationSceneNames[tool.slug]}</span>
+                                                        <span className="font-medium">{navigationSceneNames[tool.slug]}</span>
+                                                        <span className="text-xs text-stone-400">{tool.label}</span>
                                                     </span>
                                                 ),
                                                 onMouseEnter: () => void preloadRoute(`/${tool.slug}`),
