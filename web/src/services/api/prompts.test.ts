@@ -21,6 +21,13 @@ test("includes Banana Prompt Quicker as a trusted default without removing custo
     assert.ok(DEFAULT_PROMPT_SOURCES.some((source) => source.id === "freestylefly-awesome-gpt-image-2"));
 });
 
+test("includes the attributed GPT-4o image gallery as a trusted source", () => {
+    const source = DEFAULT_PROMPT_SOURCES.find((item) => item.id === "jamez-bondos-awesome-gpt4o-images");
+    assert.equal(source?.trusted, true);
+    assert.equal(source?.githubUrl, "https://github.com/jamez-bondos/awesome-gpt4o-images");
+    assert.match(source?.script || "", /README\.md/);
+});
+
 test("keeps a valid expired source cache available while a refresh runs in the background", () => {
     const cached = {
         items: [{ id: "prompt-1" }],

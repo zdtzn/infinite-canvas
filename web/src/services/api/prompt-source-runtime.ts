@@ -223,6 +223,7 @@ export async function runTrustedPromptSource(sourceId: string, options?: RunOpti
     if (sourceId === "freestylefly-awesome-gpt-image-2") return parseFreestylefly(options);
     if (sourceId === "awesome-gpt-image") return parseAwesomeGptImage(options);
     if (sourceId === "awesome-gpt4o-image-prompts") return parseAwesomeGpt4o(options);
+    if (sourceId === "jamez-bondos-awesome-gpt4o-images") return parseJamezBondosAwesomeGpt4oImages(options);
     if (sourceId === "youmind-gpt-image-2") return parseYouMind("https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main", "youmind-gpt-image-2", "gpt-image-2", options);
     if (sourceId === "youmind-nano-banana-pro") return parseYouMind("https://raw.githubusercontent.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts/main", "youmind-nano-banana-pro", "nano-banana-pro", options);
     throw new Error("公网安全模式不允许运行自定义提示词脚本");
@@ -313,6 +314,36 @@ async function parseAwesomeGpt4o(options?: RunOptions) {
         if (!title || !prompt) continue;
         const images = extractImages(base, block);
         items.push(makePrompt({ id: `awesome-gpt4o-image-prompts-${leftPad(items.length + 1)}`, title, prompt, coverUrl: images[0] || "", tags: ["gpt4o"], preview: markdownPreview(images) }));
+    }
+    return items;
+}
+
+async function parseJamezBondosAwesomeGpt4oImages(options?: RunOptions) {
+    const base = "https://raw.githubusercontent.com/jamez-bondos/awesome-gpt4o-images/main";
+    const markdown = await fetchText(`${base}/README.md`, options?.signal);
+    return parseJamezBondosAwesomeGpt4oImagesMarkdown(markdown, base);
+}
+
+export function parseJamezBondosAwesomeGpt4oImagesMarkdown(markdown: string, base = "https://raw.githubusercontent.com/jamez-bondos/awesome-gpt4o-images/main") {
+    const items: RawPrompt[] = [];
+    const casePattern = /(?:^|\n)###\s+案例\s*(\d+)[：:]\s*(.+)\r?\n([\s\S]*?)(?=\r?\n###\s+案例\s*\d+[：:]|\s*$)/g;
+    for (const match of markdown.matchAll(casePattern)) {
+        const block = match[3];
+        const prompt = firstMatch(block, /\*\*提示词\*\*\s*\r?\n\s*```[\w-]*\r?\n([\s\S]*?)\r?\n```/).trim();
+        if (!prompt) continue;
+        const images = extractImages(base, block);
+        const tags = ["gpt-4o", "gpt-image-1"];
+        if (/需上传参考图片/.test(block)) tags.push("需要参考图");
+        items.push(
+            makePrompt({
+                id: `jamez-bondos-awesome-gpt4o-images-${leftPad(Number(match[1]))}`,
+                title: match[2].replace(/\s+\(by\s+.*$/i, "").trim(),
+                prompt,
+                coverUrl: images[0] || "",
+                tags,
+                preview: markdownPreview(images),
+            }),
+        );
     }
     return items;
 }

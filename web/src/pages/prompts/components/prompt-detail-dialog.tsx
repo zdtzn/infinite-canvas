@@ -1,4 +1,4 @@
-import { Copy, Download, FolderPlus } from "lucide-react";
+import { Copy, Download, ExternalLink, FolderPlus } from "lucide-react";
 import { App, Button, Modal, Space, Tag } from "antd";
 import { useEffect, useRef, useState } from "react";
 
@@ -115,6 +115,12 @@ export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { p
                                 <div className="mt-4 text-xs text-stone-500 dark:text-stone-400">
                                     创建：{formatPromptDate(prompt.createdAt)} · 更新：{formatPromptDate(prompt.updatedAt)}
                                 </div>
+                                {prompt.githubUrl ? (
+                                    <a className="mt-2 inline-flex items-center gap-1 text-xs text-stone-500 transition hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100" href={prompt.githubUrl} target="_blank" rel="noreferrer">
+                                        <ExternalLink className="size-3.5" />
+                                        来源：{prompt.category}
+                                    </a>
+                                ) : null}
                                 <Space wrap className="mt-5">
                                     {prompt.coverUrl ? (
                                         <Button icon={<Download className="size-4" />} loading={downloading} onClick={() => void handleDownload()}>

@@ -49,6 +49,29 @@ for (const block of splitSections(markdown, "### ")) {
 }
 return items;`;
 
+const jamezBondosAwesomeGpt4oImagesScript = `// jamez-bondos：读取中文 README 中的 100 组图片案例与提示词。
+const base = "https://raw.githubusercontent.com/jamez-bondos/awesome-gpt4o-images/main";
+const markdown = await fetchText(\`\${base}/README.md\`);
+const items = [];
+const casePattern = /(?:^|\\n)###\\s+案例\\s*(\\d+)[：:]\\s*(.+)\\r?\\n([\\s\\S]*?)(?=\\r?\\n###\\s+案例\\s*\\d+[：:]|\\s*$)/g;
+for (const match of markdown.matchAll(casePattern)) {
+  const block = match[3];
+  const prompt = firstMatch(block, /\\*\\*提示词\\*\\*\\s*\\r?\\n\\s*\`\`\`[\\w-]*\\r?\\n([\\s\\S]*?)\\r?\\n\`\`\`/).trim();
+  if (!prompt) continue;
+  const images = extractImages(base, block);
+  const tags = ["gpt-4o", "gpt-image-1"];
+  if (/需上传参考图片/.test(block)) tags.push("需要参考图");
+  items.push(makePrompt({
+    id: \`jamez-bondos-awesome-gpt4o-images-\${leftPad(Number(match[1]))}\`,
+    title: match[2].replace(/\\s+\\(by\\s+.*$/i, "").trim(),
+    prompt,
+    coverUrl: images[0] || "",
+    tags,
+    preview: markdownPreview(images),
+  }));
+}
+return items;`;
+
 function youMindScript(base: string, idPrefix: string, modelTag: string) {
     return `// YouMind 系列：README_zh.md 里 "### No.N: 标题" + "#### ...提示词" 代码块。
 const base = "${base}";
@@ -143,6 +166,14 @@ export const DEFAULT_PROMPT_SOURCES: PromptSource[] = [
     { id: "freestylefly-awesome-gpt-image-2", name: "freestylefly/awesome-gpt-image-2", githubUrl: "https://github.com/freestylefly/awesome-gpt-image-2", enabled: true, trusted: true, script: freestyleflyAwesomeGptImage2Script },
     { id: "awesome-gpt-image", name: "awesome-gpt-image", githubUrl: "https://github.com/ZeroLu/awesome-gpt-image", enabled: true, trusted: true, script: awesomeGptImageScript },
     { id: "awesome-gpt4o-image-prompts", name: "awesome-gpt4o-image-prompts", githubUrl: "https://github.com/ImgEdify/Awesome-GPT4o-Image-Prompts", enabled: true, trusted: true, script: awesomeGpt4oImageScript },
+    {
+        id: "jamez-bondos-awesome-gpt4o-images",
+        name: "GPT-4o 图像案例精选",
+        githubUrl: "https://github.com/jamez-bondos/awesome-gpt4o-images",
+        enabled: true,
+        trusted: true,
+        script: jamezBondosAwesomeGpt4oImagesScript,
+    },
     {
         id: "youmind-gpt-image-2",
         name: "youmind-gpt-image-2",
