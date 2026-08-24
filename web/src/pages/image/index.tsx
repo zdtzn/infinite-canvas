@@ -1161,10 +1161,18 @@ export default function ImagePage() {
                                     )}
                                 </div>
                             ) : (
-                                <div className="relative flex min-h-56 flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[#635f58]/35 bg-[#e7dfd1] text-center lg:min-h-[calc(100%_-_3rem)] [&_.empty-state-desc]:!text-[#34332f] [&_.empty-state-icon]:!border-[#4a463e]/30 [&_.empty-state-icon]:!bg-[#f7f1e7]/65 [&_.empty-state-icon]:!text-[#6f5d38] [&_.empty-state-title]:!text-[#1f211f]">
-                                    <img src="/images/ref/danqing-results-taiji.webp" alt="" aria-hidden="true" className="pointer-events-none absolute inset-0 size-full object-cover object-center" loading="eager" decoding="async" fetchPriority="high" />
-                                    <div className="pointer-events-none absolute inset-0 bg-[#f5efe4]/15" aria-hidden="true" />
-                                    <div className="empty-state relative z-10 !p-8 [text-shadow:0_1px_10px_rgba(255,255,255,0.95)]">
+                                <div className="relative flex min-h-56 flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[#d9c8a7]/30 bg-[#151b1e] text-center lg:min-h-[calc(100%_-_3rem)] [&_.empty-state-desc]:!text-[#eee6d8] [&_.empty-state-icon]:!border-[#efe4d0]/30 [&_.empty-state-icon]:!bg-[#11171b]/65 [&_.empty-state-icon]:!text-[#e4c78d] [&_.empty-state-title]:!text-[#fffaf0]">
+                                    <img
+                                        src="/images/ref/danqing-results-taiji-ink.webp"
+                                        alt=""
+                                        aria-hidden="true"
+                                        className="pointer-events-none absolute inset-0 size-full object-cover object-center"
+                                        loading="eager"
+                                        decoding="async"
+                                        fetchPriority="high"
+                                    />
+                                    <div className="pointer-events-none absolute inset-0 bg-[#081014]/20" aria-hidden="true" />
+                                    <div className="empty-state relative z-10 !p-8 [text-shadow:0_2px_12px_rgba(0,0,0,0.95)]">
                                         <span className="empty-state-icon">
                                             <ImagePlus className="size-5" />
                                         </span>
