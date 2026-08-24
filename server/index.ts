@@ -3037,18 +3037,36 @@ function deleteLibraryAsset(session: SessionPayload, id: string) {
 function listGenerationHistory(url: URL, session: SessionPayload, kind: GenerationHistoryKind) {
     const pageSize = Math.max(1, Math.min(200, Math.floor(Number(url.searchParams.get("pageSize") || 100)) || 100));
     const page = Math.max(1, Math.floor(Number(url.searchParams.get("page") || 1)) || 1);
-    const result = appDatabase.queryGenerationHistory(session.userId, kind, { page, pageSize });
+    const search = (url.searchParams.get("search") || "").trim();
+    const model = (url.searchParams.get("model") || "").trim();
+    const statusFilter = (url.searchParams.get("status") || "").trim().toLowerCase();
+    if (search.length > 200) throw new HttpError(400, "提示词搜索内容过长");
+    if (model.length > 300) throw new HttpError(400, "模型筛选内容过长");
+    if (statusFilter && statusFilter !== "success" && statusFilter !== "failure") throw new HttpError(400, "生成状态筛选无效");
+    const result = appDatabase.queryGenerationHistory(session.userId, kind, {
+        page,
+        pageSize,
+        search,
+        model,
+        status: statusFilter === "success" ? "成功" : statusFilter === "failure" ? "失败" : undefined,
+        includeDeleted: url.searchParams.get("activeOnly") !== "true",
+    });
     return json({
-        items: result.records.map((record) => record.type === "item" ? record.item.payload : {
-            id: record.tombstone.id,
-            createdAt: record.tombstone.deletedAt,
-            updatedAt: record.tombstone.deletedAt,
-            deletedAt: record.tombstone.deletedAt,
-        }),
+        items: result.records.map((record) =>
+            record.type === "item"
+                ? record.item.payload
+                : {
+                      id: record.tombstone.id,
+                      createdAt: record.tombstone.deletedAt,
+                      updatedAt: record.tombstone.deletedAt,
+                      deletedAt: record.tombstone.deletedAt,
+                  },
+        ),
         page: result.page,
         pageSize: result.pageSize,
         total: result.total,
         hasMore: result.hasMore,
+        models: result.models,
     });
 }
 

@@ -13,6 +13,7 @@ export type GenerationHistoryRecord = {
 };
 
 type HistoryStore = {
+    getItem<T>(key: string): Promise<T | null>;
     iterate<T, U>(iteratorCallback: (value: T, key: string, iterationNumber: number) => U): Promise<U>;
     setItem<T>(key: string, value: T): Promise<T>;
     removeItem(key: string): Promise<void>;
@@ -30,9 +31,95 @@ const historyOperations = new Map<string, Promise<unknown>>();
 const HISTORY_PREPARE_CONCURRENCY = 4;
 const HISTORY_UPLOAD_BATCH_ITEMS = 50;
 const HISTORY_UPLOAD_BATCH_BYTES = 6 * 1024 * 1024;
+const HISTORY_MIGRATION_VERSION = 2;
+
+export type GenerationHistoryPageQuery = {
+    page: number;
+    pageSize: number;
+    search?: string;
+    model?: string;
+    status?: "success" | "failure";
+};
+
+export type GenerationHistoryPage<T> = {
+    items: T[];
+    page: number;
+    pageSize: number;
+    total: number;
+    hasMore: boolean;
+    models: string[];
+};
 
 export function synchronizeGenerationHistory<T extends GenerationHistoryRecord>(options: HistorySyncOptions<T>) {
     return serializeHistoryOperation(options, () => synchronizeNow(options));
+}
+
+export async function loadGenerationHistoryPage<T extends GenerationHistoryRecord>(options: HistorySyncOptions<T>, query: GenerationHistoryPageQuery): Promise<GenerationHistoryPage<T>> {
+    const pageSize = Math.max(1, Math.min(60, Math.floor(query.pageSize) || 18));
+    const requestedPage = Math.max(1, Math.floor(query.page) || 1);
+    const search = String(query.search || "")
+        .trim()
+        .slice(0, 200);
+    const model = String(query.model || "")
+        .trim()
+        .slice(0, 300);
+    const status = query.status === "success" || query.status === "failure" ? query.status : undefined;
+
+    if (PUBLIC_MODE && options.userId) {
+        const response = await fetchServerGenerationHistory(options.kind, options.userId, {
+            page: requestedPage,
+            pageSize,
+            search,
+            model,
+            status,
+            activeOnly: true,
+        });
+        const records = activeGenerationHistoryRecords((response.items as T[]).map((record) => withLocalOwnership(record, options.userId)));
+        await Promise.all(records.map((record) => options.store.setItem(generationHistoryCacheKey(options.userId, record.id), record)));
+        return {
+            items: await Promise.all(records.map(options.hydrate)),
+            page: Math.max(1, Number(response.page || requestedPage)),
+            pageSize: Math.max(1, Number(response.pageSize || pageSize)),
+            total: Math.max(0, Number(response.total || 0)),
+            hasMore: Boolean(response.hasMore),
+            models: normalizeHistoryModels(response.models),
+        };
+    }
+
+    const local = activeGenerationHistoryRecords(await readOwnedHistoryCache<T>(options.store, options.userId));
+    const filtered = filterGenerationHistoryRecords(local, { search, model, status });
+    const total = filtered.length;
+    const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
+    const offset = (page - 1) * pageSize;
+    return {
+        items: await Promise.all(filtered.slice(offset, offset + pageSize).map(options.hydrate)),
+        page,
+        pageSize,
+        total,
+        hasMore: page * pageSize < total,
+        models: normalizeHistoryModels(local.map(generationHistoryModel)),
+    };
+}
+
+export function migrateLocalGenerationHistoryOnce<T extends GenerationHistoryRecord>(options: HistorySyncOptions<T>) {
+    return serializeHistoryOperation(options, async () => {
+        if (!PUBLIC_MODE || !options.userId) return false;
+        const markerKey = generationHistoryMigrationKey(options.kind, options.userId);
+        if (await options.store.getItem<boolean>(markerKey)) return false;
+        const local = activeGenerationHistoryRecords(await readOwnedHistoryCache<T>(options.store, options.userId));
+        if (local.length) {
+            const { prepared, failed } = await prepareHistoryRecords(local, options.prepare, options.userId);
+            if (failed.length) return false;
+            try {
+                await mergeServerGenerationHistoryBatches(options.kind, prepared, options.userId);
+            } catch (error) {
+                reportHistorySyncError(error);
+                return false;
+            }
+        }
+        await options.store.setItem(markerKey, true);
+        return local.length > 0;
+    });
 }
 
 export function persistGenerationHistoryRecord<T extends GenerationHistoryRecord>(options: HistorySyncOptions<T>, record: T) {
@@ -100,6 +187,21 @@ export function mergeGenerationHistoryRecords<T extends GenerationHistoryRecord>
 
 export function activeGenerationHistoryRecords<T extends GenerationHistoryRecord>(records: T[]) {
     return records.filter((record) => !isGenerationHistoryTombstone(record));
+}
+
+export function filterGenerationHistoryRecords<T extends GenerationHistoryRecord>(records: T[], query: Pick<GenerationHistoryPageQuery, "search" | "model" | "status">) {
+    const search = String(query.search || "")
+        .trim()
+        .toLocaleLowerCase();
+    const model = String(query.model || "").trim();
+    return [...records]
+        .filter((record) => {
+            if (search && !generationHistorySearchText(record).includes(search)) return false;
+            if (model && generationHistoryModel(record) !== model) return false;
+            if (query.status && generationHistoryStatus(record) !== query.status) return false;
+            return true;
+        })
+        .sort((left, right) => recordVersion(right) - recordVersion(left));
 }
 
 export function recordBelongsToUser(record: Pick<GenerationHistoryRecord, "ownerUserId">, userId: string) {
@@ -258,6 +360,35 @@ function stripLocalOwnership<T extends GenerationHistoryRecord>(record: T): T {
 
 export function generationHistoryCacheKey(userId: string, id: string) {
     return `history:${userId || "local"}:${id}`;
+}
+
+function generationHistoryMigrationKey(kind: GenerationHistoryKind, userId: string) {
+    return `history-migration:v${HISTORY_MIGRATION_VERSION}:${kind}:${userId}`;
+}
+
+function generationHistorySearchText(record: GenerationHistoryRecord) {
+    const source = record as GenerationHistoryRecord & { prompt?: unknown; title?: unknown };
+    return `${String(source.prompt || "")} ${String(source.title || "")}`.toLocaleLowerCase();
+}
+
+function generationHistoryModel(record: GenerationHistoryRecord) {
+    const source = record as GenerationHistoryRecord & { model?: unknown; config?: { imageModel?: unknown; model?: unknown } };
+    return String(source.model || source.config?.imageModel || source.config?.model || "").trim();
+}
+
+function generationHistoryStatus(record: GenerationHistoryRecord): "success" | "failure" {
+    const source = record as GenerationHistoryRecord & { status?: unknown; successCount?: unknown; imageCount?: unknown };
+    const status = String(source.status || "")
+        .trim()
+        .toLowerCase();
+    if (status === "成功" || status === "success" || status === "succeeded") return "success";
+    if (status === "失败" || status === "failure" || status === "failed") return "failure";
+    return Number(source.successCount || source.imageCount || 0) > 0 ? "success" : "failure";
+}
+
+function normalizeHistoryModels(values: unknown) {
+    if (!Array.isArray(values)) return [];
+    return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean))).slice(0, 200);
 }
 
 function recordVersion(record: GenerationHistoryRecord) {

@@ -543,6 +543,122 @@ describe("SQLite application database", () => {
     }
   });
 
+  test("filters active generation history before paginating", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      const state = store.loadState();
+      state.users.alice = {
+        userId: "alice",
+        displayName: "Alice",
+        createdAt: 1,
+      };
+      store.saveState(state);
+
+      store.upsertGenerationHistoryItems("alice", "image", [
+        {
+          id: "history-orange-success",
+          kind: "image",
+          payload: {
+            id: "history-orange-success",
+            prompt: "orange product photo",
+            model: "channel-a::gpt-image-2",
+            status: "succeeded",
+          },
+          createdAt: 10,
+          updatedAt: 40,
+        },
+        {
+          id: "history-blue-failure",
+          kind: "image",
+          payload: {
+            id: "history-blue-failure",
+            prompt: "blue city",
+            model: "channel-b::seedream",
+            status: "失败",
+          },
+          createdAt: 20,
+          updatedAt: 30,
+        },
+        {
+          id: "history-orange-failure",
+          kind: "image",
+          payload: {
+            id: "history-orange-failure",
+            title: "Orange shop poster",
+            prompt: "retail poster",
+            config: { imageModel: "channel-a::gpt-image-2" },
+            status: "失败",
+          },
+          createdAt: 30,
+          updatedAt: 20,
+        },
+      ]);
+      store.deleteGenerationHistoryItems("alice", "image", [
+        {
+          id: "history-deleted",
+          kind: "image",
+          deletedAt: 50,
+          jobIds: [],
+        },
+      ]);
+
+      const filtered = store.queryGenerationHistory("alice", "image", {
+        page: 1,
+        pageSize: 18,
+        search: "orange",
+        model: "channel-a::gpt-image-2",
+        status: "失败",
+        includeDeleted: false,
+      });
+      expect(filtered.total).toBe(1);
+      expect(
+        filtered.records.map((record) =>
+          record.type === "item" ? record.item.id : record.tombstone.id,
+        ),
+      ).toEqual(["history-orange-failure"]);
+      expect(filtered.models).toEqual([
+        "channel-a::gpt-image-2",
+        "channel-b::seedream",
+      ]);
+
+      const legacySuccess = store.queryGenerationHistory("alice", "image", {
+        page: 1,
+        pageSize: 18,
+        status: "成功",
+        includeDeleted: false,
+      });
+      expect(
+        legacySuccess.records.map((record) =>
+          record.type === "item" ? record.item.id : record.tombstone.id,
+        ),
+      ).toEqual(["history-orange-success"]);
+
+      const activePage = store.queryGenerationHistory("alice", "image", {
+        page: 2,
+        pageSize: 2,
+        includeDeleted: false,
+      });
+      expect(activePage.total).toBe(3);
+      expect(activePage.page).toBe(2);
+      expect(
+        activePage.records.map((record) =>
+          record.type === "item" ? record.item.id : record.tombstone.id,
+        ),
+      ).toEqual(["history-orange-failure"]);
+
+      const syncPage = store.queryGenerationHistory("alice", "image", {
+        page: 1,
+        pageSize: 10,
+      });
+      expect(syncPage.total).toBe(4);
+      expect(syncPage.records[0]?.type).toBe("tombstone");
+    } finally {
+      store.close();
+    }
+  });
+
   test("accepts state snapshots created before project tombstones existed", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);

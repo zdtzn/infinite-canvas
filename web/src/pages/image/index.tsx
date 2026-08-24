@@ -1,8 +1,8 @@
-import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
-import { Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { App, Button, Checkbox, Input, Modal, Tag, Tooltip } from "antd";
+import { App, Button, Checkbox, Input, Modal, Pagination, Select, Tag, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { ImagePromptOptimizer } from "@/components/prompts/image-prompt-optimizer";
@@ -11,7 +11,7 @@ import { DeferredImage } from "@/components/ui/deferred-image";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imageGenerationQualityLabel, imageOutputFormatLabel, imageResolutionLabel, imageSizeLabel } from "@/lib/image-setting-labels";
-import { normalizeImageSizeSelection, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, normalizeImageSizeSelection, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatDuration } from "@/lib/image-utils";
@@ -31,7 +31,7 @@ import { useImperialGenerationCue, useImperialMode } from "@/features/cultivatio
 import { GenerationFailureToast, generationFailureFeedback, generationFailureText } from "@/features/cultivation/generation-messages";
 import { cultivationGenerationBlockReason, cultivationRefundNotice, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
-import { deleteGenerationHistoryRecords, persistGenerationHistoryRecord, persistGenerationHistoryRecords, synchronizeGenerationHistory } from "@/services/generation-history";
+import { deleteGenerationHistoryRecords, loadGenerationHistoryPage, migrateLocalGenerationHistoryOnce, persistGenerationHistoryRecord } from "@/services/generation-history";
 import { mergePersistedImagesIntoHistoryRecord, mergeServerJobsIntoImageHistory, serverJobModelValue } from "@/services/image-generation-history";
 import { archiveDeferredServerJob, fetchServerJobs, type ServerJob } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
@@ -50,6 +50,8 @@ const ImageSettingsPanel = lazyRoute(() => import("@/components/image-settings-p
 
 const preloadPromptSelectDialog = () => void loadPromptSelectDialog().catch(() => undefined);
 const preloadAssetPickerModal = () => void loadAssetPickerModal().catch(() => undefined);
+const HISTORY_PAGE_SIZE = 18;
+const HISTORY_SEARCH_DELAY_MS = 350;
 
 type GenerationLog = {
     id: string;
@@ -107,6 +109,15 @@ export default function ImagePage() {
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
+    const [historySearchDraft, setHistorySearchDraft] = useState("");
+    const [historySearch, setHistorySearch] = useState("");
+    const [historyModel, setHistoryModel] = useState("");
+    const [historyStatus, setHistoryStatus] = useState<"" | "success" | "failure">("");
+    const [historyPage, setHistoryPage] = useState(1);
+    const [historyTotal, setHistoryTotal] = useState(0);
+    const [historyModels, setHistoryModels] = useState<string[]>([]);
+    const [historyRevision, setHistoryRevision] = useState(0);
+    const [historyLoadError, setHistoryLoadError] = useState("");
     const [resultView, setResultView] = useState<"results" | "history">("results");
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
@@ -121,7 +132,7 @@ export default function ImagePage() {
     const [autoRunToken, setAutoRunToken] = useState(0);
     const savingAssetIdsRef = useRef(new Set<string>());
     const historyArchiveRunsRef = useRef(new Set<string>());
-    const historyRefreshRef = useRef<Promise<GenerationLog[]> | null>(null);
+    const historyRequestRef = useRef(0);
     const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
     const clearImageCommand = useWorkbenchAgentStore((state) => state.clearImageCommand);
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
@@ -601,7 +612,7 @@ export default function ImagePage() {
         try {
             const logStore = await getLogStore();
             await deleteGenerationHistoryRecords({ kind: "image", userId: historyUserId, store: logStore }, deletingIds, serverJobIds);
-            await refreshLogs();
+            setHistoryRevision((value) => value + 1);
             if (previewLog && deletingIds.includes(previewLog.id)) setPreviewLog(null);
             setSelectedLogIds([]);
             setDeleteConfirmOpen(false);
@@ -614,69 +625,112 @@ export default function ImagePage() {
         }
     };
 
-    const saveLog = (log: GenerationLog) => {
-        void getLogStore()
-            .then((logStore) => persistGenerationHistoryRecord({ kind: "image", userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareImageLogForServer }, { ...serializeLog(log), updatedAt: Date.now() }))
-            .then(refreshLogs);
-    };
-
-    const refreshLogs = () => {
-        if (historyRefreshRef.current) return historyRefreshRef.current;
+    const refreshHistoryPage = useCallback(async () => {
+        if (resultView !== "history") return;
+        const requestId = historyRequestRef.current + 1;
+        historyRequestRef.current = requestId;
         setLogsLoading(true);
-        const pending = (async () => {
+        setHistoryLoadError("");
+        try {
             const logStore = await getLogStore();
             const options = { kind: "image" as const, userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareImageLogForServer };
-            let nextLogs = await synchronizeGenerationHistory(options);
-            if (PUBLIC_MODE && historyUserId) {
+            let pageResult = await loadGenerationHistoryPage(options, {
+                page: historyPage,
+                pageSize: HISTORY_PAGE_SIZE,
+                search: historySearch,
+                model: historyModel,
+                status: historyStatus || undefined,
+            });
+
+            if (PUBLIC_MODE && historyUserId && pageResult.page === 1 && !historySearch && !historyModel && !historyStatus) {
                 try {
                     const jobs = (await fetchServerJobs(historyUserId)).items;
-                    const merged = mergeServerJobsIntoImageHistory(nextLogs, jobs, buildLogFromServerJob);
-                    if (imageHistoryChanged(nextLogs, merged)) nextLogs = await persistGenerationHistoryRecords(options, merged);
-                    else nextLogs = merged;
+                    const merged = mergeServerJobsIntoImageHistory(pageResult.items, jobs, buildLogFromServerJob);
+                    if (imageHistoryChanged(pageResult.items, merged)) {
+                        const previousById = new Map(pageResult.items.map((log) => [log.id, log]));
+                        const changedLogs = merged.filter((log) => {
+                            const current = previousById.get(log.id);
+                            return !current || imageHistoryChanged([current], [log]);
+                        });
+                        await settleWithConcurrency(changedLogs, 2, (log) => persistGenerationHistoryRecord(options, { ...serializeLog(log), updatedAt: Date.now() }));
+                        pageResult = await loadGenerationHistoryPage(options, {
+                            page: 1,
+                            pageSize: HISTORY_PAGE_SIZE,
+                        });
+                    }
                     const pendingJobs = jobs.filter((job) => job.status === "succeeded" && job.result?.recoveryPending && !historyArchiveRunsRef.current.has(job.id));
                     if (pendingJobs.length) {
                         pendingJobs.forEach((job) => historyArchiveRunsRef.current.add(job.id));
                         void settleWithConcurrency(pendingJobs, 2, (job) => archiveDeferredServerJob(job, historyUserId)).then((outcomes) => {
                             pendingJobs.forEach((job) => historyArchiveRunsRef.current.delete(job.id));
-                            if (outcomes.some((outcome) => outcome.status === "fulfilled" && !outcome.value.result?.recoveryPending)) void refreshLogs();
+                            if (outcomes.some((outcome) => outcome.status === "fulfilled" && !outcome.value.result?.recoveryPending)) setHistoryRevision((value) => value + 1);
                         });
                     }
                 } catch {
-                    // The account history remains usable even if task recovery is temporarily unavailable.
+                    // Paginated history remains usable if recent task recovery is temporarily unavailable.
                 }
             }
-            setLogs(nextLogs);
-            return nextLogs;
-        })().finally(() => {
-            historyRefreshRef.current = null;
-            setLogsLoading(false);
-        });
-        historyRefreshRef.current = pending;
-        return pending;
+
+            if (historyRequestRef.current !== requestId) return;
+            setLogs(pageResult.items);
+            setHistoryPage(pageResult.page);
+            setHistoryTotal(pageResult.total);
+            setHistoryModels(pageResult.models);
+            setSelectedLogIds([]);
+        } catch (error) {
+            if (historyRequestRef.current !== requestId) return;
+            console.error("Failed to load image generation history page", error);
+            setHistoryLoadError(error instanceof Error ? error.message : "太古遗迹载入失败");
+            setLogs([]);
+            setHistoryTotal(0);
+        } finally {
+            if (historyRequestRef.current === requestId) setLogsLoading(false);
+        }
+    }, [historyModel, historyPage, historySearch, historyStatus, historyUserId, resultView]);
+
+    const saveLog = (log: GenerationLog) => {
+        void getLogStore()
+            .then((logStore) => persistGenerationHistoryRecord({ kind: "image", userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareImageLogForServer }, { ...serializeLog(log), updatedAt: Date.now() }))
+            .then(() => {
+                setHistoryPage(1);
+                setHistoryRevision((value) => value + 1);
+            });
     };
 
     useEffect(() => {
-        let canceled = false;
-        let idleHandle: number | undefined;
-        const idleWindow = window as Window & {
-            requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
-            cancelIdleCallback?: (handle: number) => void;
-        };
-        const run = () => {
-            if (!canceled) void refreshLogs().catch((error) => console.error("Failed to refresh image generation history", error));
-        };
         const delayHandle = window.setTimeout(() => {
-            if (idleWindow.requestIdleCallback) idleHandle = idleWindow.requestIdleCallback(run, { timeout: 1_500 });
-            else run();
-        }, 800);
+            const normalized = historySearchDraft.trim();
+            setHistorySearch((current) => {
+                if (current === normalized) return current;
+                setHistoryPage(1);
+                return normalized;
+            });
+        }, HISTORY_SEARCH_DELAY_MS);
+        return () => {
+            window.clearTimeout(delayHandle);
+        };
+    }, [historySearchDraft]);
+
+    useEffect(() => {
+        if (resultView !== "history") return;
+        void refreshHistoryPage();
+    }, [historyRevision, refreshHistoryPage, resultView]);
+
+    useEffect(() => {
+        if (!PUBLIC_MODE || !historyUserId) return;
+        let canceled = false;
+        const delayHandle = window.setTimeout(() => {
+            void getLogStore()
+                .then((logStore) => migrateLocalGenerationHistoryOnce({ kind: "image", userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareImageLogForServer }))
+                .then((migrated) => {
+                    if (!canceled && migrated) setHistoryRevision((value) => value + 1);
+                })
+                .catch((error) => console.error("Failed to migrate local image generation history", error));
+        }, 2_000);
         return () => {
             canceled = true;
             window.clearTimeout(delayHandle);
-            if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle);
         };
-        // Refreshing history is intentionally delayed so it cannot compete with
-        // the first workbench paint. An explicit history open still refreshes it.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [historyUserId]);
 
     useEffect(() => {
@@ -997,7 +1051,7 @@ export default function ImagePage() {
                                 <div className="flex min-w-0 items-center gap-2">
                                     <h2 className="text-xl font-semibold">{resultView === "results" ? "生成结果" : "太古遗迹"}</h2>
                                     {resultView === "results" && previewLog ? <Tag className="m-0">遗迹预览</Tag> : null}
-                                    {resultView === "history" ? <Tag className="m-0">{logs.length}</Tag> : null}
+                                    {resultView === "history" ? <Tag className="m-0">{historyTotal}</Tag> : null}
                                     {running ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
                                 </div>
                                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 sm:justify-end">
@@ -1024,7 +1078,6 @@ export default function ImagePage() {
                                             icon={<Archive className="size-3.5" />}
                                             onClick={() => {
                                                 setResultView("history");
-                                                void refreshLogs().catch((error) => console.error("Failed to refresh image generation history", error));
                                             }}
                                         >
                                             太古遗迹
@@ -1035,18 +1088,62 @@ export default function ImagePage() {
                                     </Tooltip>
                                 </div>
                             </div>
-                            {resultView === "history" && logsLoading && !logs.length ? (
-                                <HistoryLoading />
-                            ) : resultView === "history" ? (
-                                <LogPanel
-                                    logs={logs}
-                                    selectedLogIds={selectedLogIds}
-                                    activeLogId={previewLog?.id}
-                                    onSelectedLogIdsChange={setSelectedLogIds}
-                                    onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                                    onPreviewLog={previewGenerationLog}
-                                    onContinueLog={continueFromGenerationLog}
-                                />
+                            {resultView === "history" ? (
+                                <div>
+                                    <HistoryFilters
+                                        search={historySearchDraft}
+                                        model={historyModel}
+                                        status={historyStatus}
+                                        models={historyModels.map((value) => ({ value, label: modelOptionLabel(effectiveConfig, value) }))}
+                                        loading={logsLoading}
+                                        onSearchChange={setHistorySearchDraft}
+                                        onModelChange={(value) => {
+                                            setHistoryModel(value);
+                                            setHistoryPage(1);
+                                        }}
+                                        onStatusChange={(value) => {
+                                            setHistoryStatus(value);
+                                            setHistoryPage(1);
+                                        }}
+                                        onReset={() => {
+                                            setHistorySearchDraft("");
+                                            setHistorySearch("");
+                                            setHistoryModel("");
+                                            setHistoryStatus("");
+                                            setHistoryPage(1);
+                                            setHistoryRevision((value) => value + 1);
+                                        }}
+                                        onRefresh={() => setHistoryRevision((value) => value + 1)}
+                                    />
+                                    {logsLoading && !logs.length ? (
+                                        <HistoryLoading />
+                                    ) : (
+                                        <LogPanel
+                                            logs={logs}
+                                            selectedLogIds={selectedLogIds}
+                                            activeLogId={previewLog?.id}
+                                            loading={logsLoading}
+                                            error={historyLoadError}
+                                            page={historyPage}
+                                            pageSize={HISTORY_PAGE_SIZE}
+                                            total={historyTotal}
+                                            filtered={Boolean(historySearch || historyModel || historyStatus)}
+                                            onPageChange={setHistoryPage}
+                                            onRetry={() => setHistoryRevision((value) => value + 1)}
+                                            onResetFilters={() => {
+                                                setHistorySearchDraft("");
+                                                setHistorySearch("");
+                                                setHistoryModel("");
+                                                setHistoryStatus("");
+                                                setHistoryPage(1);
+                                            }}
+                                            onSelectedLogIdsChange={setSelectedLogIds}
+                                            onDeleteSelected={() => setDeleteConfirmOpen(true)}
+                                            onPreviewLog={previewGenerationLog}
+                                            onContinueLog={continueFromGenerationLog}
+                                        />
+                                    )}
+                                </div>
                             ) : results.length ? (
                                 <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                     {results.map((result, index) =>
@@ -1232,10 +1329,82 @@ function PendingImageCard() {
     );
 }
 
+function HistoryFilters({
+    search,
+    model,
+    status,
+    models,
+    loading,
+    onSearchChange,
+    onModelChange,
+    onStatusChange,
+    onReset,
+    onRefresh,
+}: {
+    search: string;
+    model: string;
+    status: "" | "success" | "failure";
+    models: Array<{ value: string; label: string }>;
+    loading: boolean;
+    onSearchChange: (value: string) => void;
+    onModelChange: (value: string) => void;
+    onStatusChange: (value: "" | "success" | "failure") => void;
+    onReset: () => void;
+    onRefresh: () => void;
+}) {
+    const filtered = Boolean(search.trim() || model || status);
+    return (
+        <div className="mb-4 flex flex-col gap-2 border-b border-stone-200 pb-4 dark:border-stone-800 xl:flex-row xl:items-center">
+            <Input
+                value={search}
+                allowClear
+                maxLength={200}
+                prefix={<Search className="size-4 text-stone-400" />}
+                placeholder="搜索提示词"
+                aria-label="搜索太古遗迹提示词"
+                className="min-w-0 xl:max-w-md"
+                onChange={(event) => onSearchChange(event.target.value)}
+            />
+            <Select value={model || undefined} allowClear showSearch optionFilterProp="label" placeholder="全部模型" aria-label="按模型筛选太古遗迹" className="w-full xl:w-56" options={models} onChange={(value) => onModelChange(value || "")} />
+            <Select
+                value={status || undefined}
+                allowClear
+                placeholder="全部状态"
+                aria-label="按生成状态筛选太古遗迹"
+                className="w-full xl:w-36"
+                options={[
+                    { value: "success", label: "生成成功" },
+                    { value: "failure", label: "生成失败" },
+                ]}
+                onChange={(value) => onStatusChange(value || "")}
+            />
+            <div className="flex shrink-0 items-center justify-end gap-1">
+                {filtered ? (
+                    <Button size="small" type="text" icon={<RotateCcw className="size-3.5" />} onClick={onReset}>
+                        重置
+                    </Button>
+                ) : null}
+                <Tooltip title="刷新记录">
+                    <Button aria-label="刷新太古遗迹" size="small" type="text" loading={loading} icon={<RefreshCw className="size-3.5" />} onClick={onRefresh} />
+                </Tooltip>
+            </div>
+        </div>
+    );
+}
+
 function LogPanel({
     logs,
     selectedLogIds,
     activeLogId,
+    loading,
+    error,
+    page,
+    pageSize,
+    total,
+    filtered,
+    onPageChange,
+    onRetry,
+    onResetFilters,
     onSelectedLogIdsChange,
     onDeleteSelected,
     onPreviewLog,
@@ -1244,6 +1413,15 @@ function LogPanel({
     logs: GenerationLog[];
     selectedLogIds: string[];
     activeLogId?: string;
+    loading: boolean;
+    error: string;
+    page: number;
+    pageSize: number;
+    total: number;
+    filtered: boolean;
+    onPageChange: (page: number) => void;
+    onRetry: () => void;
+    onResetFilters: () => void;
     onSelectedLogIdsChange: (ids: string[]) => void;
     onDeleteSelected: () => void;
     onPreviewLog: (log: GenerationLog) => void;
@@ -1265,7 +1443,7 @@ function LogPanel({
                     {managing ? (
                         <>
                             <Button size="small" type="text" disabled={!logs.length} onClick={toggleAll}>
-                                {allSelected ? "取消全选" : "全选"}
+                                {allSelected ? "取消全选" : "本页全选"}
                             </Button>
                             <Button size="small" type="text" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>
                                 移除
@@ -1281,7 +1459,7 @@ function LogPanel({
                     )}
                 </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+            <div className={`grid gap-3 transition-opacity sm:grid-cols-2 2xl:grid-cols-3 ${loading ? "pointer-events-none opacity-60" : ""}`} aria-busy={loading}>
                 {logs.map((log) => (
                     <LogCard
                         key={log.id}
@@ -1294,14 +1472,33 @@ function LogPanel({
                         onContinue={() => onContinueLog(log)}
                     />
                 ))}
-                {!logs.length ? (
+                {!logs.length && error ? (
+                    <div className="col-span-full flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed border-rose-300 px-6 text-center dark:border-rose-900/70">
+                        <Archive className="mb-3 size-7 text-rose-400" />
+                        <div className="text-sm font-medium">太古遗迹暂时无法载入</div>
+                        <div className="mt-1 max-w-lg text-xs leading-5 text-stone-500">{error}</div>
+                        <Button className="mt-4" size="small" icon={<RefreshCw className="size-3.5" />} onClick={onRetry}>
+                            重新载入
+                        </Button>
+                    </div>
+                ) : !logs.length ? (
                     <div className="col-span-full flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700">
                         <ImagePlus className="mb-3 size-7 text-stone-400" />
-                        <div className="text-sm font-medium">遗迹尚未留下痕迹</div>
-                        <div className="mt-1 text-xs text-stone-500">完成第一次生成后，记录会自动出现在这里。</div>
+                        <div className="text-sm font-medium">{filtered ? "没有符合条件的记录" : "遗迹尚未留下痕迹"}</div>
+                        <div className="mt-1 text-xs text-stone-500">{filtered ? "调整搜索词或筛选条件后再试。" : "完成第一次生成后，记录会自动出现在这里。"}</div>
+                        {filtered ? (
+                            <Button className="mt-4" size="small" icon={<RotateCcw className="size-3.5" />} onClick={onResetFilters}>
+                                清除筛选
+                            </Button>
+                        ) : null}
                     </div>
                 ) : null}
             </div>
+            {total > 0 ? (
+                <div className="mt-5 flex justify-center border-t border-stone-200 pt-4 dark:border-stone-800">
+                    <Pagination current={page} pageSize={pageSize} total={total} responsive showSizeChanger={false} showTotal={(count, range) => `${range[0]}-${range[1]} / ${count}`} disabled={loading} onChange={onPageChange} />
+                </div>
+            ) : null}
         </div>
     );
 }

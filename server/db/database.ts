@@ -67,7 +67,14 @@ export type AppDatabase = {
   queryGenerationHistory(
     userId: string,
     kind: GenerationHistoryKind,
-    options: { page: number; pageSize: number },
+    options: {
+      page: number;
+      pageSize: number;
+      search?: string;
+      model?: string;
+      status?: "成功" | "失败";
+      includeDeleted?: boolean;
+    },
   ): {
     records: Array<
       | { type: "item"; item: StoredGenerationHistoryItem }
@@ -77,6 +84,7 @@ export type AppDatabase = {
     pageSize: number;
     total: number;
     hasMore: boolean;
+    models: string[];
   };
   upsertGenerationHistoryItems(
     userId: string,
@@ -1203,36 +1211,113 @@ function sqliteStore(database: Database): AppDatabase {
         updatedAt: Number(item.updated_at),
       })),
     queryGenerationHistory: (userId, kind, options) => {
-      const pageSize = Math.max(1, Math.min(200, Math.floor(options.pageSize) || 100));
+      const pageSize = Math.max(
+        1,
+        Math.min(200, Math.floor(options.pageSize) || 100),
+      );
       const requestedPage = Math.max(1, Math.floor(options.page) || 1);
-      const totalRow = database
+      const search = String(options.search || "").trim();
+      const model = String(options.model || "").trim();
+      const status =
+        options.status === "成功" || options.status === "失败"
+          ? options.status
+          : undefined;
+      const includeDeleted =
+        options.includeDeleted !== false && !search && !model && !status;
+      const modelExpression =
+        "COALESCE(NULLIF(json_extract(payload_json, '$.model'), ''), NULLIF(json_extract(payload_json, '$.config.imageModel'), ''), NULLIF(json_extract(payload_json, '$.config.model'), ''), '')";
+      const statusExpression =
+        "CASE LOWER(COALESCE(NULLIF(json_extract(payload_json, '$.status'), ''), '')) WHEN '成功' THEN '成功' WHEN 'success' THEN '成功' WHEN 'succeeded' THEN '成功' WHEN '失败' THEN '失败' WHEN 'failure' THEN '失败' WHEN 'failed' THEN '失败' ELSE CASE WHEN CAST(COALESCE(json_extract(payload_json, '$.successCount'), 0) AS INTEGER) > 0 OR CAST(COALESCE(json_extract(payload_json, '$.imageCount'), 0) AS INTEGER) > 0 THEN '成功' ELSE '失败' END END";
+      const where = ["user_id = ?", "history_kind = ?"];
+      const parameters: Array<string | number> = [userId, kind];
+      if (search) {
+        const pattern = `%${escapeSqlLike(search)}%`;
+        where.push(
+          "(COALESCE(json_extract(payload_json, '$.prompt'), '') LIKE ? ESCAPE '\\' OR COALESCE(json_extract(payload_json, '$.title'), '') LIKE ? ESCAPE '\\')",
+        );
+        parameters.push(pattern, pattern);
+      }
+      if (model) {
+        where.push(`${modelExpression} = ?`);
+        parameters.push(model);
+      }
+      if (status) {
+        where.push(`${statusExpression} = ?`);
+        parameters.push(status);
+      }
+      const whereSql = where.join(" AND ");
+      const itemCountRow = database
         .query(
-          "SELECT (SELECT COUNT(*) FROM generation_history_items WHERE user_id = ? AND history_kind = ?) + (SELECT COUNT(*) FROM generation_history_tombstones WHERE user_id = ? AND history_kind = ?) AS count",
+          `SELECT COUNT(*) AS count FROM generation_history_items WHERE ${whereSql}`,
         )
-        .get(userId, kind, userId, kind) as { count?: number } | null;
-      const total = Number(totalRow?.count || 0);
-      const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
+        .get(...parameters) as { count?: number } | null;
+      const tombstoneCount = includeDeleted
+        ? Number(
+            (
+              database
+                .query(
+                  "SELECT COUNT(*) AS count FROM generation_history_tombstones WHERE user_id = ? AND history_kind = ?",
+                )
+                .get(userId, kind) as { count?: number } | null
+            )?.count || 0,
+          )
+        : 0;
+      const total = Number(itemCountRow?.count || 0) + tombstoneCount;
+      const page = Math.min(
+        requestedPage,
+        Math.max(1, Math.ceil(total / pageSize)),
+      );
       const offset = (page - 1) * pageSize;
-      const rows = database
-        .query(
-          `SELECT record_id, payload_json, created_at, updated_at, 0 AS is_tombstone
-           FROM generation_history_items WHERE user_id = ? AND history_kind = ?
-           UNION ALL
-           SELECT record_id, NULL AS payload_json, deleted_at AS created_at, deleted_at AS updated_at, 1 AS is_tombstone
-           FROM generation_history_tombstones WHERE user_id = ? AND history_kind = ?
-           ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
-        )
-        .all(userId, kind, userId, kind, pageSize, offset) as Array<{
+      const rows = (
+        includeDeleted
+          ? database
+              .query(
+                `SELECT record_id, payload_json, created_at, updated_at, 0 AS is_tombstone
+               FROM generation_history_items WHERE user_id = ? AND history_kind = ?
+               UNION ALL
+               SELECT record_id, NULL AS payload_json, deleted_at AS created_at, deleted_at AS updated_at, 1 AS is_tombstone
+               FROM generation_history_tombstones WHERE user_id = ? AND history_kind = ?
+               ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+              )
+              .all(userId, kind, userId, kind, pageSize, offset)
+          : database
+              .query(
+                `SELECT record_id, payload_json, created_at, updated_at, 0 AS is_tombstone
+               FROM generation_history_items WHERE ${whereSql}
+               ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+              )
+              .all(...parameters, pageSize, offset)
+      ) as Array<{
         record_id: string;
         payload_json: string | null;
         created_at: number;
         updated_at: number;
         is_tombstone: number;
       }>;
+      const models = (
+        database
+          .query(
+            `SELECT DISTINCT ${modelExpression} AS model
+             FROM generation_history_items
+             WHERE user_id = ? AND history_kind = ? AND ${modelExpression} <> ''
+             ORDER BY model COLLATE NOCASE ASC LIMIT 200`,
+          )
+          .all(userId, kind) as Array<{ model?: string }>
+      )
+        .map((row) => String(row.model || "").trim())
+        .filter(Boolean);
       return {
         records: rows.map((row) =>
           row.is_tombstone
-            ? { type: "tombstone" as const, tombstone: { id: row.record_id, kind, deletedAt: Number(row.updated_at), jobIds: [] } }
+            ? {
+                type: "tombstone" as const,
+                tombstone: {
+                  id: row.record_id,
+                  kind,
+                  deletedAt: Number(row.updated_at),
+                  jobIds: [],
+                },
+              }
             : {
                 type: "item" as const,
                 item: {
@@ -1248,6 +1333,7 @@ function sqliteStore(database: Database): AppDatabase {
         pageSize,
         total,
         hasMore: page * pageSize < total,
+        models,
       };
     },
     loadGenerationHistoryTombstones: (userId, kind) =>
@@ -1630,6 +1716,10 @@ function parseStringArray(value?: string) {
   } catch {
     return [];
   }
+}
+
+function escapeSqlLike(value: string) {
+  return value.replace(/[\\%_]/g, "\\$&");
 }
 
 function safeSegment(value: string) {

@@ -330,12 +330,34 @@ export async function deleteServerAssetLibraryItem(id: string, expectedUserId?: 
     await serverRequest(`/api/library-assets/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
 }
 
-export async function fetchServerGenerationHistory(kind: "image" | "video", expectedUserId?: string, options: { page?: number; pageSize?: number } = {}) {
+export type ServerGenerationHistoryQuery = {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    model?: string;
+    status?: "success" | "failure";
+    activeOnly?: boolean;
+};
+
+export type ServerGenerationHistoryPage = {
+    items: Record<string, unknown>[];
+    page?: number;
+    pageSize?: number;
+    total?: number;
+    hasMore?: boolean;
+    models?: string[];
+};
+
+export async function fetchServerGenerationHistory(kind: "image" | "video", expectedUserId?: string, options: ServerGenerationHistoryQuery = {}) {
     const params = new URLSearchParams();
     if (options.page) params.set("page", String(options.page));
     if (options.pageSize) params.set("pageSize", String(options.pageSize));
+    if (options.search) params.set("search", options.search);
+    if (options.model) params.set("model", options.model);
+    if (options.status) params.set("status", options.status);
+    if (options.activeOnly) params.set("activeOnly", "true");
     const query = params.toString();
-    return serverRequest<{ items: Record<string, unknown>[]; page?: number; pageSize?: number; total?: number; hasMore?: boolean }>(`/api/generation-history/${kind}${query ? `?${query}` : ""}`, { timeoutMs: 20_000, expectedUserId });
+    return serverRequest<ServerGenerationHistoryPage>(`/api/generation-history/${kind}${query ? `?${query}` : ""}`, { timeoutMs: 20_000, expectedUserId });
 }
 
 export async function mergeServerGenerationHistory(kind: "image" | "video", items: Record<string, unknown>[], expectedUserId?: string) {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { activeGenerationHistoryRecords, mergeGenerationHistoryRecords, reconcileGenerationHistoryRecords, recordBelongsToUser, splitGenerationHistoryBatches } from "./generation-history";
+import { activeGenerationHistoryRecords, filterGenerationHistoryRecords, mergeGenerationHistoryRecords, reconcileGenerationHistoryRecords, recordBelongsToUser, splitGenerationHistoryBatches } from "./generation-history";
 
 describe("generation history synchronization", () => {
     test("merges local and remote records without dropping either side", () => {
@@ -58,5 +58,16 @@ describe("generation history synchronization", () => {
         expect(batches.length).toBeGreaterThan(1);
         expect(batches.flat()).toHaveLength(records.length);
         expect(Math.max(...batches.map((batch) => new TextEncoder().encode(JSON.stringify(batch)).byteLength))).toBeLessThan(7 * 1024 * 1024);
+    });
+
+    test("filters prompt, model and status before applying page slicing", () => {
+        const records = [
+            { id: "one", createdAt: 1, updatedAt: 30, prompt: "orange product", model: "model-a", status: "成功" },
+            { id: "two", createdAt: 2, updatedAt: 20, prompt: "blue city", model: "model-b", status: "失败" },
+            { id: "three", createdAt: 3, updatedAt: 10, title: "Orange shop", config: { imageModel: "model-a" }, status: "失败" },
+        ];
+
+        expect(filterGenerationHistoryRecords(records, { search: "orange", model: "model-a", status: "failure" }).map((record) => record.id)).toEqual(["three"]);
+        expect(filterGenerationHistoryRecords(records, { model: "model-a" }).map((record) => record.id)).toEqual(["one", "three"]);
     });
 });
