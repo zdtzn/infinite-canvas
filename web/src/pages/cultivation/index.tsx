@@ -281,9 +281,9 @@ export default function CultivationPage() {
                             <figure className="shj-panel group relative aspect-[5/4] overflow-hidden !rounded-lg lg:h-0 lg:aspect-auto lg:min-h-80 lg:flex-1" aria-label="斗帝帝境法相">
                                 <img
                                     src={realmHero.portraitSrc}
-                                    alt="斗帝立于金色天地法阵中的帝境法相"
-                                    width={1024}
-                                    height={1024}
+                                    alt="金色斗帝书法悬于天地法阵之上的帝境法相"
+                                    width={1600}
+                                    height={696}
                                     loading="lazy"
                                     decoding="async"
                                     className="absolute inset-0 h-full w-full object-cover object-[center_45%] transition-transform duration-700 group-hover:scale-[1.015] motion-reduce:transition-none"
