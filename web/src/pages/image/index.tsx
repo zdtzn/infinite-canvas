@@ -642,41 +642,51 @@ export default function ImagePage() {
                 status: historyStatus || undefined,
             });
 
-            if (PUBLIC_MODE && historyUserId && pageResult.page === 1 && !historySearch && !historyModel && !historyStatus) {
-                try {
-                    const jobs = (await fetchServerJobs(historyUserId)).items;
-                    const merged = mergeServerJobsIntoImageHistory(pageResult.items, jobs, buildLogFromServerJob);
-                    if (imageHistoryChanged(pageResult.items, merged)) {
-                        const previousById = new Map(pageResult.items.map((log) => [log.id, log]));
-                        const changedLogs = merged.filter((log) => {
-                            const current = previousById.get(log.id);
-                            return !current || imageHistoryChanged([current], [log]);
-                        });
-                        await settleWithConcurrency(changedLogs, 2, (log) => persistGenerationHistoryRecord(options, { ...serializeLog(log), updatedAt: Date.now() }));
-                        pageResult = await loadGenerationHistoryPage(options, {
-                            page: 1,
-                            pageSize: HISTORY_PAGE_SIZE,
-                        });
-                    }
-                    const pendingJobs = jobs.filter((job) => job.status === "succeeded" && job.result?.recoveryPending && !historyArchiveRunsRef.current.has(job.id));
-                    if (pendingJobs.length) {
-                        pendingJobs.forEach((job) => historyArchiveRunsRef.current.add(job.id));
-                        void settleWithConcurrency(pendingJobs, 2, (job) => archiveDeferredServerJob(job, historyUserId)).then((outcomes) => {
-                            pendingJobs.forEach((job) => historyArchiveRunsRef.current.delete(job.id));
-                            if (outcomes.some((outcome) => outcome.status === "fulfilled" && !outcome.value.result?.recoveryPending)) setHistoryRevision((value) => value + 1);
-                        });
-                    }
-                } catch {
-                    // Paginated history remains usable if recent task recovery is temporarily unavailable.
-                }
-            }
-
             if (historyRequestRef.current !== requestId) return;
             setLogs(pageResult.items);
             setHistoryPage(pageResult.page);
             setHistoryTotal(pageResult.total);
             setHistoryModels(pageResult.models);
             setSelectedLogIds([]);
+
+            if (PUBLIC_MODE && historyUserId && pageResult.page === 1 && !historySearch && !historyModel && !historyStatus) {
+                void (async () => {
+                    try {
+                        const jobs = (await fetchServerJobs(historyUserId)).items;
+                        if (historyRequestRef.current !== requestId) return;
+                        const merged = mergeServerJobsIntoImageHistory(pageResult.items, jobs, buildLogFromServerJob);
+                        if (imageHistoryChanged(pageResult.items, merged)) {
+                            const previousById = new Map(pageResult.items.map((log) => [log.id, log]));
+                            const changedLogs = merged.filter((log) => {
+                                const current = previousById.get(log.id);
+                                return !current || imageHistoryChanged([current], [log]);
+                            });
+                            await settleWithConcurrency(changedLogs, 2, (log) => persistGenerationHistoryRecord(options, { ...serializeLog(log), updatedAt: Date.now() }));
+                            if (historyRequestRef.current !== requestId) return;
+                            const refreshedPage = await loadGenerationHistoryPage(options, {
+                                page: 1,
+                                pageSize: HISTORY_PAGE_SIZE,
+                            });
+                            if (historyRequestRef.current !== requestId) return;
+                            setLogs(refreshedPage.items);
+                            setHistoryPage(refreshedPage.page);
+                            setHistoryTotal(refreshedPage.total);
+                            setHistoryModels(refreshedPage.models);
+                            setSelectedLogIds([]);
+                        }
+                        const pendingJobs = jobs.filter((job) => job.status === "succeeded" && job.result?.recoveryPending && !historyArchiveRunsRef.current.has(job.id));
+                        if (pendingJobs.length) {
+                            pendingJobs.forEach((job) => historyArchiveRunsRef.current.add(job.id));
+                            void settleWithConcurrency(pendingJobs, 2, (job) => archiveDeferredServerJob(job, historyUserId)).then((outcomes) => {
+                                pendingJobs.forEach((job) => historyArchiveRunsRef.current.delete(job.id));
+                                if (historyRequestRef.current === requestId && outcomes.some((outcome) => outcome.status === "fulfilled" && !outcome.value.result?.recoveryPending)) setHistoryRevision((value) => value + 1);
+                            });
+                        }
+                    } catch {
+                        // Paginated history is already visible if recent task recovery is temporarily unavailable.
+                    }
+                })();
+            }
         } catch (error) {
             if (historyRequestRef.current !== requestId) return;
             console.error("Failed to load image generation history page", error);
@@ -1528,7 +1538,10 @@ function LogCard({
     onPreview: () => void;
     onContinue: () => void;
 }) {
-    const thumbnails = (log.thumbnails || []).filter(Boolean).slice(0, 4);
+    const thumbnails = log.images
+        .map((image) => image.thumbnailUrl || image.dataUrl)
+        .filter((image): image is string => Boolean(image))
+        .slice(0, 4);
     const title = generationPromptSummary(log);
 
     return (
@@ -1629,7 +1642,9 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         quality: log.quality || config.quality || "",
         status: log.status || "成功",
         images,
-        thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
+        thumbnails: images
+            .map((image) => image.thumbnailUrl || image.dataUrl)
+            .filter((image): image is string => Boolean(image)),
     };
 }
 

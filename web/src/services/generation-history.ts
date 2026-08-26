@@ -75,7 +75,9 @@ export async function loadGenerationHistoryPage<T extends GenerationHistoryRecor
             activeOnly: true,
         });
         const records = activeGenerationHistoryRecords((response.items as T[]).map((record) => withLocalOwnership(record, options.userId)));
-        await Promise.all(records.map((record) => options.store.setItem(generationHistoryCacheKey(options.userId, record.id), record)));
+        void Promise.all(records.map((record) => options.store.setItem(generationHistoryCacheKey(options.userId, record.id), record))).catch((error) => {
+            console.warn("Failed to cache generation history page", error);
+        });
         return {
             items: await Promise.all(records.map(options.hydrate)),
             page: Math.max(1, Number(response.page || requestedPage)),
