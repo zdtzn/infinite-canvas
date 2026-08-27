@@ -132,7 +132,7 @@ export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { p
                                     </Button>
                                     {onSaveAsset ? (
                                         <Button icon={<FolderPlus className="size-4" />} onClick={() => onSaveAsset(prompt)}>
-                                            加入我的资产
+                                            入藏卷阁
                                         </Button>
                                     ) : null}
                                 </Space>

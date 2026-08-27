@@ -39,7 +39,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
 
     const saveAsset = (item: Prompt) => {
         addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
-        message.success("已加入我的资产");
+        message.success("已收入藏卷阁");
     };
 
     return (
@@ -117,7 +117,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                                         详情
                                     </Button>
                                     <Button size="small" type="text" icon={<FolderPlus className="size-3.5" />} onClick={() => saveAsset(item)}>
-                                        加入资产
+                                        入藏卷阁
                                     </Button>
                                 </Space>
                             ),

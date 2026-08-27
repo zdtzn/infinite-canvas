@@ -35,7 +35,7 @@ export default function PromptsPage() {
 
     const savePromptAsset = (item: Prompt) => {
         addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
-        message.success("已加入我的资产");
+        message.success("已收入藏卷阁");
     };
 
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {
@@ -92,7 +92,7 @@ export default function PromptsPage() {
                                         emptyDescription={indexed === false ? "提示词库正在同步，请稍后刷新" : "没有找到匹配的提示词"}
                                         renderActions={(item) => (
                                             <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => savePromptAsset(item)}>
-                                                加入资产
+                                                入藏卷阁
                                             </Button>
                                         )}
                                     />
