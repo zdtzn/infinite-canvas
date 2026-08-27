@@ -1,4 +1,4 @@
-import { Copy, Download, ExternalLink, FolderPlus } from "lucide-react";
+import { Check, Copy, Download, ExternalLink, FolderPlus } from "lucide-react";
 import { App, Button, Modal, Space, Tag } from "antd";
 import { useEffect, useRef, useState } from "react";
 
@@ -46,7 +46,19 @@ async function downloadPromptCover(prompt: Prompt, signal: AbortSignal) {
     throw new Error("原图下载失败，请稍后重试");
 }
 
-export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { prompt: Prompt | null; onClose: () => void; onCopy: (prompt: string) => void; onSaveAsset?: (prompt: Prompt) => void }) {
+export function PromptDetailDialog({
+    prompt,
+    onClose,
+    onCopy,
+    onSaveAsset,
+    onUse,
+}: {
+    prompt: Prompt | null;
+    onClose: () => void;
+    onCopy: (prompt: string) => void;
+    onSaveAsset?: (prompt: Prompt) => void;
+    onUse?: (prompt: Prompt) => void;
+}) {
     const { message } = App.useApp();
     const [downloading, setDownloading] = useState(false);
     const downloadAbortRef = useRef<AbortController | null>(null);
@@ -127,12 +139,17 @@ export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { p
                                             下载原图
                                         </Button>
                                     ) : null}
-                                    <Button type="primary" icon={<Copy className="size-4" />} onClick={() => onCopy(prompt.prompt)}>
+                                    <Button type={onUse ? "default" : "primary"} icon={<Copy className="size-4" />} onClick={() => onCopy(prompt.prompt)}>
                                         复制提示词
                                     </Button>
                                     {onSaveAsset ? (
                                         <Button icon={<FolderPlus className="size-4" />} onClick={() => onSaveAsset(prompt)}>
                                             入藏卷阁
+                                        </Button>
+                                    ) : null}
+                                    {onUse ? (
+                                        <Button type="primary" icon={<Check className="size-4" />} onClick={() => onUse(prompt)}>
+                                            使用此提示词
                                         </Button>
                                     ) : null}
                                 </Space>
