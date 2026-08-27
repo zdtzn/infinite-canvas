@@ -1,4 +1,4 @@
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { useId, type MouseEvent as ReactMouseEvent } from "react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -20,6 +20,7 @@ export function ConnectionPath({
     onContextMenu?: (event: ReactMouseEvent<SVGPathElement>) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const activeGradientId = `canvas-connection-active-${useId().replace(/:/g, "")}`;
     const startX = from.position.x + from.width;
     const startY = from.position.y + from.height / 2;
     const endX = to.position.x;
@@ -30,6 +31,15 @@ export function ConnectionPath({
 
     return (
         <g>
+            {active ? (
+                <defs>
+                    <linearGradient id={activeGradientId} gradientUnits="userSpaceOnUse" x1={startX} y1={startY} x2={endX} y2={endY}>
+                        <stop offset="0%" stopColor="#22d3ee" />
+                        <stop offset="48%" stopColor="#168af5" />
+                        <stop offset="100%" stopColor="#2563eb" />
+                    </linearGradient>
+                </defs>
+            ) : null}
             <path
                 data-connection-id={connection.id}
                 d={pathD}
@@ -49,11 +59,12 @@ export function ConnectionPath({
             />
             <path
                 d={pathD}
-                stroke={active ? theme.node.activeStroke : theme.node.muted}
-                strokeWidth={active ? 3 : 2}
+                stroke={active ? `url(#${activeGradientId})` : theme.node.muted}
+                strokeWidth={active ? 2.5 : 2}
                 strokeOpacity={active ? 1 : 0.82}
+                strokeLinecap="round"
                 fill="none"
-                style={{ filter: active ? `drop-shadow(0 0 8px ${theme.node.activeStroke}66)` : undefined, pointerEvents: "none" }}
+                style={{ filter: active ? "drop-shadow(0 0 5px rgba(34, 211, 238, 0.42))" : undefined, pointerEvents: "none" }}
             />
         </g>
     );
