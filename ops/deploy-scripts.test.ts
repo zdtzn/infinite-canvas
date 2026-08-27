@@ -28,12 +28,22 @@ test("commit deployment waits for a commit-specific image tag before resolving a
 
 test("Docker publishing exposes a full commit tag and shell scripts use LF checkouts", () => {
   const workflow = read("../.github/workflows/docker-image.yml");
+  const dockerfile = read("../Dockerfile");
   const attributes = read("../.gitattributes");
+  const verifyJob = workflow.slice(
+    workflow.indexOf("  verify:"),
+    workflow.indexOf("  meta:"),
+  );
 
   expect(workflow).toContain("type=sha,prefix=,format=long");
+  expect(workflow).toContain("uses: actions/cache@v4");
+  expect(workflow).toContain("path: ~/.bun/install/cache");
+  expect(workflow).not.toContain("web/node_modules");
   expect(workflow).toContain("Install dependencies with retry");
   expect(workflow).toContain("for attempt in 1 2 3");
   expect(workflow).not.toContain("Install server dependencies");
+  expect(verifyJob).not.toContain("bun run build");
+  expect(dockerfile).toContain("RUN bun run build");
   expect(attributes).toContain("*.sh text eol=lf");
 });
 
