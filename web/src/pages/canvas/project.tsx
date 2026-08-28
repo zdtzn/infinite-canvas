@@ -27,6 +27,7 @@ import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
+import type { CanvasImageLightingParams } from "@/components/canvas/canvas-node-lighting-dialog";
 import type { CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
 import type { CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
 import type { CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
@@ -53,6 +54,8 @@ import {
     audioExtension,
     buildAngleLabel,
     buildAnglePrompt,
+    buildLightingLabel,
+    buildLightingPrompt,
     buildGenerationConfig,
     findRetrySourceNode,
     generationReferenceUrls,
@@ -107,6 +110,7 @@ const CanvasNodeMaskEditDialog = lazyRoute(() => import("@/components/canvas/can
 const CanvasNodeSplitDialog = lazyRoute(() => import("@/components/canvas/canvas-node-split-dialog").then(({ CanvasNodeSplitDialog: Component }) => ({ default: Component })));
 const CanvasNodeUpscaleDialog = lazyRoute(() => import("@/components/canvas/canvas-node-upscale-dialog").then(({ CanvasNodeUpscaleDialog: Component }) => ({ default: Component })));
 const CanvasNodeAngleDialog = lazyRoute(() => import("@/components/canvas/canvas-node-angle-dialog").then(({ CanvasNodeAngleDialog: Component }) => ({ default: Component })));
+const CanvasNodeLightingDialog = lazyRoute(() => import("@/components/canvas/canvas-node-lighting-dialog").then(({ CanvasNodeLightingDialog: Component }) => ({ default: Component })));
 const AssetPickerModal = lazyRoute(() => import("@/components/canvas/asset-picker-modal").then(({ AssetPickerModal: Component }) => ({ default: Component })));
 
 // 内置节点注册到统一注册表(模块加载时执行一次)
@@ -314,6 +318,7 @@ function InfiniteCanvasPage() {
     const [splitNodeId, setSplitNodeId] = useState<string | null>(null);
     const [upscaleNodeId, setUpscaleNodeId] = useState<string | null>(null);
     const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
+    const [lightingNodeId, setLightingNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
     const [titleEditing, setTitleEditing] = useState(false);
     const [titleDraft, setTitleDraft] = useState("");
@@ -745,6 +750,7 @@ function InfiniteCanvasPage() {
     const splitNode = splitNodeId ? nodeById.get(splitNodeId) || null : null;
     const upscaleNode = upscaleNodeId ? nodeById.get(upscaleNodeId) || null : null;
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
+    const lightingNode = lightingNodeId ? nodeById.get(lightingNodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const selectedNodes = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id)), [nodes, selectedNodeIds]);
@@ -2514,6 +2520,68 @@ function InfiniteCanvasPage() {
         [effectiveConfig, finishGenerationRequest, isDouEmperor, message, openConfigDialog, startGenerationRequest],
     );
 
+    const generateLightingNode = useCallback(
+        async (node: CanvasNodeData, params: CanvasImageLightingParams) => {
+            if (!node.metadata?.content) return;
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1" };
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            const { capabilities } = resolveImageModelSettings(generationConfig, generationConfig.model);
+            if (capabilities.maxReferences < 1) {
+                message.warning("当前模型不支持参考图编辑，请在洞府中切换支持图生图的模型");
+                return;
+            }
+
+            const childId = nanoid();
+            const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+            const title = buildLightingLabel(params);
+            const prompt = buildLightingPrompt(params);
+            const reference = { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey };
+            const generationMetadata = {
+                ...buildImageGenerationMetadata("edit", generationConfig, 1, [reference]),
+                derivedFromNodeId: node.id,
+                variantGroupId: node.metadata?.variantGroupId || node.id,
+                versionLabel: "打光变体",
+            };
+            const generationStartedAt = Date.now();
+            setLightingNodeId(null);
+            setRunningNodeId(childId);
+            setNodes((prev) => [
+                ...prev,
+                {
+                    id: childId,
+                    type: CanvasNodeType.Image,
+                    title,
+                    position: { x: node.position.x + node.width + 96, y: node.position.y },
+                    width: imageConfig.width,
+                    height: imageConfig.height,
+                    metadata: { prompt, status: NODE_STATUS_LOADING, generationStartedAt, ...generationMetadata },
+                },
+            ]);
+            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+            setSelectedNodeIds(new Set([childId]));
+            setDialogNodeId(childId);
+            const controller = startGenerationRequest(childId, node.id, childId);
+            try {
+                const image = await requestEdit(generationConfig, prompt, [reference], undefined, imageRequestOptions(childId, controller)).then((items) => items[0]);
+                const uploaded = await uploadImage(image.dataUrl, { outputFormat: generationConfig.imageOutputFormat });
+                const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
+            } catch (error) {
+                if (isGenerationCanceled(error)) return;
+                const errorDetails = friendlyErrorMessage(error);
+                message.error({ content: <GenerationFailureToast feedback={generationFailureFeedback(errorDetails, { isDouEmperor })} />, duration: 2 });
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+            } finally {
+                finishGenerationRequest(childId, controller);
+                setRunningNodeId(null);
+            }
+        },
+        [effectiveConfig, finishGenerationRequest, isDouEmperor, message, openConfigDialog, startGenerationRequest],
+    );
+
     const handleFontSizeChange = useCallback((nodeId: string, fontSize: number) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, fontSize } } : node)));
     }, []);
@@ -3707,6 +3775,7 @@ function InfiniteCanvasPage() {
                     onSplit={(node) => setSplitNodeId(node.id)}
                     onUpscale={(node) => setUpscaleNodeId(node.id)}
                     onAngle={(node) => setAngleNodeId(node.id)}
+                    onLighting={(node) => setLightingNodeId(node.id)}
                     onViewImage={(node) => setPreviewNodeId(node.id)}
                     onReversePrompt={createImageReversePromptNodes}
                     onRetry={(node) => void handleRetryNode(node)}
@@ -3843,6 +3912,12 @@ function InfiniteCanvasPage() {
                 {angleNode?.metadata?.content ? (
                     <Suspense fallback={<CanvasToolLoading />}>
                         <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} />
+                    </Suspense>
+                ) : null}
+
+                {lightingNode?.metadata?.content ? (
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <CanvasNodeLightingDialog dataUrl={lightingNode.metadata.content} open onClose={() => setLightingNodeId(null)} onConfirm={(params) => void generateLightingNode(lightingNode!, params)} />
                     </Suspense>
                 ) : null}
 

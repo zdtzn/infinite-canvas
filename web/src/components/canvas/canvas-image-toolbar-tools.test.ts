@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { imageQuickToolsStorageKey, loadImageQuickToolsConfig, writeImageQuickToolsConfig, type ImageQuickToolsConfig } from "./canvas-image-toolbar-tools";
+import { IMAGE_QUICK_TOOLS_VERSION, imageQuickToolsStorageKey, loadImageQuickToolsConfig, writeImageQuickToolsConfig, type ImageQuickToolsConfig } from "./canvas-image-toolbar-tools";
 
 function createStorage(initial: Record<string, string> = {}) {
     const values = new Map(Object.entries(initial));
@@ -15,8 +15,8 @@ function createStorage(initial: Record<string, string> = {}) {
 describe("canvas image toolbar preferences", () => {
     test("keeps toolbar choices isolated by account", () => {
         const storage = createStorage();
-        const alice: ImageQuickToolsConfig = { ids: ["saveAsset", "download", "split"], showLabels: false };
-        const bob: ImageQuickToolsConfig = { ids: ["info", "download", "crop"], showLabels: true };
+        const alice: ImageQuickToolsConfig = { ids: ["saveAsset", "download", "split"], showLabels: false, version: IMAGE_QUICK_TOOLS_VERSION };
+        const bob: ImageQuickToolsConfig = { ids: ["info", "download", "crop"], showLabels: true, version: IMAGE_QUICK_TOOLS_VERSION };
 
         writeImageQuickToolsConfig(storage, "alice", alice);
         writeImageQuickToolsConfig(storage, "bob", bob);
@@ -28,9 +28,10 @@ describe("canvas image toolbar preferences", () => {
     test("migrates the latest legacy browser preference without losing split", () => {
         const legacy = { ids: ["download", "edit", "split", "view"], showLabels: false };
         const storage = createStorage({ "canvas-image-quick-tools-v7": JSON.stringify(legacy) });
+        const migrated = { ids: ["download", "edit", "split", "lighting", "view"], showLabels: false, version: IMAGE_QUICK_TOOLS_VERSION };
 
-        expect(loadImageQuickToolsConfig(storage, "alice")).toEqual({ config: legacy, configured: true });
-        expect(storage.value(imageQuickToolsStorageKey("alice"))).toBe(JSON.stringify(legacy));
+        expect(loadImageQuickToolsConfig(storage, "alice")).toEqual({ config: migrated, configured: true });
+        expect(storage.value(imageQuickToolsStorageKey("alice"))).toBe(JSON.stringify(migrated));
         expect(storage.value("canvas-image-quick-tools-v7")).toBeNull();
     });
 
@@ -38,12 +39,13 @@ describe("canvas image toolbar preferences", () => {
         const legacy = { ids: ["download", "split"], showLabels: false };
         const storage = createStorage({ "canvas-image-quick-tools-v7": JSON.stringify(legacy) });
 
-        expect(loadImageQuickToolsConfig(storage, "")).toEqual({ config: legacy, configured: true });
+        const migrated = { ids: ["download", "split", "lighting"], showLabels: false, version: IMAGE_QUICK_TOOLS_VERSION };
+        expect(loadImageQuickToolsConfig(storage, "")).toEqual({ config: migrated, configured: true });
         expect(storage.value("canvas-image-quick-tools-v7")).toBe(JSON.stringify(legacy));
         expect(storage.value(imageQuickToolsStorageKey(""))).toBeNull();
 
-        expect(loadImageQuickToolsConfig(storage, "alice")).toEqual({ config: legacy, configured: true });
-        expect(storage.value(imageQuickToolsStorageKey("alice"))).toBe(JSON.stringify(legacy));
+        expect(loadImageQuickToolsConfig(storage, "alice")).toEqual({ config: migrated, configured: true });
+        expect(storage.value(imageQuickToolsStorageKey("alice"))).toBe(JSON.stringify(migrated));
         expect(storage.value("canvas-image-quick-tools-v7")).toBeNull();
     });
 
@@ -61,6 +63,6 @@ describe("canvas image toolbar preferences", () => {
         };
 
         expect(loadImageQuickToolsConfig(storage, "alice").configured).toBeFalse();
-        expect(() => writeImageQuickToolsConfig(storage, "alice", { ids: ["split"], showLabels: false })).not.toThrow();
+        expect(() => writeImageQuickToolsConfig(storage, "alice", { ids: ["split"], showLabels: false, version: IMAGE_QUICK_TOOLS_VERSION })).not.toThrow();
     });
 });

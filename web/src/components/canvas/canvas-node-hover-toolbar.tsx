@@ -14,7 +14,7 @@ import { useColorAlchemyStore } from "@/features/color-alchemy/use-color-alchemy
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
 import type { CanvasNodeToolbarItem } from "@/types/canvas-plugin";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
-import { buildImageToolbarTools, defaultImageQuickToolIds, loadImageQuickToolsConfig, readImageQuickToolsConfig, writeImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
+import { buildImageToolbarTools, defaultImageQuickToolIds, IMAGE_QUICK_TOOLS_VERSION, loadImageQuickToolsConfig, readImageQuickToolsConfig, writeImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
@@ -35,6 +35,7 @@ type CanvasNodeHoverToolbarProps = {
     onSplit: (node: CanvasNodeData) => void;
     onUpscale: (node: CanvasNodeData) => void;
     onAngle: (node: CanvasNodeData) => void;
+    onLighting: (node: CanvasNodeData) => void;
     onViewImage: (node: CanvasNodeData) => void;
     onReversePrompt: (node: CanvasNodeData) => void;
     onRetry: (node: CanvasNodeData) => void;
@@ -72,6 +73,7 @@ export function CanvasNodeHoverToolbar({
     onSplit,
     onUpscale,
     onAngle,
+    onLighting,
     onViewImage,
     onReversePrompt,
     onRetry,
@@ -155,7 +157,7 @@ export function CanvasNodeHoverToolbar({
         }
         copyText(prompt, "提示词已复制");
     };
-    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onMaskEdit, onCrop, onSplit, onUpscale, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
+    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onMaskEdit, onCrop, onSplit, onUpscale, onAngle, onLighting, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
     const colorAlchemyTool: ToolbarTool = {
         id: "colorAlchemy",
         title: "发送至灵彩",
@@ -222,7 +224,7 @@ export function CanvasNodeHoverToolbar({
     };
 
     const saveImageToolSettings = () => {
-        const config = readImageQuickToolsConfig({ ids: draftImageToolIds, showLabels: draftShowImageToolLabels });
+        const config = readImageQuickToolsConfig({ ids: draftImageToolIds, showLabels: draftShowImageToolLabels, version: IMAGE_QUICK_TOOLS_VERSION });
         const revision = toolbarPreferenceRevision.current + 1;
         toolbarPreferenceRevision.current = revision;
         setQuickImageToolIds(config.ids);

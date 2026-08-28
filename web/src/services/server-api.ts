@@ -196,7 +196,7 @@ export type ServerUserPreferences = {
     chatPresetConfigured?: boolean;
     chatPersona: string;
     chatPersonaConfigured?: boolean;
-    canvasImageToolbar: { ids: string[]; showLabels: boolean } | null;
+    canvasImageToolbar: { ids: string[]; showLabels: boolean; version?: number } | null;
     canvasImageToolbarConfigured?: boolean;
     generationPreferences: GenerationPreferences | null;
     generationPreferencesConfigured?: boolean;

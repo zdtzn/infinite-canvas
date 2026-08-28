@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
-import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Upload, ZoomIn } from "lucide-react";
+import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Sun, Upload, ZoomIn } from "lucide-react";
 
 import type { CanvasNodeData } from "@/types/canvas";
 
-export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "split" | "upscale" | "angle" | "view";
+export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "split" | "upscale" | "angle" | "lighting" | "view";
 export type ImageQuickToolId = "info" | "delete" | "saveAsset" | "download" | "edit" | ImageNodeActionToolId;
 
 export type ImageToolHandlers = {
@@ -14,6 +14,7 @@ export type ImageToolHandlers = {
     onSplit: (node: CanvasNodeData) => void;
     onUpscale: (node: CanvasNodeData) => void;
     onAngle: (node: CanvasNodeData) => void;
+    onLighting: (node: CanvasNodeData) => void;
     onViewImage: (node: CanvasNodeData) => void;
     onCopyPrompt: (node: CanvasNodeData) => void;
     onReversePrompt: (node: CanvasNodeData) => void;
@@ -33,11 +34,13 @@ export type ImageToolDefinition = {
 export type ImageQuickToolsConfig = {
     ids: ImageQuickToolId[];
     showLabels: boolean;
+    version: number;
 };
 
 type ImageQuickToolsStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools";
+export const IMAGE_QUICK_TOOLS_VERSION = 2;
 const LEGACY_IMAGE_QUICK_TOOLS_STORAGE_KEYS = ["canvas-image-quick-tools-v7", "canvas-image-quick-tools-v6"];
 
 const imageBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download", "edit"];
@@ -127,6 +130,15 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
         run: (node, handlers) => handlers.onAngle(node),
     },
     {
+        id: "lighting",
+        defaultVisible: true,
+        panelLabel: "AI 打光",
+        label: "打光",
+        title: "调整主光方向、亮度与色温",
+        icon: () => <Sun className="size-4" />,
+        run: (node, handlers) => handlers.onLighting(node),
+    },
+    {
         id: "view",
         defaultVisible: true,
         panelLabel: "查看大图",
@@ -157,12 +169,14 @@ export function normalizeImageQuickToolIds(value: unknown[]) {
 }
 
 export function readImageQuickToolsConfig(value: unknown): ImageQuickToolsConfig {
-    if (Array.isArray(value)) return { ids: normalizeImageQuickToolIds(value), showLabels: false };
-    if (!value || typeof value !== "object") return { ids: defaultImageQuickToolIds, showLabels: false };
+    if (Array.isArray(value)) return { ids: migrateImageQuickToolIds(normalizeImageQuickToolIds(value), 0), showLabels: false, version: IMAGE_QUICK_TOOLS_VERSION };
+    if (!value || typeof value !== "object") return { ids: defaultImageQuickToolIds, showLabels: false, version: IMAGE_QUICK_TOOLS_VERSION };
     const data = value as Partial<ImageQuickToolsConfig>;
+    const version = Number.isInteger(data.version) ? Number(data.version) : 0;
     return {
-        ids: Array.isArray(data.ids) ? normalizeImageQuickToolIds(data.ids) : defaultImageQuickToolIds,
+        ids: Array.isArray(data.ids) ? migrateImageQuickToolIds(normalizeImageQuickToolIds(data.ids), version) : defaultImageQuickToolIds,
         showLabels: data.showLabels === true,
+        version: IMAGE_QUICK_TOOLS_VERSION,
     };
 }
 
@@ -226,4 +240,11 @@ function removeStorageValue(storage: ImageQuickToolsStorage | null | undefined, 
 
 function resolveToolText(value: string | ((node: CanvasNodeData) => string), node: CanvasNodeData) {
     return typeof value === "function" ? value(node) : value;
+}
+
+function migrateImageQuickToolIds(ids: ImageQuickToolId[], version: number) {
+    if (version >= IMAGE_QUICK_TOOLS_VERSION || ids.includes("lighting")) return ids;
+    const selected = new Set<ImageQuickToolId>([...ids, "lighting"]);
+    const allIds: ImageQuickToolId[] = [...imageBaseToolIds, ...imageToolDefinitions.map((tool) => tool.id)];
+    return allIds.filter((id) => selected.has(id));
 }

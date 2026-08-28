@@ -6,6 +6,7 @@ import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
+import type { CanvasImageLightingParams } from "@/components/canvas/canvas-node-lighting-dialog";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
@@ -168,4 +169,24 @@ export function buildAngleLabel(params: CanvasImageAngleParams) {
 
 export function buildAnglePrompt(params: CanvasImageAngleParams) {
     return `基于参考图重新生成同一主体的新视角，保持主体、颜色、材质和画面风格一致，不要只做透视变形。${buildAngleLabel(params)}。`;
+}
+
+const lightingDirectionLabels: Record<CanvasImageLightingParams["direction"], string> = {
+    front: "前方顺光",
+    left: "左侧主光",
+    top: "顶部主光",
+    back: "后方逆光",
+    right: "右侧主光",
+    bottom: "底部主光",
+};
+
+export function buildLightingLabel(params: CanvasImageLightingParams) {
+    return `AI 打光：${lightingDirectionLabels[params.direction]}，亮度 ${params.brightness}%，色温 ${params.temperature}K`;
+}
+
+export function buildLightingPrompt(params: CanvasImageLightingParams) {
+    const mode = params.mode === "perspective" ? "按照场景透视、主体体积和空间深度建立自然光照层次" : "采用正面布光，光线覆盖均匀但保留自然立体感";
+    const brightness = params.brightness < 35 ? "低亮度、克制柔和" : params.brightness < 65 ? "中等亮度、明暗平衡" : params.brightness < 85 ? "明亮清晰、对比自然" : "高亮度、冲击力较强但高光不过曝";
+    const temperature = params.temperature < 3800 ? "偏暖的金橙色光线" : params.temperature > 6200 ? "偏冷的蓝白色光线" : "中性的自然白光";
+    return `基于参考图进行专业 AI 重打光。严格保持原图主体身份、产品外观、姿态、构图、镜头、文字内容、背景结构和画面比例，不新增或删除元素，不改变材质与原有设计。主光使用${lightingDirectionLabels[params.direction]}，${mode}；整体为${brightness}，色温 ${params.temperature}K，呈现${temperature}。重塑合理的高光、阴影、轮廓光和环境反射，使光影方向一致、边缘干净、过渡自然，避免死黑阴影、过曝、光晕污染和主体变形。`;
 }

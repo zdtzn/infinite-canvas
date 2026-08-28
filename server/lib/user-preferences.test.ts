@@ -56,12 +56,14 @@ describe("user preferences", () => {
 
   test("keeps only supported canvas image toolbar tools", () => {
     const preference = normalizeUserCanvasImageToolbar({
-      ids: ["split", "download", "split"],
+      ids: ["lighting", "split", "download", "split"],
       showLabels: true,
+      version: 2,
     });
     expect(preference).toEqual({
-      ids: ["download", "split"],
+      ids: ["download", "split", "lighting"],
       showLabels: true,
+      version: 2,
     });
     expect(readStoredUserCanvasImageToolbar(preference)).toEqual(preference);
     expect(() =>

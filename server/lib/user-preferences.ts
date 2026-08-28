@@ -28,6 +28,7 @@ const canvasImageToolbarToolIds = [
   "split",
   "upscale",
   "angle",
+  "lighting",
   "view",
 ] as const;
 const canvasImageToolbarToolIdSet = new Set<string>(canvasImageToolbarToolIds);
@@ -35,6 +36,7 @@ const canvasImageToolbarToolIdSet = new Set<string>(canvasImageToolbarToolIds);
 export type UserCanvasImageToolbarPreference = {
   ids: string[];
   showLabels: boolean;
+  version: number;
 };
 
 export type UserGenerationPreferences = {
@@ -112,7 +114,7 @@ export function normalizeUserCanvasImageToolbar(
 ): UserCanvasImageToolbarPreference {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("画布图片工具栏偏好无效");
-  const source = value as { ids?: unknown; showLabels?: unknown };
+  const source = value as { ids?: unknown; showLabels?: unknown; version?: unknown };
   if (!Array.isArray(source.ids) || typeof source.showLabels !== "boolean")
     throw new Error("画布图片工具栏偏好无效");
   const ids = source.ids;
@@ -127,6 +129,7 @@ export function normalizeUserCanvasImageToolbar(
   return {
     ids: canvasImageToolbarToolIds.filter((id) => ids.includes(id)),
     showLabels: source.showLabels,
+    version: typeof source.version === "number" && Number.isInteger(source.version) ? source.version : 0,
   };
 }
 
