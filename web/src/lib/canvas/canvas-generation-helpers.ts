@@ -188,5 +188,16 @@ export function buildLightingPrompt(params: CanvasImageLightingParams) {
     const mode = params.mode === "perspective" ? "按照场景透视、主体体积和空间深度建立自然光照层次" : "采用正面布光，光线覆盖均匀但保留自然立体感";
     const brightness = params.brightness < 35 ? "低亮度、克制柔和" : params.brightness < 65 ? "中等亮度、明暗平衡" : params.brightness < 85 ? "明亮清晰、对比自然" : "高亮度、冲击力较强但高光不过曝";
     const temperature = params.temperature < 3800 ? "偏暖的金橙色光线" : params.temperature > 6200 ? "偏冷的蓝白色光线" : "中性的自然白光";
-    return `基于参考图进行专业 AI 重打光。严格保持原图主体身份、产品外观、姿态、构图、镜头、文字内容、背景结构和画面比例，不新增或删除元素，不改变材质与原有设计。主光使用${lightingDirectionLabels[params.direction]}，${mode}；整体为${brightness}，色温 ${params.temperature}K，呈现${temperature}。重塑合理的高光、阴影、轮廓光和环境反射，使光影方向一致、边缘干净、过渡自然，避免死黑阴影、过曝、光晕污染和主体变形。`;
+    const horizontal = Math.round(params.lightPosition.x * 100);
+    const vertical = Math.round(params.lightPosition.y * 100);
+    const position = describeLightingPosition(params.lightPosition);
+    return `基于参考图进行专业 AI 重打光。严格保持原图主体身份、产品外观、姿态、构图、镜头、文字内容、背景结构和画面比例，不新增或删除元素，不改变材质与原有设计。主光使用${lightingDirectionLabels[params.direction]}，光源相对主体位于${position}，水平偏移 ${horizontal}%，垂直偏移 ${vertical}%；${mode}。整体为${brightness}，色温 ${params.temperature}K，呈现${temperature}。重塑合理的高光、阴影、轮廓光和环境反射，使光影方向一致、边缘干净、过渡自然，避免死黑阴影、过曝、光晕污染和主体变形。`;
+}
+
+function describeLightingPosition(position: CanvasImageLightingParams["lightPosition"]) {
+    const horizontal = position.x < -0.2 ? "左" : position.x > 0.2 ? "右" : "";
+    const vertical = position.y < -0.2 ? "上方" : position.y > 0.2 ? "下方" : "";
+    if (!horizontal && !vertical) return "正前方中央";
+    if (!vertical) return `${horizontal}侧`;
+    return `${horizontal || "正"}${vertical}`;
 }
