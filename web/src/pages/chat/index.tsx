@@ -1195,7 +1195,7 @@ function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete, onR
         <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
             <div
                 className={cn(
-                    "min-w-0 max-w-[82%] rounded-xl px-4 py-3 text-sm leading-6 shadow-sm",
+                    "min-w-0 max-w-[82%] overflow-hidden rounded-xl px-4 py-3 text-sm leading-6 shadow-sm",
                     isUser ? "bg-stone-900 text-white dark:bg-[#f2dfb0] dark:text-stone-950" : "border border-stone-200 bg-white text-stone-800 dark:border-white/10 dark:bg-white/[0.04] dark:text-[#f5efe3]",
                 )}
             >

@@ -11,7 +11,48 @@
 }
 
 .agent-streamdown {
+    min-width: 0;
+    max-width: 100%;
     overflow-wrap: anywhere;
+}
+
+.agent-streamdown > * {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.agent-streamdown p,
+.agent-streamdown li,
+.agent-streamdown blockquote,
+.agent-streamdown h1,
+.agent-streamdown h2,
+.agent-streamdown h3,
+.agent-streamdown h4 {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.agent-streamdown p {
+    margin-block: 0.55rem;
+}
+
+.agent-streamdown h1,
+.agent-streamdown h2,
+.agent-streamdown h3,
+.agent-streamdown h4 {
+    margin-block: 0.9rem 0.45rem;
+    line-height: 1.45;
+}
+
+.agent-streamdown ul,
+.agent-streamdown ol {
+    padding-left: 1.35rem;
+}
+
+.agent-streamdown table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
 }
 
 .agent-streamdown > :first-child {
@@ -53,12 +94,23 @@
 .agent-streamdown [data-streamdown="code-block-body"] {
     min-height: 0;
     padding: 0.4rem 2rem 0.4rem 0.6rem;
-    overflow-x: auto;
+    overflow-x: hidden;
     border: 0;
     border-radius: 0;
     background: transparent !important;
     font-size: 0.75rem;
     line-height: 1.15rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.agent-streamdown [data-streamdown="code-block-body"] pre,
+.agent-streamdown [data-streamdown="code-block-body"] code {
+    max-width: 100%;
+    white-space: inherit;
+    overflow-wrap: inherit;
+    word-break: inherit;
 }
 
 .agent-streamdown [data-streamdown="code-block-actions"] {
