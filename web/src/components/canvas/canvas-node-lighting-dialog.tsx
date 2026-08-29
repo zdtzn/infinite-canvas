@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { Button, Modal, Segmented, Slider } from "antd";
+import { Button, Modal, Segmented } from "antd";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, RotateCcw, Sparkles, Sun } from "lucide-react";
 
 export type CanvasLightingMode = "front" | "perspective";
@@ -146,8 +146,18 @@ export function CanvasNodeLightingDialog({ dataUrl, open, onClose, onConfirm }: 
                     </div>
 
                     <div className="space-y-6 rounded-lg border p-5">
-                        <LightingSlider label="亮度" value={params.brightness} min={10} max={100} step={1} suffix="%" onChange={(value) => update("brightness", value)} />
-                        <LightingSlider label="色温" value={params.temperature} min={2000} max={8000} step={100} suffix="K" onChange={(value) => update("temperature", value)} trackColor={temperatureColor(params.temperature)} />
+                        <LightingSlider label="亮度" value={params.brightness} min={10} max={100} step={1} suffix="%" trackBackground="linear-gradient(90deg, #3a3d42 0%, #8e9298 46%, #ffffff 100%)" onChange={(value) => update("brightness", value)} />
+                        <LightingSlider
+                            label="色温"
+                            hint={temperatureLabel(params.temperature)}
+                            value={params.temperature}
+                            min={2000}
+                            max={8000}
+                            step={100}
+                            suffix="K"
+                            trackBackground="linear-gradient(90deg, #ff6b24 0%, #ffbd72 31%, #fff1ca 50%, #d9e1ff 72%, #91adf5 100%)"
+                            onChange={(value) => update("temperature", value)}
+                        />
 
                         <div>
                             <div className="mb-3 flex items-center justify-between">
@@ -190,17 +200,49 @@ export function CanvasNodeLightingDialog({ dataUrl, open, onClose, onConfirm }: 
     );
 }
 
-function LightingSlider({ label, value, min, max, step, suffix, trackColor, onChange }: { label: string; value: number; min: number; max: number; step: number; suffix: string; trackColor?: string; onChange: (value: number) => void }) {
+function LightingSlider({
+    label,
+    hint,
+    value,
+    min,
+    max,
+    step,
+    suffix,
+    trackBackground,
+    onChange,
+}: {
+    label: string;
+    hint?: string;
+    value: number;
+    min: number;
+    max: number;
+    step: number;
+    suffix: string;
+    trackBackground: string;
+    onChange: (value: number) => void;
+}) {
     return (
-        <div>
-            <div className="mb-2 flex items-center justify-between gap-4">
-                <span className="text-sm font-medium opacity-75">{label}</span>
-                <span className="min-w-16 text-right text-sm font-semibold">
-                    {value}
-                    {suffix}
-                </span>
+        <div className="grid grid-cols-[minmax(0,1fr)_72px] items-end gap-x-5 gap-y-2">
+            <div className="flex min-w-0 items-baseline gap-1.5">
+                <span className="text-sm font-medium opacity-80">{label}</span>
+                {hint ? <span className="truncate text-xs opacity-45">({hint})</span> : null}
             </div>
-            <Slider min={min} max={max} step={step} value={value} onChange={onChange} styles={trackColor ? { track: { background: trackColor } } : undefined} />
+            <span className="row-span-2 self-end pb-px text-right text-base font-semibold tabular-nums opacity-80">
+                {value}
+                {suffix}
+            </span>
+            <input
+                type="range"
+                aria-label={label}
+                aria-valuetext={`${value}${suffix}${hint ? `，${hint}` : ""}`}
+                min={min}
+                max={max}
+                step={step}
+                value={value}
+                onChange={(event) => onChange(Number(event.currentTarget.value))}
+                className="h-2 w-full cursor-pointer appearance-none rounded-full outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-cyan-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#141414] [&::-moz-range-thumb]:size-5 [&::-moz-range-thumb]:cursor-grab [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border [&::-moz-range-thumb]:border-black/10 [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:shadow-[0_2px_7px_rgba(0,0,0,.28)] [&::-moz-range-track]:h-2 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-transparent [&::-webkit-slider-thumb]:size-5 [&::-webkit-slider-thumb]:cursor-grab [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-black/10 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-[0_2px_7px_rgba(0,0,0,.28)] active:[&::-moz-range-thumb]:cursor-grabbing active:[&::-webkit-slider-thumb]:cursor-grabbing"
+                style={{ background: trackBackground }}
+            />
         </div>
     );
 }
@@ -274,6 +316,14 @@ function temperatureColor(kelvin: number) {
     const green = Math.round(150 + ratio * 70);
     const blue = Math.round(76 + ratio * 179);
     return `rgb(${red}, ${green}, ${blue})`;
+}
+
+function temperatureLabel(kelvin: number) {
+    if (kelvin < 3200) return "暖光";
+    if (kelvin < 4500) return "暖白光";
+    if (kelvin < 5600) return "中午日光";
+    if (kelvin < 6800) return "冷白光";
+    return "阴天冷光";
 }
 
 function withAlpha(rgb: string, alpha: number) {
