@@ -1173,7 +1173,7 @@ export default function ImagePage() {
                             ) : (
                                 <div className="relative flex min-h-56 flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[#d9c8a7]/30 bg-[#151b1e] text-center lg:min-h-[calc(100%_-_3rem)] [&_.empty-state-desc]:!text-[#eee6d8] [&_.empty-state-icon]:!border-[#efe4d0]/30 [&_.empty-state-icon]:!bg-[#11171b]/65 [&_.empty-state-icon]:!text-[#e4c78d] [&_.empty-state-title]:!text-[#fffaf0]">
                                     <img
-                                        src="/images/ref/danqing-results-taiji-ink.webp"
+                                        src="/images/ref/danqing-results-celestial.webp"
                                         alt=""
                                         aria-hidden="true"
                                         className="pointer-events-none absolute inset-0 size-full object-cover object-center"
