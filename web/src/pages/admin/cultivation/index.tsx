@@ -630,14 +630,11 @@ function GrowthRulesPanel() {
                                 aria-current={selected ? "true" : undefined}
                                 onClick={() => setSelectedRealmId(realm.id)}
                             >
-                                <span className="cultivation-realm-art" aria-hidden="true">
-                                    <img src={realmHero.imageSrc} alt="" loading="lazy" decoding="async" />
-                                </span>
                                 <span className="cultivation-realm-tier" aria-hidden="true">
                                     {String(index + 1).padStart(2, "0")}
                                 </span>
-                                <span className="cultivation-realm-symbol">
-                                    <RealmIcon iconKey={realm.iconKey} className="size-4" />
+                                <span className="cultivation-realm-badge" aria-hidden="true">
+                                    <img src={realmHero.badgeSrc} alt="" loading="lazy" decoding="async" />
                                 </span>
                                 <span className="min-w-0 flex-1">
                                     <span className="cultivation-realm-name">{realm.name}</span>
@@ -646,6 +643,9 @@ function GrowthRulesPanel() {
                                         <span aria-hidden="true">·</span>
                                         <span>{activeStageCount} 阶段</span>
                                     </span>
+                                </span>
+                                <span className="cultivation-realm-aura" aria-hidden="true">
+                                    <img src={realmHero.auraSrc} alt="" loading="lazy" decoding="async" />
                                 </span>
                                 <span className="cultivation-realm-state-wrap">
                                     <span className={`cultivation-realm-state ${realm.active ? "is-enabled" : ""}`} aria-hidden="true" />
