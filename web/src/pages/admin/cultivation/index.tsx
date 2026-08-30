@@ -633,7 +633,7 @@ function GrowthRulesPanel() {
                                 <span className="cultivation-realm-tier" aria-hidden="true">
                                     {String(index + 1).padStart(2, "0")}
                                 </span>
-                                <span className="cultivation-realm-badge" aria-hidden="true">
+                                <span className="cultivation-realm-visual-badge" aria-hidden="true">
                                     <img src={realmHero.badgeSrc} alt="" loading="lazy" decoding="async" />
                                 </span>
                                 <span className="min-w-0 flex-1">
@@ -1142,20 +1142,24 @@ function OverviewPanel({ onOpenUser, onNavigate }: { onOpenUser: (displayName: s
                         </Button>
                     </div>
                     <div className="cultivation-admin-realm-rail">
-                        {realms.map((realm, index) => (
-                            <div key={realm.id} className="cultivation-admin-realm-node">
-                                <div className="cultivation-admin-realm-node-icon" style={{ "--realm-node-color": realm.color } as CSSProperties}>
-                                    <RealmIcon iconKey={realm.iconKey} className="size-5" />
+                        {realms.map((realm, index) => {
+                            const realmHero = cultivationRealmHero(realm.id);
+                            return (
+                                <div key={realm.id} className="cultivation-admin-realm-node" style={{ "--realm-node-color": realm.color } as CSSProperties}>
+                                    <div className="cultivation-admin-realm-node-badge" aria-hidden="true">
+                                        <img src={realmHero.badgeSrc} alt="" loading="lazy" decoding="async" />
+                                    </div>
+                                    <div className="cultivation-admin-realm-node-copy">
+                                        <span className="cultivation-admin-realm-node-order">{String(index + 1).padStart(2, "0")}</span>
+                                        <strong>{realm.name}</strong>
+                                        <span>{realm.stages.filter((stage) => stage.active).length} 个阶段</span>
+                                    </div>
+                                    <div className="cultivation-admin-realm-node-aura" aria-hidden="true">
+                                        <img src={realmHero.auraSrc} alt="" loading="lazy" decoding="async" />
+                                    </div>
                                 </div>
-                                <strong>{realm.name}</strong>
-                                <span>{realm.stages.filter((stage) => stage.active).length} 个阶段</span>
-                                {index < realms.length - 1 ? (
-                                    <span className="cultivation-admin-realm-connector" aria-hidden="true">
-                                        <ChevronRight className="size-3.5" />
-                                    </span>
-                                ) : null}
-                            </div>
-                        ))}
+                            );
+                        })}
                         {!config.isLoading && !realms.length ? <AdminEmptyLine text="暂无已启用境界配置" /> : null}
                     </div>
                     <div className="cultivation-admin-panel-footnote">
