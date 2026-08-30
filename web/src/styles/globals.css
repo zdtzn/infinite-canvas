@@ -4594,66 +4594,193 @@ html:not(.dark) .canvas-cinematic-wash {
         background: rgb(201 168 106 / 8%);
     }
 
-    /* ── 命宫 · 十境天梯 ── */
+    /* ── 命宫 · 十二境天梯 ── */
+
+    .shj-ladder-panel {
+        overflow: hidden;
+    }
+
+    .shj-ladder-progress {
+        display: flex;
+        align-items: baseline;
+        gap: 0.25rem;
+        color: rgb(201 196 185 / 55%);
+        font-size: 0.625rem;
+        white-space: nowrap;
+    }
+
+    .shj-ladder-progress strong {
+        color: #c9a86a;
+        font-family: var(--font-display);
+        font-size: 1.25rem;
+        font-weight: 500;
+    }
 
     .shj-ladder {
         position: relative;
+        display: grid;
+        list-style: none;
+        margin-bottom: 0;
+        padding-left: 0;
     }
 
     .shj-ladder::before {
         position: absolute;
-        top: 10px;
-        bottom: 10px;
-        left: 7px;
+        z-index: 0;
+        top: 1.75rem;
+        bottom: 1.75rem;
+        left: 1.55rem;
         width: 1px;
-        background: linear-gradient(180deg, transparent, rgb(201 168 106 / 28%) 12%, rgb(201 168 106 / 28%) 88%, transparent);
+        background: linear-gradient(180deg, transparent, rgb(201 168 106 / 34%) 10%, rgb(62 92 86 / 40%) 88%, transparent);
         content: "";
     }
 
     .shj-ladder-item {
         position: relative;
-        display: flex;
+        isolation: isolate;
+        display: grid;
+        grid-template-columns: 3rem minmax(0, 1fr) auto;
         align-items: center;
-        gap: 0.875rem;
-        padding: 0.625rem 0;
+        gap: 0.65rem;
+        min-height: 3.75rem;
+        overflow: hidden;
+        border-bottom: 1px solid rgb(237 237 230 / 7%);
+        padding: 0.42rem 0.35rem;
+        transition:
+            background-color 220ms var(--shj-ease),
+            border-color 220ms var(--shj-ease),
+            opacity 220ms var(--shj-ease);
     }
 
-    .shj-ladder-dot {
-        z-index: 1;
-        width: 15px;
-        height: 15px;
-        flex-shrink: 0;
-        border: 1px solid rgb(237 237 230 / 25%);
+    .shj-ladder-item:last-child {
+        border-bottom: 0;
+    }
+
+    .shj-ladder-mark {
+        position: relative;
+        z-index: 2;
+        display: grid;
+        width: 2.7rem;
+        height: 2.7rem;
+        place-items: center;
+        border: 1px solid rgb(237 237 230 / 12%);
         border-radius: 999px;
-        background: #17171d;
-        transition: box-shadow 300ms var(--shj-ease);
+        background: rgb(10 11 15 / 82%);
+        box-shadow: 0 6px 18px rgb(0 0 0 / 24%);
+    }
+
+    .shj-ladder-badge {
+        width: 2.35rem;
+        height: 2.35rem;
+        object-fit: contain;
+        transition:
+            filter 220ms var(--shj-ease),
+            opacity 220ms var(--shj-ease),
+            transform 220ms var(--shj-ease);
+    }
+
+    .shj-ladder-aura {
+        position: absolute;
+        z-index: 0;
+        top: 50%;
+        right: -1rem;
+        width: 6.5rem;
+        height: 6.5rem;
+        object-fit: contain;
+        opacity: 0;
+        transform: translateY(-50%);
+        transition: opacity 220ms var(--shj-ease);
+    }
+
+    .shj-ladder-copy,
+    .shj-ladder-meta {
+        position: relative;
+        z-index: 1;
+        min-width: 0;
+    }
+
+    .shj-ladder-copy {
+        display: grid;
+        gap: 0.12rem;
+    }
+
+    .shj-ladder-state {
+        color: rgb(201 196 185 / 46%);
+        font-size: 0.625rem;
+        line-height: 1;
+    }
+
+    .shj-ladder-name {
+        overflow: hidden;
+        color: #c9c4b9;
+        font-family: var(--font-display);
+        font-size: 0.9rem;
+        line-height: 1.3;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .shj-ladder-meta {
+        color: rgb(201 196 185 / 38%);
+        font-size: 0.625rem;
+        white-space: nowrap;
     }
 
     .shj-ladder-item.is-passed {
-        color: #c9c4b9;
+        opacity: 0.78;
     }
 
-    .shj-ladder-item.is-passed .shj-ladder-dot {
-        border-color: #3e5c56;
-        background: #3e5c56;
+    .shj-ladder-item.is-passed .shj-ladder-mark {
+        border-color: rgb(86 126 117 / 42%);
+    }
+
+    .shj-ladder-item.is-passed .shj-ladder-badge {
+        opacity: 0.78;
+        filter: saturate(0.7);
+    }
+
+    .shj-ladder-item.is-passed .shj-ladder-state {
+        color: #72968d;
     }
 
     .shj-ladder-item.is-current {
-        color: #f0ead8;
+        border-color: rgb(201 168 106 / 20%);
+        border-radius: 6px;
+        background: linear-gradient(90deg, rgb(201 168 106 / 14%), rgb(201 168 106 / 4%) 58%, transparent);
     }
 
-    .shj-ladder-item.is-current .shj-ladder-dot {
-        border-color: #c9a86a;
-        background: #c9a86a;
-        box-shadow: 0 0 16px rgb(201 168 106 / 60%);
+    .shj-ladder-item.is-current .shj-ladder-mark {
+        border-color: rgb(223 190 125 / 70%);
+        box-shadow:
+            0 0 0 3px rgb(201 168 106 / 9%),
+            0 8px 24px rgb(0 0 0 / 30%);
+    }
+
+    .shj-ladder-item.is-current .shj-ladder-badge {
+        filter: drop-shadow(0 0 8px rgb(201 168 106 / 42%));
+        transform: scale(1.04);
+    }
+
+    .shj-ladder-item.is-current .shj-ladder-aura {
+        opacity: 0.18;
+    }
+
+    .shj-ladder-item.is-current .shj-ladder-state,
+    .shj-ladder-item.is-current .shj-ladder-meta {
+        color: #c9a86a;
+    }
+
+    .shj-ladder-item.is-current .shj-ladder-name {
+        color: #f0ead8;
+        font-size: 1rem;
     }
 
     .shj-ladder-item.is-future {
-        color: rgb(201 196 185 / 35%);
+        opacity: 0.42;
     }
 
-    .shj-ladder-item.is-future .shj-ladder-dot {
-        opacity: 0.35;
+    .shj-ladder-item.is-future .shj-ladder-badge {
+        filter: grayscale(0.72) saturate(0.42);
     }
 
     @keyframes shj-mist-drift {

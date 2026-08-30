@@ -138,17 +138,6 @@ export const DEFAULT_REALMS: RealmSeed[] = [
     promotionPolicy: "auto",
   },
   {
-    code: "dou-zun-peak",
-    name: "斗尊巅峰",
-    stageCount: 10,
-    stageSuffix: "转",
-    color: "#0369a1",
-    iconKey: "Waves",
-    dailyLimit: 200,
-    maxConcurrency: 2,
-    promotionPolicy: "auto",
-  },
-  {
     code: "half-saint",
     name: "半圣",
     stageCount: 1,

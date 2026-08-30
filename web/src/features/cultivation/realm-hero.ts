@@ -88,13 +88,6 @@ const realmHeroThemes: Record<string, RealmHeroTheme> = {
         progressMessage: "距离掌控空间仅一步之遥，每一次创作都在积蓄力量。",
         imagePosition: "center",
     },
-    "realm-dou-zun-peak": {
-        ...realmVisual("realm-dou-zun-peak"),
-        imageSrc: realmAsset("realm-dou-zun-peak.webp"),
-        description: "万象归一，下一次突破正在积蓄。",
-        progressMessage: "十转圆满在即，守住节奏，让积累在最后一程化作突破。",
-        imagePosition: "center",
-    },
     "realm-half-saint": {
         ...realmVisual("realm-half-saint"),
         imageSrc: realmAsset("realm-half-saint.webp"),

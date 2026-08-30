@@ -516,7 +516,12 @@ function runMigrations(database: Database) {
       const insertGrant = database.query(
         "INSERT OR IGNORE INTO stage_capabilities(stage_id, capability_key, enabled) SELECT s.id, ?, 1 FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE r.sort_order >= ?",
       );
-      for (const [key, label, category, minimumRealmSortOrder] of PRODUCT_CAPABILITIES) {
+      for (const [
+        key,
+        label,
+        category,
+        minimumRealmSortOrder,
+      ] of PRODUCT_CAPABILITIES) {
         insertCapability.run(key, label, category);
         insertGrant.run(key, minimumRealmSortOrder);
       }
@@ -526,10 +531,42 @@ function runMigrations(database: Database) {
         "INSERT OR IGNORE INTO product_templates(template_id, platform, name, output_kind, style_key, aspect_ratio, prompt_template, active, sort_order, created_at, updated_at) VALUES (?, 'pinduoduo', ?, ?, ?, ?, ?, 1, ?, ?, ?)",
       );
       const templates = [
-        ["pdd-main-clean", "清晰主图", "main_image", "clean", "1:1", "突出商品主体、背景干净、留白明确，适合拼多多商品主图", 10],
-        ["pdd-selling-poster", "卖点海报", "selling_poster", "value", "3:4", "围绕单一核心卖点建立清晰信息层级，保留商品真实结构", 20],
-        ["pdd-scene-lifestyle", "生活场景", "scene_image", "lifestyle", "4:3", "将商品自然置入真实使用场景，保持商品外观与包装信息一致", 30],
-        ["pdd-detail-clean", "详情页", "detail_page", "clean", "3:4", "纵向详情页构图，逐页说明材质、功能、细节与使用场景", 40],
+        [
+          "pdd-main-clean",
+          "清晰主图",
+          "main_image",
+          "clean",
+          "1:1",
+          "突出商品主体、背景干净、留白明确，适合拼多多商品主图",
+          10,
+        ],
+        [
+          "pdd-selling-poster",
+          "卖点海报",
+          "selling_poster",
+          "value",
+          "3:4",
+          "围绕单一核心卖点建立清晰信息层级，保留商品真实结构",
+          20,
+        ],
+        [
+          "pdd-scene-lifestyle",
+          "生活场景",
+          "scene_image",
+          "lifestyle",
+          "4:3",
+          "将商品自然置入真实使用场景，保持商品外观与包装信息一致",
+          30,
+        ],
+        [
+          "pdd-detail-clean",
+          "详情页",
+          "detail_page",
+          "clean",
+          "3:4",
+          "纵向详情页构图，逐页说明材质、功能、细节与使用场景",
+          40,
+        ],
       ] as const;
       for (const template of templates)
         insertTemplate.run(...template, timestamp, timestamp);
@@ -920,6 +957,93 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 23").get()
+  )
+    database.transaction(() => {
+      const timestamp = Date.now();
+      const retiredRealm = database
+        .query("SELECT id FROM realms WHERE code = ?")
+        .get("dou-zun-peak") as { id: string } | null;
+
+      if (retiredRealm) {
+        const bounds = database
+          .query(
+            "SELECT MIN(stage_order) AS first_order, MAX(stage_order) AS last_order FROM realm_stages WHERE realm_id = ?",
+          )
+          .get(retiredRealm.id) as {
+          first_order: number | null;
+          last_order: number | null;
+        };
+        const exactTarget = database
+          .query(
+            "SELECT s.id FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.id = ? AND s.active = 1 AND r.active = 1",
+          )
+          .get("realm-half-saint-1") as { id: string } | null;
+        const nextTarget =
+          exactTarget ||
+          (bounds.last_order == null
+            ? null
+            : (database
+                .query(
+                  "SELECT s.id FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.realm_id <> ? AND s.active = 1 AND r.active = 1 AND s.stage_order > ? ORDER BY s.stage_order LIMIT 1",
+                )
+                .get(retiredRealm.id, bounds.last_order) as {
+                id: string;
+              } | null));
+        const target =
+          nextTarget ||
+          (bounds.first_order == null
+            ? null
+            : (database
+                .query(
+                  "SELECT s.id FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.realm_id <> ? AND s.active = 1 AND r.active = 1 AND s.stage_order < ? ORDER BY s.stage_order DESC LIMIT 1",
+                )
+                .get(retiredRealm.id, bounds.first_order) as {
+                id: string;
+              } | null));
+        const assignedUsers = database
+          .query(
+            "SELECT COUNT(*) AS value FROM user_cultivation WHERE stage_id IN (SELECT id FROM realm_stages WHERE realm_id = ?)",
+          )
+          .get(retiredRealm.id) as { value: number };
+
+        if (Number(assignedUsers.value) > 0 && !target)
+          throw new Error(
+            "Cannot retire dou-zun-peak without an active cultivation stage",
+          );
+
+        if (target)
+          database
+            .query(
+              "UPDATE user_cultivation SET stage_id = ?, pending_stage_id = NULL, updated_at = ? WHERE stage_id IN (SELECT id FROM realm_stages WHERE realm_id = ?)",
+            )
+            .run(target.id, timestamp, retiredRealm.id);
+        database
+          .query(
+            "UPDATE user_cultivation SET pending_stage_id = NULL, updated_at = ? WHERE pending_stage_id IN (SELECT id FROM realm_stages WHERE realm_id = ?)",
+          )
+          .run(timestamp, retiredRealm.id);
+        database
+          .query(
+            "UPDATE breakthrough_history SET status = 'superseded', reason = CASE WHEN reason = '' THEN ? ELSE reason END WHERE status = 'pending' AND (from_stage_id IN (SELECT id FROM realm_stages WHERE realm_id = ?) OR to_stage_id IN (SELECT id FROM realm_stages WHERE realm_id = ?))",
+          )
+          .run("斗尊巅峰境界已退役", retiredRealm.id, retiredRealm.id);
+        database
+          .query("UPDATE realm_stages SET active = 0 WHERE realm_id = ?")
+          .run(retiredRealm.id);
+        database
+          .query("UPDATE realms SET active = 0 WHERE id = ?")
+          .run(retiredRealm.id);
+      }
+
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (23, ?)",
+        )
+        .run(timestamp);
+    })();
 }
 
 function migrateLegacyState(
@@ -1023,7 +1147,9 @@ function sqliteStore(database: Database): AppDatabase {
     saveState: (state) => replaceState(database, state),
     loadSetting: (key) => {
       const row = database
-        .query("SELECT value_json FROM cultivation_settings WHERE setting_key = ?")
+        .query(
+          "SELECT value_json FROM cultivation_settings WHERE setting_key = ?",
+        )
         .get(key) as { value_json?: string } | null;
       if (!row?.value_json) return null;
       try {
@@ -1105,13 +1231,26 @@ function sqliteStore(database: Database): AppDatabase {
           .query("SELECT 1 FROM asset_library_state WHERE user_id = ?")
           .get(userId),
       );
-      const pageSize = Math.max(1, Math.min(100, Math.floor(options.pageSize) || 24));
+      const pageSize = Math.max(
+        1,
+        Math.min(100, Math.floor(options.pageSize) || 24),
+      );
       const requestedPage = Math.max(1, Math.floor(options.page) || 1);
       const conditions = ["user_id = ?"];
       const params: Array<string | number> = [userId];
-      const kind = String(options.kind || "").trim().toLowerCase();
-      const keyword = String(options.keyword || "").trim().toLowerCase();
-      const tags = Array.from(new Set((options.tags || []).map((tag) => String(tag).trim().toLowerCase()).filter(Boolean)));
+      const kind = String(options.kind || "")
+        .trim()
+        .toLowerCase();
+      const keyword = String(options.keyword || "")
+        .trim()
+        .toLowerCase();
+      const tags = Array.from(
+        new Set(
+          (options.tags || [])
+            .map((tag) => String(tag).trim().toLowerCase())
+            .filter(Boolean),
+        ),
+      );
       if (kind && kind !== "all") {
         conditions.push("json_extract(payload_json, '$.kind') = ?");
         params.push(kind);
@@ -1121,20 +1260,39 @@ function sqliteStore(database: Database): AppDatabase {
         params.push(`%${keyword}%`);
       }
       for (const tag of tags) {
-        conditions.push("EXISTS (SELECT 1 FROM json_each(COALESCE(json_extract(payload_json, '$.tags'), '[]')) WHERE LOWER(value) = ?)");
+        conditions.push(
+          "EXISTS (SELECT 1 FROM json_each(COALESCE(json_extract(payload_json, '$.tags'), '[]')) WHERE LOWER(value) = ?)",
+        );
         params.push(tag);
       }
       const where = conditions.join(" AND ");
-      const totalRow = database.query(`SELECT COUNT(*) AS count FROM asset_library_items WHERE ${where}`).get(...params) as { count?: number } | null;
+      const totalRow = database
+        .query(
+          `SELECT COUNT(*) AS count FROM asset_library_items WHERE ${where}`,
+        )
+        .get(...params) as { count?: number } | null;
       const total = Number(totalRow?.count || 0);
-      const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
+      const page = Math.min(
+        requestedPage,
+        Math.max(1, Math.ceil(total / pageSize)),
+      );
       const offset = (page - 1) * pageSize;
       const rows = database
-        .query(`SELECT asset_id, payload_json, updated_at FROM asset_library_items WHERE ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`)
-        .all(...params, pageSize, offset) as Array<{ asset_id: string; payload_json: string; updated_at: number }>;
+        .query(
+          `SELECT asset_id, payload_json, updated_at FROM asset_library_items WHERE ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+        )
+        .all(...params, pageSize, offset) as Array<{
+        asset_id: string;
+        payload_json: string;
+        updated_at: number;
+      }>;
       return {
         initialized,
-        items: rows.map((item) => ({ id: item.asset_id, payload: JSON.parse(item.payload_json), updatedAt: Number(item.updated_at) })),
+        items: rows.map((item) => ({
+          id: item.asset_id,
+          payload: JSON.parse(item.payload_json),
+          updatedAt: Number(item.updated_at),
+        })),
         page,
         pageSize,
         total,
@@ -1396,9 +1554,10 @@ function sqliteStore(database: Database): AppDatabase {
           "INSERT INTO generation_history_tombstones(user_id, history_kind, record_id, deleted_at, job_ids_json) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, history_kind, record_id) DO UPDATE SET deleted_at = MAX(generation_history_tombstones.deleted_at, excluded.deleted_at), job_ids_json = excluded.job_ids_json",
         );
         for (const tombstone of tombstones) {
-          const existing = loadExisting.get(userId, kind, tombstone.id) as
-            | { deleted_at: number; job_ids_json: string }
-            | null;
+          const existing = loadExisting.get(userId, kind, tombstone.id) as {
+            deleted_at: number;
+            job_ids_json: string;
+          } | null;
           const jobIds = Array.from(
             new Set([
               ...parseStringArray(existing?.job_ids_json),
@@ -1487,9 +1646,9 @@ function replaceState(database: Database, state: ServerState) {
         state.auth.adminUserId,
       );
     const hasSessionVersion = (
-      database
-        .query("PRAGMA table_info(users)")
-        .all() as Array<{ name: string }>
+      database.query("PRAGMA table_info(users)").all() as Array<{
+        name: string;
+      }>
     ).some((column) => column.name === "session_version");
     const insertUser = database.query(
       hasSessionVersion

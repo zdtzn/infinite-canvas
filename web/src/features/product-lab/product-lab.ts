@@ -118,7 +118,6 @@ export function productRealmExperience(realmName: string) {
         斗皇: { title: "商品之意皆可解析。", description: "标题、卖点与视觉方向将形成统一规划。" },
         斗宗: { title: "空间展开。", description: "多个商品项目可以有序规划与炼制。" },
         斗尊: { title: "商品视觉法则已然清晰。", description: "品牌信息可以贯穿整套商品画卷。" },
-        斗尊巅峰: { title: "商品视觉法则已臻化境。", description: "整套视觉能够保持稳定而统一的表达。" },
         半圣: { title: "圣境商品领域已近在眼前。", description: "完整商业视觉正在形成一体化秩序。" },
         斗圣: { title: "一念之间，可构建完整商品体系。", description: "分析、规划与成套视觉皆已贯通。" },
         斗帝: { title: "恭迎斗帝归来。", description: "天地法则已感知您的创造之意。商品万象，皆可化为画卷。" },
@@ -129,7 +128,7 @@ export function productRealmExperience(realmName: string) {
 }
 
 export function productDetailPageLimit(realmName: string) {
-    const realmOrder = ["斗之气", "斗者", "斗师", "大斗师", "斗灵", "斗王", "斗皇", "斗宗", "斗尊", "斗尊巅峰", "半圣", "斗圣", "斗帝"];
+    const realmOrder = ["斗之气", "斗者", "斗师", "大斗师", "斗灵", "斗王", "斗皇", "斗宗", "斗尊", "半圣", "斗圣", "斗帝"];
     const index = realmOrder.indexOf(realmName.trim());
     if (index < realmOrder.indexOf("大斗师")) return 0;
     return index === realmOrder.indexOf("大斗师") ? 3 : 8;

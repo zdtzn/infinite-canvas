@@ -18,7 +18,7 @@ import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
 
-/** 境界阶梯(展示层,与 realm-hero 的十三重境界对应) */
+/** 境界阶梯(展示层,与 realm-hero 的十二重境界对应) */
 const REALM_LADDER = [
     { id: "realm-dou-qi", name: "斗之气" },
     { id: "realm-dou-zhe", name: "斗者" },
@@ -29,15 +29,18 @@ const REALM_LADDER = [
     { id: "realm-dou-huang", name: "斗皇" },
     { id: "realm-dou-zong", name: "斗宗" },
     { id: "realm-dou-zun", name: "斗尊" },
-    { id: "realm-dou-zun-peak", name: "斗尊巅峰" },
     { id: "realm-half-saint", name: "半圣" },
     { id: "realm-dou-saint", name: "斗圣" },
     { id: "realm-dou-emperor", name: "斗帝" },
 ] as const;
 
+function realmLadderAsset(realmId: string, variant: "badge" | "aura") {
+    return `/cultivation-realms/badges/${realmId}-${variant}.webp`;
+}
+
 /**
  * 命宫 · 修炼页(方案B「山海境」)
- * 数据与逻辑零改动:修为/配额/审批/头像上传与旧版一致,仅重做呈现。
+ * 修为/配额/审批/头像上传沿用既有逻辑，页面聚焦当前境界与成长路径。
  */
 export default function CultivationPage() {
     const { message } = App.useApp();
@@ -224,7 +227,7 @@ export default function CultivationPage() {
                     </div>
                 </section>
 
-                <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_300px]">
+                <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
                     <div className="flex h-full min-w-0 flex-col gap-6">
                         {/* ── 今日修行 ── */}
                         <section className="shj-panel p-6" aria-label="今日修行">
@@ -301,22 +304,38 @@ export default function CultivationPage() {
                     </div>
 
                     {/* ── 境界阶梯 ── */}
-                    <aside className="shj-panel h-fit p-6 lg:sticky lg:top-20" aria-label="境界阶梯">
-                        <h2 className="font-display text-lg tracking-[0.15em] text-[#edede6]">境界阶梯</h2>
-                        <p className="mt-1 text-xs text-[#8a8a96]">越过一境,天地一变</p>
-                        <div className="shj-ladder mt-5">
+                    <aside className="shj-panel shj-ladder-panel h-fit p-5 sm:p-6 lg:sticky lg:top-20" aria-label="境界阶梯">
+                        <div className="flex items-end justify-between gap-4">
+                            <div>
+                                <h2 className="font-display text-lg text-[#edede6]">境界阶梯</h2>
+                                <p className="mt-1 text-xs text-[#8a8a96]">越过一境，天地一变</p>
+                            </div>
+                            <div className="shj-ladder-progress" aria-label={`当前位于第 ${ladderIndex + 1} 境，共 ${REALM_LADDER.length} 境`}>
+                                <span>境程</span>
+                                <strong>{String(ladderIndex + 1).padStart(2, "0")}</strong>
+                                <span>/ {REALM_LADDER.length}</span>
+                            </div>
+                        </div>
+                        <ol className="shj-ladder mt-5">
                             {[...REALM_LADDER].reverse().map((realm) => {
                                 const index = REALM_LADDER.findIndex((item) => item.id === realm.id);
                                 const state = index < ladderIndex ? "is-passed" : index === ladderIndex ? "is-current" : "is-future";
+                                const stateLabel = state === "is-passed" ? "已越境" : state === "is-current" ? "当前境界" : "尚未抵达";
                                 return (
-                                    <div key={realm.id} className={cn("shj-ladder-item", state)}>
-                                        <span className="shj-ladder-dot" aria-hidden />
-                                        <span className={cn("font-display", state === "is-current" ? "text-base" : "text-sm")}>{realm.name}</span>
-                                        {state === "is-current" ? <span className="shj-seal ml-auto !px-1.5 !py-1 !text-[11px]">汝在此处</span> : null}
-                                    </div>
+                                    <li key={realm.id} className={cn("shj-ladder-item", state)} aria-current={state === "is-current" ? "step" : undefined}>
+                                        <img className="shj-ladder-aura" src={realmLadderAsset(realm.id, "aura")} alt="" width={128} height={128} loading="lazy" decoding="async" aria-hidden="true" />
+                                        <span className="shj-ladder-mark" aria-hidden="true">
+                                            <img className="shj-ladder-badge" src={realmLadderAsset(realm.id, "badge")} alt="" width={96} height={96} loading={state === "is-current" ? "eager" : "lazy"} decoding="async" />
+                                        </span>
+                                        <span className="shj-ladder-copy">
+                                            <span className="shj-ladder-state">{stateLabel}</span>
+                                            <span className="shj-ladder-name">{realm.name}</span>
+                                        </span>
+                                        <span className="shj-ladder-meta">{state === "is-current" ? stageLabel : `第 ${index + 1} 境`}</span>
+                                    </li>
                                 );
                             })}
-                        </div>
+                        </ol>
                     </aside>
                 </div>
 

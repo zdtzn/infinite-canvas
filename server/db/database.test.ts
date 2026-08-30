@@ -122,8 +122,12 @@ describe("SQLite application database", () => {
     directories.push(dataDir);
     const store = openAppDatabase({ dataDir });
     try {
-      store.saveSetting("app.prompt-sources", [{ id: "custom", enabled: true }]);
-      expect(store.loadSetting("app.prompt-sources")).toEqual([{ id: "custom", enabled: true }]);
+      store.saveSetting("app.prompt-sources", [
+        { id: "custom", enabled: true },
+      ]);
+      expect(store.loadSetting("app.prompt-sources")).toEqual([
+        { id: "custom", enabled: true },
+      ]);
       expect(store.loadState().users).toEqual({});
     } finally {
       store.close();
@@ -137,14 +141,14 @@ describe("SQLite application database", () => {
 
     try {
       const tables = (
-        store.raw!
-          .query(
+        store
+          .raw!.query(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'product_%' ORDER BY name",
           )
           .all() as Array<{ name: string }>
       ).map((item) => item.name);
-      const migration = store.raw!
-        .query("SELECT MAX(version) AS version FROM schema_migrations")
+      const migration = store
+        .raw!.query("SELECT MAX(version) AS version FROM schema_migrations")
         .get() as { version: number };
 
       expect(tables).toEqual([
@@ -154,8 +158,8 @@ describe("SQLite application database", () => {
         "product_projects",
         "product_templates",
       ]);
-      const universalTemplate = store.raw!
-        .query(
+      const universalTemplate = store
+        .raw!.query(
           "SELECT name, output_kind, style_key, aspect_ratio, prompt_template FROM product_templates WHERE template_id = ?",
         )
         .get("pdd-main-contrast-banner") as {
@@ -167,52 +171,65 @@ describe("SQLite application database", () => {
       };
 
       const chatTables = (
-        store.raw!
-          .query(
+        store
+          .raw!.query(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'chat_%' ORDER BY name",
           )
           .all() as Array<{ name: string }>
       ).map((item) => item.name);
 
       const colorAlchemyTables = (
-        store.raw!
-          .query(
+        store
+          .raw!.query(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'color_alchemy_documents'",
           )
           .all() as Array<{ name: string }>
       ).map((item) => item.name);
-      const colorAlchemyIndex = store.raw!
-        .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_color_alchemy_documents_user_updated'")
+      const colorAlchemyIndex = store
+        .raw!.query(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_color_alchemy_documents_user_updated'",
+        )
         .get() as { name: string } | null;
       const colorAlchemyTombstoneTables = (
-        store.raw!
-          .query(
+        store
+          .raw!.query(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'color_alchemy_document_tombstones'",
           )
           .all() as Array<{ name: string }>
       ).map((item) => item.name);
-      const colorAlchemyTombstoneIndex = store.raw!
-        .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_color_alchemy_document_tombstones_user_deleted'")
+      const colorAlchemyTombstoneIndex = store
+        .raw!.query(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_color_alchemy_document_tombstones_user_deleted'",
+        )
         .get() as { name: string } | null;
 
       expect(Number(migration.version)).toBeGreaterThanOrEqual(13);
       const userPreferenceTables = (
-        store.raw!
-          .query(
+        store
+          .raw!.query(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'user_preferences'",
           )
           .all() as Array<{ name: string }>
       ).map((item) => item.name);
-      const userPreferenceIndex = store.raw!
-        .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_user_preferences_user_updated'")
+      const userPreferenceIndex = store
+        .raw!.query(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_user_preferences_user_updated'",
+        )
         .get() as { name: string } | null;
       expect(Number(migration.version)).toBeGreaterThanOrEqual(16);
       expect(userPreferenceTables).toEqual(["user_preferences"]);
-      expect(userPreferenceIndex?.name).toBe("idx_user_preferences_user_updated");
-      expect(chatTables).toEqual(["chat_conversations", "chat_memories", "chat_messages", "chat_usage"]);
+      expect(userPreferenceIndex?.name).toBe(
+        "idx_user_preferences_user_updated",
+      );
+      expect(chatTables).toEqual([
+        "chat_conversations",
+        "chat_memories",
+        "chat_messages",
+        "chat_usage",
+      ]);
       const douQiTables = (
-        store.raw!
-          .query(
+        store
+          .raw!.query(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'douqi_life_%' ORDER BY name",
           )
           .all() as Array<{ name: string }>
@@ -222,46 +239,59 @@ describe("SQLite application database", () => {
         "douqi_life_saves",
         "douqi_life_sessions",
       ]);
-      expect(Number(migration.version)).toBeGreaterThanOrEqual(18);
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(23);
       for (const index of [
         "idx_douqi_life_sessions_user_updated",
         "idx_douqi_life_messages_user_session_created",
         "idx_douqi_life_saves_user_updated",
       ]) {
         expect(
-          store.raw!
-            .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+          store
+            .raw!.query(
+              "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+            )
             .get(index),
         ).toEqual({ name: index });
       }
       const chatConversationPresetColumn = (
-        store.raw!
-          .query("PRAGMA table_info(chat_conversations)")
+        store
+          .raw!.query("PRAGMA table_info(chat_conversations)")
           .all() as Array<{ name: string; dflt_value: string | null }>
       ).find((column) => column.name === "preset_id");
       expect(chatConversationPresetColumn?.dflt_value).toBe("'general'");
       const douQiSaveKindColumn = (
-        store.raw!
-          .query("PRAGMA table_info(douqi_life_saves)")
-          .all() as Array<{ name: string; dflt_value: string | null }>
+        store.raw!.query("PRAGMA table_info(douqi_life_saves)").all() as Array<{
+          name: string;
+          dflt_value: string | null;
+        }>
       ).find((column) => column.name === "save_kind");
       expect(douQiSaveKindColumn?.dflt_value).toBe("'manual'");
       expect(
-        store.raw!
-          .query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_douqi_life_saves_auto'")
+        store
+          .raw!.query(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_douqi_life_saves_auto'",
+          )
           .get(),
       ).toEqual({ name: "idx_douqi_life_saves_auto" });
       expect(colorAlchemyTables).toEqual(["color_alchemy_documents"]);
-      expect(colorAlchemyIndex?.name).toBe("idx_color_alchemy_documents_user_updated");
-      expect(colorAlchemyTombstoneTables).toEqual(["color_alchemy_document_tombstones"]);
-      expect(colorAlchemyTombstoneIndex?.name).toBe("idx_color_alchemy_document_tombstones_user_deleted");
+      expect(colorAlchemyIndex?.name).toBe(
+        "idx_color_alchemy_documents_user_updated",
+      );
+      expect(colorAlchemyTombstoneTables).toEqual([
+        "color_alchemy_document_tombstones",
+      ]);
+      expect(colorAlchemyTombstoneIndex?.name).toBe(
+        "idx_color_alchemy_document_tombstones_user_deleted",
+      );
       expect(universalTemplate).toMatchObject({
         name: "爆款撞色主图",
         output_kind: "main_image",
         style_key: "value",
         aspect_ratio: "1:1",
       });
-      expect(universalTemplate.prompt_template).toContain("【{{productName}}】");
+      expect(universalTemplate.prompt_template).toContain(
+        "【{{productName}}】",
+      );
       expect(universalTemplate.prompt_template).toContain("不得添加价格");
     } finally {
       store.close();
@@ -273,12 +303,20 @@ describe("SQLite application database", () => {
     directories.push(dataDir);
     const store = openAppDatabase({ dataDir });
     try {
-      store.raw!.query("INSERT INTO users(user_id, display_name, created_at) VALUES (?, ?, ?), (?, ?, ?)").run("alice", "Alice", 1, "bob", "Bob", 2);
+      store
+        .raw!.query(
+          "INSERT INTO users(user_id, display_name, created_at) VALUES (?, ?, ?), (?, ?, ?)",
+        )
+        .run("alice", "Alice", 1, "bob", "Bob", 2);
       store.saveUserPreference("alice", "system-prompt", "Alice prompt");
       store.saveUserPreference("bob", "system-prompt", "Bob prompt");
 
-      expect(store.loadUserPreference("alice", "system-prompt")).toBe("Alice prompt");
-      expect(store.loadUserPreference("bob", "system-prompt")).toBe("Bob prompt");
+      expect(store.loadUserPreference("alice", "system-prompt")).toBe(
+        "Alice prompt",
+      );
+      expect(store.loadUserPreference("bob", "system-prompt")).toBe(
+        "Bob prompt",
+      );
       expect(store.loadUserPreference("alice", "missing")).toBeNull();
     } finally {
       store.close();
@@ -753,6 +791,113 @@ describe("SQLite application database", () => {
         stage_id: "realm-dou-emperor-1",
         pending_stage_id: null,
       });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  test("retires the legacy peak Dou Zun realm without losing user progress", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    const database = store.raw;
+    if (!database) throw new Error("Expected SQLite database");
+    try {
+      const insertRealm = database.query(
+        "INSERT INTO realms(id, theme_key, code, name, color, icon_key, animation_preset, sort_order, daily_limit, max_concurrency, promotion_policy, active) VALUES (?, 'doupo-default', ?, ?, '#111827', 'Star', 'minimal-line', ?, 200, 2, 'auto', 1)",
+      );
+      insertRealm.run("realm-dou-zun-peak", "dou-zun-peak", "斗尊巅峰", 10);
+      insertRealm.run("realm-half-saint", "half-saint", "半圣", 11);
+
+      const insertStage = database.query(
+        "INSERT INTO realm_stages(id, realm_id, name, stage_order, required_xp, active) VALUES (?, ?, ?, ?, ?, 1)",
+      );
+      insertStage.run(
+        "realm-dou-zun-peak-1",
+        "realm-dou-zun-peak",
+        "一转",
+        90,
+        3_250,
+      );
+      insertStage.run(
+        "realm-dou-zun-peak-2",
+        "realm-dou-zun-peak",
+        "二转",
+        91,
+        3_325,
+      );
+      insertStage.run(
+        "realm-half-saint-1",
+        "realm-half-saint",
+        "半圣",
+        100,
+        3_600,
+      );
+      database
+        .query(
+          "INSERT INTO users(user_id, display_name, is_admin, status, created_at) VALUES ('peak-user', 'Peak User', 0, 'NORMAL', 1)",
+        )
+        .run();
+      database
+        .query(
+          "INSERT INTO user_cultivation(user_id, stage_id, current_xp, total_xp, unlimited_quota, pending_stage_id, started_at, updated_at) VALUES ('peak-user', 'realm-dou-zun-peak-1', 77, 999, 0, 'realm-dou-zun-peak-2', 1, 1)",
+        )
+        .run();
+      database
+        .query(
+          "INSERT INTO breakthrough_history(id, user_id, from_stage_id, to_stage_id, status, reason, created_at) VALUES ('peak-pending', 'peak-user', 'realm-dou-zun-peak-1', 'realm-dou-zun-peak-2', 'pending', '', 1)",
+        )
+        .run();
+      database.query("DELETE FROM schema_migrations WHERE version = 23").run();
+    } finally {
+      store.close();
+    }
+
+    const reopened = openAppDatabase({ dataDir });
+    try {
+      const database = reopened.raw;
+      if (!database) throw new Error("Expected SQLite database");
+      expect(
+        database
+          .query(
+            "SELECT stage_id, current_xp, total_xp, pending_stage_id FROM user_cultivation WHERE user_id = 'peak-user'",
+          )
+          .get(),
+      ).toEqual({
+        stage_id: "realm-half-saint-1",
+        current_xp: 77,
+        total_xp: 999,
+        pending_stage_id: null,
+      });
+      expect(
+        database
+          .query("SELECT active FROM realms WHERE id = 'realm-dou-zun-peak'")
+          .get(),
+      ).toEqual({ active: 0 });
+      expect(
+        database
+          .query(
+            "SELECT DISTINCT active FROM realm_stages WHERE realm_id = 'realm-dou-zun-peak'",
+          )
+          .all(),
+      ).toEqual([{ active: 0 }]);
+      expect(
+        database
+          .query(
+            "SELECT status, reason FROM breakthrough_history WHERE id = 'peak-pending'",
+          )
+          .get(),
+      ).toEqual({
+        status: "superseded",
+        reason: "斗尊巅峰境界已退役",
+      });
+      expect(
+        database
+          .query(
+            "SELECT 1 AS applied FROM schema_migrations WHERE version = 23",
+          )
+          .get(),
+      ).toEqual({ applied: 1 });
     } finally {
       reopened.close();
     }

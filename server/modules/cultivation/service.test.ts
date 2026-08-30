@@ -43,6 +43,35 @@ describe("cultivation quota and settlement", () => {
     }
   });
 
+  test("hides the retired peak Dou Zun realm from configuration", () => {
+    const { store, service } = setup();
+    try {
+      store
+        .raw!.query(
+          "INSERT INTO realms(id, theme_key, code, name, color, icon_key, animation_preset, sort_order, daily_limit, max_concurrency, promotion_policy, active) VALUES ('realm-dou-zun-peak', 'doupo-default', 'dou-zun-peak', '斗尊巅峰', '#0369a1', 'Waves', 'minimal-line', 999, 200, 2, 'auto', 0)",
+        )
+        .run();
+      store
+        .raw!.query(
+          "INSERT INTO realm_stages(id, realm_id, name, stage_order, required_xp, active) VALUES ('realm-dou-zun-peak-1', 'realm-dou-zun-peak', '一转', 999, 3250, 0)",
+        )
+        .run();
+
+      expect(
+        service
+          .getConfiguration()
+          .realms.some((realm) => realm.code === "dou-zun-peak"),
+      ).toBe(false);
+      expect(
+        store
+          .raw!.query("SELECT name FROM realms WHERE code = 'dou-zun-peak'")
+          .get(),
+      ).toEqual({ name: "斗尊巅峰" });
+    } finally {
+      store.close();
+    }
+  });
+
   test("reserves quota and settles only successful images", () => {
     const { store, service } = setup();
     try {
@@ -155,9 +184,7 @@ describe("cultivation quota and settlement", () => {
         activeJobs: 0,
       });
 
-      expect(service.getGenerationUsage("proxy-work")?.status).toBe(
-        "reserved",
-      );
+      expect(service.getGenerationUsage("proxy-work")?.status).toBe("reserved");
       service.consumeGeneration("proxy-work", 350);
       service.consumeGeneration("proxy-work", 500);
 
@@ -166,9 +193,7 @@ describe("cultivation quota and settlement", () => {
       expect(profile.remainingToday).toBe(9);
       expect(profile.totalXp).toBe(0);
       expect(profile.totalImages).toBe(0);
-      expect(service.getGenerationUsage("proxy-work")?.status).toBe(
-        "settled",
-      );
+      expect(service.getGenerationUsage("proxy-work")?.status).toBe("settled");
     } finally {
       store.close();
     }
@@ -235,9 +260,9 @@ describe("cultivation quota and settlement", () => {
       });
       const loginLogs = service.listLoginLogs(1, 20);
       expect(loginLogs.total).toBe(1);
-      expect((loginLogs.items[0] as { display_name: string }).display_name).toBe(
-        "User",
-      );
+      expect(
+        (loginLogs.items[0] as { display_name: string }).display_name,
+      ).toBe("User");
 
       expect(() =>
         service.updateUser(
@@ -253,15 +278,15 @@ describe("cultivation quota and settlement", () => {
       ).not.toThrow();
       expect(service.getProfile("user").stageId).toBe(noReasonTarget.id);
       expect(
-        store.raw!
-          .query(
+        store
+          .raw!.query(
             "SELECT reason FROM admin_audit_logs WHERE target_user_id = ? AND reason = ?",
           )
           .get("user", "管理员直接调整"),
       ).toEqual({ reason: "管理员直接调整" });
       expect(
-        store.raw!
-          .query(
+        store
+          .raw!.query(
             "SELECT reason FROM cultivation_ledger WHERE user_id = ? AND reason = ?",
           )
           .get("user", "管理员直接调整"),
@@ -575,13 +600,13 @@ describe("cultivation quota and settlement", () => {
       ).toEqual(["orphan-job"]);
       expect(reopenedService.getProfile("user").remainingToday).toBe(9);
       expect(
-        reopened.raw!
-          .query("SELECT status FROM generation_usage WHERE job_id = ?")
+        reopened
+          .raw!.query("SELECT status FROM generation_usage WHERE job_id = ?")
           .get("orphan-job"),
       ).toEqual({ status: "refunded" });
       expect(
-        reopened.raw!
-          .query("SELECT status FROM generation_usage WHERE job_id = ?")
+        reopened
+          .raw!.query("SELECT status FROM generation_usage WHERE job_id = ?")
           .get("active-job"),
       ).toEqual({ status: "reserved" });
       expect(
@@ -641,33 +666,33 @@ describe("cultivation quota and settlement", () => {
       const metrics = service.listChannelMetrics(7);
       expect(metrics).toHaveLength(2);
       expect(metrics.find((item) => item.channelId === "channel-a")).toEqual({
-          userId: "user",
-          channelId: "channel-a",
-          totalJobs: 2,
-          settledJobs: 1,
-          refundedJobs: 1,
-          activeJobs: 0,
-          requestedImages: 3,
-          successImages: 1,
-          failedImages: 2,
-          avgDurationMs: 2_000,
-          p95DurationMs: 2_000,
-          lastUsedAt: new Date("2026-07-22T08:00:00+08:00").getTime(),
-        });
+        userId: "user",
+        channelId: "channel-a",
+        totalJobs: 2,
+        settledJobs: 1,
+        refundedJobs: 1,
+        activeJobs: 0,
+        requestedImages: 3,
+        successImages: 1,
+        failedImages: 2,
+        avgDurationMs: 2_000,
+        p95DurationMs: 2_000,
+        lastUsedAt: new Date("2026-07-22T08:00:00+08:00").getTime(),
+      });
       expect(metrics.find((item) => item.channelId === "channel-b")).toEqual({
-          userId: "user",
-          channelId: "channel-b",
-          totalJobs: 1,
-          settledJobs: 0,
-          refundedJobs: 0,
-          activeJobs: 1,
-          requestedImages: 1,
-          successImages: 0,
-          failedImages: 0,
-          avgDurationMs: 0,
-          p95DurationMs: 0,
-          lastUsedAt: new Date("2026-07-22T08:00:00+08:00").getTime(),
-        });
+        userId: "user",
+        channelId: "channel-b",
+        totalJobs: 1,
+        settledJobs: 0,
+        refundedJobs: 0,
+        activeJobs: 1,
+        requestedImages: 1,
+        successImages: 0,
+        failedImages: 0,
+        avgDurationMs: 0,
+        p95DurationMs: 0,
+        lastUsedAt: new Date("2026-07-22T08:00:00+08:00").getTime(),
+      });
     } finally {
       store.close();
     }

@@ -25,6 +25,8 @@ export class CultivationError extends Error {
 }
 
 type ServiceOptions = { now?: () => Date; timeZone?: string };
+const RETIRED_REALM_CODE = "dou-zun-peak";
+
 type ReservationInput = {
   jobId: string;
   userId: string;
@@ -398,8 +400,7 @@ export function createCultivationService(
           status: String(usage.status),
           requestedCount: Number(usage.requested_count),
           createdAt: Number(usage.created_at),
-          settledAt:
-            usage.settled_at == null ? null : Number(usage.settled_at),
+          settledAt: usage.settled_at == null ? null : Number(usage.settled_at),
         }
       : null;
   }
@@ -442,9 +443,9 @@ export function createCultivationService(
 
   function getConfiguration() {
     const realms = (
-      database.query("SELECT * FROM realms ORDER BY sort_order").all() as Array<
-        Record<string, unknown>
-      >
+      database
+        .query("SELECT * FROM realms WHERE code <> ? ORDER BY sort_order")
+        .all(RETIRED_REALM_CODE) as Array<Record<string, unknown>>
     ).map((realm) => ({
       id: String(realm.id),
       code: String(realm.code),
@@ -943,7 +944,9 @@ export function createCultivationService(
       )
       .all(since) as Array<Record<string, unknown>>;
     const durationRows = database
-      .query("SELECT user_id, channel_id, duration_ms FROM generation_usage WHERE created_at >= ? AND status = 'settled' AND duration_ms > 0")
+      .query(
+        "SELECT user_id, channel_id, duration_ms FROM generation_usage WHERE created_at >= ? AND status = 'settled' AND duration_ms > 0",
+      )
       .all(since) as Array<Record<string, unknown>>;
     const durationsByChannel = new Map<string, number[]>();
     for (const durationRow of durationRows) {
@@ -965,7 +968,11 @@ export function createCultivationService(
       successImages: Number(row.success_images || 0),
       failedImages: Number(row.failed_images || 0),
       avgDurationMs: Number(row.avg_duration_ms || 0),
-      p95DurationMs: percentile95(durationsByChannel.get(`${String(row.user_id)}:${String(row.channel_id)}`) || []),
+      p95DurationMs: percentile95(
+        durationsByChannel.get(
+          `${String(row.user_id)}:${String(row.channel_id)}`,
+        ) || [],
+      ),
       lastUsedAt: Number(row.last_used_at || 0),
     }));
   }
@@ -1143,7 +1150,12 @@ function seedDefaults(database: Database) {
       if (stage.stageOrder >= 37)
         for (const key of ["feature.lora", "feature.controlnet"])
           insertGrant.run(stage.id, key);
-      for (const [key, _label, _category, minimumRealmSortOrder] of PRODUCT_CAPABILITIES)
+      for (const [
+        key,
+        _label,
+        _category,
+        minimumRealmSortOrder,
+      ] of PRODUCT_CAPABILITIES)
         if (stage.realmSortOrder >= minimumRealmSortOrder)
           insertGrant.run(stage.id, key);
     }
@@ -1220,12 +1232,7 @@ function awardXp(
       reason,
       timestamp,
     );
-  recordProgressTransitions(
-    database,
-    userId,
-    advanced.transitions,
-    timestamp,
-  );
+  recordProgressTransitions(database, userId, advanced.transitions, timestamp);
 }
 
 function applyAutomaticPromotion(
@@ -1262,12 +1269,7 @@ function applyAutomaticPromotion(
       "UPDATE user_cultivation SET stage_id = ?, current_xp = ?, pending_stage_id = NULL, updated_at = ? WHERE user_id = ?",
     )
     .run(advanced.stageId, advanced.currentXp, timestamp, userId);
-  recordProgressTransitions(
-    database,
-    userId,
-    advanced.transitions,
-    timestamp,
-  );
+  recordProgressTransitions(database, userId, advanced.transitions, timestamp);
 }
 
 function automaticProgressStages(database: Database): ProgressStage[] {
@@ -1429,7 +1431,10 @@ function maskIp(ip: string) {
 function percentile95(values: number[]) {
   if (!values.length) return 0;
   const sorted = values.slice().sort((left, right) => left - right);
-  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)] || 0;
+  return (
+    sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)] ||
+    0
+  );
 }
 
 function profileRow(database: Database, userId: string) {
