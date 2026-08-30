@@ -3600,44 +3600,8 @@ function InfiniteCanvasPage() {
                     }}
                     onContextMenu={preventCanvasContextMenu}
                     onDrop={handleDrop}
-                >
-                    <svg className="absolute left-0 top-0 size-px overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
-                        {connections
-                            .filter((connection) => {
-                                const from = nodeById.get(connection.fromNodeId);
-                                const to = nodeById.get(connection.toNodeId);
-                                return Boolean(from && to && (visibleNodeIds.has(connection.fromNodeId) || visibleNodeIds.has(connection.toNodeId)) && !isHiddenBatchConnectionEndpoint(from, nodes) && !isHiddenBatchConnectionEndpoint(to, nodes));
-                            })
-                            .map((connection) => {
-                                const from = nodeById.get(connection.fromNodeId);
-                                const to = nodeById.get(connection.toNodeId);
-                                if (!from || !to) return null;
-
-                                return (
-                                    <ConnectionPath
-                                        key={connection.id}
-                                        connection={connection}
-                                        from={from}
-                                        to={to}
-                                        active={selectedConnectionId === connection.id || relatedHighlight.connectionIds.has(connection.id)}
-                                        onSelect={() => {
-                                            setSelectedConnectionId(connection.id);
-                                            setSelectedNodeIds(new Set());
-                                            setContextMenu(null);
-                                        }}
-                                        onContextMenu={(event) => {
-                                            setSelectedConnectionId(connection.id);
-                                            setSelectedNodeIds(new Set());
-                                            setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId: connection.id });
-                                        }}
-                                    />
-                                );
-                            })}
-                        {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
-                    </svg>
-
-                    {nodes.length === 0 ? (
-                        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center px-4">
+                    overlay={
+                        nodes.length === 0 ? (
                             <section className="pointer-events-auto w-full max-w-xl border border-stone-300/80 bg-white/85 p-5 shadow-xl backdrop-blur-md dark:border-white/10 dark:bg-stone-950/75">
                                 <div className="text-center">
                                     <div className="text-base font-semibold">从一个动作开始</div>
@@ -3679,8 +3643,43 @@ function InfiniteCanvasPage() {
                                     </button>
                                 </div>
                             </section>
-                        </div>
-                    ) : null}
+                        ) : null
+                    }
+                >
+                    <svg className="absolute left-0 top-0 size-px overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
+                        {connections
+                            .filter((connection) => {
+                                const from = nodeById.get(connection.fromNodeId);
+                                const to = nodeById.get(connection.toNodeId);
+                                return Boolean(from && to && (visibleNodeIds.has(connection.fromNodeId) || visibleNodeIds.has(connection.toNodeId)) && !isHiddenBatchConnectionEndpoint(from, nodes) && !isHiddenBatchConnectionEndpoint(to, nodes));
+                            })
+                            .map((connection) => {
+                                const from = nodeById.get(connection.fromNodeId);
+                                const to = nodeById.get(connection.toNodeId);
+                                if (!from || !to) return null;
+
+                                return (
+                                    <ConnectionPath
+                                        key={connection.id}
+                                        connection={connection}
+                                        from={from}
+                                        to={to}
+                                        active={selectedConnectionId === connection.id || relatedHighlight.connectionIds.has(connection.id)}
+                                        onSelect={() => {
+                                            setSelectedConnectionId(connection.id);
+                                            setSelectedNodeIds(new Set());
+                                            setContextMenu(null);
+                                        }}
+                                        onContextMenu={(event) => {
+                                            setSelectedConnectionId(connection.id);
+                                            setSelectedNodeIds(new Set());
+                                            setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId: connection.id });
+                                        }}
+                                    />
+                                );
+                            })}
+                        {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
+                    </svg>
 
                     {visibleNodes.map((node) => (
                         <CanvasNode

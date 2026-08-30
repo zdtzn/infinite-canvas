@@ -17,9 +17,10 @@ type InfiniteCanvasProps = {
     onContextMenu?: (event: React.MouseEvent) => void;
     onDrop?: (event: React.DragEvent<HTMLDivElement>) => void;
     children: React.ReactNode;
+    overlay?: React.ReactNode;
 };
 
-export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines", transparentBackground = false, onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines", transparentBackground = false, onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children, overlay }: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const panState = useRef({
         isPanning: false,
@@ -278,6 +279,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         >
             <CanvasGrid viewport={viewport} mode={backgroundMode} emphasized={transparentBackground} />
             <div
+                data-canvas-world="true"
                 className="absolute origin-top-left"
                 style={{
                     transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.k})`,
@@ -285,6 +287,11 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
             >
                 {children}
             </div>
+            {overlay ? (
+                <div data-canvas-overlay="true" data-canvas-no-zoom="true" className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center px-4">
+                    {overlay}
+                </div>
+            ) : null}
         </div>
     );
 }
