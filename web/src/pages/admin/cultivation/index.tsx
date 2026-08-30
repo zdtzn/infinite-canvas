@@ -615,28 +615,37 @@ function GrowthRulesPanel() {
                     <span>{data.realms.length}</span>
                 </div>
                 <div className="cultivation-realm-list-items">
-                    {data.realms.map((realm) => {
+                    {data.realms.map((realm, index) => {
                         const selected = realm.id === selectedRealm?.id;
                         const accent = cultivationAccentColor(realm.color);
+                        const activeStageCount = realm.stages.filter((stage) => stage.active).length;
                         return (
                             <button
                                 key={realm.id}
                                 type="button"
-                                className={selected ? "is-active" : ""}
+                                className={`cultivation-realm-item ${selected ? "is-active" : ""} ${realm.active ? "" : "is-disabled"}`}
                                 style={{ "--cultivation-admin-accent": accent } as CSSProperties}
                                 aria-current={selected ? "true" : undefined}
                                 onClick={() => setSelectedRealmId(realm.id)}
                             >
+                                <span className="cultivation-realm-tier" aria-hidden="true">
+                                    {String(index + 1).padStart(2, "0")}
+                                </span>
                                 <span className="cultivation-realm-symbol">
                                     <RealmIcon iconKey={realm.iconKey} className="size-4" />
                                 </span>
                                 <span className="min-w-0 flex-1">
-                                    <span className="block truncate font-medium">{realm.name}</span>
-                                    <span className="mt-1 block truncate text-xs">
-                                        {realm.dailyLimit === null ? "不限额度" : `${realm.dailyLimit} 次/日`} · {realm.stages.length} 阶段
+                                    <span className="cultivation-realm-name">{realm.name}</span>
+                                    <span className="cultivation-realm-meta">
+                                        <span>{realm.dailyLimit === null ? "不限额度" : `${realm.dailyLimit} 次/日`}</span>
+                                        <span aria-hidden="true">·</span>
+                                        <span>{activeStageCount} 阶段</span>
                                     </span>
                                 </span>
-                                <span className={`cultivation-realm-state ${realm.active ? "is-enabled" : ""}`} aria-label={realm.active ? "已启用" : "已停用"} />
+                                <span className="cultivation-realm-state-wrap">
+                                    <span className={`cultivation-realm-state ${realm.active ? "is-enabled" : ""}`} aria-hidden="true" />
+                                    <span className="cultivation-realm-state-label">{realm.active ? "已启用" : "已停用"}</span>
+                                </span>
                             </button>
                         );
                     })}
