@@ -1,7 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Descriptions, Drawer, Empty, Form, Input, InputNumber, Modal, Result, Segmented, Select, Switch, Table, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Activity, ArrowLeft, BookOpenCheck, ChevronRight, CircleGauge, Edit3, Eye, LayoutDashboard, RefreshCw, ScrollText, Settings2, ShieldCheck, Users } from "lucide-react";
+import {
+    Activity,
+    ArrowLeft,
+    ArrowUpRight,
+    Bell,
+    BookOpenCheck,
+    CheckCircle2,
+    ChevronRight,
+    CircleAlert,
+    CircleGauge,
+    Database,
+    Edit3,
+    Eye,
+    LayoutDashboard,
+    RefreshCw,
+    ScrollText,
+    Search,
+    ServerCog,
+    Settings2,
+    ShieldCheck,
+    Sparkles,
+    TrendingUp,
+    Users,
+} from "lucide-react";
 import { createRef, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -85,16 +108,17 @@ const accountStatusOptions = [
 ];
 
 const adminSections = [
-    { key: "overview", label: "总览", title: "运营总览", description: "集中查看用户规模、任务状态、渠道健康和最近管理变更。", icon: LayoutDashboard },
-    { key: "users", label: "用户管理", title: "用户管理", description: "查看并调整用户境界、修为、额度与账号状态。", icon: Users },
-    { key: "rules", label: "成长规则", title: "成长规则", description: "按境界查看阶段进度、升级阈值和突破反馈。", icon: BookOpenCheck },
-    { key: "capabilities", label: "能力与额度", title: "能力与额度", description: "维护修为奖励、能力总开关和各境界默认额度。", icon: ShieldCheck },
-    { key: "monitoring", label: "运行监控", title: "运行监控", description: "检查渠道成功率、任务运行状态、备份和资源清理。", icon: Activity },
-    { key: "records", label: "记录中心", title: "记录中心", description: "统一查询生成用量、修为流水、管理操作和登录记录。", icon: ScrollText },
-] as const satisfies ReadonlyArray<{ key: AdminSectionKey; label: string; title: string; description: string; icon: typeof LayoutDashboard }>;
+    { key: "overview", group: "运营中枢", label: "总览", title: "运营总览", description: "集中查看用户规模、任务状态、渠道健康和最近管理变更。", icon: LayoutDashboard },
+    { key: "users", group: "修炼体系", label: "用户管理", title: "用户管理", description: "查看并调整用户境界、修为、额度与账号状态。", icon: Users },
+    { key: "rules", group: "修炼体系", label: "成长规则", title: "成长规则", description: "按境界查看阶段进度、升级阈值和突破反馈。", icon: BookOpenCheck },
+    { key: "capabilities", group: "修炼体系", label: "能力与额度", title: "能力与额度", description: "维护修为奖励、能力总开关和各境界默认额度。", icon: ShieldCheck },
+    { key: "monitoring", group: "系统管理", label: "运行监控", title: "运行监控", description: "检查渠道成功率、任务运行状态、备份和资源清理。", icon: Activity },
+    { key: "records", group: "系统管理", label: "记录中心", title: "记录中心", description: "统一查询生成用量、修为流水、管理操作和登录记录。", icon: ScrollText },
+] as const satisfies ReadonlyArray<{ key: AdminSectionKey; group: string; label: string; title: string; description: string; icon: typeof LayoutDashboard }>;
 
 export default function AdminCultivationPage() {
-    const admin = useUserStore((state) => Boolean(state.user?.admin));
+    const account = useUserStore((state) => state.user);
+    const admin = Boolean(account?.admin);
     const [searchParams, setSearchParams] = useSearchParams();
     const activeSection = resolveAdminSection(searchParams.get("tab"));
     const activeRecordKind = resolveAdminRecordKind(searchParams.get("record"));
@@ -125,22 +149,38 @@ export default function AdminCultivationPage() {
             <div className="cultivation-admin-shell">
                 <aside className="cultivation-admin-sidebar">
                     <div className="cultivation-admin-brand">
-                        <p>ADMIN CONSOLE</p>
-                        <div className="font-brush">掌教殿</div>
+                        <div className="cultivation-admin-brand-mark" aria-hidden="true">
+                            <Sparkles className="size-5" />
+                        </div>
+                        <div className="cultivation-admin-brand-copy">
+                            <p>INFINITE CANVAS</p>
+                            <strong className="font-brush">掌教殿</strong>
+                            <span>修炼管理中枢</span>
+                        </div>
                     </div>
                     <nav className="cultivation-admin-nav" aria-label="掌教殿管理导航">
                         {adminSections.map((item) => {
                             const Icon = item.icon;
                             const selected = item.key === activeSection;
                             return (
-                                <button key={item.key} type="button" className={selected ? "is-active" : ""} aria-current={selected ? "page" : undefined} onClick={() => selectSection(item.key)}>
-                                    <Icon className="size-4" aria-hidden="true" />
-                                    <span>{item.label}</span>
-                                    <ChevronRight className="ml-auto size-3.5" aria-hidden="true" />
-                                </button>
+                                <div key={item.key}>
+                                    {item.key === "overview" || item.key === "users" || item.key === "monitoring" ? <p className="cultivation-admin-nav-group">{item.group}</p> : null}
+                                    <button type="button" className={selected ? "is-active" : ""} aria-current={selected ? "page" : undefined} onClick={() => selectSection(item.key)}>
+                                        <Icon className="size-4" aria-hidden="true" />
+                                        <span>{item.label}</span>
+                                        <ChevronRight className="ml-auto size-3.5" aria-hidden="true" />
+                                    </button>
+                                </div>
                             );
                         })}
                     </nav>
+                    <div className="cultivation-admin-sidebar-status">
+                        <span className="cultivation-admin-status-dot" />
+                        <div>
+                            <strong>系统运行正常</strong>
+                            <span>管理权限已验证</span>
+                        </div>
+                    </div>
                     <Link to="/cultivation" className="cultivation-admin-back-link">
                         <ArrowLeft className="size-4" aria-hidden="true" />
                         返回我的修炼
@@ -148,6 +188,35 @@ export default function AdminCultivationPage() {
                 </aside>
 
                 <div className="cultivation-admin-workspace">
+                    <div className="cultivation-admin-topbar">
+                        <div className="cultivation-admin-context">
+                            <span className="cultivation-admin-context-icon">
+                                <ServerCog className="size-4" aria-hidden="true" />
+                            </span>
+                            <div>
+                                <strong>后台管理中枢</strong>
+                                <span>实时掌控修炼体系与系统运行</span>
+                            </div>
+                        </div>
+                        <div className="cultivation-admin-topbar-actions">
+                            <div className="cultivation-admin-command-search" aria-label="后台搜索">
+                                <Search className="size-4" aria-hidden="true" />
+                                <span>搜索用户、规则或记录</span>
+                                <kbd>Ctrl K</kbd>
+                            </div>
+                            <span className="cultivation-admin-icon-button" role="img" aria-label="通知状态" title="通知状态">
+                                <Bell className="size-4" aria-hidden="true" />
+                                <span className="cultivation-admin-notification-dot" />
+                            </span>
+                            <div className="cultivation-admin-operator">
+                                <span className="cultivation-admin-operator-avatar">{(account?.displayName || "管").slice(0, 1)}</span>
+                                <div>
+                                    <strong>{account?.displayName || "系统管理员"}</strong>
+                                    <span>掌教管理员</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <header className="cultivation-admin-header">
                         <div className="cultivation-admin-mobile-nav">
                             <Select value={activeSection} aria-label="选择管理区域" options={adminSections.map((item) => ({ value: item.key, label: item.label }))} onChange={(value) => selectSection(value as AdminSectionKey)} />
@@ -999,68 +1068,144 @@ function CapabilityEditor({ configuration, onSaved }: { configuration: Cultivati
 function OverviewPanel({ onOpenUser, onNavigate }: { onOpenUser: (displayName: string) => void; onNavigate: (section: AdminSectionKey) => void }) {
     const system = useQuery({ queryKey: ["admin", "metrics"], queryFn: fetchAdminMetrics, refetchInterval: 30_000 });
     const channels = useQuery({ queryKey: ["admin", "channels", "metrics", 7], queryFn: () => fetchAdminChannelMetrics(7), refetchInterval: 30_000 });
+    const config = useQuery({ queryKey: ["admin", "cultivation", "config"], queryFn: fetchCultivationConfiguration });
+    const users = useQuery({ queryKey: ["admin", "cultivation", "users", "overview"], queryFn: () => fetchAdminCultivationUsers(1, 5, "") });
     const audits = useQuery({ queryKey: ["admin", "cultivation", "audit-logs", 1, 6, "overview"], queryFn: () => fetchCultivationLog<LogRow>("audit-logs", 1, 6) });
     const jobs = system.data?.jobs;
     const activeJobs = Number(jobs?.queued || 0) + Number(jobs?.running || 0);
     const channelItems = channels.data?.items || [];
     const channelIssues = channelItems.filter((channel) => channel.status === "degraded" || channel.status === "unavailable");
+    const realms = (config.data?.realms || []).filter((realm) => realm.active).sort((left, right) => left.sortOrder - right.sortOrder);
+    const enabledCapabilities = (config.data?.capabilities || []).filter((capability) => capability.active).length;
+    const failedJobs = Number(jobs?.failed || 0);
 
     return (
-        <div className="space-y-10">
-            <section className="cultivation-admin-panel">
-                <div className="cultivation-admin-metric-strip cultivation-overview-metrics">
-                    <AdminMetric label="用户" value={formatMetricValue(system.data?.users)} />
-                    <AdminMetric label="渠道" value={formatMetricValue(system.data?.channels)} />
-                    <AdminMetric label="运行中任务" value={formatMetricValue(activeJobs)} tone={activeJobs > 0 ? "active" : undefined} />
-                    <AdminMetric label="累计完成" value={formatMetricValue(jobs?.succeeded)} />
-                    <AdminMetric label="累计失败" value={formatMetricValue(jobs?.failed)} tone={Number(jobs?.failed || 0) > 0 ? "danger" : undefined} />
-                    <AdminMetric label="异常渠道" value={formatMetricValue(channelIssues.length)} tone={channelIssues.length ? "warning" : undefined} />
+        <div className="cultivation-admin-dashboard">
+            <section className="cultivation-admin-dashboard-hero">
+                <div className="cultivation-admin-hero-copy">
+                    <p className="cultivation-admin-eyebrow">
+                        <Sparkles className="size-3.5" aria-hidden="true" /> CULTIVATION OPERATIONS
+                    </p>
+                    <h2>掌教殿 · 修炼管理中枢</h2>
+                    <p>在这里掌控用户成长、能力开放与系统运行状态。所有调整都会留下可追溯的管理记录。</p>
+                </div>
+                <div className="cultivation-admin-hero-actions">
+                    <Button type="primary" icon={<Users className="size-4" />} onClick={() => onNavigate("users")}>
+                        管理用户
+                    </Button>
+                    <Button icon={<BookOpenCheck className="size-4" />} onClick={() => onNavigate("rules")}>
+                        调整规则
+                    </Button>
+                </div>
+                <div className="cultivation-admin-hero-meta">
+                    <span>
+                        <span className="cultivation-admin-status-dot" />
+                        系统在线 · 每 30 秒自动刷新
+                    </span>
+                    <span>数据范围：当前服务实例</span>
                 </div>
             </section>
 
-            <div className="cultivation-overview-grid">
-                <section className="cultivation-admin-panel">
-                    <div className="cultivation-admin-section-heading">
+            <section className="cultivation-admin-metric-strip cultivation-overview-metrics">
+                <AdminMetric icon={<Users className="size-4" />} label="用户总数" value={formatMetricValue(system.data?.users)} delta="平台账户" />
+                <AdminMetric icon={<ServerCog className="size-4" />} label="接入渠道" value={formatMetricValue(system.data?.channels)} delta="已配置" />
+                <AdminMetric icon={<Activity className="size-4" />} label="运行中任务" value={formatMetricValue(activeJobs)} tone={activeJobs > 0 ? "active" : undefined} delta="队列 + 执行" />
+                <AdminMetric icon={<CheckCircle2 className="size-4" />} label="累计完成" value={formatMetricValue(jobs?.succeeded)} delta="生成任务" />
+                <AdminMetric icon={<CircleAlert className="size-4" />} label="累计失败" value={formatMetricValue(failedJobs)} tone={failedJobs ? "danger" : undefined} delta="需要关注" />
+                <AdminMetric icon={<ShieldCheck className="size-4" />} label="开放能力" value={formatMetricValue(enabledCapabilities)} delta="全局开关" />
+            </section>
+
+            <section className="cultivation-admin-dashboard-grid cultivation-admin-dashboard-grid-main">
+                <div className="cultivation-admin-panel cultivation-admin-realm-panel">
+                    <div className="cultivation-admin-panel-header">
                         <div>
-                            <h2>运行关注</h2>
-                            <p>只显示需要处理的渠道和系统维护状态。</p>
+                            <p className="cultivation-admin-panel-kicker">REALM CONFIGURATION</p>
+                            <h2>境界体系</h2>
+                            <p>当前已启用的修炼层级与阶段规模。</p>
                         </div>
-                        <Button type="text" icon={<ChevronRight className="size-4" />} onClick={() => onNavigate("monitoring")}>
-                            查看监控
+                        <Button type="text" icon={<ArrowUpRight className="size-4" />} onClick={() => onNavigate("rules")}>
+                            查看详情
                         </Button>
                     </div>
-                    <div className="cultivation-attention-list">
-                        {channelIssues.map((channel) => (
-                            <div key={`${channel.userId}:${channel.channelId}`}>
-                                <span className="cultivation-attention-indicator is-warning" />
-                                <div className="min-w-0 flex-1">
-                                    <div className="truncate font-medium">{channel.channelName}</div>
-                                    <div className="mt-1 truncate text-xs text-stone-500">{channel.lastError ? friendlyErrorMessage(channel.lastError) : `最近 7 天成功率 ${channel.successRate ?? 0}%`}</div>
+                    <div className="cultivation-admin-realm-rail">
+                        {realms.map((realm, index) => (
+                            <div key={realm.id} className="cultivation-admin-realm-node">
+                                <div className="cultivation-admin-realm-node-icon" style={{ "--realm-node-color": realm.color } as CSSProperties}>
+                                    <RealmIcon iconKey={realm.iconKey} className="size-5" />
                                 </div>
-                                <ChannelStatusTag status={channel.status} />
+                                <strong>{realm.name}</strong>
+                                <span>{realm.stages.filter((stage) => stage.active).length} 个阶段</span>
+                                {index < realms.length - 1 ? (
+                                    <span className="cultivation-admin-realm-connector" aria-hidden="true">
+                                        <ChevronRight className="size-3.5" />
+                                    </span>
+                                ) : null}
                             </div>
                         ))}
-                        {system.data?.backup?.lastError ? (
-                            <div>
-                                <span className="cultivation-attention-indicator is-danger" />
-                                <div className="min-w-0 flex-1">
-                                    <div className="font-medium">自动备份失败</div>
-                                    <div className="mt-1 line-clamp-2 text-xs text-stone-500">{system.data.backup.lastError}</div>
-                                </div>
-                            </div>
-                        ) : null}
-                        {!channels.isLoading && !system.isLoading && !channelIssues.length && !system.data?.backup?.lastError ? <AdminEmptyLine text="当前没有需要处理的运行异常" /> : null}
+                        {!config.isLoading && !realms.length ? <AdminEmptyLine text="暂无已启用境界配置" /> : null}
                     </div>
-                </section>
+                    <div className="cultivation-admin-panel-footnote">
+                        <span>
+                            <Database className="size-3.5" />
+                            规则配置已持久化
+                        </span>
+                        <span>
+                            {realms.length} 个境界 · {realms.reduce((total, realm) => total + realm.stages.length, 0)} 个阶段
+                        </span>
+                    </div>
+                </div>
 
-                <section className="cultivation-admin-panel">
-                    <div className="cultivation-admin-section-heading">
+                <div className="cultivation-admin-panel cultivation-admin-quick-panel">
+                    <div className="cultivation-admin-panel-header">
                         <div>
-                            <h2>最近管理操作</h2>
-                            <p>显示最近 6 条规则和用户变更。</p>
+                            <p className="cultivation-admin-panel-kicker">QUICK ACCESS</p>
+                            <h2>快捷管理</h2>
+                            <p>常用配置入口。</p>
                         </div>
-                        <Button type="text" icon={<ChevronRight className="size-4" />} onClick={() => onNavigate("records")}>
-                            查看记录
+                    </div>
+                    <div className="cultivation-admin-quick-grid">
+                        <OverviewQuickLink icon={<Users className="size-4" />} title="用户管理" detail="境界、修为、额度" onClick={() => onNavigate("users")} />
+                        <OverviewQuickLink icon={<BookOpenCheck className="size-4" />} title="成长规则" detail="阶段与突破反馈" onClick={() => onNavigate("rules")} />
+                        <OverviewQuickLink icon={<ShieldCheck className="size-4" />} title="能力与额度" detail="开放能力与奖励" onClick={() => onNavigate("capabilities")} />
+                        <OverviewQuickLink icon={<ServerCog className="size-4" />} title="运行监控" detail="渠道与服务状态" onClick={() => onNavigate("monitoring")} />
+                    </div>
+                </div>
+            </section>
+
+            <section className="cultivation-admin-dashboard-grid cultivation-admin-dashboard-grid-bottom">
+                <div className="cultivation-admin-panel">
+                    <div className="cultivation-admin-panel-header">
+                        <div>
+                            <p className="cultivation-admin-panel-kicker">SYSTEM PULSE</p>
+                            <h2>今日系统数据</h2>
+                            <p>服务实例的实时运行概览。</p>
+                        </div>
+                        <Button type="text" icon={<ArrowUpRight className="size-4" />} onClick={() => onNavigate("monitoring")}>
+                            打开监控
+                        </Button>
+                    </div>
+                    <div className="cultivation-admin-pulse-list">
+                        <OverviewPulse icon={<TrendingUp className="size-4" />} label="任务处理" value={`${formatMetricValue(jobs?.succeeded)} 完成`} detail={`${formatMetricValue(activeJobs)} 条正在处理`} tone="good" />
+                        <OverviewPulse icon={<ServerCog className="size-4" />} label="服务运行" value={formatUptime(system.data?.uptimeSeconds)} detail={system.data ? `内存 ${formatBytes(system.data.memory.rss)}` : "等待数据"} />
+                        <OverviewPulse
+                            icon={<CircleAlert className="size-4" />}
+                            label="异常渠道"
+                            value={formatMetricValue(channelIssues.length)}
+                            detail={channelIssues.length ? "请前往运行监控处理" : "当前没有异常渠道"}
+                            tone={channelIssues.length ? "warning" : "good"}
+                        />
+                    </div>
+                </div>
+
+                <div className="cultivation-admin-panel">
+                    <div className="cultivation-admin-panel-header">
+                        <div>
+                            <p className="cultivation-admin-panel-kicker">RECENT ACTIVITY</p>
+                            <h2>最近管理动态</h2>
+                            <p>规则和用户变更记录。</p>
+                        </div>
+                        <Button type="text" icon={<ArrowUpRight className="size-4" />} onClick={() => onNavigate("records")}>
+                            全部记录
                         </Button>
                     </div>
                     <div className="cultivation-audit-list">
@@ -1090,8 +1235,56 @@ function OverviewPanel({ onOpenUser, onNavigate }: { onOpenUser: (displayName: s
                         })}
                         {!audits.isLoading && !audits.data?.items.length ? <AdminEmptyLine text="暂无管理操作记录" /> : null}
                     </div>
-                </section>
+                </div>
+            </section>
+
+            <section className="cultivation-admin-panel cultivation-admin-recent-users">
+                <div className="cultivation-admin-panel-header">
+                    <div>
+                        <p className="cultivation-admin-panel-kicker">ACTIVE CULTIVATORS</p>
+                        <h2>修炼者概览</h2>
+                        <p>快速查看最近用户的境界与成长进度。</p>
+                    </div>
+                    <Button type="text" icon={<ArrowUpRight className="size-4" />} onClick={() => onNavigate("users")}>
+                        查看全部用户
+                    </Button>
+                </div>
+                <div className="cultivation-admin-user-strip">
+                    {(users.data?.items || []).map((user) => (
+                        <div key={user.userId} className="cultivation-admin-user-card">
+                            <UserIdentity user={user} />
+                            <RealmBadge user={user} />
+                        </div>
+                    ))}
+                    {!users.isLoading && !users.data?.items.length ? <AdminEmptyLine text="暂无用户数据" /> : null}
+                </div>
+            </section>
+        </div>
+    );
+}
+
+function OverviewQuickLink({ icon, title, detail, onClick }: { icon: ReactNode; title: string; detail: string; onClick: () => void }) {
+    return (
+        <button type="button" className="cultivation-admin-quick-link" onClick={onClick}>
+            <span className="cultivation-admin-quick-icon">{icon}</span>
+            <span className="min-w-0">
+                <strong>{title}</strong>
+                <small>{detail}</small>
+            </span>
+            <ChevronRight className="ml-auto size-4" aria-hidden="true" />
+        </button>
+    );
+}
+
+function OverviewPulse({ icon, label, value, detail, tone }: { icon: ReactNode; label: string; value: string; detail: string; tone?: "good" | "warning" }) {
+    return (
+        <div className={`cultivation-admin-pulse-row ${tone ? `is-${tone}` : ""}`}>
+            <span className="cultivation-admin-pulse-icon">{icon}</span>
+            <div className="min-w-0 flex-1">
+                <span>{label}</span>
+                <strong>{value}</strong>
             </div>
+            <small>{detail}</small>
         </div>
     );
 }
@@ -1329,11 +1522,15 @@ function CultivationProgress({ user }: { user: Pick<AdminCultivationUser, "curre
     );
 }
 
-function AdminMetric({ label, value, tone }: { label: string; value: string; tone?: "active" | "warning" | "danger" }) {
+function AdminMetric({ label, value, tone, icon, delta }: { label: string; value: string; tone?: "active" | "warning" | "danger"; icon?: ReactNode; delta?: string }) {
     return (
         <div className={`cultivation-admin-metric ${tone ? `is-${tone}` : ""}`}>
-            <span>{label}</span>
+            <div className="cultivation-admin-metric-label">
+                {icon ? <span className="cultivation-admin-metric-icon">{icon}</span> : null}
+                <span>{label}</span>
+            </div>
             <strong>{value}</strong>
+            {delta ? <small>{delta}</small> : null}
         </div>
     );
 }

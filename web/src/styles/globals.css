@@ -16,6 +16,1015 @@
     overflow-wrap: anywhere;
 }
 
+/* 掌教殿 · 深海东方管理中枢 */
+@layer components {
+    .cultivation-admin-page {
+        --cultivation-admin-accent: #d3b36d;
+        --cultivation-admin-cyan: #70c9e8;
+        --cultivation-admin-success: #75c9ae;
+        --cultivation-admin-danger: #ec8278;
+        --cultivation-admin-bg: #08111d;
+        --cultivation-admin-surface: #0d1a2a;
+        --cultivation-admin-surface-raised: #112238;
+        --cultivation-admin-sidebar: #091522;
+        --cultivation-admin-border: rgb(151 177 204 / 18%);
+        --cultivation-admin-border-strong: rgb(211 179 109 / 42%);
+        --cultivation-admin-muted: #8294aa;
+        position: relative;
+        overflow: hidden;
+        color: #e7edf5;
+        background-color: var(--cultivation-admin-bg);
+        background-image: linear-gradient(rgb(112 201 232 / 3%) 1px, transparent 1px), linear-gradient(90deg, rgb(112 201 232 / 3%) 1px, transparent 1px), linear-gradient(135deg, #0b1725 0%, #08111d 58%, #0e1b28 100%);
+        background-size:
+            88px 88px,
+            88px 88px,
+            auto;
+    }
+
+    .cultivation-admin-page::before {
+        position: absolute;
+        inset: 0 0 auto;
+        height: 15rem;
+        pointer-events: none;
+        content: "";
+        opacity: 0.15;
+        background-image: url("/images/hero-main.webp");
+        background-position: center 34%;
+        background-size: cover;
+        mask-image: linear-gradient(180deg, #000, transparent);
+    }
+
+    .cultivation-admin-shell,
+    .cultivation-admin-topbar,
+    .cultivation-admin-header,
+    .cultivation-admin-content {
+        position: relative;
+        z-index: 1;
+    }
+
+    .cultivation-admin-shell {
+        grid-template-columns: 15.5rem minmax(0, 1fr);
+    }
+
+    .cultivation-admin-sidebar {
+        padding: 1.25rem 0.75rem 0.75rem;
+        border-right-color: var(--cultivation-admin-border);
+        background: rgb(7 17 29 / 88%);
+        box-shadow: 14px 0 40px rgb(0 0 0 / 16%);
+    }
+
+    .cultivation-admin-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        min-height: 4.25rem;
+        padding: 0.25rem 0.75rem 1.125rem;
+        border-bottom-color: var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-brand-mark,
+    .cultivation-admin-context-icon {
+        display: grid;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid rgb(211 179 109 / 44%);
+        color: var(--cultivation-admin-accent);
+        background: rgb(211 179 109 / 8%);
+        box-shadow: 0 0 20px rgb(211 179 109 / 8%);
+    }
+
+    .cultivation-admin-brand-mark {
+        width: 2.25rem;
+        height: 2.25rem;
+        border-radius: 0.5rem;
+    }
+
+    .cultivation-admin-brand-copy {
+        display: grid;
+        min-width: 0;
+        gap: 0.12rem;
+    }
+
+    .cultivation-admin-brand-copy p,
+    .cultivation-admin-brand-copy strong,
+    .cultivation-admin-brand-copy span {
+        overflow: hidden;
+        margin: 0;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .cultivation-admin-brand-copy p {
+        color: var(--cultivation-admin-accent);
+        font-size: 0.56rem;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+    }
+
+    .cultivation-admin-brand-copy strong {
+        color: #f0f3f7;
+        font-size: 1.55rem;
+        line-height: 1.6rem;
+    }
+
+    .cultivation-admin-brand-copy span {
+        color: var(--cultivation-admin-muted);
+        font-size: 0.65rem;
+    }
+
+    .cultivation-admin-nav {
+        gap: 0.15rem;
+        padding: 1.15rem 0.15rem;
+    }
+
+    .cultivation-admin-nav-group {
+        margin: 0.45rem 0.7rem 0.3rem;
+        color: #5d738a;
+        font-size: 0.59rem;
+        font-weight: 700;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+    }
+
+    .cultivation-admin-nav button {
+        min-height: 2.65rem;
+        padding: 0.65rem 0.75rem;
+        border-radius: 0.45rem;
+        color: #91a4b9;
+    }
+
+    .cultivation-admin-nav button:hover {
+        color: #ecf3fa;
+        background: rgb(112 201 232 / 8%);
+    }
+
+    .cultivation-admin-nav button.is-active {
+        border-color: rgb(112 201 232 / 32%);
+        color: #eef7ff;
+        background: linear-gradient(90deg, rgb(40 87 137 / 68%), rgb(25 55 89 / 38%));
+        box-shadow:
+            inset 3px 0 0 #70c9e8,
+            0 8px 20px rgb(0 0 0 / 13%);
+    }
+
+    .cultivation-admin-nav button.is-active > svg:first-child {
+        color: var(--cultivation-admin-cyan);
+    }
+
+    .cultivation-admin-sidebar-status {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin: auto 0.35rem 0.75rem;
+        padding: 0.7rem;
+        border: 1px solid rgb(117 201 174 / 20%);
+        border-radius: 0.45rem;
+        background: rgb(117 201 174 / 5%);
+    }
+
+    .cultivation-admin-sidebar-status > div {
+        display: grid;
+        min-width: 0;
+        gap: 0.15rem;
+    }
+
+    .cultivation-admin-sidebar-status strong,
+    .cultivation-admin-sidebar-status span:last-child {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .cultivation-admin-sidebar-status strong {
+        color: #d9eee7;
+        font-size: 0.7rem;
+        font-weight: 600;
+    }
+
+    .cultivation-admin-sidebar-status span:last-child {
+        color: #6d8a89;
+        font-size: 0.62rem;
+    }
+
+    .cultivation-admin-status-dot {
+        display: inline-block;
+        width: 0.45rem;
+        height: 0.45rem;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--cultivation-admin-success);
+        box-shadow:
+            0 0 0 4px rgb(117 201 174 / 12%),
+            0 0 14px rgb(117 201 174 / 55%);
+    }
+
+    .cultivation-admin-back-link {
+        margin: 0;
+        padding: 0.8rem 0.75rem 0.25rem;
+        border-top-color: var(--cultivation-admin-border);
+        color: #70859b !important;
+    }
+
+    .cultivation-admin-back-link:hover {
+        color: #dce9f4 !important;
+    }
+
+    .cultivation-admin-workspace {
+        background: rgb(5 13 23 / 28%);
+    }
+
+    .cultivation-admin-topbar {
+        display: flex;
+        min-height: 4.25rem;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.75rem 2rem;
+        border-bottom: 1px solid var(--cultivation-admin-border);
+        background: rgb(8 17 29 / 82%);
+        backdrop-filter: blur(18px);
+    }
+
+    .cultivation-admin-context,
+    .cultivation-admin-topbar-actions,
+    .cultivation-admin-operator,
+    .cultivation-admin-hero-meta,
+    .cultivation-admin-panel-footnote,
+    .cultivation-admin-pulse-row,
+    .cultivation-admin-user-card {
+        display: flex;
+        align-items: center;
+    }
+
+    .cultivation-admin-context {
+        gap: 0.65rem;
+    }
+
+    .cultivation-admin-context-icon {
+        width: 2rem;
+        height: 2rem;
+        border-radius: 0.4rem;
+    }
+
+    .cultivation-admin-context div,
+    .cultivation-admin-operator div {
+        display: grid;
+        min-width: 0;
+        gap: 0.12rem;
+    }
+
+    .cultivation-admin-context strong,
+    .cultivation-admin-operator strong {
+        color: #e7eef6;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .cultivation-admin-context span:last-child,
+    .cultivation-admin-operator span:last-child {
+        color: var(--cultivation-admin-muted);
+        font-size: 0.62rem;
+    }
+
+    .cultivation-admin-topbar-actions {
+        gap: 0.7rem;
+    }
+
+    .cultivation-admin-command-search {
+        display: flex;
+        width: min(18rem, 30vw);
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.55rem 0.7rem;
+        border: 1px solid var(--cultivation-admin-border);
+        border-radius: 0.4rem;
+        color: #71869c;
+        background: rgb(10 25 41 / 74%);
+        font-size: 0.7rem;
+    }
+
+    .cultivation-admin-command-search span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .cultivation-admin-command-search kbd {
+        margin-left: auto;
+        padding: 0.12rem 0.28rem;
+        border: 1px solid rgb(151 177 204 / 22%);
+        border-radius: 0.25rem;
+        color: #91a4b9;
+        font-size: 0.58rem;
+        white-space: nowrap;
+    }
+
+    .cultivation-admin-icon-button {
+        position: relative;
+        display: grid;
+        width: 2.25rem;
+        height: 2.25rem;
+        place-items: center;
+        border: 1px solid transparent;
+        border-radius: 0.4rem;
+        color: #8ca0b4;
+        background: transparent;
+        cursor: pointer;
+    }
+
+    .cultivation-admin-icon-button:hover {
+        border-color: var(--cultivation-admin-border);
+        color: #e5f3fb;
+        background: rgb(112 201 232 / 8%);
+    }
+
+    .cultivation-admin-notification-dot {
+        position: absolute;
+        top: 0.32rem;
+        right: 0.35rem;
+        width: 0.35rem;
+        height: 0.35rem;
+        border: 2px solid #08111d;
+        border-radius: 999px;
+        background: #ef8d73;
+    }
+
+    .cultivation-admin-operator {
+        gap: 0.5rem;
+        padding-left: 0.6rem;
+        border-left: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-operator-avatar {
+        display: grid;
+        width: 2rem;
+        height: 2rem;
+        place-items: center;
+        border: 1px solid rgb(211 179 109 / 42%);
+        border-radius: 50%;
+        color: #f2dfb3;
+        background: rgb(211 179 109 / 14%);
+        font-size: 0.75rem;
+        font-weight: 700;
+    }
+
+    .cultivation-admin-header {
+        top: 0;
+        padding: 1.15rem 2rem 1rem;
+        border-bottom-color: var(--cultivation-admin-border);
+        background: rgb(8 17 29 / 72%);
+    }
+
+    .cultivation-admin-breadcrumb {
+        color: var(--cultivation-admin-accent);
+        font-size: 0.62rem;
+        letter-spacing: 0.14em;
+    }
+
+    .cultivation-admin-header h1 {
+        color: #edf3f8;
+        font-size: 1.4rem;
+    }
+
+    .cultivation-admin-header > div > p:last-child {
+        color: var(--cultivation-admin-muted);
+    }
+
+    .cultivation-admin-content {
+        max-width: 110rem;
+        padding: 1.35rem 2rem 3rem;
+    }
+
+    .cultivation-admin-dashboard {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .cultivation-admin-dashboard-hero {
+        position: relative;
+        display: flex;
+        min-height: 9rem;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1.25rem;
+        overflow: hidden;
+        padding: 1.35rem 1.5rem 1.1rem;
+        border: 1px solid var(--cultivation-admin-border-strong);
+        border-radius: 0.55rem;
+        background: linear-gradient(110deg, rgb(17 39 64 / 88%), rgb(13 28 46 / 86%) 60%, rgb(17 36 56 / 66%));
+        box-shadow: 0 18px 50px rgb(0 0 0 / 18%);
+    }
+
+    .cultivation-admin-dashboard-hero::after {
+        position: absolute;
+        top: -4rem;
+        right: -1rem;
+        width: 18rem;
+        height: 12rem;
+        pointer-events: none;
+        content: "";
+        opacity: 0.22;
+        background-image: linear-gradient(135deg, transparent 44%, rgb(211 179 109 / 48%) 45%, transparent 46%), linear-gradient(45deg, transparent 54%, rgb(112 201 232 / 35%) 55%, transparent 56%);
+        background-size: 5rem 5rem;
+        transform: rotate(12deg);
+    }
+
+    .cultivation-admin-hero-copy,
+    .cultivation-admin-hero-actions,
+    .cultivation-admin-hero-meta {
+        position: relative;
+        z-index: 1;
+    }
+
+    .cultivation-admin-hero-copy {
+        min-width: min(100%, 30rem);
+    }
+
+    .cultivation-admin-eyebrow,
+    .cultivation-admin-panel-kicker {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        margin: 0;
+        color: var(--cultivation-admin-accent);
+        font-size: 0.6rem;
+        font-weight: 700;
+        letter-spacing: 0.15em;
+    }
+
+    .cultivation-admin-hero-copy h2 {
+        margin: 0.45rem 0 0;
+        color: #f1f5f8;
+        font-size: 1.8rem;
+        font-weight: 650;
+        line-height: 1.25;
+    }
+
+    .cultivation-admin-hero-copy > p:last-child {
+        max-width: 38rem;
+        margin: 0.5rem 0 0;
+        color: #9cb0c3;
+        font-size: 0.78rem;
+        line-height: 1.55;
+    }
+
+    .cultivation-admin-hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .cultivation-admin-dashboard-hero .ant-btn {
+        border-color: rgb(151 177 204 / 25%);
+        border-radius: 0.4rem;
+        color: #c4d4e3;
+        background: rgb(7 18 31 / 48%);
+    }
+
+    .cultivation-admin-dashboard-hero .ant-btn-primary {
+        border-color: #5ab2d4;
+        color: #071521;
+        background: #70c9e8;
+        box-shadow: 0 8px 22px rgb(44 146 181 / 25%);
+    }
+
+    .cultivation-admin-dashboard-hero .ant-btn-primary:hover {
+        color: #071521 !important;
+        background: #92dcf3 !important;
+    }
+
+    .cultivation-admin-hero-meta {
+        width: 100%;
+        justify-content: space-between;
+        gap: 1rem;
+        padding-top: 0.7rem;
+        border-top: 1px solid rgb(151 177 204 / 16%);
+        color: #7890a6;
+        font-size: 0.63rem;
+    }
+
+    .cultivation-admin-hero-meta span:first-child {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .cultivation-admin-metric-strip {
+        overflow: hidden;
+        border: 1px solid var(--cultivation-admin-border);
+        border-radius: 0.5rem;
+        background: rgb(12 28 45 / 82%);
+    }
+
+    .cultivation-admin-metric {
+        padding: 0.9rem 1rem;
+    }
+
+    .cultivation-admin-metric + .cultivation-admin-metric {
+        border-left-color: var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-metric-label {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        color: #91a6ba;
+    }
+
+    .cultivation-admin-metric-label > span:last-child {
+        color: inherit;
+        font-size: 0.65rem;
+    }
+
+    .cultivation-admin-metric-icon {
+        display: grid;
+        width: 1.55rem;
+        height: 1.55rem;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid rgb(112 201 232 / 24%);
+        border-radius: 0.35rem;
+        color: var(--cultivation-admin-cyan);
+        background: rgb(112 201 232 / 7%);
+    }
+
+    .cultivation-admin-metric strong {
+        margin-top: 0.4rem;
+        color: #f0f5fa;
+        font-size: 1.25rem;
+    }
+
+    .cultivation-admin-metric small {
+        display: block;
+        margin-top: 0.2rem;
+        color: #657e94;
+        font-size: 0.6rem;
+    }
+
+    .cultivation-admin-metric.is-active .cultivation-admin-metric-icon,
+    .cultivation-admin-metric.is-active strong {
+        color: var(--cultivation-admin-cyan);
+    }
+
+    .cultivation-admin-metric.is-danger .cultivation-admin-metric-icon,
+    .cultivation-admin-metric.is-danger strong {
+        color: var(--cultivation-admin-danger);
+    }
+
+    .cultivation-admin-dashboard-grid {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .cultivation-admin-dashboard-grid-main {
+        grid-template-columns: minmax(0, 1.7fr) minmax(18rem, 0.8fr);
+    }
+
+    .cultivation-admin-dashboard-grid-bottom {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .cultivation-admin-panel {
+        overflow: hidden;
+        padding: 1.15rem 1.25rem;
+        border: 1px solid var(--cultivation-admin-border);
+        border-radius: 0.5rem;
+        background: linear-gradient(180deg, rgb(14 30 48 / 91%), rgb(10 23 38 / 91%));
+        box-shadow: 0 14px 32px rgb(0 0 0 / 12%);
+    }
+
+    .cultivation-admin-panel-header,
+    .cultivation-admin-section-heading {
+        margin-bottom: 1rem;
+    }
+
+    .cultivation-admin-panel-header h2,
+    .cultivation-admin-section-heading h2,
+    .cultivation-admin-section-heading h3 {
+        color: #e9f0f5;
+    }
+
+    .cultivation-admin-panel-header p,
+    .cultivation-admin-section-heading p {
+        color: #7890a6;
+    }
+
+    .cultivation-admin-panel-kicker {
+        margin-bottom: 0.3rem;
+        color: #6d9ab0;
+        font-size: 0.56rem;
+        letter-spacing: 0.12em;
+    }
+
+    .cultivation-admin-panel .ant-btn-text {
+        color: #8fb7c9;
+    }
+
+    .cultivation-admin-panel .ant-btn-text:hover {
+        color: #d1eff8 !important;
+        background: rgb(112 201 232 / 8%);
+    }
+
+    .cultivation-admin-realm-panel {
+        border-color: rgb(211 179 109 / 33%);
+    }
+
+    .cultivation-admin-realm-rail {
+        display: flex;
+        min-width: 42rem;
+        align-items: flex-start;
+        padding: 0.8rem 0.1rem 0.9rem;
+        overflow-x: auto;
+        scrollbar-width: thin;
+        scrollbar-color: rgb(112 201 232 / 35%) transparent;
+    }
+
+    .cultivation-admin-realm-node {
+        position: relative;
+        display: grid;
+        min-width: 5.3rem;
+        flex: 1 1 0;
+        justify-items: center;
+        gap: 0.3rem;
+        padding: 0 0.55rem;
+        text-align: center;
+    }
+
+    .cultivation-admin-realm-node-icon {
+        display: grid;
+        width: 2.8rem;
+        height: 2.8rem;
+        place-items: center;
+        border: 1px solid color-mix(in srgb, var(--realm-node-color) 55%, #8da1b5 20%);
+        border-radius: 50%;
+        color: var(--realm-node-color);
+        background: color-mix(in srgb, var(--realm-node-color) 12%, #0a1928);
+        box-shadow: 0 0 20px color-mix(in srgb, var(--realm-node-color) 18%, transparent);
+    }
+
+    .cultivation-admin-realm-node strong {
+        color: #e3ebf2;
+        font-size: 0.7rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .cultivation-admin-realm-node > span:not(.cultivation-admin-realm-connector) {
+        color: #70869b;
+        font-size: 0.58rem;
+        white-space: nowrap;
+    }
+
+    .cultivation-admin-realm-connector {
+        position: absolute;
+        top: 1.25rem;
+        right: -0.45rem;
+        display: grid;
+        width: 0.9rem;
+        height: 0.9rem;
+        place-items: center;
+        color: #557189;
+    }
+
+    .cultivation-admin-panel-footnote {
+        justify-content: space-between;
+        gap: 1rem;
+        padding-top: 0.8rem;
+        border-top: 1px solid var(--cultivation-admin-border);
+        color: #70879d;
+        font-size: 0.62rem;
+    }
+
+    .cultivation-admin-panel-footnote span:first-child {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        color: var(--cultivation-admin-success);
+    }
+
+    .cultivation-admin-quick-grid {
+        display: grid;
+        gap: 0.55rem;
+    }
+
+    .cultivation-admin-quick-link {
+        display: flex;
+        width: 100%;
+        min-width: 0;
+        align-items: center;
+        gap: 0.65rem;
+        padding: 0.7rem;
+        border: 1px solid rgb(151 177 204 / 13%);
+        border-radius: 0.4rem;
+        color: #8fa5b9;
+        background: rgb(8 20 34 / 45%);
+        text-align: left;
+        cursor: pointer;
+        transition:
+            border-color 160ms ease,
+            background-color 160ms ease,
+            transform 160ms ease;
+    }
+
+    .cultivation-admin-quick-link:hover {
+        border-color: rgb(112 201 232 / 36%);
+        background: rgb(25 55 86 / 48%);
+        transform: translateY(-1px);
+    }
+
+    .cultivation-admin-quick-icon {
+        display: grid;
+        width: 2rem;
+        height: 2rem;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid rgb(211 179 109 / 28%);
+        border-radius: 0.35rem;
+        color: var(--cultivation-admin-accent);
+        background: rgb(211 179 109 / 7%);
+    }
+
+    .cultivation-admin-quick-link > span:nth-child(2) {
+        display: grid;
+        gap: 0.15rem;
+    }
+
+    .cultivation-admin-quick-link strong {
+        color: #e2ebf2;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .cultivation-admin-quick-link small {
+        color: #71889d;
+        font-size: 0.6rem;
+    }
+
+    .cultivation-admin-quick-link > svg:last-child {
+        color: #5c7790;
+    }
+
+    .cultivation-admin-pulse-list {
+        display: grid;
+    }
+
+    .cultivation-admin-pulse-row {
+        min-width: 0;
+        gap: 0.7rem;
+        padding: 0.72rem 0;
+        border-bottom: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-pulse-row:last-child {
+        border-bottom: 0;
+    }
+
+    .cultivation-admin-pulse-icon {
+        display: grid;
+        width: 2rem;
+        height: 2rem;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid rgb(112 201 232 / 22%);
+        border-radius: 50%;
+        color: var(--cultivation-admin-cyan);
+        background: rgb(112 201 232 / 7%);
+    }
+
+    .cultivation-admin-pulse-row > div {
+        display: grid;
+        min-width: 0;
+        gap: 0.15rem;
+    }
+
+    .cultivation-admin-pulse-row > div > span {
+        color: #7790a5;
+        font-size: 0.62rem;
+    }
+
+    .cultivation-admin-pulse-row strong {
+        color: #e7eff5;
+        font-size: 0.78rem;
+        font-weight: 600;
+    }
+
+    .cultivation-admin-pulse-row small {
+        max-width: 9rem;
+        color: #6d8398;
+        font-size: 0.6rem;
+        text-align: right;
+    }
+
+    .cultivation-admin-pulse-row.is-good .cultivation-admin-pulse-icon {
+        border-color: rgb(117 201 174 / 25%);
+        color: var(--cultivation-admin-success);
+        background: rgb(117 201 174 / 7%);
+    }
+
+    .cultivation-admin-pulse-row.is-warning .cultivation-admin-pulse-icon {
+        border-color: rgb(236 130 120 / 25%);
+        color: var(--cultivation-admin-danger);
+        background: rgb(236 130 120 / 7%);
+    }
+
+    .cultivation-admin-user-strip {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.55rem;
+    }
+
+    .cultivation-admin-user-card {
+        min-width: 0;
+        justify-content: space-between;
+        gap: 0.65rem;
+        padding: 0.7rem;
+        border: 1px solid rgb(151 177 204 / 13%);
+        border-radius: 0.4rem;
+        background: rgb(8 20 34 / 42%);
+    }
+
+    .cultivation-admin-user-card .cultivation-user-identity {
+        min-width: 0;
+    }
+
+    .cultivation-admin-user-card .cultivation-realm-badge {
+        padding: 0.18rem 0.35rem;
+        font-size: 0.59rem;
+        line-height: 1rem;
+    }
+
+    .cultivation-admin-user-card .cultivation-realm-symbol {
+        width: 1.3rem;
+        height: 1.3rem;
+    }
+
+    .cultivation-admin-user-card .cultivation-realm-symbol svg {
+        width: 0.8rem;
+        height: 0.8rem;
+    }
+
+    .cultivation-admin-page .ant-table,
+    .cultivation-admin-page .ant-table-container,
+    .cultivation-admin-page .ant-table-thead > tr > th,
+    .cultivation-admin-page .ant-table-tbody > tr > td {
+        color: #d7e2eb;
+        background: transparent;
+    }
+
+    .cultivation-admin-page .ant-table-thead > tr > th {
+        color: #7f97ac;
+        border-bottom-color: var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-page .ant-table-tbody > tr > td {
+        border-bottom-color: var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-page .ant-table-tbody > tr.ant-table-row:hover > td,
+    .cultivation-admin-page .ant-table-cell-fix-right {
+        background: rgb(33 69 105 / 28%);
+    }
+
+    .cultivation-admin-page .ant-pagination,
+    .cultivation-admin-page .ant-pagination a,
+    .cultivation-admin-page .ant-pagination .ant-pagination-item-link {
+        color: #8ca2b6;
+    }
+
+    .cultivation-admin-page .ant-input,
+    .cultivation-admin-page .ant-input-affix-wrapper,
+    .cultivation-admin-page .ant-input-number,
+    .cultivation-admin-page .ant-select-selector,
+    .cultivation-admin-page .ant-segmented {
+        border-color: var(--cultivation-admin-border) !important;
+        color: #e2ebf2;
+        background: rgb(8 20 34 / 72%) !important;
+    }
+
+    .cultivation-admin-page .ant-input::placeholder,
+    .cultivation-admin-page .ant-select-selection-placeholder {
+        color: #647b90;
+    }
+
+    .cultivation-admin-page .ant-btn-default,
+    .cultivation-admin-page .ant-btn:not(.ant-btn-primary):not(.ant-btn-text) {
+        border-color: var(--cultivation-admin-border);
+        color: #b7cad9;
+        background: rgb(8 20 34 / 64%);
+    }
+
+    .cultivation-admin-page .ant-btn-default:hover,
+    .cultivation-admin-page .ant-btn:not(.ant-btn-primary):not(.ant-btn-text):hover {
+        border-color: rgb(112 201 232 / 42%);
+        color: #e4f4fb;
+        background: rgb(32 67 101 / 58%);
+    }
+
+    .cultivation-admin-page .ant-pagination-item-active {
+        border-color: var(--cultivation-admin-cyan);
+        background: rgb(112 201 232 / 12%);
+    }
+
+    .cultivation-admin-page .ant-pagination-item-active a {
+        color: var(--cultivation-admin-cyan);
+    }
+
+    @media (max-width: 1200px) {
+        .cultivation-admin-user-strip {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 1024px) {
+        .cultivation-admin-shell {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .cultivation-admin-sidebar {
+            display: none;
+        }
+
+        .cultivation-admin-topbar {
+            padding-inline: 1rem;
+        }
+
+        .cultivation-admin-header {
+            padding-inline: 1rem;
+        }
+
+        .cultivation-admin-content {
+            padding-inline: 1rem;
+        }
+
+        .cultivation-admin-mobile-nav {
+            display: block;
+            margin-bottom: 0.75rem;
+        }
+
+        .cultivation-admin-dashboard-grid-main,
+        .cultivation-admin-dashboard-grid-bottom {
+            grid-template-columns: minmax(0, 1fr);
+        }
+    }
+
+    @media (max-width: 680px) {
+        .cultivation-admin-topbar {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+
+        .cultivation-admin-topbar-actions {
+            width: 100%;
+        }
+
+        .cultivation-admin-command-search {
+            width: auto;
+            flex: 1;
+        }
+
+        .cultivation-admin-operator div {
+            display: none;
+        }
+
+        .cultivation-admin-dashboard-hero {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+
+        .cultivation-admin-hero-copy {
+            min-width: 0;
+        }
+
+        .cultivation-admin-hero-copy h2 {
+            font-size: 1.45rem;
+        }
+
+        .cultivation-admin-hero-meta,
+        .cultivation-admin-panel-footnote {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+
+        .cultivation-overview-metrics {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .cultivation-overview-metrics .cultivation-admin-metric:nth-child(odd) {
+            border-left: 0;
+        }
+
+        .cultivation-overview-metrics .cultivation-admin-metric:nth-child(n + 3) {
+            border-top: 1px solid var(--cultivation-admin-border);
+        }
+
+        .cultivation-admin-user-strip {
+            grid-template-columns: minmax(0, 1fr);
+        }
+    }
+}
+
 .agent-streamdown > * {
     min-width: 0;
     max-width: 100%;
@@ -3799,6 +4808,109 @@ html[data-imperial-mode="true"] {
         .product-realm-header.is-imperial::before,
         .product-imperial-entry {
             animation: none;
+        }
+    }
+}
+
+/* 掌教殿覆盖层：保证管理中枢主题优先于通用后台规则 */
+@layer components {
+    .cultivation-admin-page {
+        --cultivation-admin-accent: #d3b36d;
+        --cultivation-admin-border: rgb(151 177 204 / 18%);
+        --cultivation-admin-subtle: rgb(14 30 48 / 72%);
+        --cultivation-admin-hover: rgb(33 69 105 / 32%);
+        color: #e7edf5;
+        background-color: #08111d;
+        background-image: linear-gradient(rgb(112 201 232 / 3%) 1px, transparent 1px), linear-gradient(90deg, rgb(112 201 232 / 3%) 1px, transparent 1px), linear-gradient(135deg, #0b1725 0%, #08111d 58%, #0e1b28 100%);
+        background-size:
+            88px 88px,
+            88px 88px,
+            auto;
+    }
+
+    .cultivation-admin-page .cultivation-admin-shell {
+        grid-template-columns: 15.5rem minmax(0, 1fr);
+    }
+
+    .cultivation-admin-page .cultivation-admin-sidebar {
+        padding: 1.25rem 0.75rem 0.75rem;
+        border-right-color: rgb(151 177 204 / 18%);
+        background: rgb(7 17 29 / 88%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.25rem 0.75rem 1.125rem;
+        border-bottom-color: rgb(151 177 204 / 18%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-workspace {
+        background: rgb(5 13 23 / 28%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-topbar {
+        position: relative;
+        z-index: 5;
+    }
+
+    .cultivation-admin-page .cultivation-admin-header {
+        top: 0;
+        padding: 1.15rem 2rem 1rem;
+        border-bottom-color: rgb(151 177 204 / 18%);
+        background: rgb(8 17 29 / 72%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-content {
+        max-width: 110rem;
+        padding: 1.35rem 2rem 3rem;
+    }
+
+    .cultivation-admin-page .cultivation-admin-dashboard .cultivation-admin-panel {
+        padding: 1.15rem 1.25rem;
+        border-color: rgb(151 177 204 / 18%);
+        border-radius: 0.5rem;
+        background: linear-gradient(180deg, rgb(14 30 48 / 91%), rgb(10 23 38 / 91%));
+        box-shadow: 0 14px 32px rgb(0 0 0 / 12%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-metric-strip {
+        border-color: rgb(151 177 204 / 18%);
+        border-radius: 0.5rem;
+        background: rgb(12 28 45 / 82%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-metric + .cultivation-admin-metric {
+        border-left-color: rgb(151 177 204 / 18%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-dashboard-grid-main {
+        grid-template-columns: minmax(0, 1.7fr) minmax(18rem, 0.8fr);
+    }
+
+    .cultivation-admin-page .cultivation-admin-dashboard-grid-bottom {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    @media (max-width: 1024px) {
+        .cultivation-admin-page .cultivation-admin-shell {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .cultivation-admin-page .cultivation-admin-sidebar {
+            display: none;
+        }
+
+        .cultivation-admin-page .cultivation-admin-header,
+        .cultivation-admin-page .cultivation-admin-content {
+            padding-right: 1rem;
+            padding-left: 1rem;
+        }
+
+        .cultivation-admin-page .cultivation-admin-dashboard-grid-main,
+        .cultivation-admin-page .cultivation-admin-dashboard-grid-bottom {
+            grid-template-columns: minmax(0, 1fr);
         }
     }
 }
