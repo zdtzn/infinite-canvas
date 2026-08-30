@@ -804,7 +804,7 @@ function RealmQuotaTable({ realms, onEdit }: { realms: CultivationRealmConfig[];
             scroll={{ x: 760 }}
             dataSource={realms}
             columns={[
-                { title: "境界", key: "realm", width: 220, render: (_: unknown, realm) => <RealmConfigIdentity realm={realm} /> },
+                { title: "境界", key: "realm", width: 240, render: (_: unknown, realm) => <RealmConfigIdentity realm={realm} showBadge /> },
                 { title: "每日额度", key: "dailyLimit", width: 130, align: "right", render: (_: unknown, realm) => <span className="cultivation-count">{realm.dailyLimit === null ? "不限" : `${realm.dailyLimit} 次`}</span> },
                 { title: "最大并发", dataIndex: "maxConcurrency", width: 110, align: "right", render: (value: number) => <span className="cultivation-count">{value}</span> },
                 { title: "状态", dataIndex: "active", width: 96, render: (active: boolean) => (active ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>) },
@@ -1704,13 +1704,20 @@ function RealmBadge({ user }: { user: Pick<AdminCultivationUser, "realmName" | "
     );
 }
 
-function RealmConfigIdentity({ realm }: { realm: CultivationRealmConfig }) {
+function RealmConfigIdentity({ realm, showBadge = false }: { realm: CultivationRealmConfig; showBadge?: boolean }) {
     const accent = cultivationAccentColor(realm.color);
+    const realmHero = cultivationRealmHero(realm.id);
     return (
         <div className="flex min-w-0 items-center gap-2.5" style={{ "--cultivation-admin-accent": accent } as CSSProperties}>
-            <span className="cultivation-realm-symbol">
-                <RealmIcon iconKey={realm.iconKey} className="size-4" />
-            </span>
+            {showBadge ? (
+                <span className="cultivation-quota-realm-badge" aria-hidden="true">
+                    <img src={realmHero.badgeSrc} alt="" loading="lazy" decoding="async" />
+                </span>
+            ) : (
+                <span className="cultivation-realm-symbol">
+                    <RealmIcon iconKey={realm.iconKey} className="size-4" />
+                </span>
+            )}
             <div className="min-w-0">
                 <div className="truncate font-medium text-stone-900 dark:text-stone-100">{realm.name}</div>
                 <div className="mt-1 truncate text-xs text-stone-500">{realm.code}</div>
