@@ -31,6 +31,7 @@ import { Link, useSearchParams } from "react-router-dom";
 
 import { previewCultivationBreakthrough } from "@/features/cultivation/breakthrough-overlay";
 import { RealmIcon } from "@/features/cultivation/realm-icon";
+import { cultivationRealmHero } from "@/features/cultivation/realm-hero";
 import { cultivationAccentColor, cultivationStageLabel } from "@/features/cultivation/utils";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
@@ -611,7 +612,7 @@ function GrowthRulesPanel() {
         <div className="cultivation-rules-layout">
             <aside className="cultivation-realm-list" aria-label="境界列表">
                 <div className="cultivation-realm-list-heading">
-                    <span>境界</span>
+                    <span>境界图鉴</span>
                     <span>{data.realms.length}</span>
                 </div>
                 <div className="cultivation-realm-list-items">
@@ -619,6 +620,7 @@ function GrowthRulesPanel() {
                         const selected = realm.id === selectedRealm?.id;
                         const accent = cultivationAccentColor(realm.color);
                         const activeStageCount = realm.stages.filter((stage) => stage.active).length;
+                        const realmHero = cultivationRealmHero(realm.id);
                         return (
                             <button
                                 key={realm.id}
@@ -628,6 +630,9 @@ function GrowthRulesPanel() {
                                 aria-current={selected ? "true" : undefined}
                                 onClick={() => setSelectedRealmId(realm.id)}
                             >
+                                <span className="cultivation-realm-art" aria-hidden="true">
+                                    <img src={realmHero.imageSrc} alt="" loading="lazy" decoding="async" />
+                                </span>
                                 <span className="cultivation-realm-tier" aria-hidden="true">
                                     {String(index + 1).padStart(2, "0")}
                                 </span>

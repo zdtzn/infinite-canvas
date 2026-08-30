@@ -1025,6 +1025,116 @@
     }
 }
 
+@layer components {
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item {
+        min-height: 5.15rem;
+        gap: 0.65rem;
+        padding: 0.78rem 0.7rem 0.78rem 0.4rem;
+        overflow: hidden;
+        isolation: isolate;
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item > :not(.cultivation-realm-art) {
+        position: relative;
+        z-index: 1;
+    }
+
+    .cultivation-admin-page .cultivation-realm-art {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        overflow: hidden;
+        border-radius: inherit;
+        opacity: 0.24;
+        pointer-events: none;
+        transition:
+            opacity 180ms ease,
+            transform 280ms ease;
+    }
+
+    .cultivation-admin-page .cultivation-realm-art::before,
+    .cultivation-admin-page .cultivation-realm-art::after {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        content: "";
+        pointer-events: none;
+    }
+
+    .cultivation-admin-page .cultivation-realm-art::before {
+        background: linear-gradient(90deg, rgb(8 20 34 / 100%) 0%, rgb(8 20 34 / 94%) 28%, rgb(8 20 34 / 56%) 68%, rgb(8 20 34 / 30%) 100%);
+    }
+
+    .cultivation-admin-page .cultivation-realm-art::after {
+        background: linear-gradient(180deg, rgb(5 14 24 / 22%), transparent 46%, rgb(5 14 24 / 44%));
+    }
+
+    .cultivation-admin-page .cultivation-realm-art img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: 75% center;
+        filter: saturate(1.12) contrast(1.06);
+        transform: scale(1.08);
+        transition: transform 420ms ease;
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item:hover .cultivation-realm-art,
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item.is-active .cultivation-realm-art {
+        opacity: 0.38;
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item:hover .cultivation-realm-art img,
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item.is-active .cultivation-realm-art img {
+        transform: scale(1.13);
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item.is-active {
+        background: linear-gradient(90deg, color-mix(in srgb, var(--cultivation-admin-accent) 18%, rgb(9 25 41 / 94%)), rgb(12 28 46 / 68%));
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item.is-active .cultivation-realm-name {
+        color: color-mix(in srgb, var(--cultivation-admin-accent) 72%, white 28%);
+        text-shadow: 0 0 16px color-mix(in srgb, var(--cultivation-admin-accent) 28%, transparent);
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items .cultivation-realm-name {
+        font-size: 0.96rem;
+        line-height: 1.35rem;
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items .cultivation-realm-symbol {
+        width: 2.75rem;
+        height: 2.75rem;
+        flex-basis: 2.75rem;
+        border-radius: 0.8rem;
+        background: color-mix(in srgb, var(--cultivation-admin-accent) 15%, rgb(7 20 34 / 88%));
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items .cultivation-realm-item.is-active .cultivation-realm-symbol {
+        background: color-mix(in srgb, var(--cultivation-admin-accent) 26%, rgb(7 20 34 / 88%));
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item:focus-visible {
+        outline: 2px solid color-mix(in srgb, var(--cultivation-admin-accent) 82%, white 18%);
+        outline-offset: 2px;
+    }
+
+    @media (max-width: 1024px) {
+        .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item {
+            width: 15.5rem;
+            min-height: 4.9rem;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .cultivation-admin-page .cultivation-realm-art,
+        .cultivation-admin-page .cultivation-realm-art img {
+            transition: none;
+        }
+    }
+}
+
 .agent-streamdown > * {
     min-width: 0;
     max-width: 100%;
@@ -4911,6 +5021,74 @@ html[data-imperial-mode="true"] {
         .cultivation-admin-page .cultivation-admin-dashboard-grid-main,
         .cultivation-admin-page .cultivation-admin-dashboard-grid-bottom {
             grid-template-columns: minmax(0, 1fr);
+        }
+    }
+}
+
+@layer components {
+    .cultivation-admin-page .cultivation-rules-layout {
+        display: block;
+        min-height: 0;
+        overflow: visible;
+        border: 0;
+    }
+
+    .cultivation-admin-page .cultivation-realm-list {
+        overflow: visible;
+        padding: 1.25rem;
+        border-right: 0;
+        border-bottom: 1px solid var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.75rem;
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item {
+        width: 100%;
+        min-height: 6.15rem;
+    }
+
+    .cultivation-admin-page .cultivation-rule-workspace {
+        padding: 1.35rem 1.25rem 1.5rem;
+        background: rgb(5 13 23 / 30%);
+    }
+
+    @media (max-width: 1024px) {
+        .cultivation-admin-page .cultivation-realm-list {
+            overflow: visible;
+            padding: 1rem;
+        }
+
+        .cultivation-admin-page .cultivation-realm-list-items {
+            display: grid;
+            width: auto;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item {
+            width: 100%;
+            min-height: 5.55rem;
+        }
+
+        .cultivation-admin-page .cultivation-rule-workspace {
+            padding: 1rem;
+        }
+    }
+
+    @media (max-width: 680px) {
+        .cultivation-admin-page .cultivation-realm-list {
+            padding: 0.8rem;
+        }
+
+        .cultivation-admin-page .cultivation-realm-list-items {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item {
+            min-height: 5.15rem;
         }
     }
 }
