@@ -5624,3 +5624,360 @@ html[data-imperial-mode="true"] {
         }
     }
 }
+
+@layer components {
+    .cultivation-admin-page {
+        --cultivation-admin-accent: #c9a86a;
+        --cultivation-admin-cyan: #82a9aa;
+        --cultivation-admin-success: #79b79f;
+        --cultivation-admin-danger: #df7b72;
+        --cultivation-admin-bg: #0e0e12;
+        --cultivation-admin-surface: #15151b;
+        --cultivation-admin-surface-raised: #1b1b22;
+        --cultivation-admin-sidebar: #101016;
+        --cultivation-admin-border: rgb(220 211 195 / 13%);
+        --cultivation-admin-border-strong: rgb(201 168 106 / 38%);
+        --cultivation-admin-muted: #918d84;
+        --cultivation-admin-subtle: rgb(24 24 30 / 88%);
+        --cultivation-admin-hover: rgb(201 168 106 / 8%);
+        color: #ece9e2;
+        background-color: var(--cultivation-admin-bg);
+        background-image:
+            linear-gradient(rgb(201 168 106 / 2%) 1px, transparent 1px), linear-gradient(90deg, rgb(201 168 106 / 2%) 1px, transparent 1px), radial-gradient(circle at 76% 0%, rgb(201 168 106 / 7%), transparent 32%),
+            linear-gradient(135deg, #141419 0%, #0e0e12 58%, #111210 100%);
+        background-size:
+            88px 88px,
+            88px 88px,
+            auto,
+            auto;
+    }
+
+    .cultivation-admin-page::before {
+        height: 18rem;
+        opacity: 0.7;
+        background-image: radial-gradient(ellipse at 58% 0%, rgb(201 168 106 / 9%), transparent 66%);
+        background-position: center;
+        background-size: cover;
+    }
+
+    .cultivation-admin-page .cultivation-admin-sidebar {
+        border-right-color: var(--cultivation-admin-border);
+        background: rgb(16 16 22 / 94%);
+        box-shadow: 14px 0 40px rgb(0 0 0 / 18%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-workspace {
+        background: rgb(8 8 11 / 18%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-topbar,
+    .cultivation-admin-page .cultivation-admin-header {
+        border-color: var(--cultivation-admin-border);
+        background: rgb(14 14 18 / 86%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-brand-copy strong,
+    .cultivation-admin-page .cultivation-admin-context strong,
+    .cultivation-admin-page .cultivation-admin-operator strong,
+    .cultivation-admin-page .cultivation-admin-header h1,
+    .cultivation-admin-page .cultivation-admin-panel-header h2,
+    .cultivation-admin-page .cultivation-admin-section-heading h2,
+    .cultivation-admin-page .cultivation-admin-section-heading h3 {
+        color: #f1eee7;
+    }
+
+    .cultivation-admin-page .cultivation-admin-brand-copy span,
+    .cultivation-admin-page .cultivation-admin-context span:last-child,
+    .cultivation-admin-page .cultivation-admin-operator span:last-child,
+    .cultivation-admin-page .cultivation-admin-header > div > p:last-child,
+    .cultivation-admin-page .cultivation-admin-panel-header p,
+    .cultivation-admin-page .cultivation-admin-section-heading p {
+        color: var(--cultivation-admin-muted);
+    }
+
+    .cultivation-admin-page .cultivation-admin-nav-group {
+        color: #6f6b64;
+    }
+
+    .cultivation-admin-page .cultivation-admin-nav button {
+        color: #99958d;
+    }
+
+    .cultivation-admin-page .cultivation-admin-nav button:hover {
+        color: #f0ede6;
+        background: rgb(201 168 106 / 7%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-nav button.is-active {
+        border-color: rgb(201 168 106 / 32%);
+        color: #fffaf0;
+        background: linear-gradient(90deg, rgb(201 168 106 / 18%), rgb(201 168 106 / 5%));
+        box-shadow:
+            inset 3px 0 0 var(--cultivation-admin-accent),
+            0 8px 20px rgb(0 0 0 / 14%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-nav button.is-active > svg:first-child {
+        color: var(--cultivation-admin-accent);
+    }
+
+    .cultivation-admin-page .cultivation-admin-back-link {
+        color: #77736c !important;
+    }
+
+    .cultivation-admin-page .cultivation-admin-back-link:hover {
+        color: #ded9cf !important;
+    }
+
+    .cultivation-admin-page .cultivation-admin-command-search {
+        border-color: var(--cultivation-admin-border);
+        color: #77736c;
+        background: rgb(24 24 30 / 76%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-command-search kbd {
+        border-color: var(--cultivation-admin-border);
+        color: #9d988f;
+    }
+
+    .cultivation-admin-page .cultivation-admin-icon-button {
+        color: #8f8a82;
+    }
+
+    .cultivation-admin-page .cultivation-admin-icon-button:hover {
+        border-color: rgb(201 168 106 / 22%);
+        color: #f2e6cb;
+        background: rgb(201 168 106 / 7%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-notification-dot {
+        border-color: var(--cultivation-admin-bg);
+    }
+
+    .cultivation-admin-page .cultivation-admin-dashboard-hero {
+        border-color: var(--cultivation-admin-border-strong);
+        background:
+            linear-gradient(90deg, rgb(14 14 18 / 97%) 0%, rgb(14 14 18 / 90%) 44%, rgb(14 14 18 / 58%) 100%),
+            url("/images/cultivation-admin-taiji.webp") center 45% / cover no-repeat;
+        box-shadow: 0 18px 50px rgb(0 0 0 / 24%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-dashboard-hero::after {
+        opacity: 0.12;
+        background-image: linear-gradient(135deg, transparent 44%, rgb(201 168 106 / 50%) 45%, transparent 46%), linear-gradient(45deg, transparent 54%, rgb(201 168 106 / 28%) 55%, transparent 56%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-hero-copy h2 {
+        color: #fffaf0;
+    }
+
+    .cultivation-admin-page .cultivation-admin-hero-meta {
+        color: #9e998f;
+    }
+
+    .cultivation-admin-page .ant-btn-primary {
+        border-color: #c9a86a !important;
+        color: #18140d !important;
+        background: #c9a86a !important;
+        box-shadow: 0 8px 20px rgb(201 168 106 / 16%);
+    }
+
+    .cultivation-admin-page .ant-btn-primary:hover {
+        border-color: #ddc184 !important;
+        background: #ddc184 !important;
+    }
+
+    .cultivation-admin-page .cultivation-admin-metric-strip,
+    .cultivation-admin-page .cultivation-admin-dashboard .cultivation-admin-panel,
+    .cultivation-admin-page .cultivation-admin-panel {
+        border-color: var(--cultivation-admin-border);
+        background: linear-gradient(180deg, rgb(25 25 31 / 94%), rgb(18 18 23 / 94%));
+        box-shadow: 0 14px 32px rgb(0 0 0 / 15%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-metric-strip {
+        background: rgb(23 23 29 / 88%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-metric + .cultivation-admin-metric {
+        border-left-color: var(--cultivation-admin-border);
+    }
+
+    .cultivation-admin-page .cultivation-admin-metric-label {
+        color: #9a968e;
+    }
+
+    .cultivation-admin-page .cultivation-admin-metric-icon {
+        border-color: rgb(201 168 106 / 22%);
+        color: var(--cultivation-admin-accent);
+        background: rgb(201 168 106 / 7%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-metric strong {
+        color: #f2efe8;
+    }
+
+    .cultivation-admin-page .cultivation-admin-metric small,
+    .cultivation-admin-page .cultivation-admin-panel-footnote,
+    .cultivation-admin-page .cultivation-admin-pulse-row > div > span,
+    .cultivation-admin-page .cultivation-admin-pulse-row small {
+        color: #817d75;
+    }
+
+    .cultivation-admin-page .cultivation-admin-metric.is-active .cultivation-admin-metric-icon,
+    .cultivation-admin-page .cultivation-admin-metric.is-active strong {
+        color: var(--cultivation-admin-cyan);
+    }
+
+    .cultivation-admin-page .cultivation-admin-panel-kicker,
+    .cultivation-admin-page .cultivation-admin-panel .ant-btn-text {
+        color: #b69b68;
+    }
+
+    .cultivation-admin-page .cultivation-admin-panel .ant-btn-text:hover {
+        color: #f0ddb6 !important;
+        background: rgb(201 168 106 / 7%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-realm-node {
+        border-color: color-mix(in srgb, var(--realm-node-color) 28%, var(--cultivation-admin-border));
+        background: linear-gradient(100deg, color-mix(in srgb, var(--realm-node-color) 9%, rgb(18 18 23 / 96%)), rgb(22 22 28 / 82%));
+    }
+
+    .cultivation-admin-page .cultivation-admin-realm-node-badge,
+    .cultivation-admin-page .cultivation-realm-visual-badge {
+        border-color: color-mix(in srgb, var(--cultivation-admin-accent) 30%, var(--cultivation-admin-border));
+        background: rgb(10 10 13 / 70%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-quick-link,
+    .cultivation-admin-page .cultivation-admin-user-card {
+        border-color: var(--cultivation-admin-border);
+        background: rgb(20 20 25 / 68%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-quick-link:hover {
+        border-color: rgb(201 168 106 / 30%);
+        background: rgb(201 168 106 / 7%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-quick-icon,
+    .cultivation-admin-page .cultivation-admin-pulse-icon {
+        border-color: rgb(201 168 106 / 22%);
+        color: var(--cultivation-admin-accent);
+        background: rgb(201 168 106 / 7%);
+    }
+
+    .cultivation-admin-page .cultivation-admin-pulse-row strong {
+        color: #ece9e2;
+    }
+
+    .cultivation-admin-page .ant-table,
+    .cultivation-admin-page .ant-table-container,
+    .cultivation-admin-page .ant-table-thead > tr > th,
+    .cultivation-admin-page .ant-table-tbody > tr > td {
+        color: #dedad2;
+        background: transparent;
+    }
+
+    .cultivation-admin-page .ant-table-thead > tr > th,
+    .cultivation-admin-page .ant-pagination,
+    .cultivation-admin-page .ant-pagination a,
+    .cultivation-admin-page .ant-pagination .ant-pagination-item-link {
+        color: #928e86;
+    }
+
+    .cultivation-admin-page .ant-table-tbody > tr.ant-table-row:hover > td,
+    .cultivation-admin-page .ant-table-cell-fix-right {
+        background: rgb(201 168 106 / 7%);
+    }
+
+    .cultivation-admin-page .ant-input,
+    .cultivation-admin-page .ant-input-affix-wrapper,
+    .cultivation-admin-page .ant-input-number,
+    .cultivation-admin-page .ant-select-selector,
+    .cultivation-admin-page .ant-segmented {
+        border-color: var(--cultivation-admin-border) !important;
+        color: #e7e3db;
+        background: rgb(20 20 25 / 82%) !important;
+    }
+
+    .cultivation-admin-page .ant-input::placeholder,
+    .cultivation-admin-page .ant-select-selection-placeholder {
+        color: #77736c;
+    }
+
+    .cultivation-admin-page .ant-btn-default,
+    .cultivation-admin-page .ant-btn:not(.ant-btn-primary):not(.ant-btn-text) {
+        border-color: var(--cultivation-admin-border);
+        color: #c9c3b8;
+        background: rgb(20 20 25 / 76%);
+    }
+
+    .cultivation-admin-page .ant-btn-default:hover,
+    .cultivation-admin-page .ant-btn:not(.ant-btn-primary):not(.ant-btn-text):hover {
+        border-color: rgb(201 168 106 / 38%);
+        color: #f0e4ca;
+        background: rgb(201 168 106 / 9%);
+    }
+
+    .cultivation-admin-page .ant-pagination-item-active {
+        border-color: var(--cultivation-admin-accent);
+        background: rgb(201 168 106 / 12%);
+    }
+
+    .cultivation-admin-page .ant-pagination-item-active a {
+        color: var(--cultivation-admin-accent);
+    }
+
+    .cultivation-admin-page .cultivation-realm-list {
+        background: linear-gradient(180deg, rgb(24 24 30 / 94%), rgb(15 15 19 / 97%)), radial-gradient(circle at 18% 8%, rgb(201 168 106 / 8%), transparent 34%);
+    }
+
+    .cultivation-admin-page .cultivation-realm-list::before {
+        background: linear-gradient(180deg, rgb(201 168 106 / 30%), rgb(201 168 106 / 7%) 88%, transparent);
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-heading {
+        color: #dedad2;
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-heading span:last-child {
+        border-color: rgb(201 168 106 / 20%);
+        color: #b9a477;
+        background: rgb(201 168 106 / 7%);
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item {
+        color: #9a968e;
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item:hover {
+        color: #eeeae2;
+        background: rgb(201 168 106 / 6%);
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items button.cultivation-realm-item.is-active {
+        border-color: color-mix(in srgb, var(--cultivation-admin-accent) 48%, var(--cultivation-admin-border));
+        color: #f4f0e8;
+        background: linear-gradient(100deg, color-mix(in srgb, var(--cultivation-admin-accent) 14%, rgb(18 18 23 / 92%)), rgb(24 24 30 / 78%));
+    }
+
+    .cultivation-admin-page .cultivation-realm-tier,
+    .cultivation-admin-page .cultivation-realm-meta,
+    .cultivation-admin-page .cultivation-realm-state-label {
+        color: #77736c;
+    }
+
+    .cultivation-admin-page .cultivation-realm-list-items .cultivation-realm-symbol {
+        background: color-mix(in srgb, var(--cultivation-admin-accent) 10%, rgb(17 17 22 / 88%));
+    }
+
+    .cultivation-admin-page .cultivation-realm-art::before {
+        background: linear-gradient(90deg, rgb(17 17 22 / 100%) 0%, rgb(17 17 22 / 94%) 28%, rgb(17 17 22 / 56%) 68%, rgb(17 17 22 / 30%) 100%);
+    }
+
+    .cultivation-admin-page .cultivation-rule-workspace {
+        background: rgb(10 10 13 / 34%);
+    }
+}
