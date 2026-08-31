@@ -8,6 +8,7 @@ import { markCultivationBreakthroughSeen, type CultivationBreakthrough } from "@
 import { cultivationCapabilityLabel } from "./utils";
 import { DOU_EMPEROR_REALM_ID } from "./imperial-mode";
 import { cultivationProfileQueryKey, useCultivationProfile } from "./queries";
+import "./cultivation-visuals.css";
 
 const previewEventName = "canvas:cultivation-preview";
 

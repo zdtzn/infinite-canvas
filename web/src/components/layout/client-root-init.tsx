@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { App } from "antd";
 
@@ -14,7 +13,7 @@ import { useUserStore } from "@/stores/use-user-store";
 
 const SYSTEM_PROMPT_OWNER_KEY = "infinite-canvas:system-prompt-owner";
 
-export function ClientRootInit({ children }: { children: ReactNode }) {
+export function ClientRootInit() {
     const { message } = App.useApp();
     const handledConfigParams = useRef(false);
     const syncedChannelUser = useRef("");
@@ -340,7 +339,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         })();
     }, [config.channels, message, openConfigDialog, updateConfig, user?.admin]);
 
-    return <>{children}</>;
+    return null;
 }
 
 function toClientChannel(channel: ServerChannel): ModelChannel {

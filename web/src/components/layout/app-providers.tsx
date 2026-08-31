@@ -1,15 +1,17 @@
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App, ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 
-import { ClientRootInit } from "@/components/layout/client-root-init";
 import { AuthGate } from "@/components/layout/auth-gate";
 import { AccountSessionController } from "@/components/layout/account-session-controller";
 import { imperialModeChangeEvent, ImperialModeProvider } from "@/features/cultivation/imperial-mode";
 import { getAntThemeConfig } from "@/lib/app-theme";
+import { lazyRoute } from "@/lib/lazy-route";
 import { useThemeStore } from "@/stores/use-theme-store";
+
+const ClientRootInit = lazyRoute(() => import("@/components/layout/client-root-init").then(({ ClientRootInit: Component }) => ({ default: Component })));
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -43,12 +45,16 @@ export function AppProviders({ children }: { children: ReactNode }) {
         <ConfigProvider locale={zhCN} theme={getAntThemeConfig(dark)}>
             <App>
                 <QueryClientProvider client={queryClient}>
-                    <AccountSessionController />
-                    <AuthGate>
-                        <ImperialModeProvider>
-                            <ClientRootInit>{children}</ClientRootInit>
-                        </ImperialModeProvider>
-                    </AuthGate>
+                    <AccountSessionController>
+                        <AuthGate>
+                            <ImperialModeProvider>
+                                <Suspense fallback={null}>
+                                    <ClientRootInit />
+                                </Suspense>
+                                {children}
+                            </ImperialModeProvider>
+                        </AuthGate>
+                    </AccountSessionController>
                 </QueryClientProvider>
             </App>
         </ConfigProvider>

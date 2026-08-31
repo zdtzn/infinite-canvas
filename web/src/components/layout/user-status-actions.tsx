@@ -1,19 +1,21 @@
 import type { CSSProperties } from "react";
 import { BookOpen, CircleUserRound, Crown, Download, Keyboard, LogOut, Moon, MoreHorizontal, Puzzle, ShieldCheck, Sun } from "lucide-react";
 import { App, Dropdown, Input, Modal, type MenuProps } from "antd";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 
 import { VersionReleaseModal } from "@/components/layout/version-release-modal";
 import { DOCS_URL, REPOSITORY_URL } from "@/constant/env";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { TaskCenter } from "@/components/layout/task-center";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { changePersonalPassword, downloadAccountExport, logoutAccess, revokeAllServerSessions } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cn } from "@/lib/utils";
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
+import { lazyRoute } from "@/lib/lazy-route";
+
+const TaskCenter = lazyRoute(() => import("@/components/layout/task-center").then(({ TaskCenter: Component }) => ({ default: Component })));
 
 type UserStatusActionsProps = {
     showTaskCenter?: boolean;
@@ -154,7 +156,11 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
     return (
         <>
         <div className="inline-flex shrink-0 items-center gap-1">
-            {showTaskCenter ? <TaskCenter /> : null}
+            {showTaskCenter ? (
+                <Suspense fallback={<span className="inline-flex size-7 shrink-0" aria-hidden="true" />}>
+                    <TaskCenter />
+                </Suspense>
+            ) : null}
             {showWorkspaceMenu ? <WorkspaceMenuAction variant={variant} onOpenShortcuts={onOpenShortcuts} onOpenPlugins={onOpenPlugins} /> : null}
             {PUBLIC_MODE ? (
                 <Dropdown menu={{ items: accountMenuItems }} trigger={["click"]}>

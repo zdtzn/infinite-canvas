@@ -5,6 +5,9 @@ import { resetAgentSessionState, useAgentStore } from "./use-agent-store";
 describe("agent account isolation", () => {
     test("clears connection, conversation, model and approval state on account changes", () => {
         useAgentStore.setState({
+            panelOpen: true,
+            panelMounted: true,
+            panelClosing: true,
             token: "private-agent-token",
             connected: true,
             enabled: true,
@@ -22,6 +25,9 @@ describe("agent account isolation", () => {
         resetAgentSessionState();
 
         const state = useAgentStore.getState();
+        expect(state.panelOpen).toBe(false);
+        expect(state.panelMounted).toBe(false);
+        expect(state.panelClosing).toBe(false);
         expect(state.token).toBe("");
         expect(state.connected).toBe(false);
         expect(state.enabled).toBe(false);

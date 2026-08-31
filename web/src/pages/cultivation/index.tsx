@@ -14,6 +14,7 @@ import type { CultivationProfile } from "@/services/server-api";
 import { uploadProfileAvatar } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
+import "@/features/cultivation/cultivation-visuals.css";
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);

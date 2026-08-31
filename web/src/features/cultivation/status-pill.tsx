@@ -9,6 +9,7 @@ import { isDouEmperorRealm, useImperialMode } from "./imperial-mode";
 import { RealmIcon } from "./realm-icon";
 import { useCultivationProfile } from "./queries";
 import { cultivationAccentColor, cultivationStageLabel, quotaText } from "./utils";
+import "./cultivation-visuals.css";
 
 /**
  * 顶部身份徽章。
@@ -31,8 +32,8 @@ export function CultivationStatusPill() {
     const statusContent = (
         <>
             <RealmIcon iconKey={data.iconKey} className="size-3.5 shrink-0" />
-            <span className="hidden max-w-32 truncate lg:block">{label}</span>
-            {!isDouEmperor ? <span className="hidden text-xs text-stone-400 lg:block dark:text-stone-500">{data.remainingToday}</span> : null}
+            <span className="cultivation-status-copy hidden max-w-32 truncate lg:block">{label}</span>
+            {!isDouEmperor ? <span className="cultivation-status-copy hidden text-xs text-stone-400 lg:block dark:text-stone-500">{data.remainingToday}</span> : null}
         </>
     );
 

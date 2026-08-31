@@ -57,6 +57,7 @@ import {
 import { useUserStore } from "@/stores/use-user-store";
 import { resolveAdminRecordKind, resolveAdminSection, type AdminRecordKind, type AdminSectionKey } from "./navigation";
 import { buildCultivationUserPatch, type CultivationUserFormValues, type CultivationUserPatch } from "./user-update";
+import "./admin.css";
 
 type AdminCultivationUser = CultivationProfile & { status: string };
 type UserFormValues = CultivationUserFormValues;

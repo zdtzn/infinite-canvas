@@ -3,6 +3,7 @@ import { ArrowRight, KeyRound, LoaderCircle, ShieldCheck, UserRound } from "luci
 import { type ReactNode, useEffect, useState } from "react";
 
 import { LOGIN_TRANSITION_MS, LoginRealmBackground, LoginTransition, RealmWelcomeText, selectLoginTransitionMessage } from "@/components/auth/login-realm";
+import { preloadAccountSessionRuntime } from "@/components/layout/account-session-controller";
 import { fetchAuthStatus, loginAccess, setupAccess } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -29,7 +30,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
             .then((status) => {
                 if (!active) return;
                 setConfigured(status.configured);
-                if (status.user) setSession({ id: status.user.userId, username: status.user.displayName, displayName: status.user.displayName, avatarUrl: status.user.avatarUrl || "", admin: status.user.admin });
+                if (status.user) {
+                    void preloadAccountSessionRuntime();
+                    setSession({ id: status.user.userId, username: status.user.displayName, displayName: status.user.displayName, avatarUrl: status.user.avatarUrl || "", admin: status.user.admin });
+                }
                 else clearSession();
             })
             .catch((reason) => active && setError(reason instanceof Error ? reason.message : "无法连接服务端"))
@@ -54,6 +58,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setError("");
         try {
             const result = configured ? await loginAccess(values) : await setupAccess(values);
+            void preloadAccountSessionRuntime();
             setTransitionMessage(selectLoginTransitionMessage(result.user.userId));
             const transitionDuration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 160 : LOGIN_TRANSITION_MS;
             await new Promise((resolve) => window.setTimeout(resolve, transitionDuration));

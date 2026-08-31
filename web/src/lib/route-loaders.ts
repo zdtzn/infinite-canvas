@@ -37,15 +37,15 @@ type RouteWarmupTarget = {
 // intentionally delayed so their module evaluation cannot block an immediate
 // user navigation during application startup.
 const routeWarmupTargets: readonly RouteWarmupTarget[] = [
-    { route: "/chat", delayMs: 450, idleTimeoutMs: 900 },
-    { route: "/canvas", delayMs: 900 },
-    { route: "/assets", delayMs: 900 },
-    { route: "/prompts", delayMs: 1_000 },
-    { route: "/cultivation", delayMs: 1_000 },
-    { route: "/image", delayMs: 1_500 },
-    { route: "/color-alchemy", delayMs: 1_500 },
-    { route: "/product-lab", delayMs: 1_500 },
-    { route: "/video", delayMs: 1_500 },
+    { route: "/chat", delayMs: 2_400, idleTimeoutMs: 1_500 },
+    { route: "/canvas", delayMs: 1_200 },
+    { route: "/assets", delayMs: 1_200 },
+    { route: "/prompts", delayMs: 1_500 },
+    { route: "/cultivation", delayMs: 1_500 },
+    { route: "/image", delayMs: 1_800 },
+    { route: "/color-alchemy", delayMs: 1_800 },
+    { route: "/product-lab", delayMs: 1_800 },
+    { route: "/video", delayMs: 1_800 },
 ];
 
 export function buildRouteWarmupOrder(currentPath: string) {

@@ -7,6 +7,7 @@ import { useCopyText } from "@/hooks/use-copy-text";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useAgentStore, type AgentPendingApproval } from "@/stores/use-agent-store";
 import { revealAgentLocalFile } from "./agent-api";
+import "./streamdown.css";
 
 const streamdownProps = {
     className: "agent-streamdown",

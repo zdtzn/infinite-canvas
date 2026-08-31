@@ -1,52 +1,31 @@
-import { Bot, ChevronDown, LoaderCircle, Menu, MessageCircle } from "lucide-react";
+import { ChevronDown, LoaderCircle, Menu, MessageCircle } from "lucide-react";
 import { Button, Dropdown, Tooltip } from "antd";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { navigationSceneNames, primaryNavigationTools, secondaryNavigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
-import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions, WorkspaceMenuAction } from "@/components/layout/user-status-actions";
-import { TaskCenter } from "@/components/layout/task-center";
-import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
-import { CultivationStatusPill } from "@/features/cultivation/status-pill";
+import { useDeferredMount } from "@/hooks/use-deferred-mount";
 import { lazyRoute } from "@/lib/lazy-route";
 import { preloadRoute } from "@/lib/route-loaders";
 import { cn } from "@/lib/utils";
-import { Suspense, useEffect, useRef, useState } from "react";
-import { useAgentStore } from "@/stores/use-agent-store";
+import { Suspense, useState } from "react";
 import { useChatRuntimeStore } from "@/stores/use-chat-runtime-store";
-import { useConfigStore } from "@/stores/use-config-store";
 
-const AppConfigModal = lazyRoute(() => import("@/components/layout/app-config-modal").then(({ AppConfigModal: Component }) => ({ default: Component })));
+const AgentNavAction = lazyRoute(() => import("@/components/layout/agent-runtime").then(({ AgentNavAction: Component }) => ({ default: Component })));
+const CultivationStatusPill = lazyRoute(() => import("@/features/cultivation/status-pill").then(({ CultivationStatusPill: Component }) => ({ default: Component })));
+const DeferredAppConfigModal = lazyRoute(() => import("@/components/layout/deferred-app-config-modal").then(({ DeferredAppConfigModal: Component }) => ({ default: Component })));
+const MobileNavDrawer = lazyRoute(() => import("@/components/layout/mobile-nav-drawer").then(({ MobileNavDrawer: Component }) => ({ default: Component })));
+const TaskCenter = lazyRoute(() => import("@/components/layout/task-center").then(({ TaskCenter: Component }) => ({ default: Component })));
 
-function DeferredAppConfigModal() {
-    const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
-    const loadingLabel = useImperialLoadingText("正在打开配置...", "config");
-    if (!isConfigOpen) return null;
-
-    return (
-        <Suspense
-            fallback={
-                <div className="fixed inset-0 z-[1000] grid place-items-center bg-black/10 backdrop-blur-[1px]" aria-live="polite">
-                    <span className="rounded-md border border-stone-200 bg-background px-3 py-2 text-sm text-stone-600 shadow-lg dark:border-stone-700 dark:text-stone-300">{loadingLabel}</span>
-                </div>
-            }
-        >
-            <AppConfigModal />
-        </Suspense>
-    );
+function NavActionPlaceholder({ widthClass = "w-7" }: { widthClass?: string }) {
+    return <span className={cn("inline-flex h-8 shrink-0", widthClass)} aria-hidden="true" />;
 }
 
 export function AppTopNav() {
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
-    const autoConnectRef = useRef(false);
-    const agentToken = useAgentStore((state) => state.token);
-    const agentEnabled = useAgentStore((state) => state.enabled);
-    const agentConnected = useAgentStore((state) => state.connected);
-    const connectAgent = useAgentStore((state) => state.connectAgent);
-    const togglePanel = useAgentStore((state) => state.togglePanel);
-    const panelOpen = useAgentStore((state) => state.panelOpen);
+    const deferredNavReady = useDeferredMount(900, 1_500);
     const chatPending = useChatRuntimeStore((state) => state.pending);
     const chatRuntimeStatus = useChatRuntimeStore((state) => state.status);
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
@@ -55,39 +34,15 @@ export function AppTopNav() {
     const secondaryActive = secondaryNavigationTools.some((tool) => tool.slug === activeToolSlug);
     const chatRuntimeLabel = chatRuntimeStatus === "stopping" ? "正在停止问道台回答" : chatRuntimeStatus === "starting" ? "正在连接问道台" : "问道台正在回答";
 
-    useEffect(() => {
-        if (autoConnectRef.current || agentEnabled || agentConnected || !agentToken.trim()) return;
-        let disposed = false;
-        let idleHandle: number | undefined;
-        const idleWindow = window as Window & {
-            requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
-            cancelIdleCallback?: (handle: number) => void;
-        };
-        const connect = () => {
-            if (disposed || autoConnectRef.current || agentEnabled || agentConnected) return;
-            autoConnectRef.current = true;
-            connectAgent({ silent: true });
-        };
-        const delayHandle = window.setTimeout(() => {
-            if (idleWindow.requestIdleCallback) idleHandle = idleWindow.requestIdleCallback(connect, { timeout: 1_500 });
-            else connect();
-        }, 1_200);
-        return () => {
-            disposed = true;
-            window.clearTimeout(delayHandle);
-            if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle);
-        };
-    }, [agentConnected, agentEnabled, agentToken, connectAgent]);
-
     return (
         <>
             {!hideHeader ? (
-                <header className="sticky top-0 z-20 h-14 shrink-0 border-b border-stone-200 bg-background/92 backdrop-blur-xl dark:border-[rgb(237_237_230/0.1)]">
+                <header className="app-top-nav sticky top-0 z-20 h-14 shrink-0 border-b border-stone-200 bg-background/92 backdrop-blur-xl dark:border-[rgb(237_237_230/0.1)]">
                     <div className="flex h-full items-center justify-between gap-4 px-4 lg:px-6">
                         <div className="flex min-w-0 items-center">
                             <button
                                 type="button"
-                                className="mr-1 inline-flex size-8 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 lg:hidden dark:text-stone-300 dark:hover:text-white"
+                                className="app-top-nav-mobile-trigger mr-1 inline-flex size-8 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 lg:hidden dark:text-stone-300 dark:hover:text-white"
                                 onClick={() => setMobileNavOpen(true)}
                                 aria-label="打开导航菜单"
                                 title="导航菜单"
@@ -111,10 +66,10 @@ export function AppTopNav() {
                                         WebkitMask: "url(/logo.svg) center / contain no-repeat",
                                     }}
                                 />
-                                <span className="font-display hidden text-base font-semibold tracking-[0.2em] text-stone-800 sm:inline dark:text-[#edede6]">无限画布</span>
+                                <span className="app-top-nav-brand-text font-display hidden text-base font-semibold tracking-[0.2em] text-stone-800 sm:inline dark:text-[#edede6]">无限画布</span>
                             </Link>
 
-                            <nav className="hidden h-14 min-w-0 items-center gap-1 lg:flex" aria-label="场景导航">
+                            <nav className="app-top-nav-scenes hidden h-14 min-w-0 items-center gap-1 lg:flex" aria-label="场景导航">
                                 {primaryNavigationTools.map((tool) => {
                                     const Icon = tool.icon;
                                     const active = tool.slug === activeToolSlug;
@@ -182,7 +137,13 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
-                            <TaskCenter />
+                            {deferredNavReady ? (
+                                <Suspense fallback={<NavActionPlaceholder />}>
+                                    <TaskCenter />
+                                </Suspense>
+                            ) : (
+                                <NavActionPlaceholder />
+                            )}
                             {chatPending ? (
                                 <Tooltip title={`${chatRuntimeLabel}，点击返回问道台`}>
                                     <Button
@@ -198,20 +159,38 @@ export function AppTopNav() {
                                 </Tooltip>
                             ) : null}
                             <span className="hidden lg:inline-flex">
-                                <Tooltip title={panelOpen ? "收起 Agent" : "打开 Agent"}>
-                                    <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label="打开 Agent" />
-                                </Tooltip>
+                                {deferredNavReady ? (
+                                    <Suspense fallback={<NavActionPlaceholder widthClass="w-8" />}>
+                                        <AgentNavAction />
+                                    </Suspense>
+                                ) : (
+                                    <NavActionPlaceholder widthClass="w-8" />
+                                )}
                             </span>
                             <WorkspaceMenuAction />
-                            <CultivationStatusPill />
+                            <span className="app-top-nav-cultivation-slot inline-flex h-8 w-8 shrink-0 items-center justify-center lg:w-36">
+                                {deferredNavReady ? (
+                                    <Suspense fallback={null}>
+                                        <CultivationStatusPill />
+                                    </Suspense>
+                                ) : null}
+                            </span>
                             <UserStatusActions showTaskCenter={false} showWorkspaceMenu={false} />
                         </div>
                     </div>
                 </header>
             ) : null}
 
-            <MobileNavDrawer open={mobileNavOpen} activeToolSlug={activeToolSlug} onClose={() => setMobileNavOpen(false)} />
-            <DeferredAppConfigModal />
+            {mobileNavOpen ? (
+                <Suspense fallback={null}>
+                    <MobileNavDrawer open activeToolSlug={activeToolSlug} onClose={() => setMobileNavOpen(false)} />
+                </Suspense>
+            ) : null}
+            {deferredNavReady ? (
+                <Suspense fallback={null}>
+                    <DeferredAppConfigModal />
+                </Suspense>
+            ) : null}
         </>
     );
 }

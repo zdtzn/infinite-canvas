@@ -1,5 +1,7 @@
 import { Streamdown } from "streamdown";
 
+import "@/components/agent/streamdown.css";
+
 type ChatMarkdownProps = {
     className?: string;
     content: string;

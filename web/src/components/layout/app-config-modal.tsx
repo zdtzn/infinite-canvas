@@ -12,7 +12,7 @@ import { deleteServerChannel, reorderServerChannels, saveServerChannel } from "@
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { ConfigMembers } from "@/components/layout/config-members";
 import { ConfigLocalStorage } from "@/components/layout/config-local-storage";
-import { ImperialModePreferences } from "@/features/cultivation/imperial-mode";
+import { ImperialModePreferences } from "@/features/cultivation/imperial-mode-preferences";
 import { useUserStore } from "@/stores/use-user-store";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import {

@@ -2,7 +2,6 @@ import { ArrowRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { App, Image } from "antd";
 import { Link, useNavigate } from "react-router-dom";
-import { motion, type Variants } from "motion/react";
 
 import { DriftWall } from "@/components/home/drift-wall";
 import { LightRays } from "@/components/home/light-rays";
@@ -17,45 +16,13 @@ import { cn } from "@/lib/utils";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 
 import { HOMEPAGE_PROMPT_ROTATION_MS, HOMEPAGE_PROMPT_WINDOW_SIZE, promptIdentity, selectHomepagePromptShowcase, selectHomepagePromptWindow } from "./showcase";
+import "./home.css";
 
 /**
  * 山门 · 首页(方案B「山海境」开场版)
  * 功能不变:新建画布 / 继续最近项目 / 提示词精选与预览。
  * 视觉:AI 水墨山水 + 开场编排动画 + 金色浮尘 + 流光标题 + 修行引路条。
  */
-
-const SHJ_EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];
-
-const heroStagger: Variants = {
-    hidden: {},
-    show: {
-        transition: { staggerChildren: 0.1, delayChildren: 0.05 },
-    },
-};
-
-const heroRise: Variants = {
-    hidden: { y: 18, filter: "blur(4px)" },
-    show: {
-        y: 0,
-        filter: "blur(0px)",
-        transition: { duration: 0.65, ease: SHJ_EASE },
-    },
-};
-
-const sealStamp: Variants = {
-    hidden: { opacity: 0, scale: 1.7, rotate: -10 },
-    show: {
-        opacity: 1,
-        scale: 1,
-        rotate: -2,
-        transition: { duration: 0.4, ease: SHJ_EASE },
-    },
-};
-
-const coupletFade: Variants = {
-    hidden: { opacity: 0 },
-    show: { opacity: 1, transition: { duration: 0.8, ease: "easeOut" } },
-};
 
 export default function IndexPage() {
     const { message } = App.useApp();
@@ -107,7 +74,7 @@ export default function IndexPage() {
     return (
         <main className="h-full overflow-y-auto bg-background text-foreground">
             {/* ── 山门 · 全屏 Hero ─────────────────────────── */}
-            <motion.section className={cn("shj-hero relative flex min-h-[calc(100dvh-3.5rem)] flex-col items-center justify-center overflow-hidden", isImperialMode && "shj-hero--imperial")} initial="hidden" animate="show" variants={heroStagger}>
+            <section className={cn("shj-hero relative flex min-h-[calc(100dvh-3.5rem)] flex-col items-center justify-center overflow-hidden", isImperialMode && "shj-hero--imperial")}>
                 <div className="shj-hero-stars" aria-hidden />
                 <div className="shj-hero-mist" aria-hidden />
                 <LightRays
@@ -129,34 +96,34 @@ export default function IndexPage() {
                 <div className="shj-grain" aria-hidden />
 
                 {/* 两侧竖排楹联(仅宽屏,低存在感) */}
-                <motion.span variants={coupletFade} className="shj-vertical shj-couplet font-display absolute left-10 top-1/2 hidden -translate-y-1/2 text-sm lg:block" aria-hidden>
+                <span className="shj-vertical shj-couplet font-display home-enter-fade home-enter-delay-5 absolute left-10 top-1/2 hidden -translate-y-1/2 text-sm lg:block" aria-hidden>
                     雲海千重皆入畫
-                </motion.span>
-                <motion.span variants={coupletFade} className="shj-vertical shj-couplet font-display absolute right-10 top-1/2 hidden -translate-y-1/2 text-sm lg:block" aria-hidden>
+                </span>
+                <span className="shj-vertical shj-couplet font-display home-enter-fade home-enter-delay-5 absolute right-10 top-1/2 hidden -translate-y-1/2 text-sm lg:block" aria-hidden>
                     心藏萬象筆先成
-                </motion.span>
+                </span>
 
                 <div className="relative z-10 flex max-w-4xl flex-col items-center px-6 text-center">
-                    <motion.span variants={heroRise} className="shj-hero-eyebrow">
+                    <span className="shj-hero-eyebrow home-enter-rise home-enter-delay-1">
                         Infinite Canvas
-                    </motion.span>
+                    </span>
 
-                    <motion.h1 variants={heroRise} className="font-brush shj-title-sheen mt-8 whitespace-nowrap text-[4rem] leading-none sm:mt-10 sm:text-9xl md:text-[10rem] lg:text-[11rem]">
+                    <h1 className="font-brush shj-title-sheen home-enter-rise home-enter-delay-2 mt-8 whitespace-nowrap text-[4rem] leading-none sm:mt-10 sm:text-9xl md:text-[10rem] lg:text-[11rem]">
                         无限画布
-                    </motion.h1>
+                    </h1>
 
-                    <motion.p variants={heroRise} className="font-display shj-hero-tagline mt-8 text-balance text-xl leading-8 tracking-[0.3em] sm:text-2xl">
+                    <p className="font-display shj-hero-tagline home-enter-rise home-enter-delay-3 mt-8 text-balance text-xl leading-8 tracking-[0.3em] sm:text-2xl">
                         一笔落,万象生
-                    </motion.p>
+                    </p>
 
                     {cultivation ? (
-                        <motion.div variants={sealStamp} className="mt-10 flex items-center gap-4">
+                        <div className="home-enter-stamp home-enter-delay-4 mt-10 flex items-center gap-4">
                             <span className="shj-hero-realm-label text-sm tracking-[0.3em]">汝之境界</span>
                             <span className={cn("shj-seal-lg", isImperialMode && "is-imperial")}>{cultivationStageLabel(cultivation.realmName, cultivation.stageName)}</span>
-                        </motion.div>
+                        </div>
                     ) : null}
 
-                    <motion.div variants={heroRise} className="mt-14 flex flex-wrap items-center justify-center gap-4">
+                    <div className="home-enter-rise home-enter-delay-5 mt-14 flex flex-wrap items-center justify-center gap-4">
                         <SpecularButton
                             onClick={() => navigate("/canvas?mode=new")}
                             onPointerEnter={() => void preloadRoute("/canvas")}
@@ -191,13 +158,13 @@ export default function IndexPage() {
                         >
                             继续最近项目
                         </button>
-                    </motion.div>
+                    </div>
                 </div>
 
-                <motion.div variants={coupletFade} className="absolute inset-x-0 bottom-8 z-10 flex justify-center">
+                <div className="home-enter-fade home-enter-delay-6 absolute inset-x-0 bottom-8 z-10 flex justify-center">
                     <span className="shj-scroll-cue">卷轴展开</span>
-                </motion.div>
-            </motion.section>
+                </div>
+            </section>
 
             {/* ── 修行引路条 ──────────────────────────────── */}
             {cultivation ? (
