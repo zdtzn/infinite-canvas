@@ -4,6 +4,7 @@ import { Activity, Aperture, ArrowUpRight, CalendarDays, Camera, Cpu, Expand, Fo
 import { Link } from "react-router-dom";
 
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
+import { RealmIcon } from "@/features/cultivation/realm-icon";
 import type { CultivationProfile } from "@/services/server-api";
 import "./dou-emperor-palace.css";
 
@@ -51,18 +52,18 @@ const GROUP_LABELS: Array<{ key: CapabilityMeta["group"]; title: string; subtitl
 ];
 
 const REALM_JOURNEY = [
-    { id: "realm-dou-qi", name: "斗之气" },
-    { id: "realm-dou-zhe", name: "斗者" },
-    { id: "realm-dou-shi", name: "斗师" },
-    { id: "realm-da-dou-shi", name: "大斗师" },
-    { id: "realm-dou-ling", name: "斗灵" },
-    { id: "realm-dou-wang", name: "斗王" },
-    { id: "realm-dou-huang", name: "斗皇" },
-    { id: "realm-dou-zong", name: "斗宗" },
-    { id: "realm-dou-zun", name: "斗尊" },
-    { id: "realm-half-saint", name: "半圣" },
-    { id: "realm-dou-saint", name: "斗圣" },
-    { id: "realm-dou-emperor", name: "斗帝" },
+    { id: "realm-dou-qi", name: "斗之气", iconKey: "Gauge", inscription: "初感天地" },
+    { id: "realm-dou-zhe", name: "斗者", iconKey: "Sparkles", inscription: "气旋初成" },
+    { id: "realm-dou-shi", name: "斗师", iconKey: "Orbit", inscription: "凝气化铠" },
+    { id: "realm-da-dou-shi", name: "大斗师", iconKey: "Shield", inscription: "斗气外放" },
+    { id: "realm-dou-ling", name: "斗灵", iconKey: "Diamond", inscription: "灵韵显化" },
+    { id: "realm-dou-wang", name: "斗王", iconKey: "Crown", inscription: "振翼凌空" },
+    { id: "realm-dou-huang", name: "斗皇", iconKey: "Sun", inscription: "御气而行" },
+    { id: "realm-dou-zong", name: "斗宗", iconKey: "Hexagon", inscription: "踏虚破界" },
+    { id: "realm-dou-zun", name: "斗尊", iconKey: "Aperture", inscription: "执掌空间" },
+    { id: "realm-half-saint", name: "半圣", iconKey: "CircleDot", inscription: "圣意初生" },
+    { id: "realm-dou-saint", name: "斗圣", iconKey: "Star", inscription: "法则入圣" },
+    { id: "realm-dou-emperor", name: "斗帝", iconKey: "Infinity", inscription: "万法归一" },
 ] as const;
 
 const MODEL_COLORS = ["#d9b96f", "#7db2d8", "#dce8f2", "#7789a4", "#a96858", "#5f958c"];
@@ -169,25 +170,26 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                                 登帝之路
                             </h2>
                         </div>
-                        <p>十二境皆已走过。此处记录来路，不再指向下一次升级。</p>
+                        <p>十二境皆已走过。每一枚境印，皆是昔日破境留下的回响。</p>
                     </div>
-                    <div className="dep-journey-scroll" tabIndex={0} aria-label="从斗之气至斗帝的修炼历史">
-                        <ol className="dep-journey-track">
-                            {REALM_JOURNEY.map((realm, index) => {
-                                const current = realm.id === "realm-dou-emperor";
-                                return (
-                                    <li key={realm.id} className={current ? "is-current" : "is-passed"} aria-current={current ? "step" : undefined}>
-                                        <span className="dep-journey-index">{String(index + 1).padStart(2, "0")}</span>
-                                        <span className="dep-journey-node" aria-hidden="true">
-                                            {current ? <Sparkles className="size-4" /> : <span />}
-                                        </span>
-                                        <strong>{realm.name}</strong>
-                                        <small>{current ? "帝境已成" : "已历此境"}</small>
-                                    </li>
-                                );
-                            })}
-                        </ol>
-                    </div>
+                    <ol className="dep-journey-grid" aria-label="从斗之气至斗帝的十二境界徽章">
+                        {REALM_JOURNEY.map((realm, index) => {
+                            const current = realm.id === "realm-dou-emperor";
+                            return (
+                                <li key={realm.id} className={current ? "is-current" : "is-passed"} aria-current={current ? "step" : undefined}>
+                                    <span className="dep-journey-index" aria-hidden="true">
+                                        {String(index + 1).padStart(2, "0")}
+                                    </span>
+                                    <span className="dep-realm-seal" aria-hidden="true">
+                                        <RealmIcon iconKey={realm.iconKey} className="dep-realm-seal-icon" />
+                                    </span>
+                                    <strong>{realm.name}</strong>
+                                    <small>{realm.inscription}</small>
+                                    <span className="dep-journey-state">{current ? "帝印已成" : "境印已证"}</span>
+                                </li>
+                            );
+                        })}
+                    </ol>
                 </section>
 
                 <div className="dep-core-grid">
@@ -199,11 +201,12 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                                     法则掌控
                                 </h2>
                             </div>
-                            <p>境界授权、系统能力与模型能力共同构成当前可调动的创作法则。</p>
+                            <p>万法归一，诸天俯首。已掌之法，皆可随一念而动。</p>
                         </div>
 
                         <div className="dep-law-layout">
                             <div className="dep-law-core" aria-label={`已掌握 ${capabilities.length} 项能力`}>
+                                <span className="dep-law-core-kicker">帝境法旨</span>
                                 <div className="dep-law-core-rings" aria-hidden="true">
                                     <span />
                                     <span />
@@ -211,7 +214,11 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                                 </div>
                                 <InfinityIcon aria-hidden="true" />
                                 <strong>{capabilities.length}</strong>
-                                <span>项法则已掌控</span>
+                                <span className="dep-law-core-count">道创作法则，皆应帝念</span>
+                                <div className="dep-law-core-mantra" aria-hidden="true">
+                                    <span>万法归一</span>
+                                    <strong className="font-display">诸天俯首</strong>
+                                </div>
                             </div>
 
                             <div className="dep-capability-groups">
@@ -255,13 +262,13 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                                     创作纪元
                                 </h2>
                             </div>
-                            <p>以真实创作记录呈现你的作品规模、时间沉淀与模型轨迹。</p>
+                            <p>天地已无更高境界，创作永无止境。此处记下每一次执笔留下的纪元刻度。</p>
                         </div>
 
                         <div className="dep-epoch-primary">
                             <span>累计作品</span>
                             <strong>{profile.totalImages.toLocaleString()}</strong>
-                            <small>幅作品已写入你的创作纪元</small>
+                            <small>幅画卷已镌入此方创作纪元</small>
                         </div>
 
                         <dl className="dep-epoch-metrics">
@@ -307,6 +314,17 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                                     <p className="dep-model-empty">完成首批图像创作后，这里会自动形成真实的模型使用分布。</p>
                                 )}
                             </div>
+                        </div>
+
+                        <div className="dep-epoch-manifesto" aria-label="斗帝创作箴言">
+                            <span className="dep-epoch-manifesto-kicker">IMPERIAL CREED · 帝境创作箴言</span>
+                            <blockquote className="font-display">
+                                <p>已登临斗帝之境。</p>
+                                <p>
+                                    天地已无更高境界，<strong>创作永无止境。</strong>
+                                </p>
+                            </blockquote>
+                            <span className="dep-epoch-manifesto-signature">一念落笔，诸天再添一卷</span>
                         </div>
                     </section>
                 </div>
