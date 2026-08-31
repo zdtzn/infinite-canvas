@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Slider } from "antd";
 
 type ColorAdjustmentRowProps = {
@@ -14,8 +14,42 @@ type ColorAdjustmentRowProps = {
 
 export function ColorAdjustmentRow({ label, value, onChange, onCommit, min = -100, max = 100, defaultValue = 0, spectrum }: ColorAdjustmentRowProps) {
     const [draft, setDraft] = useState(String(Math.round(value)));
+    const [sliderValue, setSliderValue] = useState(value);
+    const frameRef = useRef<number | null>(null);
+    const pendingValueRef = useRef<number | null>(null);
 
-    useEffect(() => setDraft(String(Math.round(value))), [value]);
+    useEffect(() => {
+        setDraft(String(Math.round(value)));
+        setSliderValue(value);
+    }, [value]);
+
+    useEffect(
+        () => () => {
+            if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+        },
+        [],
+    );
+
+    const scheduleChange = (next: number) => {
+        setSliderValue(next);
+        pendingValueRef.current = next;
+        if (frameRef.current !== null) return;
+        frameRef.current = window.requestAnimationFrame(() => {
+            frameRef.current = null;
+            const pending = pendingValueRef.current;
+            pendingValueRef.current = null;
+            if (pending !== null) onChange(pending);
+        });
+    };
+
+    const commitSlider = (next: number) => {
+        if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+        pendingValueRef.current = null;
+        setSliderValue(next);
+        onChange(next);
+        onCommit();
+    };
 
     const commitDraft = () => {
         const parsed = Number(draft);
@@ -24,13 +58,15 @@ export function ColorAdjustmentRow({ label, value, onChange, onCommit, min = -10
             return;
         }
         const next = Math.min(max, Math.max(min, parsed));
+        setSliderValue(next);
         onChange(next);
         setDraft(String(Math.round(next)));
         onCommit();
     };
 
     const reset = () => {
-        if (value === defaultValue) return;
+        if (sliderValue === defaultValue) return;
+        setSliderValue(defaultValue);
         onChange(defaultValue);
         setDraft(String(Math.round(defaultValue)));
         onCommit();
@@ -43,7 +79,7 @@ export function ColorAdjustmentRow({ label, value, onChange, onCommit, min = -10
             </button>
             <div className="color-adjustment-slider-wrap">
                 {spectrum ? <span className="color-adjustment-spectrum" style={{ background: spectrum }} aria-hidden="true" /> : null}
-                <Slider min={min} max={max} value={value} tooltip={{ open: false }} onChange={onChange} onChangeComplete={onCommit} aria-label={label} />
+                <Slider min={min} max={max} value={sliderValue} tooltip={{ open: false }} onChange={scheduleChange} onChangeComplete={commitSlider} aria-label={label} />
             </div>
             <input
                 className="color-adjustment-value"

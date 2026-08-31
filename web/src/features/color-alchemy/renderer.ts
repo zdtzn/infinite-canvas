@@ -42,7 +42,7 @@ export function drawOriginalColorPreview(source: LoadedColorImage, canvas: HTMLC
     const dimensions = fitDimensions(source.width, source.height, maxEdge);
     canvas.width = dimensions.width;
     canvas.height = dimensions.height;
-    const context = canvas.getContext("2d", { alpha: true });
+    const context = canvas.getContext("2d", { alpha: true, willReadFrequently: true });
     if (!context) throw new Error("当前浏览器无法预览图片");
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(source.image, 0, 0, canvas.width, canvas.height);

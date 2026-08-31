@@ -3,6 +3,7 @@ import { Maximize, Minus, MoveHorizontal, Pipette, Plus, ScanSearch } from "luci
 import { Tooltip } from "antd";
 
 import { analyzedColorFromRgb } from "./color-engine";
+import { createColorPreviewWorkerClient, type ColorPreviewWorkerClient } from "./color-preview-worker-client";
 import { analyzeLoadedColorImage, drawOriginalColorPreview, loadColorImage, renderColorPreview, type LoadedColorImage } from "./renderer";
 import type { AnalyzedColor, ColorAlchemySource, ColorAnalysis, ColorSettings } from "./types";
 
@@ -48,47 +49,71 @@ export function ColorPreviewStage({
     const renderInFlightRef = useRef(false);
     const queuedRenderRef = useRef<{ generation: number; maxEdge: number } | null>(null);
     const processingCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const previewWorkerRef = useRef<ColorPreviewWorkerClient | null>(null);
     const lastRenderedSettingsRef = useRef<ColorSettings | null>(null);
 
-    const requestPreviewRender = useCallback((maxEdge: number, generation: number): void => {
-        if (renderInFlightRef.current) {
-            const queued = queuedRenderRef.current;
-            queuedRenderRef.current = !queued || queued.generation !== generation ? { generation, maxEdge } : { generation, maxEdge: Math.max(queued.maxEdge, maxEdge) };
-            return;
-        }
-
-        const loaded = loadedRef.current;
-        const canvas = adjustedCanvasRef.current;
-        if (!loaded || !canvas || generation !== sourceGenerationRef.current) return;
-        const renderSettings = settingsRef.current;
-        const processingCanvas = processingCanvasRef.current || document.createElement("canvas");
-        processingCanvasRef.current = processingCanvas;
-        renderInFlightRef.current = true;
-        setRendering(true);
-
-        void renderColorPreview(loaded, processingCanvas, renderSettings, maxEdge)
-            .then(() => {
-                if (generation !== sourceGenerationRef.current || loadedRef.current !== loaded) return;
-                canvas.width = processingCanvas.width;
-                canvas.height = processingCanvas.height;
+    const renderPreviewFrame = useCallback(async (loaded: LoadedColorImage, canvas: HTMLCanvasElement, renderSettings: ColorSettings, maxEdge: number) => {
+        const worker = previewWorkerRef.current;
+        if (worker) {
+            try {
+                const frame = await worker.render(renderSettings, maxEdge);
+                canvas.width = frame.width;
+                canvas.height = frame.height;
                 const context = canvas.getContext("2d", { alpha: true });
                 if (!context) throw new Error("当前浏览器无法预览调色结果");
-                context.clearRect(0, 0, canvas.width, canvas.height);
-                context.drawImage(processingCanvas, 0, 0);
-                lastRenderedSettingsRef.current = renderSettings;
-                setError("");
-            })
-            .catch((reason) => {
-                if (generation === sourceGenerationRef.current) setError(reason instanceof Error ? reason.message : "调色预览失败");
-            })
-            .finally(() => {
-                renderInFlightRef.current = false;
-                const queued = queuedRenderRef.current;
-                queuedRenderRef.current = null;
-                if (queued) requestPreviewRender(queued.maxEdge, queued.generation);
-                else if (generation === sourceGenerationRef.current) setRendering(false);
-            });
+                context.putImageData(new ImageData(new Uint8ClampedArray(frame.pixels), frame.width, frame.height), 0, 0);
+                return;
+            } catch (error) {
+                if (previewWorkerRef.current !== worker) throw error;
+                worker.dispose();
+                previewWorkerRef.current = null;
+                console.warn("color_preview_worker_fallback", error instanceof Error ? error.message : error);
+            }
+        }
+        await renderColorPreview(loaded, canvas, renderSettings, maxEdge);
     }, []);
+
+    const requestPreviewRender = useCallback(
+        (maxEdge: number, generation: number): void => {
+            if (renderInFlightRef.current) {
+                queuedRenderRef.current = { generation, maxEdge };
+                return;
+            }
+
+            const loaded = loadedRef.current;
+            const canvas = adjustedCanvasRef.current;
+            if (!loaded || !canvas || generation !== sourceGenerationRef.current) return;
+            const renderSettings = settingsRef.current;
+            const processingCanvas = processingCanvasRef.current || document.createElement("canvas");
+            processingCanvasRef.current = processingCanvas;
+            renderInFlightRef.current = true;
+            setRendering(true);
+
+            void renderPreviewFrame(loaded, processingCanvas, renderSettings, maxEdge)
+                .then(() => {
+                    if (generation !== sourceGenerationRef.current || loadedRef.current !== loaded) return;
+                    canvas.width = processingCanvas.width;
+                    canvas.height = processingCanvas.height;
+                    const context = canvas.getContext("2d", { alpha: true });
+                    if (!context) throw new Error("当前浏览器无法预览调色结果");
+                    context.clearRect(0, 0, canvas.width, canvas.height);
+                    context.drawImage(processingCanvas, 0, 0);
+                    lastRenderedSettingsRef.current = renderSettings;
+                    setError("");
+                })
+                .catch((reason) => {
+                    if (generation === sourceGenerationRef.current) setError(reason instanceof Error ? reason.message : "调色预览失败");
+                })
+                .finally(() => {
+                    renderInFlightRef.current = false;
+                    const queued = queuedRenderRef.current;
+                    queuedRenderRef.current = null;
+                    if (queued) requestPreviewRender(queued.maxEdge, queued.generation);
+                    else if (generation === sourceGenerationRef.current) setRendering(false);
+                });
+        },
+        [renderPreviewFrame],
+    );
 
     useEffect(() => {
         const element = stageRef.current;
@@ -114,6 +139,8 @@ export function ColorPreviewStage({
         settingsRef.current = settings;
         lastRenderedSettingsRef.current = null;
         queuedRenderRef.current = null;
+        previewWorkerRef.current?.dispose();
+        previewWorkerRef.current = null;
         if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
         if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
         previewTimerRef.current = null;
@@ -137,9 +164,16 @@ export function ColorPreviewStage({
                 const adjustedCanvas = adjustedCanvasRef.current;
                 if (!originalCanvas || !adjustedCanvas) return;
                 const preview = drawOriginalColorPreview(loaded, originalCanvas);
+                const previewWorker = createColorPreviewWorkerClient();
+                if (previewWorker) {
+                    const originalContext = originalCanvas.getContext("2d", { alpha: true, willReadFrequently: true });
+                    if (!originalContext) throw new Error("当前浏览器无法初始化后台预览");
+                    previewWorker.initialize(originalContext.getImageData(0, 0, originalCanvas.width, originalCanvas.height));
+                    previewWorkerRef.current = previewWorker;
+                }
                 const renderSettings = settingsRef.current;
                 const initialCanvas = document.createElement("canvas");
-                await renderColorPreview(loaded, initialCanvas, renderSettings);
+                await renderPreviewFrame(loaded, initialCanvas, renderSettings, 1_400);
                 if (cancelled) return;
                 adjustedCanvas.width = initialCanvas.width;
                 adjustedCanvas.height = initialCanvas.height;
@@ -158,10 +192,12 @@ export function ColorPreviewStage({
             });
         return () => {
             cancelled = true;
+            previewWorkerRef.current?.dispose();
+            previewWorkerRef.current = null;
             loadedRef.current?.dispose();
             loadedRef.current = null;
         };
-    }, [source.key, source.storageKey, source.url]);
+    }, [renderPreviewFrame, source.key, source.storageKey, source.url]);
 
     useEffect(() => {
         settingsRef.current = settings;
@@ -173,7 +209,7 @@ export function ColorPreviewStage({
                 () => {
                     previewTimerRef.current = null;
                     lastPreviewStartedRef.current = performance.now();
-                    requestPreviewRender(760, generation);
+                    requestPreviewRender(640, generation);
                 },
                 Math.max(0, 72 - elapsed),
             );

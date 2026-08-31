@@ -16,9 +16,10 @@ import { ColorAlchemyToolbar } from "@/features/color-alchemy/color-alchemy-tool
 import { ColorPreviewStage } from "@/features/color-alchemy/color-preview-stage";
 import { ColorSourcePanel, type ColorSourcePanelTab } from "@/features/color-alchemy/color-source-panel";
 import { deriveBorrowedColorSettings, recommendColorSettings } from "@/features/color-alchemy/color-engine";
+import { commitColorSettingsDraft, resolveColorSettingsDraft, updateColorSettingsDraft, type ColorSettingsDraft } from "@/features/color-alchemy/color-settings-draft";
 import { applyColorPreset } from "@/features/color-alchemy/presets";
 import { analyzeColorSource, colorExportExtension, renderColorBlob, type ColorRenderOptions } from "@/features/color-alchemy/renderer";
-import { normalizeColorSettings } from "@/features/color-alchemy/settings";
+import { colorSettingsEqual, normalizeColorSettings } from "@/features/color-alchemy/settings";
 import { prepareColorAlchemyForUser, useColorAlchemyStore } from "@/features/color-alchemy/use-color-alchemy-store";
 import type { AnalyzedColor, ColorAlchemySource, ColorExportFormat, ColorPreset, ColorSettings } from "@/features/color-alchemy/types";
 import { deleteColorAlchemyDocument, fetchColorAlchemyDocuments, saveColorAlchemyDocument, type ColorAlchemyDocumentTombstone } from "@/services/color-alchemy-api";
@@ -45,7 +46,6 @@ export default function ColorAlchemyPage() {
     const setAnalysis = useColorAlchemyStore((state) => state.setAnalysis);
     const setReference = useColorAlchemyStore((state) => state.setReference);
     const replaceSettings = useColorAlchemyStore((state) => state.replaceSettings);
-    const commitSettings = useColorAlchemyStore((state) => state.commitSettings);
     const undo = useColorAlchemyStore((state) => state.undo);
     const redo = useColorAlchemyStore((state) => state.redo);
     const reset = useColorAlchemyStore((state) => state.reset);
@@ -67,6 +67,7 @@ export default function ColorAlchemyPage() {
     const [dragActive, setDragActive] = useState(false);
     const [cloudReadyUserId, setCloudReadyUserId] = useState("");
     const [syncTick, setSyncTick] = useState(0);
+    const [settingsDraft, setSettingsDraft] = useState<ColorSettingsDraft>(null);
     const desktopLayout = useDesktopColorLayout();
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const syncedVersionsRef = useRef(new Map<string, string>());
@@ -76,6 +77,7 @@ export default function ColorAlchemyPage() {
     const syncRetryTimersRef = useRef(new Map<string, number>());
     const exportAbortRef = useRef<AbortController | null>(null);
     const consumedImageTransferRef = useRef<string | null>(null);
+    const settingsDraftRef = useRef<ColorSettingsDraft>(null);
 
     useEffect(() => prepareColorAlchemyForUser(userId), [userId]);
 
@@ -185,11 +187,18 @@ export default function ColorAlchemyPage() {
     }, [cloudReadyUserId, documents, hydrated, removeDocuments, syncTick, userId]);
 
     const document = useMemo(() => documents.find((item) => item.id === activeDocumentId) || documents[0] || null, [activeDocumentId, documents]);
+    const workingSettings = document ? resolveColorSettingsDraft(settingsDraft, document.id, document.settings) : null;
+    const workingDocument = useMemo(() => {
+        if (!document || !workingSettings || workingSettings === document.settings) return document;
+        return { ...document, settings: workingSettings };
+    }, [document, workingSettings]);
     const forceOriginal = originalPinned || originalHeld;
-    const canUndo = Boolean(document && (document.historyIndex > 0 || JSON.stringify(document.settings) !== JSON.stringify(document.history[document.historyIndex])));
+    const canUndo = Boolean(document && workingSettings && (document.historyIndex > 0 || !colorSettingsEqual(workingSettings, document.history[document.historyIndex])));
     const canRedo = Boolean(document && document.historyIndex < document.history.length - 1);
 
     useEffect(() => {
+        settingsDraftRef.current = null;
+        setSettingsDraft(null);
         setOriginalPinned(false);
         setOriginalHeld(false);
         setPickedColor(null);
@@ -234,26 +243,48 @@ export default function ColorAlchemyPage() {
         }
     };
 
-    const applySettings = (settings: ColorSettings, commit = false) => {
-        if (document) replaceSettings(document.id, settings, commit);
+    const applySettings = (settings: ColorSettings) => {
+        if (!document) return;
+        const draft = updateColorSettingsDraft(settingsDraftRef.current, document.id, settings);
+        settingsDraftRef.current = draft;
+        setSettingsDraft(draft);
+    };
+
+    const discardSettingsDraft = () => {
+        settingsDraftRef.current = null;
+        setSettingsDraft(null);
+    };
+
+    const commitSettingsChanges = () => {
+        if (!document || settingsDraftRef.current?.documentId !== document.id) return;
+        const committed = commitColorSettingsDraft(settingsDraftRef.current, document.id, document.settings);
+        settingsDraftRef.current = committed.draft;
+        setSettingsDraft(committed.draft);
+        replaceSettings(document.id, committed.settings, true);
+    };
+
+    const applyCommittedSettings = (settings: ColorSettings) => {
+        if (!document) return;
+        discardSettingsDraft();
+        replaceSettings(document.id, settings, true);
     };
 
     const applyPreset = (preset: ColorPreset) => {
         if (!document) return;
-        replaceSettings(document.id, applyColorPreset(preset, 100), true);
+        applyCommittedSettings(applyColorPreset(preset, 100));
         message.success(`已应用色彩秘卷：${preset.name}`);
     };
 
     const applyLut = (lutFile: string | null) => {
         if (!document) return;
-        replaceSettings(document.id, normalizeColorSettings({ ...document.settings, lutId: lutFile, lutIntensity: 100, preset: null }), true);
+        applyCommittedSettings(normalizeColorSettings({ ...(workingSettings || document.settings), lutId: lutFile, lutIntensity: 100, preset: null }));
         message.success(lutFile ? "胶片滤镜已应用" : "胶片滤镜已清除");
     };
 
     const applyAiRecommendation = () => {
         if (!document?.analysis) return;
-        const result = recommendColorSettings(document.analysis, document.settings);
-        replaceSettings(document.id, result.settings, true);
+        const result = recommendColorSettings(document.analysis, workingSettings || document.settings);
+        applyCommittedSettings(result.settings);
         message.success("灵彩优化完成");
     };
 
@@ -274,14 +305,15 @@ export default function ColorAlchemyPage() {
 
     const borrowColors = () => {
         if (!document?.analysis || !document.reference?.analysis) return;
-        replaceSettings(document.id, deriveBorrowedColorSettings(document.analysis, document.reference.analysis, document.settings), true);
+        applyCommittedSettings(deriveBorrowedColorSettings(document.analysis, document.reference.analysis, workingSettings || document.settings));
         message.success("已借取参考图的色彩关系，主体与构图保持不变");
     };
 
     const createRenderedImage = async (format: ColorExportFormat = "webp", quality = 0.92, fitUploadLimit = false, renderOptions?: ColorRenderOptions) => {
         if (!document) throw new Error("请先添加图片");
-        const rendered = await renderColorBlob(document.source, document.settings, format, quality, undefined, renderOptions);
-        return fitUploadLimit ? fitColorUploadBlob(document.source, document.settings, rendered) : { blob: rendered, compressed: false };
+        const settings = workingSettings || document.settings;
+        const rendered = await renderColorBlob(document.source, settings, format, quality, undefined, renderOptions);
+        return fitUploadLimit ? fitColorUploadBlob(document.source, settings, rendered) : { blob: rendered, compressed: false };
     };
 
     const saveToAssets = async () => {
@@ -297,7 +329,7 @@ export default function ColorAlchemyPage() {
                 tags: ["灵彩", "调色"],
                 source: "灵彩",
                 data: { dataUrl: image.url, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey, thumbnailUrl: image.thumbnailUrl, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType },
-                metadata: { source: "color-alchemy", sourceKey: document.source.key, sourceStorageKey: document.source.storageKey, colorSettings: document.settings },
+                metadata: { source: "color-alchemy", sourceKey: document.source.key, sourceStorageKey: document.source.storageKey, colorSettings: workingSettings || document.settings },
             });
             message.success(compressed ? "调色作品已压缩并入藏卷阁" : "调色作品已入藏卷阁");
         } catch (error) {
@@ -348,7 +380,7 @@ export default function ColorAlchemyPage() {
                 width: size.width,
                 height: size.height,
                 position: sourceNode ? { x: sourceNode.position.x + sourceNode.width + 56, y: sourceNode.position.y } : { x: 120, y: 120 },
-                metadata: { ...baseNode.metadata, colorSettings: document.settings, colorAlchemySourceKey: document.source.key },
+                metadata: { ...baseNode.metadata, colorSettings: workingSettings || document.settings, colorAlchemySourceKey: document.source.key },
             };
             useCanvasStore.getState().updateProject(latestProject.id, { nodes: [...latestProject.nodes, nextNode] });
             message.success(compressed ? "已压缩并生成新的灵彩节点，原图保持不变" : "已生成新的灵彩节点，原图保持不变");
@@ -380,7 +412,7 @@ export default function ColorAlchemyPage() {
 
     const copySettings = async () => {
         if (!document) return;
-        const value = JSON.stringify(document.settings);
+        const value = JSON.stringify(workingSettings || document.settings);
         window.localStorage.setItem(SETTINGS_CLIPBOARD_KEY, value);
         await navigator.clipboard?.writeText(value).catch(() => undefined);
         message.success("调色参数已复制");
@@ -391,7 +423,7 @@ export default function ColorAlchemyPage() {
         try {
             const clipboard = await navigator.clipboard?.readText().catch(() => "");
             const value = clipboard || window.localStorage.getItem(SETTINGS_CLIPBOARD_KEY) || "";
-            replaceSettings(document.id, normalizeColorSettings(JSON.parse(value)), true);
+            applyCommittedSettings(normalizeColorSettings(JSON.parse(value)));
             message.success("调色参数已粘贴");
         } catch {
             message.warning("剪贴板里没有可用的调色参数");
@@ -425,12 +457,21 @@ export default function ColorAlchemyPage() {
                             originalPinned={originalPinned}
                             saving={saving}
                             onReturn={() => void returnToCanvas()}
-                            onUndo={() => undo(document.id)}
-                            onRedo={() => redo(document.id)}
+                            onUndo={() => {
+                                discardSettingsDraft();
+                                undo(document.id);
+                            }}
+                            onRedo={() => {
+                                discardSettingsDraft();
+                                redo(document.id);
+                            }}
                             onCompareStart={() => setOriginalHeld(true)}
                             onCompareEnd={() => setOriginalHeld(false)}
                             onToggleOriginal={() => setOriginalPinned((value) => !value)}
-                            onReset={() => reset(document.id)}
+                            onReset={() => {
+                                discardSettingsDraft();
+                                reset(document.id);
+                            }}
                             onCopy={() => void copySettings()}
                             onPaste={() => void pasteSettings()}
                             onSave={() => void saveToAssets()}
@@ -442,7 +483,7 @@ export default function ColorAlchemyPage() {
                             {desktopLayout ? (
                                 <div className="min-h-0">
                                     <ColorSourcePanel
-                                        document={document}
+                                        document={workingDocument || document}
                                         documents={documents}
                                         onSelectDocument={selectDocument}
                                         onUpload={() => uploadInputRef.current?.click()}
@@ -457,14 +498,14 @@ export default function ColorAlchemyPage() {
                                     />
                                 </div>
                             ) : null}
-                            <ColorPreviewStage source={document.source} settings={document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} onPickColor={setPickedColor} />
+                            <ColorPreviewStage source={document.source} settings={workingSettings || document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} onPickColor={setPickedColor} />
                             {desktopLayout ? (
                                 <div className="min-h-0">
                                     <ColorControlPanel
-                                        document={document}
+                                        document={workingDocument || document}
                                         analyzing={!document.analysis}
                                         onSettingsChange={(settings) => applySettings(settings)}
-                                        onCommit={() => commitSettings(document.id)}
+                                        onCommit={commitSettingsChanges}
                                         onApplyAi={applyAiRecommendation}
                                         onApplyPreset={applyPreset}
                                         onReferenceUpload={(file) => void addReference(file)}
@@ -516,7 +557,7 @@ export default function ColorAlchemyPage() {
                             styles={{ body: { padding: 0, overflow: "hidden" } }}
                         >
                             <ColorSourcePanel
-                                document={document}
+                                document={workingDocument || document}
                                 documents={documents}
                                 onSelectDocument={(id) => {
                                     selectDocument(id);
@@ -546,10 +587,10 @@ export default function ColorAlchemyPage() {
                             styles={{ body: { padding: 0, overflow: "hidden" } }}
                         >
                             <ColorControlPanel
-                                document={document}
+                                document={workingDocument || document}
                                 analyzing={!document.analysis}
                                 onSettingsChange={(settings) => applySettings(settings)}
-                                onCommit={() => commitSettings(document.id)}
+                                onCommit={commitSettingsChanges}
                                 onApplyAi={applyAiRecommendation}
                                 onApplyPreset={applyPreset}
                                 onReferenceUpload={(file) => void addReference(file)}
