@@ -55,6 +55,7 @@ import {
     type AdminMetrics,
 } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { AnnouncementAdminPanel } from "./announcement-admin-panel";
 import { resolveAdminRecordKind, resolveAdminSection, type AdminRecordKind, type AdminSectionKey } from "./navigation";
 import { buildCultivationUserPatch, type CultivationUserFormValues, type CultivationUserPatch } from "./user-update";
 import "./admin.css";
@@ -114,6 +115,7 @@ const adminSections = [
     { key: "users", group: "修炼体系", label: "用户管理", title: "用户管理", description: "查看并调整用户境界、修为、额度与账号状态。", icon: Users },
     { key: "rules", group: "修炼体系", label: "成长规则", title: "成长规则", description: "按境界查看阶段进度、升级阈值和突破反馈。", icon: BookOpenCheck },
     { key: "capabilities", group: "修炼体系", label: "能力与额度", title: "能力与额度", description: "维护修为奖励、能力总开关和各境界默认额度。", icon: ShieldCheck },
+    { key: "announcements", group: "系统管理", label: "公告管理", title: "公告管理", description: "创建、置顶、发布和归档面向全体用户的系统公告。", icon: Bell },
     { key: "monitoring", group: "系统管理", label: "运行监控", title: "运行监控", description: "检查渠道成功率、任务运行状态、备份和资源清理。", icon: Activity },
     { key: "records", group: "系统管理", label: "记录中心", title: "记录中心", description: "统一查询生成用量、修为流水、管理操作和登录记录。", icon: ScrollText },
 ] as const satisfies ReadonlyArray<{ key: AdminSectionKey; group: string; label: string; title: string; description: string; icon: typeof LayoutDashboard }>;
@@ -166,7 +168,7 @@ export default function AdminCultivationPage() {
                             const selected = item.key === activeSection;
                             return (
                                 <div key={item.key}>
-                                    {item.key === "overview" || item.key === "users" || item.key === "monitoring" ? <p className="cultivation-admin-nav-group">{item.group}</p> : null}
+                                    {item.key === "overview" || item.key === "users" || item.key === "announcements" ? <p className="cultivation-admin-nav-group">{item.group}</p> : null}
                                     <button type="button" className={selected ? "is-active" : ""} aria-current={selected ? "page" : undefined} onClick={() => selectSection(item.key)}>
                                         <Icon className="size-4" aria-hidden="true" />
                                         <span>{item.label}</span>
@@ -206,10 +208,10 @@ export default function AdminCultivationPage() {
                                 <span>搜索用户、规则或记录</span>
                                 <kbd>Ctrl K</kbd>
                             </div>
-                            <span className="cultivation-admin-icon-button" role="img" aria-label="通知状态" title="通知状态">
+                            <button type="button" className="cultivation-admin-icon-button" aria-label="打开公告管理" title="公告管理" onClick={() => selectSection("announcements")}>
                                 <Bell className="size-4" aria-hidden="true" />
                                 <span className="cultivation-admin-notification-dot" />
-                            </span>
+                            </button>
                             <div className="cultivation-admin-operator">
                                 <span className="cultivation-admin-operator-avatar">{(account?.displayName || "管").slice(0, 1)}</span>
                                 <div>
@@ -235,6 +237,7 @@ export default function AdminCultivationPage() {
                         {activeSection === "users" ? <UsersPanel searchFromUrl={searchParams.get("search") || ""} onSearchChange={(search) => updateParams({ search })} /> : null}
                         {activeSection === "rules" ? <GrowthRulesPanel /> : null}
                         {activeSection === "capabilities" ? <CapabilitiesQuotaPanel /> : null}
+                        {activeSection === "announcements" ? <AnnouncementAdminPanel /> : null}
                         {activeSection === "monitoring" ? <MonitoringPanel /> : null}
                         {activeSection === "records" ? (
                             <RecordsPanel
@@ -1186,6 +1189,7 @@ function OverviewPanel({ onOpenUser, onNavigate }: { onOpenUser: (displayName: s
                         <OverviewQuickLink icon={<Users className="size-4" />} title="用户管理" detail="境界、修为、额度" onClick={() => onNavigate("users")} />
                         <OverviewQuickLink icon={<BookOpenCheck className="size-4" />} title="成长规则" detail="阶段与突破反馈" onClick={() => onNavigate("rules")} />
                         <OverviewQuickLink icon={<ShieldCheck className="size-4" />} title="能力与额度" detail="开放能力与奖励" onClick={() => onNavigate("capabilities")} />
+                        <OverviewQuickLink icon={<Bell className="size-4" />} title="公告管理" detail="发布平台通知" onClick={() => onNavigate("announcements")} />
                         <OverviewQuickLink icon={<ServerCog className="size-4" />} title="运行监控" detail="渠道与服务状态" onClick={() => onNavigate("monitoring")} />
                     </div>
                 </div>
@@ -1470,7 +1474,7 @@ function RecordsPanel({ kind, userId, onKindChange, onUserChange, onOpenUser }: 
 const recordViewDetails: Record<LogKind, { label: string; title: string; description: string }> = {
     usage: { label: "生成用量", title: "生成用量", description: "按任务记录请求、成功结算、失败退还和耗时。" },
     ledger: { label: "修为流水", title: "修为流水", description: "记录生成奖励、管理员增减与每次结算后的总修为。" },
-    "audit-logs": { label: "管理操作", title: "管理操作", description: "记录用户、境界、阶段、能力和奖励规则的修改。" },
+    "audit-logs": { label: "管理操作", title: "管理操作", description: "记录用户、修炼规则、能力配置和系统公告的修改。" },
     "login-logs": { label: "登录安全", title: "登录安全", description: "保留必要的登录结果、设备信息与脱敏 IP。" },
     breakthroughs: { label: "突破记录", title: "突破记录", description: "查看自动突破和历史人工处理记录。" },
 };
@@ -1915,6 +1919,10 @@ function auditActionLabel(value: string) {
                 "cultivation.stage.update": "更新阶段规则",
                 "cultivation.capability.update": "更新能力开关",
                 "cultivation.rewards.update": "更新修为奖励",
+                "announcement.create": "创建系统公告",
+                "announcement.publish": "发布系统公告",
+                "announcement.update": "更新系统公告",
+                "announcement.archive": "归档系统公告",
             } as Record<string, string>
         )[value] ||
         value ||

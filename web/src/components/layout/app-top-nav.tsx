@@ -3,6 +3,7 @@ import { Button, Dropdown, Tooltip } from "antd";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { navigationSceneNames, primaryNavigationTools, secondaryNavigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
+import { AnnouncementBell } from "@/components/layout/announcement-bell";
 import { UserStatusActions, WorkspaceMenuAction } from "@/components/layout/user-status-actions";
 import { useDeferredMount } from "@/hooks/use-deferred-mount";
 import { lazyRoute } from "@/lib/lazy-route";
@@ -144,6 +145,7 @@ export function AppTopNav() {
                             ) : (
                                 <NavActionPlaceholder />
                             )}
+                            <AnnouncementBell />
                             {chatPending ? (
                                 <Tooltip title={`${chatRuntimeLabel}，点击返回问道台`}>
                                     <Button

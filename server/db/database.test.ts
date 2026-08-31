@@ -134,7 +134,7 @@ describe("SQLite application database", () => {
     }
   });
 
-  test("creates the product, chat, color alchemy and dou qi life tables in the latest migration", () => {
+  test("creates the latest product, chat, announcement, color alchemy and dou qi life tables", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
     const store = openAppDatabase({ dataDir });
@@ -227,6 +227,17 @@ describe("SQLite application database", () => {
         "chat_messages",
         "chat_usage",
       ]);
+      const announcementTables = (
+        store
+          .raw!.query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('system_announcements', 'announcement_reads') ORDER BY name",
+          )
+          .all() as Array<{ name: string }>
+      ).map((item) => item.name);
+      expect(announcementTables).toEqual([
+        "announcement_reads",
+        "system_announcements",
+      ]);
       const douQiTables = (
         store
           .raw!.query(
@@ -239,7 +250,7 @@ describe("SQLite application database", () => {
         "douqi_life_saves",
         "douqi_life_sessions",
       ]);
-      expect(Number(migration.version)).toBeGreaterThanOrEqual(23);
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(24);
       for (const index of [
         "idx_douqi_life_sessions_user_updated",
         "idx_douqi_life_messages_user_session_created",

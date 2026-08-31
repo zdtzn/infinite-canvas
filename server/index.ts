@@ -88,6 +88,7 @@ import { runPromptSourceScript, type ServerPromptSourceItem } from "./lib/prompt
 import { defaultUserChatPresetId, normalizeUserCanvasImageToolbar, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserGenerationPreferences, normalizeUserSystemPrompt, readStoredUserCanvasImageToolbar, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserGenerationPreferences, readStoredUserSystemPrompt, USER_CANVAS_IMAGE_TOOLBAR_KEY, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_GENERATION_PREFERENCES_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
+import { AnnouncementError, createAnnouncementService, type AnnouncementInput } from "./modules/announcements/service";
 import { createColorAlchemyService, ColorAlchemyError } from "./modules/color-alchemy/service";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
 import { createProductLabService, productOutputCapability, ProductLabError } from "./modules/product-lab/service";
@@ -224,6 +225,7 @@ for (const job of Object.values(state.jobs)) {
     }
 }
 const cultivation = appDatabase.raw ? createCultivationService(appDatabase.raw) : null;
+const announcements = appDatabase.raw ? createAnnouncementService(appDatabase.raw) : null;
 const productLab = appDatabase.raw ? createProductLabService(appDatabase.raw) : null;
 const chat = appDatabase.raw
     ? createChatService(appDatabase.raw, {
@@ -421,6 +423,10 @@ async function route(request: Request, requestId: string) {
         enforceRateLimit(`${session.userId}:${clientIp(request)}`, request.method === "GET" ? 240 : 90);
         if (url.pathname === "/api/admin/metrics" && request.method === "GET") return adminMetrics(session);
         if (url.pathname === "/api/admin/channels/metrics" && request.method === "GET") return adminChannelMetrics(url, session);
+        if (url.pathname === "/api/admin/announcements" && request.method === "GET") return adminListAnnouncements(url, session);
+        if (url.pathname === "/api/admin/announcements" && request.method === "POST") return adminCreateAnnouncement(request, session);
+        const adminAnnouncementMatch = url.pathname.match(/^\/api\/admin\/announcements\/([^/]+)$/);
+        if (adminAnnouncementMatch && request.method === "PATCH") return adminUpdateAnnouncement(request, session, adminAnnouncementMatch[1]);
         if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "GET") return adminPromptOptimizationConfiguration(session);
         if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "PUT") return adminUpdatePromptOptimizationConfiguration(request, session);
         if (url.pathname === "/api/prompt-sources" && request.method === "GET") return listPromptSources(session);
@@ -443,6 +449,10 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/auth/sessions/revoke" && request.method === "POST") return revokeAllSessions(session);
         if (url.pathname === "/api/auth/password" && request.method === "POST") return changePersonalPassword(request, session);
         if (url.pathname === "/api/account/export" && request.method === "GET") return exportAccountData(session);
+        if (url.pathname === "/api/announcements" && request.method === "GET") return listAnnouncements(url, session);
+        if (url.pathname === "/api/announcements/read-all" && request.method === "POST") return markAllAnnouncementsRead(session);
+        const announcementReadMatch = url.pathname.match(/^\/api\/announcements\/([^/]+)\/read$/);
+        if (announcementReadMatch && request.method === "POST") return markAnnouncementRead(session, announcementReadMatch[1]);
         const seenBreakthroughMatch = url.pathname.match(/^\/api\/cultivation\/breakthroughs\/([^/]+)\/seen$/);
         if (seenBreakthroughMatch && request.method === "POST") return markCultivationBreakthroughSeen(session, seenBreakthroughMatch[1]);
         if (url.pathname === "/api/admin/cultivation/users" && request.method === "GET") return adminCultivationUsers(url, session);
@@ -954,6 +964,52 @@ function requireAdmin(session: SessionPayload) {
     if (!state.users[session.userId]?.admin) throw new HttpError(403, "仅管理员可以执行此操作");
 }
 
+function listAnnouncements(url: URL, session: SessionPayload) {
+    const { page, pageSize } = readPagination(url);
+    return json(
+        requireAnnouncements().listPublished(session.userId, {
+            page,
+            pageSize,
+            unreadOnly: url.searchParams.get("unreadOnly") === "true",
+        }),
+    );
+}
+
+function markAnnouncementRead(session: SessionPayload, encodedAnnouncementId: string) {
+    return json(requireAnnouncements().markRead(session.userId, decodeRouteSegment(encodedAnnouncementId, "公告 ID")));
+}
+
+function markAllAnnouncementsRead(session: SessionPayload) {
+    return json(requireAnnouncements().markAllRead(session.userId));
+}
+
+function adminListAnnouncements(url: URL, session: SessionPayload) {
+    requireAdmin(session);
+    const { page, pageSize } = readPagination(url);
+    return json(
+        requireAnnouncements().listAdmin({
+            page,
+            pageSize,
+            search: url.searchParams.get("search") || "",
+            type: url.searchParams.get("type") || "",
+            status: url.searchParams.get("status") || "",
+        }),
+    );
+}
+
+async function adminCreateAnnouncement(request: Request, session: SessionPayload) {
+    requireAdmin(session);
+    const input = await readJson<AnnouncementInput>(request, 16 * 1024);
+    return json({ item: requireAnnouncements().create(session.userId, input) }, 201);
+}
+
+async function adminUpdateAnnouncement(request: Request, session: SessionPayload, encodedAnnouncementId: string) {
+    requireAdmin(session);
+    const input = await readJson<AnnouncementInput>(request, 16 * 1024);
+    const item = requireAnnouncements().update(session.userId, decodeRouteSegment(encodedAnnouncementId, "公告 ID"), input);
+    return json({ item });
+}
+
 function cultivationProfile(session: SessionPayload) {
     const service = requireCultivation();
     service.ensureUser(session.userId, Boolean(state.users[session.userId]?.admin));
@@ -1067,6 +1123,11 @@ function adminCultivationBreakthroughs(url: URL, session: SessionPayload) {
 function requireCultivation() {
     if (!cultivation) throw new HttpError(503, "SQLite 迁移尚未完成，修炼系统暂不可用");
     return cultivation;
+}
+
+function requireAnnouncements() {
+    if (!announcements) throw new HttpError(503, "SQLite 迁移尚未完成，公告系统暂不可用");
+    return announcements;
 }
 
 function readPagination(url: URL) {
@@ -2250,6 +2311,7 @@ function exportAccountData(session: SessionPayload) {
         projects,
         conversations,
         memories: chat?.listMemories(userId) || [],
+        announcementReads: announcements?.listReadReceipts(userId) || [],
         imageHistory: appDatabase.loadGenerationHistory(userId, "image").map((item) => item.payload),
         videoHistory: appDatabase.loadGenerationHistory(userId, "video").map((item) => item.payload),
         jobs,
@@ -4929,7 +4991,7 @@ function withSecurityHeaders(response: Response, requestId: string, request: Req
 
 function errorResponse(error: unknown, requestId: string) {
     const status =
-        error instanceof HttpError || error instanceof CultivationError || error instanceof ProductLabError || error instanceof ChatError || error instanceof ColorAlchemyError || error instanceof DouQiLifeError
+        error instanceof HttpError || error instanceof CultivationError || error instanceof AnnouncementError || error instanceof ProductLabError || error instanceof ChatError || error instanceof ColorAlchemyError || error instanceof DouQiLifeError
             ? error.status
             : error instanceof AssetLibraryInputError || error instanceof GenerationHistoryInputError || error instanceof ProductAnalysisInputError
               ? 400
@@ -4939,6 +5001,7 @@ function errorResponse(error: unknown, requestId: string) {
     const publicError =
         error instanceof HttpError ||
         error instanceof CultivationError ||
+        error instanceof AnnouncementError ||
         error instanceof ProductLabError ||
         error instanceof ChatError ||
         error instanceof ColorAlchemyError ||

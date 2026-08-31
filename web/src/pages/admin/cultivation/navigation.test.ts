@@ -6,6 +6,7 @@ describe("cultivation administrator navigation", () => {
     test("keeps the new section URLs stable", () => {
         expect(resolveAdminSection("overview")).toBe("overview");
         expect(resolveAdminSection("capabilities")).toBe("capabilities");
+        expect(resolveAdminSection("announcements")).toBe("announcements");
         expect(resolveAdminSection("records")).toBe("records");
     });
 

@@ -1044,6 +1044,45 @@ function runMigrations(database: Database) {
         )
         .run(timestamp);
     })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 24").get()
+  )
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS system_announcements (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL DEFAULT '',
+          content TEXT NOT NULL,
+          type TEXT NOT NULL CHECK (type IN ('update', 'notice', 'maintenance')),
+          status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'archived')),
+          pinned INTEGER NOT NULL DEFAULT 0,
+          author_user_id TEXT NOT NULL,
+          published_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (author_user_id) REFERENCES users(user_id)
+        );
+        CREATE TABLE IF NOT EXISTS announcement_reads (
+          user_id TEXT NOT NULL,
+          announcement_id TEXT NOT NULL,
+          read_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, announcement_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+          FOREIGN KEY (announcement_id) REFERENCES system_announcements(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_announcements_status_published
+          ON system_announcements(status, pinned DESC, published_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_announcement_reads_user
+          ON announcement_reads(user_id, read_at DESC);
+      `);
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (24, ?)",
+        )
+        .run(Date.now());
+    })();
 }
 
 function migrateLegacyState(

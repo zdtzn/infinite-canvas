@@ -105,6 +105,26 @@ export type CultivationRealmConfig = {
 };
 export type CultivationConfiguration = { realms: CultivationRealmConfig[]; capabilities: Array<{ key: string; label: string; category: string; active: boolean }>; rewards: Record<string, number> };
 export type PagedResponse<T> = { items: T[]; page: number; pageSize: number; total: number };
+export type AnnouncementType = "update" | "notice" | "maintenance";
+export type AnnouncementStatus = "draft" | "published" | "archived";
+export type SystemAnnouncement = {
+    id: string;
+    title: string;
+    summary: string;
+    content: string;
+    type: AnnouncementType;
+    status: AnnouncementStatus;
+    pinned: boolean;
+    authorUserId: string;
+    authorName: string;
+    publishedAt: number | null;
+    createdAt: number;
+    updatedAt: number;
+    isRead?: boolean;
+    readAt?: number | null;
+};
+export type AnnouncementInput = Pick<SystemAnnouncement, "title" | "summary" | "content" | "type" | "status" | "pinned">;
+export type AnnouncementPage = PagedResponse<SystemAnnouncement> & { unreadCount: number };
 export type AdminChannelMetric = {
     userId: string;
     ownerName: string;
@@ -552,6 +572,40 @@ export async function updateCultivationRewards(rewards: Record<string, number>, 
 export async function fetchCultivationLog<T>(kind: "ledger" | "usage" | "audit-logs" | "login-logs" | "breakthroughs", page = 1, pageSize = 20, userId = "") {
     const user = userId ? `&userId=${encodeURIComponent(userId)}` : "";
     return serverRequest<PagedResponse<T>>(`/api/admin/cultivation/${kind}?page=${page}&pageSize=${pageSize}${user}`);
+}
+
+export async function fetchAnnouncements(options: { page?: number; pageSize?: number; unreadOnly?: boolean } = {}) {
+    const params = new URLSearchParams();
+    params.set("page", String(options.page || 1));
+    params.set("pageSize", String(options.pageSize || 20));
+    if (options.unreadOnly) params.set("unreadOnly", "true");
+    return serverRequest<AnnouncementPage>(`/api/announcements?${params.toString()}`, { timeoutMs: 12_000 });
+}
+
+export async function markAnnouncementRead(id: string) {
+    return serverRequest<{ id: string; readAt: number }>(`/api/announcements/${encodeURIComponent(id)}/read`, { method: "POST" });
+}
+
+export async function markAllAnnouncementsRead() {
+    return serverRequest<{ readAt: number; count: number }>("/api/announcements/read-all", { method: "POST" });
+}
+
+export async function fetchAdminAnnouncements(options: { page?: number; pageSize?: number; search?: string; type?: AnnouncementType | ""; status?: AnnouncementStatus | "" } = {}) {
+    const params = new URLSearchParams();
+    params.set("page", String(options.page || 1));
+    params.set("pageSize", String(options.pageSize || 20));
+    if (options.search) params.set("search", options.search);
+    if (options.type) params.set("type", options.type);
+    if (options.status) params.set("status", options.status);
+    return serverRequest<PagedResponse<SystemAnnouncement>>(`/api/admin/announcements?${params.toString()}`, { timeoutMs: 12_000 });
+}
+
+export async function createAdminAnnouncement(input: AnnouncementInput) {
+    return serverRequest<{ item: SystemAnnouncement }>("/api/admin/announcements", { method: "POST", body: input });
+}
+
+export async function updateAdminAnnouncement(id: string, input: Partial<AnnouncementInput>) {
+    return serverRequest<{ item: SystemAnnouncement }>(`/api/admin/announcements/${encodeURIComponent(id)}`, { method: "PATCH", body: input });
 }
 
 export async function waitForServerJob(id: string, options?: { signal?: AbortSignal; onUpdate?: (job: ServerJob) => void; expectedUserId?: string }) {

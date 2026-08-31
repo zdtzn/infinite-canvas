@@ -9,6 +9,7 @@ import { routeLoaders } from "@/lib/route-loaders";
 import UserLayout from "@/layouts/user-layout";
 import RouteErrorPage from "@/pages/route-error";
 const AssetsPage = lazyRoute(routeLoaders["/assets"]);
+const AnnouncementsPage = lazyRoute(routeLoaders["/announcements"]);
 const CanvasPage = lazyRoute(routeLoaders["/canvas"]);
 const CanvasProjectPage = lazyRoute(routeLoaders["/canvas/:id"]);
 const ChatPage = lazyRoute(routeLoaders["/chat"]);
@@ -46,6 +47,7 @@ function routeLoadingMeta(pathname: string) {
         "/product-lab": { eyebrow: "SHANG PIN HUAN JING", title: "商品幻境", split: true },
         "/video": { eyebrow: "LIU GUANG GE", title: "流光阁", split: true },
         "/assets": { eyebrow: "CANG JUAN GE", title: "藏卷阁", split: false },
+        "/announcements": { eyebrow: "SYSTEM NOTICE", title: "系统公告", split: false },
         "/prompts": { eyebrow: "GONG FA LOU", title: "功法楼", split: false },
         "/cultivation": { eyebrow: "MING GONG", title: "命宫", split: false },
         "/config": { eyebrow: "DONG FU", title: "洞府", split: false },
@@ -134,6 +136,14 @@ export const router = createBrowserRouter([
                 element: (
                     <RoutePage>
                         <ColorAlchemyPage />
+                    </RoutePage>
+                ),
+            },
+            {
+                path: "/announcements",
+                element: (
+                    <RoutePage>
+                        <AnnouncementsPage />
                     </RoutePage>
                 ),
             },

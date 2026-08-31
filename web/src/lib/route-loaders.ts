@@ -1,5 +1,6 @@
 export const routeLoaders = {
     "/": () => import("@/pages/home"),
+    "/announcements": () => import("@/pages/announcements"),
     "/canvas": () => import("@/pages/canvas"),
     "/canvas/:id": () => import("@/pages/canvas/project"),
     "/chat": async () => {

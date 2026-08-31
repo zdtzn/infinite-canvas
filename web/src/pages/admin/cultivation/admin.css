@@ -140,6 +140,114 @@
 }
 
 @layer components {
+    .cultivation-admin-page .announcement-admin-panel {
+        min-width: 0;
+    }
+
+    .cultivation-admin-page .announcement-admin-toolbar {
+        display: grid;
+        grid-template-columns: minmax(240px, 1fr) 150px 150px 2.25rem;
+        gap: 0.65rem;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+
+    .cultivation-admin-page .announcement-admin-title-cell {
+        min-width: 0;
+    }
+
+    .cultivation-admin-page .announcement-admin-title-cell > div {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 0.45rem;
+    }
+
+    .cultivation-admin-page .announcement-admin-title-cell strong {
+        overflow: hidden;
+        color: #ece8df;
+        font-weight: 650;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .cultivation-admin-page .announcement-admin-title-cell .ant-tag {
+        margin: 0;
+        flex: none;
+    }
+
+    .cultivation-admin-page .announcement-admin-title-cell > span {
+        display: block;
+        margin-top: 0.3rem;
+        overflow: hidden;
+        color: #858078;
+        font-size: 0.72rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .cultivation-admin-page .announcement-admin-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.15rem;
+    }
+
+    .announcement-admin-form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.75rem;
+    }
+
+    .announcement-admin-drawer-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+    }
+
+    .announcement-admin-drawer-footer > span {
+        color: #8c867d;
+        font-size: 0.75rem;
+    }
+
+    .announcement-admin-drawer-footer > div {
+        display: flex;
+        flex: none;
+        gap: 0.5rem;
+    }
+
+    @media (max-width: 900px) {
+        .cultivation-admin-page .announcement-admin-toolbar {
+            grid-template-columns: minmax(0, 1fr) minmax(120px, 0.45fr) minmax(120px, 0.45fr) 2.25rem;
+        }
+    }
+
+    @media (max-width: 680px) {
+        .cultivation-admin-page .announcement-admin-toolbar {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .cultivation-admin-page .announcement-admin-toolbar .ant-input-search {
+            grid-column: 1 / -1;
+        }
+
+        .announcement-admin-form-grid {
+            grid-template-columns: minmax(0, 1fr);
+            gap: 0;
+        }
+
+        .announcement-admin-drawer-footer {
+            align-items: stretch;
+            flex-direction: column;
+        }
+
+        .announcement-admin-drawer-footer > div {
+            justify-content: flex-end;
+        }
+    }
+}
+
+@layer components {
     .cultivation-admin-page {
         --cultivation-admin-accent: #d3b36d;
         --cultivation-admin-cyan: #70c9e8;
