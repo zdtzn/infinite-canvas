@@ -142,6 +142,26 @@ export function createCultivationService(
           .get(userId) as { value: number }
       ).value,
     );
+    const modelUsage = (
+      database
+        .query(
+          `SELECT model, COUNT(*) AS jobs, COALESCE(SUM(success_count), 0) AS images
+           FROM generation_usage
+           WHERE user_id = ? AND status = 'settled' AND success_count > 0
+           GROUP BY model
+           ORDER BY images DESC, jobs DESC, model ASC
+           LIMIT 6`,
+        )
+        .all(userId) as Array<{
+        model: string;
+        jobs: number;
+        images: number;
+      }>
+    ).map((item) => ({
+      model: String(item.model),
+      jobs: Number(item.jobs),
+      images: Number(item.images),
+    }));
     const capabilities = (
       database
         .query(
@@ -196,6 +216,7 @@ export function createCultivationService(
       capabilities,
       totalImages,
       activeDays,
+      modelUsage,
       publicMessage: String(row.public_message || ""),
       internalNote: String(row.internal_note || ""),
       breakthrough: breakthrough

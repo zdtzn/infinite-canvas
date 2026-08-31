@@ -15,6 +15,7 @@ import { uploadProfileAvatar } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 import "@/features/cultivation/cultivation-visuals.css";
+import { DouEmperorPalace } from "./dou-emperor-palace";
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
@@ -104,6 +105,10 @@ export default function CultivationPage() {
         0,
         REALM_LADDER.findIndex((realm) => realm.id === data.realmId),
     );
+
+    if (emperorFinalStage) {
+        return <DouEmperorPalace profile={data} avatarUrl={avatarUrl} avatarUploading={avatarUploading} avatarInputRef={avatarInputRef} onAvatarChange={(event) => void uploadAvatar(event)} admin={Boolean(user?.admin)} />;
+    }
 
     return (
         <main className="h-full overflow-y-auto bg-background text-foreground">

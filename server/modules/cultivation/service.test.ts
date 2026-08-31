@@ -105,6 +105,9 @@ describe("cultivation quota and settlement", () => {
       expect(after.totalXp).toBe(10);
       expect(after.totalImages).toBe(1);
       expect(after.activeDays).toBe(1);
+      expect(after.modelUsage).toEqual([
+        { model: "gpt-image-1", jobs: 1, images: 1 },
+      ]);
 
       service.settleGeneration({
         jobId: "job-1",

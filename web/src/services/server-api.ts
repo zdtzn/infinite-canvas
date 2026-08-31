@@ -84,6 +84,7 @@ export type CultivationProfile = {
     capabilities: string[];
     totalImages: number;
     activeDays: number;
+    modelUsage: Array<{ model: string; jobs: number; images: number }>;
     publicMessage: string;
     internalNote?: string;
     breakthrough: CultivationBreakthrough | null;
