@@ -3,6 +3,70 @@ import type { ColorPreset, ColorSettings } from "./types";
 
 export const COLOR_PRESETS: ColorPreset[] = [
     {
+        id: "quick-natural",
+        name: "自然",
+        category: "摄影",
+        description: "轻微平衡光影与色彩，保持画面本来的气质。",
+        accent: "#98a39b",
+        previewFilter: "brightness(1.02) contrast(1.03) saturate(1.03)",
+        settings: { exposure: 2, contrast: 4, highlights: -8, shadows: 8, vibrance: 6, clarity: 2 },
+    },
+    {
+        id: "quick-clear",
+        name: "通透",
+        category: "摄影",
+        description: "打开暗部并收住高光，让画面更清晰通透。",
+        accent: "#7fb2bc",
+        previewFilter: "brightness(1.05) contrast(1.06) saturate(1.06)",
+        settings: { exposure: 6, contrast: 8, highlights: -18, shadows: 16, blacks: -3, vibrance: 10, clarity: 6 },
+    },
+    {
+        id: "quick-premium",
+        name: "高级",
+        category: "艺术",
+        description: "克制饱和度，强化明暗结构与细节质感。",
+        accent: "#a5a7a8",
+        previewFilter: "contrast(1.11) saturate(.94)",
+        settings: { exposure: 1, contrast: 12, highlights: -18, shadows: 8, blacks: -8, saturation: -5, vibrance: 5, temperature: 2, clarity: 5, vignette: 4 },
+    },
+    {
+        id: "quick-cinema",
+        name: "电影",
+        category: "电影",
+        description: "压低高光与黑位，形成克制的冷暖电影层次。",
+        accent: "#758f99",
+        previewFilter: "contrast(1.16) saturate(.88) hue-rotate(4deg)",
+        settings: {
+            exposure: -3,
+            contrast: 18,
+            highlights: -22,
+            shadows: -6,
+            blacks: -10,
+            saturation: -8,
+            temperature: -5,
+            tint: 2,
+            splitTone: { shadowHue: 208, shadowSaturation: 18, highlightHue: 38, highlightSaturation: 10 },
+        },
+    },
+    {
+        id: "quick-vivid",
+        name: "鲜艳",
+        category: "艺术",
+        description: "优先提升自然饱和与局部层次，避免颜色失控。",
+        accent: "#c66c58",
+        previewFilter: "brightness(1.03) contrast(1.07) saturate(1.18)",
+        settings: { exposure: 3, contrast: 8, highlights: -10, shadows: 8, saturation: 10, vibrance: 20, clarity: 6, texture: 4 },
+    },
+    {
+        id: "quick-commerce",
+        name: "电商",
+        category: "电商",
+        description: "提亮主体并增强包装与食物质感，保持颜色准确克制。",
+        accent: "#c89b63",
+        previewFilter: "brightness(1.06) contrast(1.08) saturate(1.06)",
+        settings: { exposure: 7, brightness: 2, contrast: 10, highlights: -15, shadows: 14, blacks: -3, saturation: 2, vibrance: 10, sharpen: 12, clarity: 10, texture: 8 },
+    },
+    {
         id: "cinema-steel",
         name: "银幕冷峻",
         category: "电影",
@@ -129,6 +193,9 @@ export const COLOR_PRESETS: ColorPreset[] = [
         settings: { saturation: -100, contrast: 28, highlights: 8, shadows: -18, blacks: -16, clarity: 18, sharpen: 12 },
     },
 ];
+
+export const QUICK_COLOR_PRESET_IDS = ["quick-natural", "quick-clear", "quick-premium", "quick-cinema", "quick-vivid", "quick-commerce"] as const;
+export const QUICK_COLOR_PRESETS = QUICK_COLOR_PRESET_IDS.map((id) => COLOR_PRESETS.find((preset) => preset.id === id)).filter((preset): preset is ColorPreset => Boolean(preset));
 
 export function applyColorPreset(preset: ColorPreset, intensity: number): ColorSettings {
     const strength = Math.min(100, Math.max(0, intensity)) / 100;

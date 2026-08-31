@@ -1,6 +1,6 @@
 export const COLOR_HSL_CHANNELS = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta"] as const;
 export const COLOR_CURVE_CHANNELS = ["rgb", "red", "green", "blue"] as const;
-export const COLOR_PRESET_CATEGORIES = ["电影", "摄影", "艺术", "东方", "幻想", "复古", "黑白"] as const;
+export const COLOR_PRESET_CATEGORIES = ["电影", "摄影", "电商", "艺术", "东方", "幻想", "复古", "黑白"] as const;
 
 export type ColorHslChannel = (typeof COLOR_HSL_CHANNELS)[number];
 export type ColorCurveChannel = (typeof COLOR_CURVE_CHANNELS)[number];

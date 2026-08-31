@@ -17,12 +17,13 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     const { isDouEmperor, isImperialMode, imperialWelcomeEnabled } = useImperialMode();
     const { pathname } = useLocation();
     const visualEffectsReady = useDeferredMount(650);
+    const showSplashCursor = visualEffectsReady && !pathname.startsWith("/color-alchemy");
 
     useEffect(() => warmupRoutesWhenIdle(pathname), [pathname]);
 
     return (
         <div className={cn("imperial-app-shell flex h-dvh overflow-hidden bg-background text-foreground", isImperialMode && "is-imperial")}>
-            {visualEffectsReady ? (
+            {showSplashCursor ? (
                 <Suspense fallback={null}>
                     <SplashCursor
                         SIM_RESOLUTION={96}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LoaderCircle, Maximize, Minus, Pipette, Plus, ScanSearch } from "lucide-react";
+import { Maximize, Minus, MoveHorizontal, Pipette, Plus, ScanSearch } from "lucide-react";
 import { Tooltip } from "antd";
 
 import { analyzedColorFromRgb } from "./color-engine";
@@ -13,7 +13,19 @@ type PreviewDimensions = {
     naturalHeight: number;
 };
 
-export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis, onPickColor }: { source: ColorAlchemySource; settings: ColorSettings; forceOriginal: boolean; onAnalysis: (analysis: ColorAnalysis) => void; onPickColor: (color: AnalyzedColor) => void }) {
+export function ColorPreviewStage({
+    source,
+    settings,
+    forceOriginal,
+    onAnalysis,
+    onPickColor,
+}: {
+    source: ColorAlchemySource;
+    settings: ColorSettings;
+    forceOriginal: boolean;
+    onAnalysis: (analysis: ColorAnalysis) => void;
+    onPickColor: (color: AnalyzedColor) => void;
+}) {
     const stageRef = useRef<HTMLDivElement>(null);
     const originalCanvasRef = useRef<HTMLCanvasElement>(null);
     const adjustedCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -183,8 +195,10 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
 
     const fit = useMemo(() => {
         if (!dimensions) return { width: 1, height: 1 };
-        const availableWidth = Math.max(120, containerSize.width - 88);
-        const availableHeight = Math.max(120, containerSize.height - 92);
+        const horizontalPadding = containerSize.width < 640 ? 32 : 88;
+        const verticalPadding = containerSize.height < 720 ? 64 : 92;
+        const availableWidth = Math.max(120, containerSize.width - horizontalPadding);
+        const availableHeight = Math.max(120, containerSize.height - verticalPadding);
         const scale = Math.min(availableWidth / dimensions.width, availableHeight / dimensions.height);
         return { width: Math.max(1, dimensions.width * scale), height: Math.max(1, dimensions.height * scale) };
     }, [containerSize, dimensions]);
@@ -240,7 +254,7 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
     return (
         <div
             ref={stageRef}
-            className="relative h-full min-h-0 overflow-hidden bg-[#0e1012]"
+            className="color-preview-stage relative h-full min-h-0 overflow-hidden bg-[#0e1012]"
             onPointerMove={handlePointerMove}
             onPointerUp={stopPointer}
             onPointerCancel={stopPointer}
@@ -254,7 +268,7 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
                 style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px)", backgroundSize: "32px 32px" }}
             />
 
-            <div className="absolute inset-0 flex items-center justify-center px-10 py-10">
+            <div className="absolute inset-0 flex items-center justify-center px-4 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-10">
                 <div
                     data-color-preview-frame
                     className="relative shrink-0 overflow-hidden bg-black shadow-[0_26px_90px_rgba(0,0,0,.48)]"
@@ -289,22 +303,24 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
                                 updateCompare(event.clientX);
                             }}
                         >
-                            <span className="absolute inset-y-0 left-1/2 w-px bg-white/90 shadow-[0_0_16px_rgba(255,255,255,.7)]" />
-                            <span className="absolute left-1/2 top-1/2 grid size-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-white/70 bg-black/55 text-[9px] text-white backdrop-blur-md">◀▶</span>
+                            <span className="absolute inset-y-0 left-1/2 w-px bg-white/78" />
+                            <span className="absolute left-1/2 top-1/2 grid size-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-white/45 bg-black/65 text-white backdrop-blur-md">
+                                <MoveHorizontal className="size-3.5" />
+                            </span>
                         </button>
                     ) : null}
                     {forceOriginal ? (
-                        <span className="absolute left-3 top-3 rounded bg-black/45 px-2 py-1 text-[10px] font-medium tracking-[0.14em] text-white/80 backdrop-blur-md">ORIGINAL</span>
+                        <span className="absolute left-3 top-3 rounded bg-black/55 px-2 py-1 text-[10px] font-medium text-white/78 backdrop-blur-md">原图</span>
                     ) : (
                         <>
-                            <span className="absolute left-3 top-3 rounded bg-black/45 px-2 py-1 text-[10px] font-medium tracking-[0.14em] text-white/80 backdrop-blur-md">AFTER</span>
-                            <span className="absolute right-3 top-3 rounded bg-black/45 px-2 py-1 text-[10px] font-medium tracking-[0.14em] text-white/80 backdrop-blur-md">BEFORE</span>
+                            <span className="absolute left-3 top-3 rounded bg-black/55 px-2 py-1 text-[10px] font-medium text-white/78 backdrop-blur-md">调整后</span>
+                            <span className="absolute right-3 top-3 rounded bg-black/55 px-2 py-1 text-[10px] font-medium text-white/78 backdrop-blur-md">原图</span>
                         </>
                     )}
                 </div>
             </div>
 
-            <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-md border border-white/10 bg-black/45 p-1 text-white/80 backdrop-blur-xl">
+            <div className="color-preview-controls absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-md border border-white/10 bg-black/55 p-1 text-white/80 backdrop-blur-xl">
                 <PreviewButton title={eyedropperActive ? "取消吸色" : "吸取画面颜色"} icon={<Pipette className="size-4" />} active={eyedropperActive} onClick={() => setEyedropperActive((value) => !value)} />
                 <span className="mx-1 h-4 w-px bg-white/10" />
                 <PreviewButton title="缩小" icon={<Minus className="size-4" />} onClick={() => setZoomAroundCenter(zoom / 1.2)} />
@@ -316,17 +332,11 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
             </div>
 
             {loading ? (
-                <div className="absolute inset-0 grid place-items-center bg-[#0e1012]/80 text-white/70 backdrop-blur-sm">
-                    <div className="flex items-center gap-2 text-sm">
-                        <LoaderCircle className="size-4 animate-spin" /> 正在展开色彩空间
-                    </div>
+                <div className="absolute inset-0 grid place-items-center bg-[#0e1012]/88 text-white/70">
+                    <div className="color-processing-status">正在载入画面…</div>
                 </div>
             ) : null}
-            {rendering && !loading ? (
-                <div className="absolute right-4 top-4 flex items-center gap-1.5 rounded bg-black/40 px-2 py-1 text-[11px] text-white/60 backdrop-blur-md">
-                    <LoaderCircle className="size-3 animate-spin" /> 实时演色
-                </div>
-            ) : null}
+            {rendering && !loading ? <div className="color-processing-status absolute right-4 top-4 rounded bg-black/48 px-2.5 py-1.5 backdrop-blur-md">正在更新预览…</div> : null}
             {error ? <div className="absolute left-1/2 top-4 -translate-x-1/2 rounded-md border border-red-300/20 bg-red-950/70 px-3 py-2 text-xs text-red-100 backdrop-blur-md">{error}</div> : null}
         </div>
     );
@@ -335,7 +345,12 @@ export function ColorPreviewStage({ source, settings, forceOriginal, onAnalysis,
 function PreviewButton({ title, icon, onClick, active = false }: { title: string; icon: React.ReactNode; onClick: () => void; active?: boolean }) {
     return (
         <Tooltip title={title}>
-            <button type="button" className={`grid size-8 place-items-center rounded transition hover:bg-white/10 hover:text-white ${active ? "bg-[#d7b46a] text-[#18140d] hover:bg-[#e5c783] hover:text-[#18140d]" : ""}`} onClick={onClick} aria-label={title}>
+            <button
+                type="button"
+                className={`grid size-8 place-items-center rounded transition hover:bg-white/10 hover:text-white ${active ? "bg-[#d7b46a] text-[#18140d] hover:bg-[#e5c783] hover:text-[#18140d]" : ""}`}
+                onClick={onClick}
+                aria-label={title}
+            >
                 {icon}
             </button>
         </Tooltip>

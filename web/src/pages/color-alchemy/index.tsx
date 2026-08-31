@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { App, ConfigProvider, Drawer, Modal, Segmented, Slider, Tooltip, theme as antdTheme } from "antd";
-import { ArrowLeft, ClipboardCopy, ClipboardPaste, Download, FileImage, ImagePlus, Images, Layers3, PanelLeft, PanelRight, Redo2, RotateCcw, Save, Undo2, X } from "lucide-react";
+import { App, ConfigProvider, Drawer, Modal, Segmented, Slider, theme as antdTheme } from "antd";
+import { Columns2, Download, ImagePlus, Images, Layers3, Save, SlidersHorizontal, X } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
@@ -12,6 +12,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { CanvasNodeType } from "@/types/canvas";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { ColorControlPanel } from "@/features/color-alchemy/color-control-panel";
+import { ColorAlchemyToolbar } from "@/features/color-alchemy/color-alchemy-toolbar";
 import { ColorPreviewStage } from "@/features/color-alchemy/color-preview-stage";
 import { ColorSourcePanel, type ColorSourcePanelTab } from "@/features/color-alchemy/color-source-panel";
 import { deriveBorrowedColorSettings, recommendColorSettings } from "@/features/color-alchemy/color-engine";
@@ -23,6 +24,7 @@ import type { AnalyzedColor, ColorAlchemySource, ColorExportFormat, ColorPreset,
 import { deleteColorAlchemyDocument, fetchColorAlchemyDocuments, saveColorAlchemyDocument, type ColorAlchemyDocumentTombstone } from "@/services/color-alchemy-api";
 import { lazyRoute } from "@/lib/lazy-route";
 import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
+import "@/features/color-alchemy/color-alchemy.css";
 
 const SETTINGS_CLIPBOARD_KEY = "infinite-canvas:color-alchemy:clipboard";
 const ColorSourceDialog = lazyRoute(() => import("@/features/color-alchemy/color-source-dialog").then(({ ColorSourceDialog: Component }) => ({ default: Component })));
@@ -65,6 +67,7 @@ export default function ColorAlchemyPage() {
     const [dragActive, setDragActive] = useState(false);
     const [cloudReadyUserId, setCloudReadyUserId] = useState("");
     const [syncTick, setSyncTick] = useState(0);
+    const desktopLayout = useDesktopColorLayout();
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const syncedVersionsRef = useRef(new Map<string, string>());
     const syncTasksRef = useRef(new Map<string, Promise<void>>());
@@ -238,7 +241,7 @@ export default function ColorAlchemyPage() {
     const applyPreset = (preset: ColorPreset) => {
         if (!document) return;
         replaceSettings(document.id, applyColorPreset(preset, 100), true);
-        message.success(`已展开秘卷：${preset.name}`);
+        message.success(`已应用色彩秘卷：${preset.name}`);
     };
 
     const applyLut = (lutFile: string | null) => {
@@ -251,7 +254,7 @@ export default function ColorAlchemyPage() {
         if (!document?.analysis) return;
         const result = recommendColorSettings(document.analysis, document.settings);
         replaceSettings(document.id, result.settings, true);
-        message.success(result.notes.length ? `推荐方案已应用：${result.notes.join("、")}` : "推荐方案已应用");
+        message.success("灵彩优化完成");
     };
 
     const addReference = async (file: File) => {
@@ -399,7 +402,7 @@ export default function ColorAlchemyPage() {
 
     return (
         <ConfigProvider theme={{ algorithm: antdTheme.darkAlgorithm, token: { colorPrimary: "#d7b46a", borderRadius: 6, colorBgElevated: "#1b1d20", colorBorder: "rgba(255,255,255,.12)" } }}>
-            <main className="h-full min-h-0 bg-[#101214] text-[#eeeae0]">
+            <main className="color-alchemy-shell h-full min-h-0">
                 <input
                     ref={uploadInputRef}
                     type="file"
@@ -412,105 +415,77 @@ export default function ColorAlchemyPage() {
                     }}
                 />
                 {document ? (
-                    <div className="flex h-full min-h-0 flex-col">
-                        <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-white/8 bg-[#141619]/95 px-3 backdrop-blur-xl lg:px-4">
-                            <div className="flex min-w-0 items-center gap-2">
-                                <Tooltip title="灵彩素材与工具">
-                                    <button type="button" className="grid size-8 place-items-center rounded text-white/55 hover:bg-white/8 hover:text-white lg:hidden" onClick={() => setMobilePanel("sources")} aria-label="打开灵彩素材与工具">
-                                        <PanelLeft className="size-4" />
-                                    </button>
-                                </Tooltip>
-                                <div className="hidden min-w-0 min-[430px]:block">
-                                    <div className="flex items-baseline gap-2">
-                                        <h1 className="text-sm font-semibold tracking-[0.1em]">灵彩</h1>
-                                        <span className="hidden text-[10px] tracking-[0.15em] text-white/28 sm:inline">COLOR ALCHEMY</span>
-                                    </div>
-                                    <div className="max-w-48 truncate text-[10px] text-white/38 sm:max-w-72">{document.source.title}</div>
-                                </div>
-                                {document.source.origin?.projectId ? (
-                                    <Tooltip title="返回画布">
-                                        <button
-                                            type="button"
-                                            className="ml-1 flex size-8 items-center justify-center gap-1.5 rounded text-xs text-white/55 transition hover:bg-white/8 hover:text-white md:w-auto md:px-2"
-                                            onClick={() => void returnToCanvas()}
-                                            disabled={returning}
-                                            aria-label="返回画布"
-                                        >
-                                            <ArrowLeft className="size-3.5" />
-                                            <span className="hidden md:inline">{returning ? "正在返回" : "返回画布"}</span>
-                                        </button>
-                                    </Tooltip>
-                                ) : null}
-                            </div>
-                            <div className="flex items-center gap-0.5">
-                                <TopTool title="撤销" icon={<Undo2 className="size-4" />} disabled={!canUndo} onClick={() => document && undo(document.id)} />
-                                <TopTool title="重做" icon={<Redo2 className="size-4" />} disabled={!canRedo} onClick={() => document && redo(document.id)} />
-                                <TopTool title="原图" icon={<FileImage className="size-4" />} active={originalPinned} onClick={() => setOriginalPinned((value) => !value)} />
-                                <TopTool title="恢复原图" icon={<RotateCcw className="size-4" />} onClick={() => reset(document.id)} />
-                                <span className="mx-1 h-5 w-px bg-white/8" />
-                                <span className="hidden md:contents">
-                                    <TopTool title="复制调色参数" icon={<ClipboardCopy className="size-4" />} onClick={() => void copySettings()} />
-                                    <TopTool title="粘贴调色参数" icon={<ClipboardPaste className="size-4" />} onClick={() => void pasteSettings()} />
-                                </span>
-                                <button
-                                    type="button"
-                                    className="ml-1 flex size-8 items-center justify-center gap-1.5 rounded text-xs font-medium text-white/72 transition hover:bg-white/8 hover:text-white sm:w-auto sm:px-2"
-                                    disabled={saving}
-                                    onClick={() => void saveToAssets()}
-                                    aria-label={saving ? "正在保存入藏卷阁" : "保存入藏卷阁"}
-                                    title={saving ? "正在保存入藏卷阁" : "保存入藏卷阁"}
-                                >
-                                    <Save className="size-3.5" />
-                                    <span className="hidden sm:inline">{saving ? "保存中" : "保存"}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    className="ml-1 flex h-8 items-center gap-1.5 rounded bg-[#d7b46a] px-2.5 text-xs font-semibold text-[#18140d] transition hover:bg-[#e5c783]"
-                                    onClick={() => setExportOpen(true)}
-                                    aria-label="导出调色结果"
-                                >
-                                    <Download className="size-3.5" />
-                                    <span className="hidden sm:inline">导出</span>
-                                </button>
-                                <Tooltip title="专业调色">
-                                    <button type="button" className="ml-1 grid size-8 place-items-center rounded text-white/55 hover:bg-white/8 hover:text-white lg:hidden" onClick={() => setMobilePanel("controls")} aria-label="打开专业调色">
-                                        <PanelRight className="size-4" />
-                                    </button>
-                                </Tooltip>
-                            </div>
-                        </header>
+                    <div className="relative flex h-full min-h-0 flex-col">
+                        <ColorAlchemyToolbar
+                            title={document.source.title}
+                            canReturn={Boolean(document.source.origin?.projectId)}
+                            returning={returning}
+                            canUndo={canUndo}
+                            canRedo={canRedo}
+                            originalPinned={originalPinned}
+                            saving={saving}
+                            onReturn={() => void returnToCanvas()}
+                            onUndo={() => undo(document.id)}
+                            onRedo={() => redo(document.id)}
+                            onCompareStart={() => setOriginalHeld(true)}
+                            onCompareEnd={() => setOriginalHeld(false)}
+                            onToggleOriginal={() => setOriginalPinned((value) => !value)}
+                            onReset={() => reset(document.id)}
+                            onCopy={() => void copySettings()}
+                            onPaste={() => void pasteSettings()}
+                            onSave={() => void saveToAssets()}
+                            onExport={() => setExportOpen(true)}
+                            onOpenSources={() => setMobilePanel("sources")}
+                        />
 
-                        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[238px_minmax(0,1fr)_326px] xl:grid-cols-[252px_minmax(0,1fr)_350px]">
-                            <div className="hidden min-h-0 lg:block">
-                                <ColorSourcePanel
-                                    document={document}
-                                    documents={documents}
-                                    onSelectDocument={selectDocument}
-                                    onUpload={() => uploadInputRef.current?.click()}
-                                    onOpenAssets={() => setSourceDialog("assets")}
-                                    onOpenCanvas={() => setSourceDialog("canvas")}
-                                    onSelectSource={openSource}
-                                    onApplyPreset={applyPreset}
-                                    onApplyLut={applyLut}
-                                    onRemoveDocument={(id) => void discardDocument(id)}
-                                    activeTab={sourcePanelTab}
-                                    onTabChange={setSourcePanelTab}
-                                />
-                            </div>
+                        <div className="grid min-h-0 flex-1 grid-cols-1 pb-[58px] lg:grid-cols-[216px_minmax(0,1fr)_336px] lg:pb-0 xl:grid-cols-[232px_minmax(0,1fr)_360px] 2xl:grid-cols-[240px_minmax(0,1fr)_368px]">
+                            {desktopLayout ? (
+                                <div className="min-h-0">
+                                    <ColorSourcePanel
+                                        document={document}
+                                        documents={documents}
+                                        onSelectDocument={selectDocument}
+                                        onUpload={() => uploadInputRef.current?.click()}
+                                        onOpenAssets={() => setSourceDialog("assets")}
+                                        onOpenCanvas={() => setSourceDialog("canvas")}
+                                        onSelectSource={openSource}
+                                        onApplyPreset={applyPreset}
+                                        onApplyLut={applyLut}
+                                        onRemoveDocument={(id) => void discardDocument(id)}
+                                        activeTab={sourcePanelTab}
+                                        onTabChange={setSourcePanelTab}
+                                    />
+                                </div>
+                            ) : null}
                             <ColorPreviewStage source={document.source} settings={document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} onPickColor={setPickedColor} />
-                            <div className="hidden min-h-0 lg:block">
-                                <ColorControlPanel
-                                    document={document}
-                                    analyzing={!document.analysis}
-                                    onSettingsChange={(settings) => applySettings(settings)}
-                                    onCommit={() => commitSettings(document.id)}
-                                    onApplyAi={applyAiRecommendation}
-                                    onReferenceUpload={(file) => void addReference(file)}
-                                    onBorrowColors={borrowColors}
-                                    pickedColor={pickedColor}
-                                />
-                            </div>
+                            {desktopLayout ? (
+                                <div className="min-h-0">
+                                    <ColorControlPanel
+                                        document={document}
+                                        analyzing={!document.analysis}
+                                        onSettingsChange={(settings) => applySettings(settings)}
+                                        onCommit={() => commitSettings(document.id)}
+                                        onApplyAi={applyAiRecommendation}
+                                        onApplyPreset={applyPreset}
+                                        onReferenceUpload={(file) => void addReference(file)}
+                                        onBorrowColors={borrowColors}
+                                        pickedColor={pickedColor}
+                                    />
+                                </div>
+                            ) : null}
                         </div>
+                        {!desktopLayout ? (
+                            <MobileColorDock
+                                saving={saving}
+                                originalActive={forceOriginal}
+                                onSources={() => setMobilePanel("sources")}
+                                onCompareStart={() => setOriginalHeld(true)}
+                                onCompareEnd={() => setOriginalHeld(false)}
+                                onControls={() => setMobilePanel("controls")}
+                                onSave={() => void saveToAssets()}
+                                onExport={() => setExportOpen(true)}
+                            />
+                        ) : null}
                     </div>
                 ) : (
                     <EmptyColorAlchemy
@@ -529,9 +504,17 @@ export default function ColorAlchemyPage() {
                         <ColorSourceDialog open initialTab={sourceDialog} onSelect={openSource} onClose={() => setSourceDialog(null)} />
                     </Suspense>
                 ) : null}
-                {document ? (
+                {document && !desktopLayout ? (
                     <>
-                        <Drawer title="灵彩素材与工具" placement="left" size={290} open={mobilePanel === "sources"} onClose={() => setMobilePanel(null)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
+                        <Drawer
+                            title="灵彩素材与工具"
+                            placement="bottom"
+                            size="min(86dvh, 760px)"
+                            rootClassName="color-alchemy-mobile-drawer"
+                            open={mobilePanel === "sources"}
+                            onClose={() => setMobilePanel(null)}
+                            styles={{ body: { padding: 0, overflow: "hidden" } }}
+                        >
                             <ColorSourcePanel
                                 document={document}
                                 documents={documents}
@@ -553,13 +536,22 @@ export default function ColorAlchemyPage() {
                                 onTabChange={setSourcePanelTab}
                             />
                         </Drawer>
-                        <Drawer title="专业调色" placement="right" size="min(340px, calc(100vw - 12px))" open={mobilePanel === "controls"} onClose={() => setMobilePanel(null)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
+                        <Drawer
+                            title="灵彩设计"
+                            placement="bottom"
+                            size="min(92dvh, 820px)"
+                            rootClassName="color-alchemy-mobile-drawer"
+                            open={mobilePanel === "controls"}
+                            onClose={() => setMobilePanel(null)}
+                            styles={{ body: { padding: 0, overflow: "hidden" } }}
+                        >
                             <ColorControlPanel
                                 document={document}
                                 analyzing={!document.analysis}
                                 onSettingsChange={(settings) => applySettings(settings)}
                                 onCommit={() => commitSettings(document.id)}
                                 onApplyAi={applyAiRecommendation}
+                                onApplyPreset={applyPreset}
                                 onReferenceUpload={(file) => void addReference(file)}
                                 onBorrowColors={borrowColors}
                                 pickedColor={pickedColor}
@@ -587,7 +579,7 @@ export default function ColorAlchemyPage() {
                                     <span>{Math.round(exportProgress * 100)}%</span>
                                 </div>
                                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
-                                    <div className="h-full rounded-full bg-[#d7b46a] transition-[width] duration-150" style={{ width: `${Math.max(4, exportProgress * 100)}%` }} />
+                                    <div className="h-full w-full origin-left rounded-full bg-[#d7b46a] transition-transform duration-150" style={{ transform: `scaleX(${Math.max(0.04, exportProgress)})` }} />
                                 </div>
                                 <button type="button" className="mt-3 inline-flex items-center gap-1.5 text-xs text-white/55 transition hover:text-white" onClick={() => exportAbortRef.current?.abort()}>
                                     <X className="size-3.5" />
@@ -651,7 +643,7 @@ function EmptyColorAlchemy({
 }) {
     return (
         <div
-            className="relative flex h-full items-center justify-center overflow-hidden bg-[#101214] px-5 py-8"
+            className="color-alchemy-empty relative flex h-full items-center justify-center overflow-hidden px-5 py-8"
             onDragEnter={(event) => {
                 event.preventDefault();
                 onDragActive(true);
@@ -667,48 +659,105 @@ function EmptyColorAlchemy({
                 if (file) onDrop(file);
             }}
         >
-            <div className="absolute inset-0 bg-cover bg-center opacity-25" style={{ backgroundImage: "url('/images/ref/nebula-vortex.webp')" }} />
-            <div className="absolute inset-0 bg-[#101214]/72" />
-            <section className={`relative w-full max-w-4xl border border-white/10 bg-black/18 px-6 py-14 text-center backdrop-blur-xl transition sm:px-12 sm:py-20 ${dragActive ? "border-[#d7b46a]/70 bg-[#d7b46a]/8" : ""}`}>
-                <div className="mx-auto mb-7 grid size-14 place-items-center rounded-md border border-white/12 bg-white/5 text-[#dfbd78]">
-                    <ImagePlus className="size-6" />
+            <section className={`color-empty-dropzone relative ${dragActive ? "is-dragging" : ""}`}>
+                <div className="mx-auto mb-6 grid size-12 place-items-center rounded-md border border-white/10 bg-white/[0.035] text-[#d7b46a]">
+                    <ImagePlus className="size-5" />
                 </div>
-                <h1 className="text-2xl font-semibold tracking-normal text-[#f2eee5] sm:text-3xl">让色彩重新定义你的画面</h1>
-                <p className="mt-3 text-sm text-white/42">上传一张图片，让灵感从色彩开始。</p>
-                <div className="mt-8 flex flex-wrap justify-center gap-2.5">
-                    <button type="button" className="flex h-10 items-center gap-2 rounded bg-[#d7b46a] px-4 text-sm font-semibold text-[#18140d] transition hover:bg-[#e5c783]" disabled={uploading} onClick={onUpload}>
+                <h1 className="text-2xl font-semibold text-[#f2eee5]">选择一张图片，开始灵彩</h1>
+                <p className="mt-2 text-sm text-white/40">从本地、藏卷阁或画布载入。</p>
+                <div className="mt-7 flex flex-wrap justify-center gap-2">
+                    <button type="button" className="flex h-10 items-center gap-2 rounded bg-[#d7b46a] px-4 text-sm font-semibold text-[#18140d] transition hover:bg-[#e2c37d]" disabled={uploading} onClick={onUpload}>
                         <ImagePlus className="size-4" />
-                        {uploading ? "正在添加" : "添加图片"}
+                        {uploading ? "正在载入" : "选择图片"}
                     </button>
-                    <button type="button" className="flex h-10 items-center gap-2 rounded border border-white/12 bg-white/5 px-4 text-sm text-white/68 transition hover:bg-white/9 hover:text-white" onClick={onAssets}>
+                    <button type="button" className="flex h-10 items-center gap-2 rounded border border-white/10 px-4 text-sm text-white/62 transition hover:bg-white/5 hover:text-white" onClick={onAssets}>
                         <Images className="size-4" />
-                        从作品库选择
+                        藏卷阁
                     </button>
-                    <button type="button" className="flex h-10 items-center gap-2 rounded border border-white/12 bg-white/5 px-4 text-sm text-white/68 transition hover:bg-white/9 hover:text-white" onClick={onCanvas}>
+                    <button type="button" className="flex h-10 items-center gap-2 rounded border border-white/10 px-4 text-sm text-white/62 transition hover:bg-white/5 hover:text-white" onClick={onCanvas}>
                         <Layers3 className="size-4" />
-                        从画布导入
+                        无限画布
                     </button>
                 </div>
-                <div className="mt-7 text-[11px] tracking-[0.12em] text-white/25">也可将图片拖入此处</div>
+                <div className="mt-6 text-[11px] text-white/24">也可将图片拖入此处</div>
             </section>
         </div>
     );
 }
 
-function TopTool({ title, icon, disabled, active, onClick }: { title: string; icon: React.ReactNode; disabled?: boolean; active?: boolean; onClick: () => void }) {
+function MobileColorDock({
+    saving,
+    originalActive,
+    onSources,
+    onCompareStart,
+    onCompareEnd,
+    onControls,
+    onSave,
+    onExport,
+}: {
+    saving: boolean;
+    originalActive: boolean;
+    onSources: () => void;
+    onCompareStart: () => void;
+    onCompareEnd: () => void;
+    onControls: () => void;
+    onSave: () => void;
+    onExport: () => void;
+}) {
+    const endCompare = (target?: HTMLElement, pointerId?: number) => {
+        if (target && pointerId !== undefined && target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
+        onCompareEnd();
+    };
+
     return (
-        <Tooltip title={title}>
+        <nav className="color-mobile-dock lg:hidden" aria-label="灵彩快捷操作">
+            <button type="button" onClick={onSources}>
+                <Images className="size-4" />
+                素材
+            </button>
             <button
                 type="button"
-                disabled={disabled}
-                className={`grid size-8 place-items-center rounded transition ${active ? "bg-white/12 text-white" : "text-white/52 hover:bg-white/8 hover:text-white"} disabled:cursor-not-allowed disabled:opacity-22`}
-                onClick={onClick}
-                aria-label={title}
+                className={originalActive ? "is-primary" : ""}
+                title="按住查看原图"
+                onPointerDown={(event) => {
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    onCompareStart();
+                }}
+                onPointerUp={(event) => endCompare(event.currentTarget, event.pointerId)}
+                onPointerCancel={(event) => endCompare(event.currentTarget, event.pointerId)}
+                onLostPointerCapture={onCompareEnd}
             >
-                {icon}
+                <Columns2 className="size-4" />
+                对比
             </button>
-        </Tooltip>
+            <button type="button" onClick={onControls}>
+                <SlidersHorizontal className="size-4" />
+                调整
+            </button>
+            <button type="button" disabled={saving} onClick={onSave}>
+                <Save className="size-4" />
+                {saving ? "保存中" : "保存"}
+            </button>
+            <button type="button" className="is-primary" onClick={onExport}>
+                <Download className="size-4" />
+                导出
+            </button>
+        </nav>
     );
+}
+
+function useDesktopColorLayout() {
+    const [desktop, setDesktop] = useState(() => (typeof window === "undefined" ? true : window.matchMedia("(min-width: 1024px)").matches));
+
+    useEffect(() => {
+        const query = window.matchMedia("(min-width: 1024px)");
+        const update = () => setDesktop(query.matches);
+        update();
+        query.addEventListener("change", update);
+        return () => query.removeEventListener("change", update);
+    }, []);
+
+    return desktop;
 }
 
 function stripExtension(name: string) {

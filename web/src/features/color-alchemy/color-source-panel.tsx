@@ -43,9 +43,9 @@ export function ColorSourcePanel({
     const presets = COLOR_PRESETS.filter((preset) => preset.category === category);
 
     return (
-        <aside className="flex h-full min-h-0 flex-col border-r border-white/8 bg-[#151719]/92 text-[#eeeae0] backdrop-blur-xl">
-            <div className="border-b border-white/8 px-4 py-3">
-                <div className="text-xs font-medium tracking-[0.12em] text-white/45">灵彩素材与工具</div>
+        <aside className="color-alchemy-source-panel flex h-full min-h-0 flex-col border-r border-white/8 text-[#eeeae0]">
+            <div className="flex h-11 shrink-0 items-center border-b border-white/8 px-4">
+                <div className="text-xs font-medium text-white/48">素材与风格</div>
             </div>
             <Tabs
                 className="color-alchemy-side-tabs min-h-0 flex-1 px-3"
@@ -56,9 +56,9 @@ export function ColorSourcePanel({
                         key: "sources",
                         label: "素材",
                         children: (
-                            <div className="thin-scrollbar h-[calc(100vh-150px)] space-y-5 overflow-y-auto pb-5">
+                            <div className="thin-scrollbar h-full space-y-5 overflow-y-auto pb-5">
                                 <PanelSection title="当前图片">
-                                    <div className="group relative overflow-hidden rounded-md border border-[#d7b46a]/40 bg-white/5" title={document.source.title}>
+                                    <div className="group relative overflow-hidden rounded-md border border-[#d7b46a]/42 bg-white/[0.035]" title={document.source.title}>
                                         <div className="aspect-[4/3] overflow-hidden bg-black/20">
                                             <ColorSourceImage source={document.source} alt={document.source.title} className="h-full w-full object-cover" />
                                         </div>
@@ -155,37 +155,26 @@ export function ColorSourcePanel({
                         key: "presets",
                         label: "色彩秘卷",
                         children: (
-                            <div className="thin-scrollbar h-[calc(100vh-150px)] overflow-y-auto pb-5">
-                                <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
+                            <div className="thin-scrollbar h-full overflow-y-auto pb-5">
+                                <div className="mb-3 flex gap-3 overflow-x-auto pb-1">
                                     {COLOR_PRESET_CATEGORIES.map((item) => (
-                                        <button
-                                            key={item}
-                                            type="button"
-                                            className={`shrink-0 rounded px-2 py-1 text-[11px] transition ${category === item ? "bg-[#d7b46a] text-[#17130c]" : "bg-white/5 text-white/55 hover:bg-white/10 hover:text-white/85"}`}
-                                            onClick={() => setCategory(item)}
-                                        >
+                                        <button key={item} type="button" className={`color-source-category ${category === item ? "is-active" : ""}`} onClick={() => setCategory(item)}>
                                             {item}
                                         </button>
                                     ))}
                                 </div>
                                 <div className="space-y-3">
                                     {presets.map((preset) => (
-                                        <button
-                                            key={preset.id}
-                                            type="button"
-                                            className={`group relative block w-full overflow-hidden rounded-md border text-left transition ${document.settings.preset === preset.id ? "border-[#d7b46a]/80" : "border-white/8 hover:border-white/20"}`}
-                                            onClick={() => onApplyPreset(preset)}
-                                        >
-                                            <div className="relative aspect-[16/9] overflow-hidden bg-black/30">
+                                        <button key={preset.id} type="button" className={`color-preset-card group block w-full ${document.settings.preset === preset.id ? "is-active" : ""}`} onClick={() => onApplyPreset(preset)}>
+                                            <div className="aspect-[16/9] overflow-hidden bg-black/30">
                                                 <ColorSourceImage source={document.source} alt="" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]" style={{ filter: preset.previewFilter }} />
-                                                <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/5 to-transparent" />
-                                                <div className="absolute inset-x-3 bottom-2.5">
-                                                    <div className="flex items-center gap-2 text-sm font-medium text-white">
-                                                        <span className="size-2 rounded-full" style={{ background: preset.accent }} />
-                                                        {preset.name}
-                                                    </div>
-                                                    <div className="mt-1 line-clamp-1 text-[10px] text-white/55">{preset.description}</div>
+                                            </div>
+                                            <div className="px-3 py-2.5">
+                                                <div className="flex items-center gap-2 text-xs font-medium text-white/82">
+                                                    <span className="size-2 rounded-full" style={{ background: preset.accent }} />
+                                                    {preset.name}
                                                 </div>
+                                                <div className="mt-1 line-clamp-1 text-[10px] text-white/38">{preset.description}</div>
                                             </div>
                                         </button>
                                     ))}
