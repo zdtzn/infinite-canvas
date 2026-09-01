@@ -1,15 +1,15 @@
 @layer components {
     .dep-page {
-        --dep-space: #050a12;
-        --dep-space-raised: #09111d;
-        --dep-space-soft: #0d1827;
-        --dep-gold: #d9b96f;
-        --dep-gold-bright: #f0dba0;
-        --dep-gold-muted: rgb(217 185 111 / 42%);
-        --dep-blue: #78b5dc;
-        --dep-white: #eef4f8;
-        --dep-muted: #8d9bab;
-        --dep-red: #c94732;
+        --dep-space: #07070a;
+        --dep-space-raised: #0d0e13;
+        --dep-space-soft: #14151b;
+        --dep-gold: #c9a86a;
+        --dep-gold-bright: #f2dca2;
+        --dep-gold-muted: rgb(201 168 106 / 42%);
+        --dep-blue: #6d91aa;
+        --dep-white: #f0eee8;
+        --dep-muted: #96949c;
+        --dep-red: #d8402a;
         height: 100%;
         min-height: 100%;
         overflow-x: hidden;
@@ -17,17 +17,17 @@
         overscroll-behavior-y: contain;
         scrollbar-gutter: stable;
         color: var(--dep-white);
-        background: radial-gradient(circle at 50% -15%, rgb(42 76 116 / 22%), transparent 34rem), linear-gradient(180deg, #060b13 0%, #05080e 60%, #07090d 100%);
+        background: radial-gradient(circle at 50% -12%, rgb(201 168 106 / 10%), transparent 32rem), radial-gradient(circle at 86% 18%, rgb(79 117 145 / 8%), transparent 28rem), linear-gradient(180deg, #08090d 0%, #07070a 58%, #0a090a 100%);
     }
 
     .dep-hero {
         position: relative;
         display: grid;
-        height: clamp(36rem, 58dvh, 47rem);
-        min-height: 36rem;
+        height: clamp(42rem, 72dvh, 54rem);
+        min-height: 42rem;
         overflow: hidden;
         isolation: isolate;
-        background: #03070d;
+        background: #050507;
     }
 
     .dep-hero-art,
@@ -41,12 +41,13 @@
     }
 
     .dep-hero-art {
-        inset: -2.5%;
-        z-index: -6;
-        width: 105%;
-        height: 105%;
+        inset: -1.5%;
+        z-index: 0;
+        width: 103%;
+        height: 103%;
         object-fit: cover;
-        object-position: center 36%;
+        object-position: center 34%;
+        filter: brightness(1.06) saturate(1.08) contrast(1.03);
         transform: scale(1.025) translate3d(0, 0, 0);
         transition: transform 1.2s cubic-bezier(0.16, 1, 0.3, 1);
         animation: dep-hero-breathe 30s ease-in-out infinite alternate;
@@ -59,16 +60,16 @@
 
     .dep-hero-depth {
         inset: 0;
-        z-index: -5;
+        z-index: 1;
         background:
-            linear-gradient(180deg, rgb(1 5 10 / 58%) 0%, rgb(2 7 14 / 10%) 26%, rgb(3 8 15 / 24%) 57%, rgb(3 7 13 / 92%) 100%), radial-gradient(circle at 50% 34%, transparent 0 15rem, rgb(2 6 12 / 16%) 27rem, rgb(2 5 10 / 48%) 75%),
-            linear-gradient(90deg, rgb(2 6 12 / 46%), transparent 25% 75%, rgb(2 6 12 / 46%));
+            linear-gradient(180deg, rgb(2 3 7 / 38%) 0%, rgb(3 4 8 / 5%) 24%, rgb(4 5 9 / 17%) 58%, rgb(5 5 8 / 94%) 100%), radial-gradient(circle at 50% 34%, transparent 0 17rem, rgb(4 5 9 / 10%) 30rem, rgb(3 3 6 / 40%) 78%),
+            linear-gradient(90deg, rgb(3 3 7 / 38%), transparent 24% 76%, rgb(3 3 7 / 38%));
     }
 
     .dep-star-field {
         inset: -10%;
-        z-index: -4;
-        opacity: 0.44;
+        z-index: 2;
+        opacity: 0.36;
         background-image: radial-gradient(circle, rgb(238 244 248 / 72%) 0 1px, transparent 1.5px), radial-gradient(circle, rgb(217 185 111 / 68%) 0 1px, transparent 1.7px);
         background-position:
             0 0,
@@ -82,8 +83,8 @@
 
     .dep-space-cracks {
         inset: 0;
-        z-index: -3;
-        opacity: 0.25;
+        z-index: 3;
+        opacity: 0.2;
         background-image: linear-gradient(118deg, transparent 0 17%, rgb(120 181 220 / 36%) 17.1%, transparent 17.35% 100%), linear-gradient(64deg, transparent 0 78%, rgb(217 185 111 / 26%) 78.1%, transparent 78.32% 100%);
         mask-image: linear-gradient(180deg, #000, transparent 72%);
         transition: opacity 600ms ease;
@@ -96,7 +97,7 @@
     .dep-law-orbit {
         top: 34%;
         left: 50%;
-        z-index: -2;
+        z-index: 4;
         border: 1px solid rgb(217 185 111 / 24%);
         border-radius: 50%;
         opacity: 0.48;
@@ -142,7 +143,7 @@
 
     .dep-hero-grain {
         inset: 0;
-        z-index: 5;
+        z-index: 8;
         opacity: 0.045;
         background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.66'/%3E%3C/svg%3E");
         mix-blend-mode: soft-light;
@@ -309,20 +310,89 @@
 
     .dep-hero-center {
         display: flex;
-        width: min(100% - 2rem, 52rem);
+        width: min(100% - 2rem, 58rem);
         align-items: center;
         justify-self: center;
         align-self: center;
         flex-direction: column;
-        padding-top: 1.5rem;
+        padding-top: 2.25rem;
         text-align: center;
+    }
+
+    .dep-imperial-crest {
+        position: relative;
+        display: grid;
+        width: 6.25rem;
+        aspect-ratio: 1;
+        place-items: center;
+        margin-bottom: 0.35rem;
+        isolation: isolate;
+    }
+
+    .dep-imperial-crest::before,
+    .dep-imperial-crest::after {
+        position: absolute;
+        border-radius: 50%;
+        content: "";
+    }
+
+    .dep-imperial-crest::before {
+        inset: 0.05rem;
+        z-index: -1;
+        border: 1px solid rgb(242 220 162 / 48%);
+        box-shadow:
+            0 0 0 0.34rem rgb(201 168 106 / 5%),
+            0 0 2.4rem rgb(201 168 106 / 22%);
+    }
+
+    .dep-imperial-crest::after {
+        inset: -0.48rem;
+        z-index: -2;
+        border: 1px dashed rgb(242 220 162 / 20%);
+        animation: dep-crest-turn 32s linear infinite;
+    }
+
+    .dep-imperial-crest-aura {
+        position: absolute;
+        inset: -0.55rem;
+        z-index: -2;
+        width: calc(100% + 1.1rem);
+        height: calc(100% + 1.1rem);
+        border-radius: 50%;
+        object-fit: cover;
+        opacity: 0.38;
+        filter: saturate(0.86) contrast(1.06);
+        mix-blend-mode: screen;
+    }
+
+    .dep-imperial-crest-frame {
+        display: grid;
+        width: 5.15rem;
+        aspect-ratio: 1;
+        place-items: center;
+        overflow: hidden;
+        border: 1px solid rgb(242 220 162 / 62%);
+        border-radius: 50%;
+        background: #0a0909;
+        box-shadow:
+            inset 0 0 0 0.24rem rgb(9 8 8 / 72%),
+            inset 0 0 1.2rem rgb(201 168 106 / 15%),
+            0 0.8rem 2.1rem rgb(0 0 0 / 36%);
+    }
+
+    .dep-imperial-crest-frame img {
+        width: 100%;
+        height: 100%;
+        border-radius: inherit;
+        object-fit: cover;
+        transform: scale(0.94);
     }
 
     .dep-arrival-mark {
         display: inline-flex;
         align-items: center;
         gap: 0.85rem;
-        color: rgb(217 185 111 / 88%);
+        color: rgb(242 220 162 / 90%);
         font-size: 0.72rem;
         font-weight: 700;
         line-height: 1rem;
@@ -342,14 +412,14 @@
         position: relative;
         display: grid;
         place-items: center;
-        margin-top: 0.55rem;
+        margin-top: 0.38rem;
     }
 
     .dep-emperor-sigil {
         position: absolute;
-        width: 12rem;
-        height: 12rem;
-        color: rgb(217 185 111 / 7%);
+        width: 14rem;
+        height: 14rem;
+        color: rgb(242 220 162 / 9%);
         stroke-width: 0.35;
         transform: rotate(-9deg);
     }
@@ -357,14 +427,14 @@
     .dep-emperor-title {
         position: relative;
         margin: 0;
-        color: #f5e4b6;
-        font-size: 6.5rem;
+        color: #f7e7b9;
+        font-size: 7.25rem;
         font-weight: 700;
         line-height: 0.92;
         text-shadow:
             0 2px 2px rgb(0 0 0 / 70%),
-            0 0 20px rgb(217 185 111 / 28%),
-            0 0 52px rgb(84 146 190 / 16%);
+            0 0 22px rgb(201 168 106 / 34%),
+            0 0 56px rgb(94 136 166 / 15%);
         transition: text-shadow 600ms ease;
     }
 
@@ -376,25 +446,34 @@
     }
 
     .dep-emperor-rank {
-        margin: 0.9rem 0 0;
+        margin: 0.78rem 0 0;
         color: var(--dep-white);
-        font-size: 1.15rem;
+        font-size: 1.25rem;
         font-weight: 650;
         line-height: 1.5rem;
     }
 
     .dep-emperor-state {
-        margin: 0.4rem 0 0;
-        color: rgb(238 244 248 / 68%);
-        font-size: 0.88rem;
-        line-height: 1.4rem;
+        margin: 0.48rem 0 0;
+        color: rgb(242 220 162 / 92%);
+        font-size: 1.02rem;
+        font-weight: 650;
+        line-height: 1.55rem;
+        text-shadow: 0 0 22px rgb(201 168 106 / 22%);
+    }
+
+    .dep-emperor-decree {
+        margin: 0.28rem 0 0;
+        color: rgb(240 238 232 / 64%);
+        font-size: 0.78rem;
+        line-height: 1.35rem;
     }
 
     .dep-hero-metrics {
         display: grid;
         width: min(100%, 35rem);
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        margin: 1.45rem 0 0;
+        margin: 1.25rem 0 0;
         padding: 0.95rem 0;
         border-top: 1px solid rgb(217 185 111 / 22%);
         border-bottom: 1px solid rgb(217 185 111 / 16%);
@@ -436,7 +515,7 @@
     }
 
     .dep-create-action {
-        margin-top: 1.15rem;
+        margin-top: 1.05rem;
         padding: 0.75rem 1.15rem;
         border: 1px solid rgb(242 116 88 / 42%);
         color: #fff3ed !important;
@@ -472,7 +551,7 @@
     .dep-domain {
         width: min(100% - 3rem, 88rem);
         margin: 0 auto;
-        padding: 3.25rem 0 5rem;
+        padding: 3.5rem 0 5rem;
     }
 
     .dep-notice {
@@ -542,8 +621,8 @@
     .dep-journey-grid {
         display: grid;
         grid-template-columns: repeat(6, minmax(0, 1fr));
-        gap: 0.7rem;
-        margin: 1.7rem 0 0;
+        gap: 0.8rem;
+        margin: 1.85rem 0 0;
         padding: 0;
         list-style: none;
     }
@@ -551,15 +630,18 @@
     .dep-journey-grid li {
         position: relative;
         display: grid;
-        min-height: 8.6rem;
+        min-height: 11.2rem;
         min-width: 0;
         align-content: center;
         justify-items: center;
         overflow: hidden;
-        padding: 1rem 0.55rem 0.75rem;
-        border: 1px solid rgb(138 159 184 / 12%);
+        padding: 1.15rem 0.55rem 0.85rem;
+        border: 1px solid rgb(201 168 106 / 13%);
         border-radius: 0.4rem;
-        background: linear-gradient(180deg, rgb(13 24 39 / 62%), rgb(6 13 22 / 78%)), radial-gradient(circle at 50% 0%, rgb(120 181 220 / 6%), transparent 54%);
+        background: radial-gradient(circle at 50% 24%, rgb(201 168 106 / 8%), transparent 38%), linear-gradient(180deg, rgb(17 17 22 / 88%), rgb(8 8 11 / 96%));
+        box-shadow:
+            inset 0 1px rgb(255 255 255 / 2%),
+            0 0.9rem 2.3rem rgb(0 0 0 / 16%);
         text-align: center;
         transition:
             border-color 220ms ease,
@@ -571,17 +653,20 @@
     .dep-journey-grid li::before {
         position: absolute;
         top: 0;
-        right: 18%;
-        left: 18%;
+        right: 12%;
+        left: 12%;
         height: 1px;
         content: "";
-        background: linear-gradient(90deg, transparent, rgb(217 185 111 / 24%), transparent);
+        background: linear-gradient(90deg, transparent, rgb(242 220 162 / 38%), transparent);
     }
 
     .dep-journey-grid li:hover {
-        border-color: rgb(217 185 111 / 24%);
-        background-color: rgb(13 24 39 / 88%);
-        transform: translateY(-2px);
+        border-color: rgb(201 168 106 / 34%);
+        background-color: rgb(20 19 22 / 96%);
+        box-shadow:
+            inset 0 1px rgb(255 255 255 / 4%),
+            0 1.15rem 2.8rem rgb(0 0 0 / 26%);
+        transform: translateY(-3px);
     }
 
     .dep-journey-index {
@@ -597,47 +682,79 @@
     .dep-realm-seal {
         position: relative;
         display: grid;
-        width: 3.8rem;
+        width: 5.75rem;
         aspect-ratio: 1;
         place-items: center;
-        border: 1px solid rgb(217 185 111 / 26%);
+        isolation: isolate;
+    }
+
+    .dep-realm-seal::before,
+    .dep-realm-seal::after {
+        position: absolute;
         border-radius: 50%;
-        color: rgb(217 185 111 / 68%);
-        background: radial-gradient(circle, rgb(217 185 111 / 9%), rgb(7 15 25 / 94%) 68%);
-        box-shadow:
-            inset 0 0 0 0.38rem rgb(217 185 111 / 3%),
-            0 0.65rem 1.5rem rgb(0 0 0 / 20%);
+        content: "";
     }
 
     .dep-realm-seal::before {
-        position: absolute;
-        inset: 0.72rem;
-        border: 1px solid rgb(120 181 220 / 13%);
-        border-radius: 0.2rem;
-        content: "";
-        transform: rotate(45deg);
+        inset: 0.28rem;
+        z-index: -1;
+        border: 1px solid rgb(201 168 106 / 32%);
+        box-shadow:
+            inset 0 0 0 0.28rem rgb(201 168 106 / 3%),
+            0 0.75rem 1.8rem rgb(0 0 0 / 28%);
     }
 
     .dep-realm-seal::after {
-        position: absolute;
-        inset: -0.28rem;
-        border: 1px dashed rgb(217 185 111 / 13%);
-        border-radius: 50%;
-        content: "";
+        inset: 0;
+        z-index: -2;
+        border: 1px dashed rgb(201 168 106 / 16%);
     }
 
-    .dep-realm-seal-icon {
-        position: relative;
-        z-index: 1;
-        width: 1.25rem;
-        height: 1.25rem;
-        stroke-width: 1.35;
+    .dep-realm-aura {
+        position: absolute;
+        inset: -0.25rem;
+        z-index: -2;
+        width: calc(100% + 0.5rem);
+        height: calc(100% + 0.5rem);
+        border-radius: 50%;
+        object-fit: cover;
+        opacity: 0.2;
+        filter: saturate(0.62) contrast(1.04);
+        mix-blend-mode: screen;
+    }
+
+    .dep-realm-medal-frame {
+        display: grid;
+        width: 4.75rem;
+        aspect-ratio: 1;
+        place-items: center;
+        overflow: hidden;
+        border: 1px solid rgb(201 168 106 / 44%);
+        border-radius: 50%;
+        background: #0b0a0b;
+        box-shadow:
+            inset 0 0 0 0.2rem rgb(8 8 10 / 72%),
+            inset 0 0 1rem rgb(201 168 106 / 8%);
+    }
+
+    .dep-realm-medal {
+        width: 100%;
+        height: 100%;
+        border-radius: inherit;
+        object-fit: cover;
+        opacity: 0.82;
+        filter: saturate(0.72) brightness(0.9);
+        transform: scale(0.94);
+        transition:
+            filter 220ms ease,
+            opacity 220ms ease,
+            transform 220ms ease;
     }
 
     .dep-journey-grid strong {
-        margin-top: 0.7rem;
-        color: rgb(238 244 248 / 76%);
-        font-size: 0.8rem;
+        margin-top: 0.68rem;
+        color: rgb(240 238 232 / 82%);
+        font-size: 0.84rem;
         font-weight: 600;
         line-height: 1.1rem;
         white-space: nowrap;
@@ -645,7 +762,7 @@
 
     .dep-journey-grid small {
         margin-top: 0.22rem;
-        color: rgb(141 155 171 / 58%);
+        color: rgb(150 148 156 / 66%);
         font-size: 0.62rem;
         line-height: 1rem;
         white-space: nowrap;
@@ -656,7 +773,7 @@
         align-items: center;
         gap: 0.3rem;
         margin-top: 0.42rem;
-        color: rgb(217 185 111 / 48%);
+        color: rgb(201 168 106 / 58%);
         font-size: 0.58rem;
         line-height: 0.9rem;
         white-space: nowrap;
@@ -672,11 +789,12 @@
     }
 
     .dep-journey-grid li.is-current {
-        border-color: rgb(217 185 111 / 42%);
-        background: linear-gradient(180deg, rgb(31 31 31 / 78%), rgb(9 14 21 / 94%)), radial-gradient(circle at 50% 0%, rgb(217 185 111 / 13%), transparent 58%);
+        border-color: rgb(242 220 162 / 54%);
+        background: radial-gradient(circle at 50% 24%, rgb(242 220 162 / 17%), transparent 42%), linear-gradient(180deg, rgb(31 27 20 / 92%), rgb(10 9 10 / 98%));
         box-shadow:
-            inset 0 1px rgb(240 219 160 / 12%),
-            0 1rem 2.6rem rgb(0 0 0 / 24%);
+            inset 0 1px rgb(255 239 193 / 18%),
+            0 1rem 2.8rem rgb(0 0 0 / 30%),
+            0 0 2.4rem rgb(201 168 106 / 9%);
     }
 
     .dep-journey-grid li.is-current .dep-journey-index,
@@ -687,10 +805,26 @@
     }
 
     .dep-journey-grid li.is-current .dep-realm-seal {
-        border-color: rgb(217 185 111 / 64%);
-        color: rgb(217 185 111 / 92%);
-        background: radial-gradient(circle, rgb(217 185 111 / 17%), rgb(8 15 24 / 96%) 68%);
         animation: dep-current-realm 3.8s ease-in-out infinite;
+    }
+
+    .dep-journey-grid li.is-current .dep-realm-aura {
+        opacity: 0.52;
+        filter: saturate(1.05) contrast(1.08);
+    }
+
+    .dep-journey-grid li.is-current .dep-realm-medal-frame {
+        border-color: rgb(242 220 162 / 78%);
+        box-shadow:
+            inset 0 0 0 0.2rem rgb(8 8 10 / 62%),
+            inset 0 0 1.35rem rgb(201 168 106 / 16%),
+            0 0 1.3rem rgb(201 168 106 / 20%);
+    }
+
+    .dep-journey-grid li.is-current .dep-realm-medal {
+        opacity: 1;
+        filter: saturate(1.08) brightness(1.04) drop-shadow(0 0 0.55rem rgb(242 220 162 / 28%));
+        transform: scale(0.98);
     }
 
     .dep-core-grid {
@@ -703,10 +837,12 @@
     .dep-module {
         min-width: 0;
         overflow: hidden;
-        border: 1px solid rgb(138 159 184 / 15%);
+        border: 1px solid rgb(201 168 106 / 14%);
         border-radius: 0.5rem;
-        background: linear-gradient(180deg, rgb(13 24 39 / 88%), rgb(7 14 24 / 94%)), radial-gradient(circle at 20% 0%, rgb(120 181 220 / 8%), transparent 45%);
-        box-shadow: 0 22px 60px rgb(0 0 0 / 22%);
+        background: radial-gradient(circle at 18% 0%, rgb(201 168 106 / 6%), transparent 42%), linear-gradient(180deg, rgb(17 18 23 / 96%), rgb(9 9 13 / 98%));
+        box-shadow:
+            inset 0 1px rgb(255 255 255 / 2%),
+            0 22px 60px rgb(0 0 0 / 24%);
     }
 
     .dep-module-heading {
@@ -742,7 +878,7 @@
         overflow: hidden;
         flex-direction: column;
         border-right: 1px solid rgb(238 244 248 / 9%);
-        background: radial-gradient(circle at 50% 44%, rgb(217 185 111 / 12%), transparent 31%), linear-gradient(180deg, rgb(8 17 29 / 66%), rgb(5 12 21 / 92%));
+        background: radial-gradient(circle at 50% 44%, rgb(201 168 106 / 15%), transparent 31%), linear-gradient(180deg, rgb(15 15 19 / 78%), rgb(7 7 10 / 96%));
     }
 
     .dep-law-core-kicker {
@@ -920,10 +1056,10 @@
         width: 2rem;
         height: 2rem;
         place-items: center;
-        border: 1px solid rgb(120 181 220 / 18%);
+        border: 1px solid rgb(201 168 106 / 18%);
         border-radius: 0.35rem;
         color: rgb(217 185 111 / 84%);
-        background: rgb(120 181 220 / 5%);
+        background: rgb(201 168 106 / 5%);
     }
 
     .dep-capability-copy {
@@ -964,7 +1100,7 @@
         width: 100%;
         height: 100%;
         border-radius: inherit;
-        background: linear-gradient(90deg, rgb(120 181 220 / 42%), rgb(217 185 111 / 82%));
+        background: linear-gradient(90deg, rgb(109 145 170 / 34%), rgb(201 168 106 / 86%));
         box-shadow: 0 0 8px rgb(217 185 111 / 24%);
     }
 
@@ -1075,31 +1211,41 @@
     .dep-epoch-manifesto {
         position: relative;
         display: flex;
-        min-height: 8.75rem;
+        min-height: 11.5rem;
         justify-content: center;
         overflow: hidden;
         flex: 1 0 auto;
         flex-direction: column;
         padding: 1.45rem 1.6rem 1.55rem;
         border-top: 1px solid rgb(217 185 111 / 10%);
-        background: linear-gradient(90deg, rgb(217 185 111 / 4%), transparent 52%), linear-gradient(180deg, rgb(9 17 29 / 22%), rgb(5 12 21 / 18%));
+        background: #08080a;
         isolation: isolate;
     }
 
-    .dep-epoch-manifesto::after {
+    .dep-epoch-manifesto::before {
         position: absolute;
-        right: 1rem;
-        bottom: -1.15rem;
-        z-index: -1;
-        color: rgb(217 185 111 / 3%);
-        content: "帝";
-        font-family: "STKaiti", "KaiTi", serif;
-        font-size: 8rem;
-        font-weight: 700;
-        line-height: 1;
+        inset: 0;
+        z-index: 1;
+        content: "";
+        background: linear-gradient(90deg, rgb(5 5 7 / 96%) 0%, rgb(5 5 7 / 78%) 52%, rgb(5 5 7 / 22%) 100%), linear-gradient(180deg, transparent, rgb(5 5 7 / 56%));
+    }
+
+    .dep-epoch-manifesto-art {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center;
+        opacity: 0.66;
+        filter: saturate(0.88) contrast(1.04);
+        transform: scale(1.02);
     }
 
     .dep-epoch-manifesto-kicker {
+        position: relative;
+        z-index: 2;
         color: rgb(217 185 111 / 52%);
         font-size: 0.6rem;
         font-weight: 700;
@@ -1107,6 +1253,9 @@
     }
 
     .dep-epoch-manifesto blockquote {
+        position: relative;
+        z-index: 2;
+        max-width: 24rem;
         margin: 0.55rem 0 0;
         color: rgb(238 244 248 / 78%);
         font-size: 1.08rem;
@@ -1123,6 +1272,8 @@
     }
 
     .dep-epoch-manifesto-signature {
+        position: relative;
+        z-index: 2;
         margin-top: 0.55rem;
         color: rgb(141 155 171 / 58%);
         font-size: 0.62rem;
@@ -1146,7 +1297,7 @@
         inset: 0.65rem;
         border-radius: 50%;
         content: "";
-        background: #08111d;
+        background: #0c0c10;
         box-shadow: inset 0 0 26px rgb(0 0 0 / 38%);
     }
 
@@ -1298,6 +1449,16 @@
         }
     }
 
+    @keyframes dep-crest-turn {
+        from {
+            transform: rotate(0deg);
+        }
+
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
     @keyframes dep-current-realm {
         0%,
         100% {
@@ -1357,7 +1518,7 @@
     @media (max-width: 820px) {
         .dep-hero {
             height: auto;
-            min-height: 42rem;
+            min-height: 45rem;
         }
 
         .dep-hero-art {
@@ -1444,7 +1605,7 @@
 
     @media (max-width: 560px) {
         .dep-hero {
-            min-height: 44rem;
+            min-height: 47rem;
         }
 
         .dep-hero-toolbar {
@@ -1493,6 +1654,23 @@
             height: 9rem;
         }
 
+        .dep-imperial-crest {
+            width: 5.25rem;
+        }
+
+        .dep-imperial-crest-frame {
+            width: 4.35rem;
+        }
+
+        .dep-emperor-state {
+            font-size: 0.9rem;
+        }
+
+        .dep-emperor-decree {
+            max-width: 20rem;
+            font-size: 0.7rem;
+        }
+
         .dep-hero-metrics {
             width: 100%;
         }
@@ -1529,16 +1707,20 @@
         }
 
         .dep-journey-grid li {
-            min-height: 7.7rem;
-            padding: 0.85rem 0.35rem 0.65rem;
+            min-height: 9.4rem;
+            padding: 0.8rem 0.3rem 0.65rem;
         }
 
         .dep-realm-seal {
-            width: 3.2rem;
+            width: 4.35rem;
         }
 
         .dep-realm-seal::before {
-            inset: 0.62rem;
+            inset: 0.18rem;
+        }
+
+        .dep-realm-medal-frame {
+            width: 3.65rem;
         }
 
         .dep-journey-grid strong {
@@ -1609,6 +1791,7 @@
         .dep-star-field,
         .dep-law-orbit,
         .dep-law-core-rings,
+        .dep-imperial-crest::after,
         .dep-journey-grid li.is-current .dep-realm-seal {
             animation: none;
         }

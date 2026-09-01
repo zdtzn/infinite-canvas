@@ -4,7 +4,6 @@ import { Activity, Aperture, ArrowUpRight, CalendarDays, Camera, Cpu, Expand, Fo
 import { Link } from "react-router-dom";
 
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
-import { RealmIcon } from "@/features/cultivation/realm-icon";
 import type { CultivationProfile } from "@/services/server-api";
 import "./dou-emperor-palace.css";
 
@@ -52,21 +51,25 @@ const GROUP_LABELS: Array<{ key: CapabilityMeta["group"]; title: string; subtitl
 ];
 
 const REALM_JOURNEY = [
-    { id: "realm-dou-qi", name: "斗之气", iconKey: "Gauge", inscription: "初感天地" },
-    { id: "realm-dou-zhe", name: "斗者", iconKey: "Sparkles", inscription: "气旋初成" },
-    { id: "realm-dou-shi", name: "斗师", iconKey: "Orbit", inscription: "凝气化铠" },
-    { id: "realm-da-dou-shi", name: "大斗师", iconKey: "Shield", inscription: "斗气外放" },
-    { id: "realm-dou-ling", name: "斗灵", iconKey: "Diamond", inscription: "灵韵显化" },
-    { id: "realm-dou-wang", name: "斗王", iconKey: "Crown", inscription: "振翼凌空" },
-    { id: "realm-dou-huang", name: "斗皇", iconKey: "Sun", inscription: "御气而行" },
-    { id: "realm-dou-zong", name: "斗宗", iconKey: "Hexagon", inscription: "踏虚破界" },
-    { id: "realm-dou-zun", name: "斗尊", iconKey: "Aperture", inscription: "执掌空间" },
-    { id: "realm-half-saint", name: "半圣", iconKey: "CircleDot", inscription: "圣意初生" },
-    { id: "realm-dou-saint", name: "斗圣", iconKey: "Star", inscription: "法则入圣" },
-    { id: "realm-dou-emperor", name: "斗帝", iconKey: "Infinity", inscription: "万法归一" },
+    { id: "realm-dou-qi", name: "斗之气", inscription: "初感天地" },
+    { id: "realm-dou-zhe", name: "斗者", inscription: "气旋初成" },
+    { id: "realm-dou-shi", name: "斗师", inscription: "凝气化铠" },
+    { id: "realm-da-dou-shi", name: "大斗师", inscription: "斗气外放" },
+    { id: "realm-dou-ling", name: "斗灵", inscription: "灵韵显化" },
+    { id: "realm-dou-wang", name: "斗王", inscription: "振翼凌空" },
+    { id: "realm-dou-huang", name: "斗皇", inscription: "御气而行" },
+    { id: "realm-dou-zong", name: "斗宗", inscription: "踏虚破界" },
+    { id: "realm-dou-zun", name: "斗尊", inscription: "执掌空间" },
+    { id: "realm-half-saint", name: "半圣", inscription: "圣意初生" },
+    { id: "realm-dou-saint", name: "斗圣", inscription: "法则入圣" },
+    { id: "realm-dou-emperor", name: "斗帝", inscription: "万法归一" },
 ] as const;
 
 const MODEL_COLORS = ["#d9b96f", "#7db2d8", "#dce8f2", "#7789a4", "#a96858", "#5f958c"];
+
+function realmMedalAsset(realmId: string, variant: "badge" | "aura") {
+    return `/cultivation-realms/badges/${realmId}-${variant}.webp`;
+}
 
 export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarInputRef, onAvatarChange, admin }: DouEmperorPalaceProps) {
     const capabilities = profile.capabilities.map((key) => ({ key, ...(CAPABILITY_META[key] || fallbackCapabilityMeta(key)) }));
@@ -120,9 +123,15 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                 </div>
 
                 <div className="dep-hero-center">
+                    <div className="dep-imperial-crest" aria-hidden="true">
+                        <img className="dep-imperial-crest-aura" src={realmMedalAsset("realm-dou-emperor", "aura")} alt="" width={116} height={116} decoding="async" fetchPriority="high" />
+                        <span className="dep-imperial-crest-frame">
+                            <img src={realmMedalAsset("realm-dou-emperor", "badge")} alt="" width={116} height={116} decoding="async" fetchPriority="high" />
+                        </span>
+                    </div>
                     <span className="dep-arrival-mark">
                         <span aria-hidden="true" />
-                        帝境降临
+                        万法来朝 · 帝境已成
                         <span aria-hidden="true" />
                     </span>
                     <div className="dep-emperor-title-wrap">
@@ -132,7 +141,8 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                         </h1>
                     </div>
                     <p className="font-display dep-emperor-rank">诸天至尊</p>
-                    <p className="dep-emperor-state">已登临最高境界。</p>
+                    <p className="font-display dep-emperor-state">手握日月摘星辰，世间无我这般人。</p>
+                    <p className="dep-emperor-decree">天地已无更高境界。唯有创作，可令诸天再开。</p>
 
                     <dl className="dep-hero-metrics" aria-label="帝境创作总览">
                         <HeroMetric label="累计修为" value={profile.totalXp.toLocaleString()} />
@@ -142,15 +152,15 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
 
                     <Link to="/image" className="dep-create-action">
                         <Sparkles className="size-4" aria-hidden="true" />
-                        继续创作
+                        执笔天地
                         <ArrowUpRight className="size-4" aria-hidden="true" />
                     </Link>
                 </div>
 
                 <div className="dep-hero-footnote" aria-hidden="true">
-                    <span>万法归一</span>
+                    <span>天地无上</span>
                     <i />
-                    <span>创作无尽</span>
+                    <span>创作无疆</span>
                 </div>
             </section>
 
@@ -165,12 +175,12 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                 <section className="dep-journey" aria-labelledby="emperor-journey-title">
                     <div className="dep-section-heading">
                         <div>
-                            <span>ASCENSION RECORD</span>
+                            <span>TWELVE REALM INSIGNIA · 十二境帝印</span>
                             <h2 id="emperor-journey-title" className="font-display">
                                 登帝之路
                             </h2>
                         </div>
-                        <p>十二境皆已走过。每一枚境印，皆是昔日破境留下的回响。</p>
+                        <p>十二重境界，十二枚勋章。昔日破境之证，如今尽数归于帝座。</p>
                     </div>
                     <ol className="dep-journey-grid" aria-label="从斗之气至斗帝的十二境界徽章">
                         {REALM_JOURNEY.map((realm, index) => {
@@ -181,11 +191,14 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                                         {String(index + 1).padStart(2, "0")}
                                     </span>
                                     <span className="dep-realm-seal" aria-hidden="true">
-                                        <RealmIcon iconKey={realm.iconKey} className="dep-realm-seal-icon" />
+                                        <img className="dep-realm-aura" src={realmMedalAsset(realm.id, "aura")} alt="" width={116} height={116} loading={current ? "eager" : "lazy"} decoding="async" />
+                                        <span className="dep-realm-medal-frame">
+                                            <img className="dep-realm-medal" src={realmMedalAsset(realm.id, "badge")} alt="" width={116} height={116} loading={current ? "eager" : "lazy"} decoding="async" />
+                                        </span>
                                     </span>
                                     <strong>{realm.name}</strong>
                                     <small>{realm.inscription}</small>
-                                    <span className="dep-journey-state">{current ? "帝印已成" : "境印已证"}</span>
+                                    <span className="dep-journey-state">{current ? "至尊帝印 · 已成" : "境界勋章 · 已铭刻"}</span>
                                 </li>
                             );
                         })}
@@ -317,9 +330,10 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                         </div>
 
                         <div className="dep-epoch-manifesto" aria-label="斗帝创作箴言">
+                            <img className="dep-epoch-manifesto-art" src="/cultivation-realms/realm-dou-emperor-calligraphy-wide.webp" alt="" width={1600} height={696} loading="lazy" decoding="async" aria-hidden="true" />
                             <span className="dep-epoch-manifesto-kicker">IMPERIAL CREED · 帝境创作箴言</span>
                             <blockquote className="font-display">
-                                <p>已登临斗帝之境。</p>
+                                <p>已登临斗帝之境，诸天尽在一念之间。</p>
                                 <p>
                                     天地已无更高境界，<strong>创作永无止境。</strong>
                                 </p>
