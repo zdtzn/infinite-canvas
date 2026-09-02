@@ -62,7 +62,7 @@
         inset: 0;
         z-index: 1;
         background:
-            linear-gradient(180deg, rgb(2 3 7 / 38%) 0%, rgb(3 4 8 / 5%) 24%, rgb(4 5 9 / 17%) 58%, rgb(5 5 8 / 94%) 100%), radial-gradient(circle at 50% 34%, transparent 0 17rem, rgb(4 5 9 / 10%) 30rem, rgb(3 3 6 / 40%) 78%),
+            linear-gradient(180deg, rgb(2 3 7 / 38%) 0%, rgb(3 4 8 / 5%) 24%, rgb(4 5 9 / 17%) 58%, rgb(5 5 8 / 80%) 86%, rgb(5 5 8 / 90%) 100%), radial-gradient(circle at 50% 34%, transparent 0 17rem, rgb(4 5 9 / 10%) 30rem, rgb(3 3 6 / 40%) 78%),
             linear-gradient(90deg, rgb(3 3 7 / 38%), transparent 24% 76%, rgb(3 3 7 / 38%));
     }
 
@@ -549,9 +549,27 @@
     }
 
     .dep-domain {
+        --dep-domain-top-space: 1.75rem;
+        position: relative;
         width: min(100% - 3rem, 88rem);
         margin: 0 auto;
-        padding: 3.5rem 0 5rem;
+        padding: var(--dep-domain-top-space) 0 5rem;
+        isolation: isolate;
+    }
+
+    .dep-domain::before {
+        position: absolute;
+        top: calc(var(--dep-domain-top-space) * -1);
+        left: 50%;
+        z-index: -1;
+        width: 100vw;
+        height: 7.5rem;
+        content: "";
+        pointer-events: none;
+        background:
+            linear-gradient(180deg, rgb(5 5 7 / 0%) 0%, rgb(7 7 10 / 72%) 48%, rgb(7 7 10 / 100%) 100%),
+            radial-gradient(ellipse at 50% 0%, rgb(201 168 106 / 7%), transparent 64%);
+        transform: translateX(-50%);
     }
 
     .dep-notice {
@@ -1554,7 +1572,7 @@
 
         .dep-domain {
             width: min(100% - 2rem, 48rem);
-            padding-top: 2.5rem;
+            --dep-domain-top-space: 1.5rem;
         }
 
         .dep-section-heading {
@@ -1689,6 +1707,7 @@
 
         .dep-domain {
             width: calc(100% - 1.25rem);
+            --dep-domain-top-space: 1.25rem;
             padding-bottom: 3rem;
         }
 
