@@ -14,7 +14,22 @@ test("current realm shadow follows a circular seal", () => {
     expect(declarationsFor(".dep-realm-seal")).toContain("border-radius: 50%;");
 });
 
-test("current realm raster layers are optically centered", () => {
-    expect(declarationsFor(".dep-journey-grid li.is-current .dep-realm-aura")).toContain("transform: translate(0.08rem, -0.06rem) scale(1.03);");
-    expect(declarationsFor(".dep-journey-grid li.is-current .dep-realm-medal")).toContain("transform: translate(-0.18rem, 0.05rem) scale(0.98);");
+test("current realm raster layers stay geometrically concentric", () => {
+    const aura = declarationsFor(".dep-journey-grid li.is-current .dep-realm-aura");
+    const medal = declarationsFor(".dep-journey-grid li.is-current .dep-realm-medal");
+
+    expect(aura).toContain("transform: scale(1.03);");
+    expect(medal).toContain("transform: scale(0.98);");
+    expect(aura).not.toContain("translate(");
+    expect(medal).not.toContain("translate(");
+});
+
+test("opaque realm artwork is clipped by its circular frames", () => {
+    const auraFrame = declarationsFor(".dep-realm-aura-frame");
+    const medalFrame = declarationsFor(".dep-realm-medal-frame");
+
+    expect(auraFrame).toContain("overflow: hidden;");
+    expect(auraFrame).toContain("border-radius: 50%;");
+    expect(medalFrame).toContain("overflow: hidden;");
+    expect(medalFrame).toContain("border-radius: 50%;");
 });
