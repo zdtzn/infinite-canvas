@@ -191,7 +191,9 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                                         {String(index + 1).padStart(2, "0")}
                                     </span>
                                     <span className="dep-realm-seal" aria-hidden="true">
-                                        <img className="dep-realm-aura" src={realmMedalAsset(realm.id, "aura")} alt="" width={116} height={116} loading={current ? "eager" : "lazy"} decoding="async" />
+                                        <span className="dep-realm-aura-frame">
+                                            <img className="dep-realm-aura" src={realmMedalAsset(realm.id, "aura")} alt="" width={116} height={116} loading={current ? "eager" : "lazy"} decoding="async" />
+                                        </span>
                                         <span className="dep-realm-medal-frame">
                                             <img className="dep-realm-medal" src={realmMedalAsset(realm.id, "badge")} alt="" width={116} height={116} loading={current ? "eager" : "lazy"} decoding="async" />
                                         </span>
