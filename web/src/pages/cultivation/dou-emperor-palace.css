@@ -703,6 +703,7 @@
         width: 5.75rem;
         aspect-ratio: 1;
         place-items: center;
+        border-radius: 50%;
         isolation: isolate;
     }
 
@@ -837,6 +838,7 @@
     .dep-journey-grid li.is-current .dep-realm-aura {
         opacity: 0.52;
         filter: saturate(1.05) contrast(1.08);
+        transform: translate(0.08rem, -0.06rem) scale(1.03);
     }
 
     .dep-journey-grid li.is-current .dep-realm-medal-frame {
@@ -850,7 +852,7 @@
     .dep-journey-grid li.is-current .dep-realm-medal {
         opacity: 1;
         filter: saturate(1.08) brightness(1.04) drop-shadow(0 0 0.55rem rgb(242 220 162 / 28%));
-        transform: scale(0.98);
+        transform: translate(-0.18rem, 0.05rem) scale(0.98);
     }
 
     .dep-core-grid {
