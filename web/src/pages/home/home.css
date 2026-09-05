@@ -1,3 +1,73 @@
+.home-page--imperial .imperial-realm::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0;
+    z-index: 0;
+    height: min(30%, 260px);
+    background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--background) 38%, transparent) 40%, color-mix(in srgb, var(--background) 86%, transparent) 78%, var(--background));
+    pointer-events: none;
+}
+
+.home-page--imperial .home-cultivation-strip {
+    border: 0;
+    background: transparent;
+}
+
+.home-page--imperial .home-cultivation-inner {
+    position: relative;
+    padding-top: 12px;
+    padding-bottom: 24px;
+    row-gap: 8px;
+    letter-spacing: 0;
+}
+
+.home-page--imperial .home-cultivation-inner::after {
+    content: "";
+    position: absolute;
+    inset: auto 24px 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgb(212 191 146 / 20%) 18%, rgb(212 191 146 / 20%) 82%, transparent);
+    pointer-events: none;
+}
+
+.home-page--imperial .home-cultivation-identity {
+    min-width: 0;
+    flex: 1 1 240px;
+}
+
+.home-page--imperial .home-cultivation-identity > div {
+    min-width: 0;
+}
+
+.home-page--imperial .home-cultivation-identity .font-display {
+    color: #e7dfcd;
+    letter-spacing: 0;
+}
+
+.home-page--imperial .home-cultivation-description {
+    color: #a9aeab;
+}
+
+.home-page--imperial .home-cultivation-link {
+    min-height: 44px;
+    color: #d4bf92;
+    letter-spacing: 0;
+}
+
+.home-page--imperial .home-cultivation-link:hover {
+    color: #f3ead6;
+}
+
+.home-page--imperial .home-showcase {
+    padding-top: 56px;
+}
+
+@media (max-width: 640px) {
+    .home-page--imperial .home-showcase {
+        padding-top: 40px;
+    }
+}
+
 @keyframes home-enter-rise {
     from {
         opacity: 0;

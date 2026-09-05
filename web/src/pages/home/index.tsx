@@ -7,6 +7,7 @@ import { DriftWall } from "@/components/home/drift-wall";
 import { LightRays } from "@/components/home/light-rays";
 import { useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
+import { ImperialSeal } from "@/features/cultivation/imperial-seal";
 import { cultivationStageLabel, quotaText } from "@/features/cultivation/utils";
 import { promptImageCandidates, promptOriginalUrl } from "@/components/prompts/prompt-cover";
 import { SpecularButton } from "@/components/ui/specular-button";
@@ -75,7 +76,7 @@ export default function IndexPage() {
     }, [promptShowcase.length, showcaseHovered]);
 
     return (
-        <main className="h-full overflow-y-auto bg-background text-foreground">
+        <main className={cn("home-page h-full overflow-y-auto bg-background text-foreground", isImperialMode && "home-page--imperial")}>
             {/* ── 山门 · 全屏 Hero ─────────────────────────── */}
             {isImperialMode ? (
                 <Suspense
@@ -180,13 +181,13 @@ export default function IndexPage() {
 
             {/* ── 修行引路条 ──────────────────────────────── */}
             {cultivation ? (
-                <section className="border-y border-[rgb(237_237_230/0.08)] bg-[#141419]">
-                    <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-5">
-                        <div className="flex items-center gap-4">
-                            <span className="shj-seal">{cultivation.realmName}</span>
+                <section className="home-cultivation-strip border-y border-[rgb(237_237_230/0.08)] bg-[#141419]">
+                    <div className="home-cultivation-inner mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-5">
+                        <div className="home-cultivation-identity flex items-center gap-4">
+                            {isImperialMode ? <ImperialSeal className="size-11" /> : <span className="shj-seal">{cultivation.realmName}</span>}
                             <div className="flex flex-col gap-0.5">
                                 <span className="font-display text-sm tracking-[0.15em] text-[#edede6]">今日修行</span>
-                                <span className="text-xs text-[#8a8a96]">{quotaText(cultivation.remainingToday, cultivation.unlimited)} · 笔耕不辍,境界自现</span>
+                                <span className="home-cultivation-description text-xs text-[#8a8a96]">{quotaText(cultivation.remainingToday, cultivation.unlimited)} · 笔耕不辍,境界自现</span>
                             </div>
                         </div>
                         <Link
@@ -195,7 +196,7 @@ export default function IndexPage() {
                             onFocus={() => void preloadRoute("/cultivation")}
                             onPointerDown={() => void preloadRoute("/cultivation")}
                             onTouchStart={() => void preloadRoute("/cultivation")}
-                            className="group inline-flex items-center gap-2 text-sm tracking-[0.1em] text-[#c9a86a] transition-colors hover:text-[#edede6]"
+                            className="home-cultivation-link group inline-flex items-center gap-2 text-sm tracking-[0.1em] text-[#c9a86a] transition-colors hover:text-[#edede6]"
                         >
                             入命宫修行
                             <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-0.5" />
@@ -205,7 +206,7 @@ export default function IndexPage() {
             ) : null}
 
             {/* ── 功法精选 ───────────────────────────────── */}
-            <section className="mx-auto max-w-6xl px-6 pb-24 pt-20">
+            <section className="home-showcase mx-auto max-w-6xl px-6 pb-24 pt-20">
                 <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
                     <div>
                         <h2 className="font-display text-3xl text-[#edede6] sm:text-4xl">功法精选</h2>
