@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, statSync, unlinkSync, utimesSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, statSync, unlinkSync } from "node:fs";
 import { isIP } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
@@ -7,6 +7,8 @@ import { createIdentityToken, createSessionToken, expiredIdentityCookie, expired
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./lib/asset-library";
 import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
 import { AsyncSemaphore } from "./lib/async-semaphore";
+import { createSharedTasks } from "./lib/shared-task";
+import { createPromptCacheMaintenance } from "./lib/prompt-cache-maintenance";
 import { canAccessUserAvatar } from "./lib/avatar-access";
 import {
     buildChatSystemPrompt,
@@ -82,7 +84,7 @@ import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstrea
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
-import { normalizePromptIndexItems, normalizePromptSourceIndexItems, normalizeStoredPromptIndexTaxonomy, promptIndexStatuses, queryPromptIndex, recordPromptIndexError, replacePromptIndex } from "./lib/prompt-index";
+import { normalizePromptIndexItems, normalizePromptSourceIndexItems, normalizeStoredPromptIndexTaxonomy, promptIndexStatuses, queryPromptCovers, queryPromptIndex, recordPromptIndexError, replacePromptIndex } from "./lib/prompt-index";
 import { PROMPT_TAXONOMY_REVISION } from "./lib/prompt-taxonomy";
 import { runPromptSourceScript, type ServerPromptSourceItem } from "./lib/prompt-source-runtime";
 import { defaultUserChatPresetId, normalizeUserCanvasImageToolbar, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserGenerationPreferences, normalizeUserSystemPrompt, readStoredUserCanvasImageToolbar, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserGenerationPreferences, readStoredUserSystemPrompt, USER_CANVAS_IMAGE_TOOLBAR_KEY, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_GENERATION_PREFERENCES_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
@@ -202,7 +204,9 @@ mkdirSync(DATA_DIR, { recursive: true });
 mkdirSync(JOB_FILE_ROOT, { recursive: true });
 mkdirSync(ASSET_ROOT, { recursive: true });
 mkdirSync(PROMPT_CACHE_ROOT, { recursive: true });
-prunePromptCache();
+const promptCacheMaintenance = createPromptCacheMaintenance(PROMPT_CACHE_ROOT, MAX_PROMPT_CACHE_ENTRIES, MAX_PROMPT_CACHE_BYTES);
+const promptDownloads = createSharedTasks<{ bytes: Uint8Array<ArrayBuffer>; contentType: string } | null>();
+await promptCacheMaintenance.prune();
 
 const appDatabase = openAppDatabase({ dataDir: DATA_DIR });
 if (appDatabase.raw && appDatabase.loadSetting("prompt_index_taxonomy_revision") !== PROMPT_TAXONOMY_REVISION) {
@@ -433,6 +437,11 @@ async function route(request: Request, requestId: string) {
         const promptSourceItemsMatch = url.pathname.match(/^\/api\/prompt-sources\/([^/]+)\/items$/);
         if (promptSourceItemsMatch && request.method === "GET") return runPromptSourceItems(request, session, decodeRouteSegment(promptSourceItemsMatch[1], "提示词来源 ID"));
         if (url.pathname === "/api/prompt-index" && request.method === "GET") return listPromptIndex(url);
+        if (url.pathname === "/api/prompt-index/covers" && request.method === "GET") {
+            const sourceIds = url.searchParams.getAll("sourceId");
+            if (sourceIds.length > 100 || sourceIds.some((id) => !/^[A-Za-z0-9_-]{1,96}$/.test(id))) throw new HttpError(400, "提示词来源参数无效");
+            return json(appDatabase.raw ? queryPromptCovers(appDatabase.raw, sourceIds) : { items: [], indexedSourceIds: [] }, 200, { "Cache-Control": "private, no-cache" });
+        }
         if (url.pathname === "/api/prompt-index" && request.method === "PUT") return savePromptIndex(request, session);
         if (url.pathname === "/api/admin/prompt-index/status" && request.method === "GET") return listPromptIndexStatus(session);
         const adminPromptSourceMatch = url.pathname.match(/^\/api\/admin\/prompt-sources\/([^/]+)$/);
@@ -4805,13 +4814,13 @@ async function proxyPromptAsset(request: Request, url: URL, requestId: string) {
     if (isFreshPromptCache(cachePath)) return promptCachedResponse(cachePath, requestId);
     try {
         const semaphore = promptProxyLane(url.pathname) === "thumbnail" ? promptThumbnailProxySemaphore : promptAssetProxySemaphore;
-        return await semaphore.run(request.signal, async () => {
-            if (isFreshPromptCache(cachePath)) return promptCachedResponse(cachePath, requestId);
+        const result = await promptDownloads.run(cacheKey, request.signal, (signal) => semaphore.run(signal, async () => {
+            if (isFreshPromptCache(cachePath)) return null;
             const response = await upstreamFetch(
                 target,
                 {
                     headers: { "User-Agent": "InfiniteCanvas/1.0" },
-                    signal: request.signal,
+                    signal,
                 },
                 false,
                 PROMPT_PROXY_TIMEOUT_MS,
@@ -4821,11 +4830,10 @@ async function proxyPromptAsset(request: Request, url: URL, requestId: string) {
             const contentType = promptAssetContentType(response.headers.get("content-type"), bytes);
             assertDiskCapacity(bytes.byteLength);
             await Promise.all([Bun.write(cachePath, bytes), Bun.write(`${cachePath}.meta.json`, JSON.stringify({ contentType, cachedAt: Date.now() }))]);
-            prunePromptCache();
-            return new Response(bytes, {
-                headers: promptCacheHeaders(contentType, requestId),
-            });
-        });
+            await promptCacheMaintenance.prune();
+            return { bytes, contentType };
+        }));
+        return result ? new Response(result.bytes, { headers: promptCacheHeaders(result.contentType, requestId) }) : promptCachedResponse(cachePath, requestId);
     } catch (error) {
         if (existsSync(cachePath)) return promptCachedResponse(cachePath, requestId, true);
         throw error;
@@ -4839,47 +4847,10 @@ function isFreshPromptCache(path: string) {
 async function promptCachedResponse(path: string, requestId: string, stale = false) {
     const file = Bun.file(path);
     const contentType = await promptCacheContentType(path, file);
-    touchPromptCacheEntry(path);
+    void promptCacheMaintenance.touch(path);
     return new Response(file, {
         headers: promptCacheHeaders(contentType, requestId, stale),
     });
-}
-
-function touchPromptCacheEntry(path: string) {
-    const metadataPath = `${path}.meta.json`;
-    if (!existsSync(metadataPath)) return;
-    try {
-        const now = new Date();
-        utimesSync(metadataPath, now, now);
-    } catch {
-        // Cache access timestamps are best effort only.
-    }
-}
-
-function prunePromptCache() {
-    let entries: Array<{ path: string; metadataPath: string; bytes: number; accessedAt: number }>;
-    try {
-        entries = readdirSync(PROMPT_CACHE_ROOT, { withFileTypes: true })
-            .filter((entry) => entry.isFile() && /^[a-f0-9]{64}$/.test(entry.name))
-            .map((entry) => {
-                const path = join(PROMPT_CACHE_ROOT, entry.name);
-                const metadataPath = `${path}.meta.json`;
-                const fileStat = statSync(path);
-                const accessedAt = existsSync(metadataPath) ? statSync(metadataPath).mtimeMs : fileStat.mtimeMs;
-                return { path, metadataPath, bytes: fileStat.size, accessedAt };
-            })
-            .sort((left, right) => left.accessedAt - right.accessedAt);
-    } catch {
-        return;
-    }
-    let totalBytes = entries.reduce((total, entry) => total + entry.bytes, 0);
-    while (entries.length > MAX_PROMPT_CACHE_ENTRIES || totalBytes > MAX_PROMPT_CACHE_BYTES) {
-        const entry = entries.shift();
-        if (!entry) break;
-        totalBytes -= entry.bytes;
-        rmSync(entry.path, { force: true });
-        rmSync(entry.metadataPath, { force: true });
-    }
 }
 
 function promptCacheHeaders(contentType: string, requestId: string, stale = false) {

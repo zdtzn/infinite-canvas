@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import { createInFlightReads } from "@/lib/in-flight";
 
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import type { Asset } from "@/stores/use-asset-store";
@@ -223,12 +224,19 @@ export type ServerUserPreferences = {
     generationPreferencesConfigured?: boolean;
 };
 
-export async function fetchServerUserPreferences(expectedUserId?: string) {
-    return serverRequest<ServerUserPreferences>("/api/preferences", { timeoutMs: 12_000, expectedUserId });
+const preferenceReads = createInFlightReads<ServerUserPreferences>();
+
+export async function fetchServerUserPreferences(expectedUserId = useUserStore.getState().user?.id || "") {
+    return preferenceReads.get(expectedUserId, () => serverRequest<ServerUserPreferences>("/api/preferences", { timeoutMs: 12_000, expectedUserId }));
 }
 
-export async function saveServerUserPreferences(preferences: Partial<ServerUserPreferences>, expectedUserId?: string) {
-    return serverRequest<ServerUserPreferences>("/api/preferences", { method: "PUT", body: preferences, timeoutMs: 12_000, expectedUserId });
+export async function saveServerUserPreferences(preferences: Partial<ServerUserPreferences>, expectedUserId = useUserStore.getState().user?.id || "") {
+    preferenceReads.invalidate(expectedUserId);
+    try {
+        return await serverRequest<ServerUserPreferences>("/api/preferences", { method: "PUT", body: preferences, timeoutMs: 12_000, expectedUserId });
+    } finally {
+        preferenceReads.invalidate(expectedUserId);
+    }
 }
 
 export async function fetchServerChannels() {
@@ -328,7 +336,7 @@ export async function deleteServerAsset(storageKey: string, expectedUserId?: str
     await serverRequest(`/api/assets/${encodeURIComponent(storageKey)}`, { method: "DELETE", expectedUserId });
 }
 
-export async function fetchServerAssetLibrary(expectedUserId?: string, options: { page?: number; pageSize?: number; keyword?: string; kind?: string; tag?: string } = {}) {
+export async function fetchServerAssetLibrary(expectedUserId?: string, options: { page?: number; pageSize?: number; keyword?: string; kind?: string; tag?: string; signal?: AbortSignal } = {}) {
     const params = new URLSearchParams();
     if (options.page) params.set("page", String(options.page));
     if (options.pageSize) params.set("pageSize", String(options.pageSize));
@@ -336,7 +344,7 @@ export async function fetchServerAssetLibrary(expectedUserId?: string, options: 
     if (options.kind) params.set("kind", options.kind);
     if (options.tag) params.set("tag", options.tag);
     const query = params.toString();
-    return serverRequest<ServerAssetLibrary>(`/api/library-assets${query ? `?${query}` : ""}`, { timeoutMs: 20_000, expectedUserId });
+    return serverRequest<ServerAssetLibrary>(`/api/library-assets${query ? `?${query}` : ""}`, { timeoutMs: 20_000, expectedUserId, signal: options.signal });
 }
 
 export async function replaceServerAssetLibrary(items: Asset[], initializeOnly = false, expectedUserId?: string) {

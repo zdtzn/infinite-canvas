@@ -211,8 +211,15 @@ async function loadCanvasSource(blob: Blob): Promise<{ image: CanvasImageSource;
     const objectUrl = URL.createObjectURL(blob);
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
         const element = new Image();
-        element.onload = () => resolve(element);
-        element.onerror = () => reject(new Error("图片转换失败：无法解码图片"));
+        element.onload = () => {
+            element.onload = element.onerror = null;
+            resolve(element);
+        };
+        element.onerror = () => {
+            element.onload = element.onerror = null;
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error("图片转换失败：无法解码图片"));
+        };
         element.src = objectUrl;
     });
     return { image, width: image.naturalWidth, height: image.naturalHeight, dispose: () => URL.revokeObjectURL(objectUrl) };
@@ -228,6 +235,8 @@ export async function resolveImageUrl(storageKey?: string, fallback = "") {
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
     const blob = await store.getItem<Blob>(storageKey);
+    const resolved = objectUrls.get(storageKey);
+    if (resolved) return resolved;
     if (!blob) return fallback;
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);

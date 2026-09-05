@@ -9,6 +9,7 @@ import {
   normalizePromptSourceIndexItems,
   normalizeStoredPromptIndexTaxonomy,
   queryPromptIndex,
+  queryPromptCovers,
   replacePromptIndex,
 } from "./prompt-index";
 
@@ -30,6 +31,26 @@ afterEach(() => {
 });
 
 describe("prompt index", () => {
+  test("cover projection retains every item and source order without prompt bodies", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-prompt-covers-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      for (const id of ["one", "two"]) {
+        replacePromptIndex(store.raw!, id, normalizePromptIndexItems(id, Array.from({ length: 125 }, (_, index) => ({ id: `${id}-${index}`, title: `Title ${index}`, prompt: "large body".repeat(100), coverUrl: `https://example.com/${index}.png` }))));
+      }
+      replacePromptIndex(store.raw!, "empty", []);
+      const result = queryPromptCovers(store.raw!, ["two", "missing", "one", "empty"]);
+      expect(result.items).toHaveLength(250);
+      expect(result.items[0].id).toBe("two-0");
+      expect(result.items[249].id).toBe("one-124");
+      expect(result.indexedSourceIds).toEqual(["two", "one", "empty"]);
+      expect(result.items[0]).not.toHaveProperty("prompt");
+      expect(result.items[0]).not.toHaveProperty("preview");
+    } finally {
+      store.close();
+    }
+  });
   test("supports bounded search, tag filtering and pagination", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-prompt-index-"));
     directories.push(dataDir);

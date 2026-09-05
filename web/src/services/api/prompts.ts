@@ -14,6 +14,7 @@ export type Prompt = RawPrompt & {
     githubUrl: string;
     sourceTags?: string[];
 };
+export type PromptCover = Pick<Prompt, "id" | "title" | "coverUrl" | "category">;
 
 export const ALL_PROMPTS_OPTION = "全部";
 
@@ -148,14 +149,51 @@ async function getSourcePrompts(source: PromptSource, force = false): Promise<Pr
 
 /** Aggregate prompts across all enabled sources; a failing source is skipped so others still load. */
 async function getAllPrompts(): Promise<Prompt[]> {
-    const settled = await Promise.all(enabledSources().map((source) => {
-        const task = getSourcePrompts(source).catch(() => [] as Prompt[]);
-        return Promise.race([
-            task,
-            new Promise<Prompt[]>((resolve) => window.setTimeout(() => resolve([]), PROMPT_INITIAL_LOAD_BUDGET_MS)),
-        ]);
-    }));
+    const settled = await Promise.all(enabledSources().map(loadSourceWithinBudget));
     return settled.flat();
+}
+
+async function loadSourceWithinBudget(source: PromptSource): Promise<Prompt[]> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            getSourcePrompts(source).catch(() => [] as Prompt[]),
+            new Promise<Prompt[]>((resolve) => { timer = setTimeout(() => resolve([]), PROMPT_INITIAL_LOAD_BUDGET_MS); }),
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/** The homepage previews images only; keep source order without fetching prompt bodies. */
+export async function fetchHomepagePromptCovers(): Promise<PromptCover[]> {
+    const sources = enabledSources();
+    if (!sources.length) return [];
+    if (PUBLIC_MODE && sources.length <= 100) {
+        try {
+            const params = new URLSearchParams();
+            sources.forEach((source) => params.append("sourceId", source.id));
+            const response = await serverRequest<{ items: Array<Omit<PromptCover, "category"> & { sourceId: string }>; indexedSourceIds: string[] }>(`/api/prompt-index/covers?${params}`, { timeoutMs: 2_500, expectedUserId: useUserStore.getState().user?.id });
+            const indexed = new Set(response.indexedSourceIds);
+            const bySource = new Map<string, PromptCover[]>();
+            const sourceById = new Map(sources.map((source) => [source.id, source]));
+            for (const item of response.items) {
+                const source = sourceById.get(item.sourceId);
+                if (!source) continue;
+                const group = bySource.get(source.id) || [];
+                group.push({ id: item.id, title: item.title, coverUrl: normalizePromptAssets({ coverUrl: item.coverUrl, preview: "" }).coverUrl, category: source.name });
+                bySource.set(source.id, group);
+            }
+            return (await Promise.all(sources.map(async (source) => indexed.has(source.id) ? bySource.get(source.id) || [] : (await loadSourceWithinBudget(source)).map(toPromptCover)))).flat();
+        } catch {
+            // Older servers or unavailable indexes retain the existing source fallback.
+        }
+    }
+    return (await getAllPrompts()).map(toPromptCover);
+}
+
+function toPromptCover(item: Prompt): PromptCover {
+    return { id: item.id, title: item.title, coverUrl: item.coverUrl, category: item.category };
 }
 
 export async function fetchPrompts({ sourceId = "", keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { sourceId?: string; keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {

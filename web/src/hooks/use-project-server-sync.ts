@@ -243,8 +243,10 @@ export function useProjectServerSync(userId?: string) {
         const unsubscribe = useCanvasStore.subscribe((state, previous) => {
             if (!active || !initialized || !state.hydrated || state.ownerUserId !== userId || state.projects === previous.projects) return;
 
+            const currentIds = new Set(state.projects.map((project) => project.id));
+            const previousById = new Map(previous.projects.map((project) => [project.id, project]));
             for (const project of previous.projects) {
-                if (state.projects.some((item) => item.id === project.id)) continue;
+                if (currentIds.has(project.id)) continue;
                 const timer = saveTimers.get(project.id);
                 if (timer) window.clearTimeout(timer);
                 saveTimers.delete(project.id);
@@ -253,7 +255,7 @@ export function useProjectServerSync(userId?: string) {
             }
 
             for (const project of state.projects) {
-                const before = previous.projects.find((item) => item.id === project.id);
+                const before = previousById.get(project.id);
                 if (!before || before.updatedAt !== project.updatedAt) scheduleSave(project.id);
             }
         });

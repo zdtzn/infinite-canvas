@@ -1,13 +1,14 @@
+import { preload } from "react-dom";
+
 export const routeLoaders = {
-    "/": () => import("@/pages/home"),
+    "/": () => {
+        preload("/images/hero-main.webp", { as: "image", type: "image/webp", fetchPriority: "high" });
+        return import("@/pages/home");
+    },
     "/announcements": () => import("@/pages/announcements"),
     "/canvas": () => import("@/pages/canvas"),
     "/canvas/:id": () => import("@/pages/canvas/project"),
-    "/chat": async () => {
-        const [page, bootstrap] = await Promise.all([import("@/pages/chat"), import("@/services/chat-bootstrap-cache")]);
-        bootstrap.prefetchChatBootstrapForCurrentUser();
-        return page;
-    },
+    "/chat": () => import("@/pages/chat"),
     "/color-alchemy": () => import("@/pages/color-alchemy"),
     "/config": () => import("@/pages/config"),
     "/cultivation": () => import("@/pages/cultivation"),
@@ -51,7 +52,7 @@ const routeWarmupTargets: readonly RouteWarmupTarget[] = [
 
 export function buildRouteWarmupOrder(currentPath: string) {
     const currentRouteKey = routeKeyForPath(currentPath);
-    return routeWarmupTargets.filter((target) => target.route !== currentRouteKey);
+    return routeWarmupTargets.filter((target) => target.route !== currentRouteKey).slice(0, 3);
 }
 
 export function preloadRoute(path: string, options: PreloadRouteOptions = {}) {
@@ -59,6 +60,10 @@ export function preloadRoute(path: string, options: PreloadRouteOptions = {}) {
     if (!isRouteKey(routeKey)) return Promise.resolve();
     if (!options.fromWarmup) stopActiveWarmups();
     const loader = routeLoaders[routeKey];
+
+    if (!options.fromWarmup && routeKey === "/chat") {
+        void import("@/services/chat-bootstrap-cache").then((bootstrap) => bootstrap.prefetchChatBootstrapForCurrentUser()).catch(() => undefined);
+    }
 
     if (loadedRouteKeys.has(routeKey)) return Promise.resolve();
 

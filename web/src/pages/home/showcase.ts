@@ -1,4 +1,4 @@
-import type { Prompt } from "@/services/api/prompts";
+import type { PromptCover } from "@/services/api/prompts";
 
 export const HOMEPAGE_PROMPT_WINDOW_SIZE = 50;
 export const HOMEPAGE_PROMPT_ROTATION_MS = 90_000;
@@ -20,7 +20,7 @@ const curatedTitles = [
     "零食品牌技术分解图",
 ] as const;
 
-export function selectHomepagePromptShowcase(items: Prompt[], limit = Number.POSITIVE_INFINITY) {
+export function selectHomepagePromptShowcase<T extends PromptCover>(items: T[], limit = Number.POSITIVE_INFINITY) {
     const maxItems = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : Number.POSITIVE_INFINITY;
     const seen = new Set<string>();
     const available = items.filter((item) => {
@@ -47,19 +47,19 @@ export function selectHomepagePromptShowcase(items: Prompt[], limit = Number.POS
     return selected.slice(0, maxItems);
 }
 
-export function selectHomepagePromptWindow(items: Prompt[], offset: number, size = HOMEPAGE_PROMPT_WINDOW_SIZE) {
+export function selectHomepagePromptWindow<T extends PromptCover>(items: T[], offset: number, size = HOMEPAGE_PROMPT_WINDOW_SIZE) {
     const windowSize = Math.max(1, Math.floor(size));
     if (items.length <= windowSize) return items;
     const start = positiveModulo(Math.floor(offset), items.length);
     return Array.from({ length: windowSize }, (_, index) => items[(start + index) % items.length]);
 }
 
-export function promptIdentity(item: Pick<Prompt, "category" | "id">) {
+export function promptIdentity(item: Pick<PromptCover, "category" | "id">) {
     return `${item.category}\n${item.id}`;
 }
 
-function interleaveByCategory(items: Prompt[]) {
-    const grouped = new Map<string, Prompt[]>();
+function interleaveByCategory<T extends PromptCover>(items: T[]) {
+    const grouped = new Map<string, T[]>();
     for (const item of items) {
         const group = grouped.get(item.category) || [];
         group.push(item);
@@ -67,7 +67,7 @@ function interleaveByCategory(items: Prompt[]) {
     }
 
     const groups = Array.from(grouped.values());
-    const interleaved: Prompt[] = [];
+    const interleaved: T[] = [];
     for (let row = 0; interleaved.length < items.length; row += 1) {
         for (const group of groups) {
             if (group[row]) interleaved.push(group[row]);

@@ -1,6 +1,6 @@
 import { App, Button, Drawer, Dropdown, Empty, Input, Popconfirm, Segmented, Skeleton, Tag, Tooltip } from "antd";
 import { BookOpen, Brain, ChevronDown, Copy, Download, FileUp, ImagePlus, LoaderCircle, MessageCircle, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserRound, X } from "lucide-react";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { lazyRoute } from "@/lib/lazy-route";
@@ -37,6 +37,7 @@ type PendingChatTurn = {
 };
 
 type ChatMode = "chat" | "douqi";
+type ChatMessageAction = "retry" | "continue" | "edit" | "delete" | "remember";
 
 export default function ChatPage() {
     const { message, modal } = App.useApp();
@@ -233,7 +234,10 @@ export default function ChatPage() {
     }, [activeConversationId, activeHasStreamingMessage, userId]);
 
     useEffect(() => {
-        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: sending ? "smooth" : "auto" });
+        const frame = requestAnimationFrame(() => {
+            scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: sending ? "smooth" : "auto" });
+        });
+        return () => cancelAnimationFrame(frame);
     }, [messages, sending]);
 
     useEffect(
@@ -763,6 +767,14 @@ export default function ChatPage() {
         }
     }
 
+    const messageActions = useRef({ retry: handleRetry, continue: handleContinue, edit: handleEdit, delete: handleDeleteMessage, remember: handleRememberMessage });
+    useLayoutEffect(() => {
+        messageActions.current = { retry: handleRetry, continue: handleContinue, edit: handleEdit, delete: handleDeleteMessage, remember: handleRememberMessage };
+    });
+    const handleMessageAction = useCallback((action: ChatMessageAction, item: ChatMessage) => {
+        void messageActions.current[action](item);
+    }, []);
+
     if (mode === "douqi") {
         return (
             <Suspense
@@ -899,7 +911,7 @@ export default function ChatPage() {
                         {!detailLoading && !messages.length ? <WelcomeEmpty preset={activePreset} /> : null}
                         <div className="space-y-5">
                             {messages.map((item, index) => (
-                                <ChatBubble key={item.id} item={item} isLatest={index === messages.length - 1} onRetry={handleRetry} onContinue={handleContinue} onEdit={handleEdit} onDelete={handleDeleteMessage} onRemember={handleRememberMessage} />
+                                <ChatBubble key={item.id} item={item} isLatest={index === messages.length - 1} onAction={handleMessageAction} />
                             ))}
                             {sending ? (
                                 <div className="flex items-center gap-2 text-xs text-stone-500">
@@ -1178,7 +1190,7 @@ function createOptimisticAssistantMessage(pending: PendingChatTurn, error: strin
     };
 }
 
-function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete, onRemember }: { item: ChatMessage; isLatest: boolean; onRetry: (item: ChatMessage) => void; onContinue: (item: ChatMessage) => void; onEdit: (item: ChatMessage) => void; onDelete: (item: ChatMessage) => void; onRemember: (item: ChatMessage) => void }) {
+const ChatBubble = memo(function ChatBubble({ item, isLatest, onAction }: { item: ChatMessage; isLatest: boolean; onAction: (action: ChatMessageAction, item: ChatMessage) => void }) {
     const isUser = item.role === "user";
     const copyText = useCopyText();
     const markdownContent = item.content;
@@ -1203,7 +1215,7 @@ function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete, onR
                     <div className="mb-2 flex flex-wrap gap-2">
                         {item.attachments.map((attachment) => (
                             <a key={attachment.assetKey} href={attachment.url} target="_blank" rel="noreferrer" className="block h-24 w-24 overflow-hidden rounded-lg border border-white/20 bg-black/5">
-                                {attachment.url ? <img src={attachment.url} alt={attachment.name} className="h-full w-full object-cover" /> : null}
+                                {attachment.url ? <img src={attachment.url} alt={attachment.name} loading="lazy" decoding="async" className="h-full w-full object-cover" /> : null}
                             </a>
                         ))}
                     </div>
@@ -1246,11 +1258,7 @@ function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete, onR
                                 menu={{
                                     items: menuItems,
                                     onClick: ({ key }) => {
-                                        if (key === "edit") onEdit(item);
-                                        if (key === "continue") onContinue(item);
-                                        if (key === "retry") onRetry(item);
-                                        if (key === "delete") onDelete(item);
-                                        if (key === "remember") onRemember(item);
+                                        if (key === "edit" || key === "continue" || key === "retry" || key === "delete" || key === "remember") onAction(key, item);
                                     },
                                 }}
                             >
@@ -1273,7 +1281,7 @@ function ChatBubble({ item, isLatest, onRetry, onContinue, onEdit, onDelete, onR
             </div>
         </div>
     );
-}
+});
 
 function readLocalChatPreset(userId: string): ChatPresetId {
     if (!userId) return defaultChatPresetId;

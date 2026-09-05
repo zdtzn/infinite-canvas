@@ -18,8 +18,9 @@ test("does not warm the workspace that is already open", () => {
     assert.equal(buildRouteWarmupOrder("/chat")[0]?.route, "/canvas");
 });
 
-test("defers wide creation workspaces behind compact routes", () => {
+test("bounds idle warmup while leaving all routes available on intent", () => {
     const order = buildRouteWarmupOrder("/").map((target) => target.route);
-    assert.ok(order.indexOf("/image") > order.indexOf("/assets"));
-    assert.ok(order.indexOf("/product-lab") > order.indexOf("/prompts"));
+    assert.equal(order.length, 3);
+    assert.ok(!order.includes("/image"));
+    assert.ok(!order.includes("/product-lab"));
 });

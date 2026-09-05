@@ -136,11 +136,13 @@ export default function AssetsPage() {
             return;
         }
         let active = true;
+        const controller = new AbortController();
         void fetchServerAssetLibrary(userId, {
             page,
             pageSize,
             keyword,
             kind: kindFilter,
+            signal: controller.signal,
         })
             .then((result) => {
                 if (active) setRemoteLibrary(result);
@@ -150,6 +152,7 @@ export default function AssetsPage() {
             });
         return () => {
             active = false;
+            controller.abort();
         };
     }, [kindFilter, keyword, page, pageSize, remoteRefresh, useRemoteLibrary, userId]);
 

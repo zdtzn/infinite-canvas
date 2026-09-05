@@ -6,6 +6,32 @@ const originalFetch = globalThis.fetch;
 const originalCreateImageBitmap = globalThis.createImageBitmap;
 const originalDocument = globalThis.document;
 
+test("releases the fallback object URL when image decoding fails", async () => {
+    const OriginalImage = globalThis.Image;
+    const create = URL.createObjectURL;
+    const revoke = URL.revokeObjectURL;
+    const revoked: string[] = [];
+    try {
+        globalThis.createImageBitmap = undefined as unknown as typeof createImageBitmap;
+        globalThis.document = {} as Document;
+        URL.createObjectURL = () => "blob:failed-decode";
+        URL.revokeObjectURL = (url) => { revoked.push(url); };
+        globalThis.Image = class {
+            onload: (() => void) | null = null;
+            onerror: (() => void) | null = null;
+            set src(_value: string) { queueMicrotask(() => this.onerror?.()); }
+        } as unknown as typeof Image;
+        await expect(convertImageOutput(new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }), "jpeg")).rejects.toThrow("无法解码图片");
+        expect(revoked).toEqual(["blob:failed-decode"]);
+    } finally {
+        globalThis.Image = OriginalImage;
+        URL.createObjectURL = create;
+        URL.revokeObjectURL = revoke;
+        globalThis.createImageBitmap = originalCreateImageBitmap;
+        globalThis.document = originalDocument;
+    }
+});
+
 afterEach(() => {
     globalThis.fetch = originalFetch;
     globalThis.createImageBitmap = originalCreateImageBitmap;

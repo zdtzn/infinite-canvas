@@ -27,6 +27,21 @@ export type PromptIndexQuery = {
   pageSize?: number;
 };
 
+export function queryPromptCovers(database: Database, sourceIds: string[]) {
+  const items: Array<{ sourceId: string; id: string; title: string; coverUrl: string }> = [];
+  const indexedSourceIds: string[] = [];
+  const status = database.query("SELECT last_success_at FROM prompt_index_status WHERE source_id = ?");
+  const covers = database.query("SELECT prompt_id AS id, title, cover_url AS coverUrl FROM prompt_index WHERE source_id = ? ORDER BY rowid ASC");
+  for (const sourceId of new Set(sourceIds)) {
+    const row = status.get(sourceId) as { last_success_at: number | null } | null;
+    if (row?.last_success_at == null) continue;
+    indexedSourceIds.push(sourceId);
+    const rows = covers.all(sourceId) as Array<{ id: string; title: string; coverUrl: string }>;
+    for (const item of rows) items.push({ sourceId, ...item });
+  }
+  return { items, indexedSourceIds };
+}
+
 export type PromptIndexResult = {
   items: PromptIndexItem[];
   tags: string[];

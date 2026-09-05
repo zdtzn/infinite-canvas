@@ -10,7 +10,7 @@ import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationStageLabel, quotaText } from "@/features/cultivation/utils";
 import { promptImageCandidates, promptOriginalUrl } from "@/components/prompts/prompt-cover";
 import { SpecularButton } from "@/components/ui/specular-button";
-import { fetchAllPrompts, type Prompt } from "@/services/api/prompts";
+import { fetchHomepagePromptCovers, type PromptCover } from "@/services/api/prompts";
 import { preloadRoute } from "@/lib/route-loaders";
 import { cn } from "@/lib/utils";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
@@ -27,7 +27,7 @@ import "./home.css";
 export default function IndexPage() {
     const { message } = App.useApp();
     const navigate = useNavigate();
-    const [promptShowcase, setPromptShowcase] = useState<Prompt[]>([]);
+    const [promptShowcase, setPromptShowcase] = useState<PromptCover[]>([]);
     const [showcaseOffset, setShowcaseOffset] = useState(0);
     const [showcaseHovered, setShowcaseHovered] = useState(false);
     const [previewIndex, setPreviewIndex] = useState(0);
@@ -51,7 +51,7 @@ export default function IndexPage() {
 
     useEffect(() => {
         let active = true;
-        void fetchAllPrompts()
+        void fetchHomepagePromptCovers()
             .then((items) => {
                 if (!active) return;
                 setPromptShowcase(selectHomepagePromptShowcase(items));
