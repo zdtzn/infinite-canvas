@@ -1,0 +1,282 @@
+.imperial-realm {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    place-items: center;
+    min-height: 600px;
+    height: calc(100svh - 116px);
+    max-height: 1080px;
+    overflow: hidden;
+    background: #1c2425;
+    color: #f2f3ec;
+    letter-spacing: 0;
+}
+.imperial-realm-scene,
+.imperial-realm-veil {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+}
+.imperial-realm-scene img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 57%;
+}
+.imperial-realm-scene {
+    animation: imperial-scene-arrive 1400ms ease-out both;
+}
+.imperial-realm-veil {
+    background: linear-gradient(180deg, rgb(17 24 24 / 8%), rgb(17 24 24 / 4%) 65%, rgb(15 20 21 / 86%));
+}
+.imperial-realm-heading {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    text-align: center;
+    width: min(100%, 900px);
+    padding: 22px 24px 56px;
+}
+.imperial-realm-kicker {
+    color: #d4bf92;
+    font-size: 11px;
+    border-bottom: 1px solid rgb(212 191 146 / 40%);
+    padding-bottom: 8px;
+}
+.imperial-realm-seal {
+    display: grid;
+    place-items: center;
+    width: 148px;
+    height: 148px;
+    margin: 10px 0 0;
+    animation: imperial-seal-arrive 800ms ease-out both;
+}
+.imperial-realm-seal img {
+    width: 100%;
+    height: 100%;
+    filter: drop-shadow(0 8px 16px rgb(0 0 0 / 32%));
+}
+.imperial-realm-rank {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 13px;
+    color: #e7d2a6;
+}
+.imperial-realm-rank i {
+    display: block;
+    width: 36px;
+    height: 1px;
+    background: #b7a27b;
+    opacity: 0.6;
+}
+.imperial-realm h1 {
+    margin: 16px 0 12px;
+    font-size: 112px;
+    line-height: 1.12;
+    letter-spacing: 0;
+    color: #f1f4ee;
+    text-shadow: 0 4px 28px rgb(6 16 15 / 55%);
+}
+.imperial-realm-heading > p {
+    margin: 0;
+    font-size: 20px;
+    line-height: 1.6;
+    color: #dae3de;
+}
+.imperial-realm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 30px;
+}
+.imperial-realm-create {
+    min-height: 48px;
+    letter-spacing: 0;
+}
+.imperial-realm-recent {
+    display: inline-flex;
+    min-height: 48px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 0 10px;
+    color: #edf2eb;
+    font-size: 14px;
+}
+.imperial-realm-recent:hover {
+    color: #f6ddb0;
+}
+.imperial-realm-actions a:focus-visible {
+    outline: 2px solid #e9d4a6;
+    outline-offset: 5px;
+    border-radius: 6px;
+}
+.imperial-realm-footer {
+    position: absolute;
+    z-index: 1;
+    left: 32px;
+    right: 32px;
+    bottom: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    color: #adbfb6;
+    font-size: 11px;
+}
+.imperial-realm-footer > svg {
+    color: #e0ca9a;
+}
+.imperial-realm-preview-label {
+    margin-top: 26px;
+    font-size: 12px;
+    color: #d4bf92;
+}
+.imperial-realm--preview {
+    height: 580px;
+    min-height: 0;
+    max-height: calc(100svh - 200px);
+    border-radius: 6px;
+}
+.imperial-realm--preview h1 {
+    font-size: 80px;
+}
+.imperial-realm--preview .imperial-realm-seal {
+    width: 120px;
+    height: 120px;
+}
+@keyframes imperial-scene-arrive {
+    from {
+        opacity: 0.45;
+        transform: scale(1.025);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+@keyframes imperial-seal-arrive {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.94);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+@media (min-width: 1500px) and (min-height: 900px) {
+    .imperial-realm h1 {
+        font-size: 144px;
+    }
+    .imperial-realm-seal {
+        width: 176px;
+        height: 176px;
+    }
+    .imperial-realm--preview h1 {
+        font-size: 80px;
+    }
+}
+@media (max-width: 640px) {
+    .imperial-realm {
+        min-height: 0;
+        height: calc(100svh - 116px);
+    }
+    .imperial-realm-heading {
+        padding: 20px 16px 62px;
+    }
+    .imperial-realm h1 {
+        font-size: 64px;
+        margin-top: 18px;
+    }
+    .imperial-realm-seal {
+        width: 120px;
+        height: 120px;
+    }
+    .imperial-realm-heading > p {
+        font-size: 16px;
+    }
+    .imperial-realm-actions {
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 24px;
+    }
+    .imperial-realm-footer {
+        left: 16px;
+        right: 16px;
+        bottom: 20px;
+        font-size: 10px;
+        gap: 8px;
+    }
+    .imperial-realm--preview {
+        height: 540px;
+        max-height: calc(100svh - 190px);
+    }
+}
+@media (max-height: 740px) {
+    .imperial-realm {
+        min-height: 0;
+    }
+    .imperial-realm-seal,
+    .imperial-realm--preview .imperial-realm-seal {
+        width: 92px;
+        height: 92px;
+        margin-top: 6px;
+    }
+    .imperial-realm h1 {
+        font-size: 64px;
+        margin: 10px 0;
+    }
+    .imperial-realm-actions {
+        margin-top: 16px;
+    }
+    .imperial-realm-heading {
+        padding-top: 10px;
+        padding-bottom: 50px;
+    }
+}
+@media (max-height: 550px) {
+    .imperial-realm,
+    .imperial-realm--preview {
+        min-height: 260px;
+        max-height: none;
+    }
+    .imperial-realm-heading {
+        padding: 8px 16px 32px;
+    }
+    .imperial-realm-kicker {
+        display: none;
+    }
+    .imperial-realm-seal,
+    .imperial-realm--preview .imperial-realm-seal {
+        width: 40px;
+        height: 40px;
+        margin: 0;
+    }
+    .imperial-realm h1 {
+        font-size: 44px;
+        margin: 6px 0;
+    }
+    .imperial-realm-heading > p {
+        font-size: 14px;
+    }
+    .imperial-realm-actions {
+        flex-direction: row;
+        margin-top: 10px;
+    }
+    .imperial-realm-footer {
+        bottom: 8px;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .imperial-realm-scene,
+    .imperial-realm-seal {
+        animation: none;
+    }
+}

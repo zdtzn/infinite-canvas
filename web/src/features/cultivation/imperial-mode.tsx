@@ -3,6 +3,7 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useM
 import { useUserStore } from "@/stores/use-user-store";
 
 import { useCultivationProfile } from "./queries";
+import { ImperialSeal } from "./imperial-seal";
 
 export const DOU_EMPEROR_REALM_ID = "realm-dou-emperor";
 export const imperialModeChangeEvent = "infinite-canvas:imperial-mode-change";
@@ -48,6 +49,7 @@ type ImperialModeContextValue = {
     isImperialMode: boolean;
     imperialWelcomeEnabled: boolean;
     imperialHeroQuote: string;
+    imperialActivation: number;
     setImperialModeEnabled: (enabled: boolean) => void;
     setImperialWelcomeEnabled: (enabled: boolean) => void;
     generationSuccessMessage: (message: string) => ReactNode;
@@ -99,17 +101,21 @@ export function writeImperialBoolean(key: string, value: boolean) {
 export function ImperialModeProvider({ children }: { children: ReactNode }) {
     const userId = useUserStore((state) => state.user?.id || "");
     const { data: profile } = useCultivationProfile();
-    const [imperialModeEnabled, setImperialModeEnabledState] = useState(true);
-    const [imperialWelcomeEnabled, setImperialWelcomeEnabledState] = useState(true);
+    const [imperialModeEnabled, setImperialModeEnabledState] = useState(() => readImperialBoolean(imperialPreferenceKey(userId, "mode"), true));
+    const [imperialWelcomeEnabled, setImperialWelcomeEnabledState] = useState(() => readImperialBoolean(imperialPreferenceKey(userId, "welcome"), true));
+    const [preferenceUserId, setPreferenceUserId] = useState(userId);
+    const [activation, setActivation] = useState({ userId, sequence: 0 });
+    const imperialActivation = activation.userId === userId ? activation.sequence : 0;
     const isDouEmperor = isDouEmperorRealm(profile?.realmId);
-    const isImperialMode = isDouEmperor && imperialModeEnabled;
+    const isImperialMode = isDouEmperor && preferenceUserId === userId && imperialModeEnabled;
     const day = localDayKey();
     const imperialHeroQuote = useMemo(() => imperialQuoteFor(`${userId}:${day}`), [day, userId]);
 
     useEffect(() => {
-        if (!userId) return;
         setImperialModeEnabledState(readImperialBoolean(imperialPreferenceKey(userId, "mode"), true));
         setImperialWelcomeEnabledState(readImperialBoolean(imperialPreferenceKey(userId, "welcome"), true));
+        setPreferenceUserId(userId);
+        setActivation({ userId, sequence: 0 });
     }, [userId]);
 
     useEffect(() => {
@@ -130,10 +136,12 @@ export function ImperialModeProvider({ children }: { children: ReactNode }) {
 
     const setImperialModeEnabled = useCallback(
         (enabled: boolean) => {
+            if (!isDouEmperor) return;
+            if (enabled && !isImperialMode) setActivation((previous) => ({ userId, sequence: previous.userId === userId ? previous.sequence + 1 : 1 }));
             setImperialModeEnabledState(enabled);
             if (userId) writeImperialBoolean(imperialPreferenceKey(userId, "mode"), enabled);
         },
-        [userId],
+        [isDouEmperor, isImperialMode, userId],
     );
 
     const setImperialWelcomeEnabled = useCallback(
@@ -147,15 +155,15 @@ export function ImperialModeProvider({ children }: { children: ReactNode }) {
     const generationSuccessMessage = useCallback(
         (message: string) => {
             if (!isImperialMode) return message;
-            const quote = imperialQuoteFor(`${userId}:${Date.now()}`, imperialGenerationQuotes);
             return (
                 <span className="imperial-success-message">
+                    <ImperialSeal className="imperial-success-seal" decorative />
                     <span>{message}</span>
-                    <span>{quote}</span>
+                    <span>一念落笔，万象成卷。</span>
                 </span>
             );
         },
-        [isImperialMode, userId],
+        [isImperialMode],
     );
 
     const value = useMemo(
@@ -164,11 +172,12 @@ export function ImperialModeProvider({ children }: { children: ReactNode }) {
             isImperialMode,
             imperialWelcomeEnabled,
             imperialHeroQuote,
+            imperialActivation,
             setImperialModeEnabled,
             setImperialWelcomeEnabled,
             generationSuccessMessage,
         }),
-        [generationSuccessMessage, imperialHeroQuote, imperialWelcomeEnabled, isDouEmperor, isImperialMode, setImperialModeEnabled, setImperialWelcomeEnabled],
+        [generationSuccessMessage, imperialHeroQuote, imperialActivation, imperialWelcomeEnabled, isDouEmperor, isImperialMode, setImperialModeEnabled, setImperialWelcomeEnabled],
     );
 
     return <ImperialModeContext.Provider value={value}>{children}</ImperialModeContext.Provider>;
@@ -181,7 +190,7 @@ export function useImperialMode() {
 }
 
 export function useImperialGenerationCue() {
-    const { isDouEmperor } = useImperialMode();
+    const { isImperialMode } = useImperialMode();
     const [active, setActive] = useState(false);
     const timeoutRef = useRef<number | null>(null);
 
@@ -193,16 +202,16 @@ export function useImperialGenerationCue() {
     );
 
     const trigger = useCallback(() => {
-        if (!isDouEmperor) return;
+        if (!isImperialMode) return;
         if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
         setActive(true);
         timeoutRef.current = window.setTimeout(() => {
             timeoutRef.current = null;
             setActive(false);
         }, 300);
-    }, [isDouEmperor]);
+    }, [isImperialMode]);
 
-    return { active: isDouEmperor && active, trigger };
+    return { active: isImperialMode && active, trigger };
 }
 
 export function useImperialLoadingText(fallback: string, scope: string) {

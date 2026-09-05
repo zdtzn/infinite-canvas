@@ -1,15 +1,18 @@
-import { type CSSProperties, useState } from "react";
-import { ArrowUpRight, Crown } from "lucide-react";
-import { Popover, Switch } from "antd";
+import { type CSSProperties, Suspense, useState } from "react";
+import { Popover } from "antd";
 import { Link } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
+import { lazyRoute } from "@/lib/lazy-route";
 
-import { isDouEmperorRealm, useImperialMode } from "./imperial-mode";
+import { isDouEmperorRealm } from "./imperial-mode";
+import { ImperialSeal } from "./imperial-seal";
 import { RealmIcon } from "./realm-icon";
 import { useCultivationProfile } from "./queries";
 import { cultivationAccentColor, cultivationStageLabel, quotaText } from "./utils";
 import "./cultivation-visuals.css";
+
+const ImperialIdentity = lazyRoute(() => import("./imperial-identity"));
 
 /**
  * 顶部身份徽章。
@@ -19,7 +22,6 @@ import "./cultivation-visuals.css";
  */
 export function CultivationStatusPill() {
     const { data } = useCultivationProfile();
-    const { isImperialMode, imperialWelcomeEnabled, setImperialModeEnabled, setImperialWelcomeEnabled } = useImperialMode();
     const [identityOpen, setIdentityOpen] = useState(false);
     if (!data) return null;
     const isDouEmperor = isDouEmperorRealm(data.realmId);
@@ -31,7 +33,7 @@ export function CultivationStatusPill() {
     );
     const statusContent = (
         <>
-            <RealmIcon iconKey={data.iconKey} className="size-3.5 shrink-0" />
+            {isDouEmperor ? <ImperialSeal className="size-7" decorative /> : <RealmIcon iconKey={data.iconKey} className="size-3.5 shrink-0" />}
             <span className="cultivation-status-copy hidden max-w-32 truncate lg:block">{label}</span>
             {!isDouEmperor ? <span className="cultivation-status-copy hidden text-xs text-stone-400 lg:block dark:text-stone-500">{data.remainingToday}</span> : null}
         </>
@@ -39,58 +41,31 @@ export function CultivationStatusPill() {
 
     if (!isDouEmperor)
         return (
-            <Link
-                to="/cultivation"
-                className={statusClassName}
-                style={{ "--cultivation-accent": accentColor } as CSSProperties}
-                title={`${label} · ${quotaText(data.remainingToday, data.unlimited)}`}
-                aria-label={`打开我的修炼：${label}`}
-            >
+            <Link to="/cultivation" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} title={`${label} · ${quotaText(data.remainingToday, data.unlimited)}`} aria-label={`打开我的修炼：${label}`}>
                 {statusContent}
             </Link>
         );
 
     return (
         <Popover
-            placement="bottomRight"
+            placement="bottom"
             trigger="click"
             open={identityOpen}
             onOpenChange={setIdentityOpen}
+            styles={{ container: { background: "#18211f", border: "1px solid rgb(210 192 146 / 24%)", borderRadius: 8 } }}
             content={
-                <div className="imperial-identity-card">
-                    <div className="imperial-identity-card-mark" aria-hidden="true">
-                        <Crown className="size-4" />
-                    </div>
-                    <div>
-                        <div className="imperial-identity-card-eyebrow">最高身份</div>
-                        <strong>斗帝</strong>
-                        <p>诸天至尊</p>
-                        <div className="imperial-identity-card-divider" />
-                        <span>已登临修炼终点</span>
-                        <span>创作永无止境</span>
-                        <div className="imperial-identity-card-divider" />
-                        <span className="imperial-identity-card-pref">
-                            帝临模式
-                            <Switch size="small" checked={isImperialMode} onChange={setImperialModeEnabled} aria-label="启用帝临模式" />
-                        </span>
-                        <span className="imperial-identity-card-pref">
-                            首页欢迎
-                            <Switch size="small" checked={imperialWelcomeEnabled} onChange={setImperialWelcomeEnabled} aria-label="首页欢迎" />
-                        </span>
-                        <Link to="/cultivation" className="mt-2 inline-flex items-center gap-1 text-xs font-medium !text-[#b99a55] hover:!text-[#e4ca8b]" onClick={() => setIdentityOpen(false)}>
-                            查看我的修炼
-                            <ArrowUpRight className="size-3" aria-hidden="true" />
-                        </Link>
-                    </div>
-                </div>
+                <Suspense
+                    fallback={
+                        <div className="flex h-80 w-64 items-center justify-center text-sm text-[#dac395]" role="status">
+                            帝印展开中...
+                        </div>
+                    }
+                >
+                    {identityOpen ? <ImperialIdentity onClose={() => setIdentityOpen(false)} /> : <span />}
+                </Suspense>
             }
         >
-            <button
-                type="button"
-                className={statusClassName}
-                style={{ "--cultivation-accent": accentColor } as CSSProperties}
-                aria-label="查看斗帝身份与帝临设置"
-            >
+            <button type="button" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} aria-label="查看斗帝身份与帝临设置">
                 {statusContent}
             </button>
         </Popover>

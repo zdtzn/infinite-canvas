@@ -1,6 +1,6 @@
 import { App, Button, Result, Skeleton, Tooltip } from "antd";
-import { ArrowUpRight, Camera, CheckCircle2, ImagePlus, Infinity as InfinityIcon, LoaderCircle, Maximize2, Settings2 } from "lucide-react";
-import { type ChangeEvent, useRef, useState } from "react";
+import { ArrowUpRight, Camera, CheckCircle2, Eye, ImagePlus, Infinity as InfinityIcon, LoaderCircle, Maximize2, Settings2 } from "lucide-react";
+import { type ChangeEvent, Suspense, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -10,6 +10,7 @@ import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationRealmHero } from "@/features/cultivation/realm-hero";
 import { cultivationCapabilityLabel, cultivationProgressPercent, cultivationStageLabel } from "@/features/cultivation/utils";
 import { cn } from "@/lib/utils";
+import { lazyRoute } from "@/lib/lazy-route";
 import type { CultivationProfile } from "@/services/server-api";
 import { uploadProfileAvatar } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
@@ -17,6 +18,8 @@ import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 import "@/features/cultivation/cultivation-visuals.css";
 import { DouEmperorPalace } from "./dou-emperor-palace";
 import { RealmCollection, palaceInsignia } from "./realm-collection";
+
+const ImperialPreview = lazyRoute(() => import("@/features/cultivation/imperial-preview"));
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
@@ -50,6 +53,7 @@ export default function CultivationPage() {
     const { isDouEmperor } = useImperialMode();
     const avatarInputRef = useRef<HTMLInputElement>(null);
     const [avatarUploading, setAvatarUploading] = useState(false);
+    const [imperialPreviewOpen, setImperialPreviewOpen] = useState(false);
     const profileUserId = data?.userId || user?.id || "";
 
     const uploadAvatar = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -118,6 +122,11 @@ export default function CultivationPage() {
                         <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#8a8a96]">修行进度与境界之路,皆在此宫</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
+                        {!isDouEmperor ? (
+                            <Button icon={<Eye size={16} />} onClick={() => setImperialPreviewOpen(true)}>
+                                预览帝境
+                            </Button>
+                        ) : null}
                         {user?.admin ? (
                             <Link to="/admin/cultivation" className="inline-flex items-center gap-1.5 text-sm text-[#c9c4b9] transition-colors hover:text-[#f7f4ea]">
                                 <Settings2 className="size-4" />
@@ -321,6 +330,17 @@ export default function CultivationPage() {
                     </section>
                 ) : null}
             </div>
+            {imperialPreviewOpen ? (
+                <Suspense
+                    fallback={
+                        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-md bg-background px-4 py-3 text-sm text-foreground" role="status">
+                            帝境展开中...
+                        </div>
+                    }
+                >
+                    <ImperialPreview onClose={() => setImperialPreviewOpen(false)} />
+                </Suspense>
+            ) : null}
         </main>
     );
 }

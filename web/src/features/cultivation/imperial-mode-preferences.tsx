@@ -15,22 +15,19 @@ export function ImperialModePreferences() {
                         <Crown className="size-4" />
                         帝临模式
                     </div>
-                    <p>斗帝专属视觉偏好仅保存在当前浏览器，不影响创作配置。</p>
                 </div>
             </div>
             <div className="imperial-mode-preference-row">
                 <div>
-                    <div className="text-sm font-medium">启用帝临模式</div>
-                    <p>使用深空蓝、淡金强调和极淡星纹主题。</p>
+                    <div className="text-sm font-medium">帝境外观</div>
                 </div>
-                <Switch size="small" checked={isImperialMode} onChange={setImperialModeEnabled} />
+                <Switch checked={isImperialMode} onChange={setImperialModeEnabled} aria-label="启用帝临模式" />
             </div>
             <div className="imperial-mode-preference-row">
                 <div>
-                    <div className="text-sm font-medium">首页欢迎</div>
-                    <p>每天首次进入网站时显示一次斗帝欢迎提示。</p>
+                    <div className="text-sm font-medium">入场礼遇</div>
                 </div>
-                <Switch size="small" checked={imperialWelcomeEnabled} onChange={setImperialWelcomeEnabled} />
+                <Switch checked={imperialWelcomeEnabled} onChange={setImperialWelcomeEnabled} aria-label="入场礼遇" />
             </div>
         </section>
     );

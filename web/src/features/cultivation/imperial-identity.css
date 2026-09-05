@@ -1,0 +1,85 @@
+.emperor-identity {
+    width: min(286px, calc(100vw - 56px));
+    padding: 12px 12px 4px;
+    color: #efece1;
+    letter-spacing: 0;
+}
+.emperor-identity header {
+    position: relative;
+    text-align: center;
+    padding-bottom: 20px;
+}
+.emperor-identity-eyebrow {
+    font-size: 11px;
+    color: #cbb381;
+}
+.emperor-identity-seal {
+    display: block;
+    width: 136px;
+    height: 136px;
+    margin: 4px auto -2px;
+}
+.emperor-identity h2 {
+    margin: 0;
+    font-size: 26px;
+    line-height: 1.4;
+    color: #f1dfb6;
+}
+.emperor-identity p {
+    margin: 8px 0 0;
+    color: #aebdb7;
+    font-size: 12px;
+}
+.emperor-identity dl {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin: 0 0 12px;
+    padding: 16px 0;
+    border-block: 1px solid rgb(210 192 146 / 18%);
+    text-align: center;
+}
+.emperor-identity dl > div + div {
+    border-left: 1px solid rgb(210 192 146 / 18%);
+}
+.emperor-identity dt {
+    color: #aebdb7;
+    font-size: 11px;
+}
+.emperor-identity dd {
+    margin: 5px 0 0;
+    font-size: 21px;
+    font-variant-numeric: tabular-nums;
+}
+.emperor-identity dd small {
+    margin-left: 5px;
+    font-size: 11px;
+    color: #aebdb7;
+}
+.emperor-identity-preference {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 44px;
+}
+.emperor-identity-preference label {
+    font-size: 13px;
+    cursor: pointer;
+}
+.emperor-identity > a {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 48px;
+    margin-top: 12px;
+    border-top: 1px solid rgb(210 192 146 / 18%);
+    font-size: 12px;
+    color: #dac395;
+}
+.emperor-identity > a:hover {
+    color: #fff2d3;
+}
+.emperor-identity > a:focus-visible {
+    outline: 2px solid #dac395;
+    outline-offset: 2px;
+}

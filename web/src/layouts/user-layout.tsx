@@ -14,7 +14,7 @@ const CultivationBreakthroughOverlay = lazyRoute(() => import("@/features/cultiv
 const ImperialWelcome = lazyRoute(() => import("@/features/cultivation/imperial-welcome").then(({ ImperialWelcome: Component }) => ({ default: Component })));
 
 export default function UserLayout({ children }: { children: ReactNode }) {
-    const { isDouEmperor, isImperialMode, imperialWelcomeEnabled } = useImperialMode();
+    const { isDouEmperor, isImperialMode } = useImperialMode();
     const { pathname } = useLocation();
     const visualEffectsReady = useDeferredMount(650);
     const showSplashCursor = visualEffectsReady && !pathname.startsWith("/color-alchemy");
@@ -51,7 +51,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
             {visualEffectsReady ? (
                 <Suspense fallback={null}>
                     <CultivationBreakthroughOverlay />
-                    {isDouEmperor && imperialWelcomeEnabled ? <ImperialWelcome /> : null}
+                    {isDouEmperor ? <ImperialWelcome /> : null}
                 </Suspense>
             ) : null}
         </div>

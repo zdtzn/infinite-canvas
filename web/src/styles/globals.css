@@ -650,28 +650,28 @@ html:not(.dark) .canvas-cinematic-wash {
 
 @layer components {
     html[data-imperial-mode="true"] {
-        --background: #07111f;
-        --foreground: #eaf0f8;
+        --background: #111817;
+        --foreground: #eef1e9;
         --border: rgb(148 163 184 / 18%);
         --ring: rgb(218 188 119 / 72%);
-        --card: #0b1727;
+        --card: #18211f;
         --card-foreground: #eaf0f8;
-        --popover: #0d1a2b;
+        --popover: #1c2825;
         --popover-foreground: #eaf0f8;
         --primary: #ead7a6;
         --primary-foreground: #111a29;
-        --secondary: #112239;
+        --secondary: #22312b;
         --secondary-foreground: #eaf0f8;
-        --muted: #102035;
-        --muted-foreground: #a4b2c7;
-        --accent: #172a43;
+        --muted: #202c28;
+        --muted-foreground: #b1bfb8;
+        --accent: #304338;
         --accent-foreground: #f6ead0;
         --input: rgb(148 163 184 / 21%);
-        --sidebar: #091525;
+        --sidebar: #151e1b;
         --sidebar-foreground: #eaf0f8;
         --sidebar-primary: #ead7a6;
         --sidebar-primary-foreground: #111a29;
-        --sidebar-accent: #14243a;
+        --sidebar-accent: #25352d;
         --sidebar-accent-foreground: #f6ead0;
         --sidebar-border: rgb(148 163 184 / 18%);
         --sidebar-ring: rgb(218 188 119 / 72%);
@@ -884,8 +884,33 @@ html:not(.dark) .canvas-cinematic-wash {
 
     .imperial-success-message {
         display: grid;
-        gap: 0.125rem;
+        grid-template-columns: 36px 1fr;
+        gap: 2px 8px;
         text-align: left;
+    }
+
+    .imperial-success-seal {
+        width: 36px;
+        height: 36px;
+        grid-row: 1 / 3;
+        animation: imperial-success-arrive 650ms ease-out both;
+    }
+
+    @keyframes imperial-success-arrive {
+        from {
+            opacity: 0;
+            transform: scale(0.8);
+        }
+        to {
+            opacity: 1;
+            transform: scale(1);
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .imperial-success-seal {
+            animation: none;
+        }
     }
 
     .imperial-success-message > span + span {
