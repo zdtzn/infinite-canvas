@@ -631,203 +631,6 @@
         text-align: right;
     }
 
-    .dep-journey {
-        padding: 0 0 3rem;
-        border-bottom: 1px solid rgb(238 244 248 / 9%);
-    }
-
-    .dep-journey-grid {
-        display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
-        gap: 0.8rem;
-        margin: 1.85rem 0 0;
-        padding: 0;
-        list-style: none;
-    }
-
-    .dep-journey-grid li {
-        position: relative;
-        display: grid;
-        min-height: 11.2rem;
-        min-width: 0;
-        align-content: center;
-        justify-items: center;
-        overflow: hidden;
-        padding: 1.15rem 0.55rem 0.85rem;
-        border: 1px solid rgb(201 168 106 / 13%);
-        border-radius: 0.4rem;
-        background: radial-gradient(circle at 50% 24%, rgb(201 168 106 / 8%), transparent 38%), linear-gradient(180deg, rgb(17 17 22 / 88%), rgb(8 8 11 / 96%));
-        box-shadow:
-            inset 0 1px rgb(255 255 255 / 2%),
-            0 0.9rem 2.3rem rgb(0 0 0 / 16%);
-        text-align: center;
-        transition:
-            border-color 220ms ease,
-            background-color 220ms ease,
-            transform 220ms ease,
-            box-shadow 220ms ease;
-    }
-
-    .dep-journey-grid li::before {
-        position: absolute;
-        top: 0;
-        right: 12%;
-        left: 12%;
-        height: 1px;
-        content: "";
-        background: linear-gradient(90deg, transparent, rgb(242 220 162 / 38%), transparent);
-    }
-
-    .dep-journey-grid li:hover {
-        border-color: rgb(201 168 106 / 34%);
-        background-color: rgb(20 19 22 / 96%);
-        box-shadow:
-            inset 0 1px rgb(255 255 255 / 4%),
-            0 1.15rem 2.8rem rgb(0 0 0 / 26%);
-        transform: translateY(-3px);
-    }
-
-    .dep-journey-index {
-        position: absolute;
-        top: 0.55rem;
-        right: 0.65rem;
-        color: rgb(141 155 171 / 42%);
-        font-size: 0.6rem;
-        font-variant-numeric: tabular-nums;
-        line-height: 1rem;
-    }
-
-    .dep-realm-seal {
-        position: relative;
-        display: grid;
-        width: 5.75rem;
-        aspect-ratio: 1;
-        place-items: center;
-        border-radius: 50%;
-        isolation: isolate;
-    }
-
-    .dep-realm-seal::before,
-    .dep-realm-seal::after {
-        position: absolute;
-        border-radius: 50%;
-        content: "";
-    }
-
-    .dep-realm-seal::before {
-        inset: 0.28rem;
-        z-index: -1;
-        border: 1px solid rgb(201 168 106 / 32%);
-        box-shadow:
-            inset 0 0 0 0.28rem rgb(201 168 106 / 3%),
-            0 0.75rem 1.8rem rgb(0 0 0 / 28%);
-    }
-
-    .dep-realm-seal::after {
-        inset: 0;
-        z-index: -2;
-        border: 1px dashed rgb(201 168 106 / 16%);
-    }
-
-    .dep-realm-medal-frame {
-        display: grid;
-        width: 4.75rem;
-        aspect-ratio: 1;
-        place-items: center;
-        overflow: hidden;
-        border: 1px solid rgb(201 168 106 / 44%);
-        border-radius: 50%;
-        background: #0b0a0b;
-        box-shadow:
-            inset 0 0 0 0.2rem rgb(8 8 10 / 72%),
-            inset 0 0 1rem rgb(201 168 106 / 8%);
-    }
-
-    .dep-realm-medal {
-        width: 100%;
-        height: 100%;
-        border-radius: inherit;
-        object-fit: cover;
-        opacity: 0.82;
-        filter: saturate(0.72) brightness(0.9);
-        transform: scale(0.94);
-        transition:
-            filter 220ms ease,
-            opacity 220ms ease,
-            transform 220ms ease;
-    }
-
-    .dep-journey-grid strong {
-        margin-top: 0.68rem;
-        color: rgb(240 238 232 / 82%);
-        font-size: 0.84rem;
-        font-weight: 600;
-        line-height: 1.1rem;
-        white-space: nowrap;
-    }
-
-    .dep-journey-grid small {
-        margin-top: 0.22rem;
-        color: rgb(150 148 156 / 66%);
-        font-size: 0.62rem;
-        line-height: 1rem;
-        white-space: nowrap;
-    }
-
-    .dep-journey-state {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.3rem;
-        margin-top: 0.42rem;
-        color: rgb(201 168 106 / 58%);
-        font-size: 0.58rem;
-        line-height: 0.9rem;
-        white-space: nowrap;
-    }
-
-    .dep-journey-state::before {
-        width: 0.28rem;
-        height: 0.28rem;
-        border-radius: 50%;
-        content: "";
-        background: currentcolor;
-        box-shadow: 0 0 0.45rem currentcolor;
-    }
-
-    .dep-journey-grid li.is-current {
-        border-color: rgb(242 220 162 / 54%);
-        background: radial-gradient(circle at 50% 24%, rgb(242 220 162 / 17%), transparent 42%), linear-gradient(180deg, rgb(31 27 20 / 92%), rgb(10 9 10 / 98%));
-        box-shadow:
-            inset 0 1px rgb(255 239 193 / 18%),
-            0 1rem 2.8rem rgb(0 0 0 / 30%),
-            0 0 2.4rem rgb(201 168 106 / 9%);
-    }
-
-    .dep-journey-grid li.is-current .dep-journey-index,
-    .dep-journey-grid li.is-current strong,
-    .dep-journey-grid li.is-current small,
-    .dep-journey-grid li.is-current .dep-journey-state {
-        color: rgb(217 185 111 / 88%);
-    }
-
-    .dep-journey-grid li.is-current .dep-realm-seal {
-        animation: dep-current-realm 3.8s ease-in-out infinite;
-    }
-
-    .dep-journey-grid li.is-current .dep-realm-medal-frame {
-        border-color: rgb(242 220 162 / 78%);
-        box-shadow:
-            inset 0 0 0 0.2rem rgb(8 8 10 / 62%),
-            inset 0 0 1.35rem rgb(201 168 106 / 16%),
-            0 0 1.3rem rgb(201 168 106 / 20%);
-    }
-
-    .dep-journey-grid li.is-current .dep-realm-medal {
-        opacity: 1;
-        filter: saturate(1.08) brightness(1.04) drop-shadow(0 0 0.55rem rgb(242 220 162 / 28%));
-        transform: scale(0.98);
-    }
-
     .dep-core-grid {
         display: grid;
         grid-template-columns: minmax(0, 1.25fr) minmax(21rem, 0.75fr);
@@ -1476,9 +1279,6 @@
     }
 
     @media (max-width: 1180px) {
-        .dep-journey-grid {
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-        }
 
         .dep-core-grid {
             grid-template-columns: minmax(0, 1fr);
@@ -1569,9 +1369,6 @@
             text-align: left;
         }
 
-        .dep-journey-grid {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-        }
 
         .dep-module-heading {
             padding: 1.3rem;
@@ -1699,45 +1496,14 @@
             gap: 0.25rem;
         }
 
-        .dep-journey {
-            padding-bottom: 2.25rem;
-        }
 
-        .dep-journey-grid {
-            gap: 0.5rem;
-            margin-top: 1.25rem;
-        }
 
-        .dep-journey-grid li {
-            min-height: 9.4rem;
-            padding: 0.8rem 0.3rem 0.65rem;
-        }
 
-        .dep-realm-seal {
-            width: 4.35rem;
-        }
 
-        .dep-realm-seal::before {
-            inset: 0.18rem;
-        }
 
-        .dep-realm-medal-frame {
-            width: 3.65rem;
-        }
 
-        .dep-journey-grid strong {
-            margin-top: 0.58rem;
-            font-size: 0.72rem;
-        }
 
-        .dep-journey-grid small {
-            font-size: 0.58rem;
-        }
 
-        .dep-journey-state {
-            margin-top: 0.3rem;
-            font-size: 0.54rem;
-        }
 
         .dep-core-grid {
             padding-top: 2.25rem;
@@ -1793,8 +1559,7 @@
         .dep-star-field,
         .dep-law-orbit,
         .dep-law-core-rings,
-        .dep-imperial-crest::after,
-        .dep-journey-grid li.is-current .dep-realm-seal {
+        .dep-imperial-crest::after {
             animation: none;
         }
 

@@ -16,6 +16,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 import "@/features/cultivation/cultivation-visuals.css";
 import { DouEmperorPalace } from "./dou-emperor-palace";
+import { RealmCollection, palaceInsignia } from "./realm-collection";
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
@@ -35,10 +36,6 @@ const REALM_LADDER = [
     { id: "realm-dou-saint", name: "斗圣" },
     { id: "realm-dou-emperor", name: "斗帝" },
 ] as const;
-
-function realmLadderAsset(realmId: string, variant: "badge" | "aura") {
-    return `/cultivation-realms/badges/${realmId}-${variant}.webp`;
-}
 
 /**
  * 命宫 · 修炼页(方案B「山海境」)
@@ -111,7 +108,7 @@ export default function CultivationPage() {
     }
 
     return (
-        <main className="h-full overflow-y-auto bg-background text-foreground">
+        <main className="palace-standard h-full overflow-y-auto bg-background text-foreground">
             <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
                 {/* ── 宫门 ── */}
                 <header className="flex flex-wrap items-end justify-between gap-4">
@@ -142,7 +139,7 @@ export default function CultivationPage() {
                 </header>
 
                 {/* ── 主殿:当前境界 ── */}
-                <section className="shj-panel relative mt-8 overflow-hidden !rounded-xl" aria-label={`${data.realmName} 境界意境`}>
+                <section className="palace-standard-hero shj-panel relative mt-8 overflow-hidden !rounded-xl" aria-label={`${data.realmName} 境界意境`}>
                     <img
                         src={realmHero.imageSrc}
                         alt={`${data.realmName} 境界意境`}
@@ -154,7 +151,8 @@ export default function CultivationPage() {
                         fetchPriority="high"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-[#0e0e12] via-[#0e0e12]/45 to-transparent" aria-hidden />
-                    <div className="absolute inset-0 flex flex-col justify-between p-6 sm:p-8">
+                    <img className="palace-current-insignia" src={palaceInsignia(REALM_LADDER[ladderIndex].id)} alt={`${data.realmName}勋章`} width={640} height={640} fetchPriority="high" />
+                    <div className="palace-standard-copy absolute inset-0 flex flex-col justify-between p-6 sm:p-8">
                         <div className="flex items-center gap-3">
                             <div className="relative shrink-0">
                                 <ProfileAvatarImage
@@ -233,7 +231,7 @@ export default function CultivationPage() {
                     </div>
                 </section>
 
-                <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+                <div className="mt-8 grid gap-6">
                     <div className="flex h-full min-w-0 flex-col gap-6">
                         {/* ── 今日修行 ── */}
                         <section className="shj-panel p-6" aria-label="今日修行">
@@ -310,39 +308,7 @@ export default function CultivationPage() {
                     </div>
 
                     {/* ── 境界阶梯 ── */}
-                    <aside className="shj-panel shj-ladder-panel h-fit p-5 sm:p-6 lg:sticky lg:top-20" aria-label="境界阶梯">
-                        <div className="flex items-end justify-between gap-4">
-                            <div>
-                                <h2 className="font-display text-lg text-[#edede6]">境界阶梯</h2>
-                                <p className="mt-1 text-xs text-[#8a8a96]">越过一境，天地一变</p>
-                            </div>
-                            <div className="shj-ladder-progress" aria-label={`当前位于第 ${ladderIndex + 1} 境，共 ${REALM_LADDER.length} 境`}>
-                                <span>境程</span>
-                                <strong>{String(ladderIndex + 1).padStart(2, "0")}</strong>
-                                <span>/ {REALM_LADDER.length}</span>
-                            </div>
-                        </div>
-                        <ol className="shj-ladder mt-5">
-                            {[...REALM_LADDER].reverse().map((realm) => {
-                                const index = REALM_LADDER.findIndex((item) => item.id === realm.id);
-                                const state = index < ladderIndex ? "is-passed" : index === ladderIndex ? "is-current" : "is-future";
-                                const stateLabel = state === "is-passed" ? "已越境" : state === "is-current" ? "当前境界" : "尚未抵达";
-                                return (
-                                    <li key={realm.id} className={cn("shj-ladder-item", state)} aria-current={state === "is-current" ? "step" : undefined}>
-                                        <img className="shj-ladder-aura" src={realmLadderAsset(realm.id, "aura")} alt="" width={128} height={128} loading="lazy" decoding="async" aria-hidden="true" />
-                                        <span className="shj-ladder-mark" aria-hidden="true">
-                                            <img className="shj-ladder-badge" src={realmLadderAsset(realm.id, "badge")} alt="" width={96} height={96} loading={state === "is-current" ? "eager" : "lazy"} decoding="async" />
-                                        </span>
-                                        <span className="shj-ladder-copy">
-                                            <span className="shj-ladder-state">{stateLabel}</span>
-                                            <span className="shj-ladder-name">{realm.name}</span>
-                                        </span>
-                                        <span className="shj-ladder-meta">{state === "is-current" ? stageLabel : `第 ${index + 1} 境`}</span>
-                                    </li>
-                                );
-                            })}
-                        </ol>
-                    </aside>
+                    <RealmCollection key={data.realmId} realmId={data.realmId} />
                 </div>
 
                 {data.capabilities.length ? (
