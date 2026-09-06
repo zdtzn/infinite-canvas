@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 import type { CultivationProfile } from "@/services/server-api";
 import "./dou-emperor-palace.css";
-import { RealmCollection, palaceInsignia } from "./realm-collection";
+import { RealmCollection } from "./realm-collection";
 
 type DouEmperorPalaceProps = {
     profile: CultivationProfile;
@@ -107,7 +107,7 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                 <div className="dep-hero-center">
                     <div className="dep-imperial-crest" aria-hidden="true">
                         <span className="dep-imperial-crest-frame">
-                            <img src={palaceInsignia("realm-dou-emperor")} alt="" width={116} height={116} decoding="async" fetchPriority="high" />
+                            <img src="/cultivation-realms/dou-emperor-character.png" alt="" width={1024} height={1536} decoding="async" fetchPriority="high" />
                         </span>
                     </div>
                     <span className="dep-arrival-mark">

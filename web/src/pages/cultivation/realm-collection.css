@@ -39,10 +39,10 @@
 .palace-redesign .dep-law-orbit, .palace-redesign .dep-space-cracks, .palace-redesign .dep-hero-footnote { display: none; }
 .palace-redesign .dep-hero-toolbar { width: min(100% - 48px, 1280px); padding-top: 24px; }
 .palace-redesign .dep-hero-center { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); grid-template-rows: auto; gap: 10px 60px; width: min(100% - 64px, 1100px); margin: 44px auto 0; padding: 0; text-align: left; align-items: center; }
-.palace-redesign .dep-imperial-crest { grid-column: 1; grid-row: 1 / 8; width: 100%; margin: 0; aspect-ratio: 1; }
+.palace-redesign .dep-imperial-crest { grid-column: 1; grid-row: 1 / 8; width: min(100%, 400px); justify-self: center; margin: 0; aspect-ratio: 2 / 3; }
 .palace-redesign .dep-imperial-crest::before, .palace-redesign .dep-imperial-crest::after { display: none; }
-.palace-redesign .dep-imperial-crest-frame { width: 100%; aspect-ratio: 1; overflow: visible; border: 0; border-radius: 0; background: none; box-shadow: none; }
-.palace-redesign .dep-imperial-crest-frame img { width: 100%; height: 100%; object-fit: contain; border-radius: 0; transform: none; filter: drop-shadow(0 12px 32px #d3ab4824); }
+.palace-redesign .dep-imperial-crest-frame { width: 100%; aspect-ratio: 2 / 3; overflow: visible; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.palace-redesign .dep-imperial-crest-frame img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; border-radius: 0; transform: none; filter: none; mask-image: linear-gradient(to bottom, transparent, black 4%, black 96%, transparent); }
 .palace-redesign .dep-hero-center > :not(.dep-imperial-crest) { grid-column: 2; }
 .palace-redesign .dep-arrival-mark { justify-content: start; margin: 0; font-size: 11px; }
 .palace-redesign .dep-arrival-mark span, .palace-redesign .dep-emperor-sigil { display: none; }
@@ -84,7 +84,7 @@
     .realm-collection-grid img { margin-bottom: 8px; }
     .realm-collection-grid strong { font-size: 13px; }
     .palace-redesign .dep-hero-center { display: flex; gap: 10px; width: calc(100% - 40px); margin-top: 24px; text-align: center; }
-    .palace-redesign .dep-imperial-crest { width: min(78vw, 330px); }
+    .palace-redesign .dep-imperial-crest { width: min(72vw, 280px); flex-shrink: 0; }
     .palace-redesign .dep-hero-metrics { max-width: 400px; }
     .palace-redesign .dep-hero-toolbar { width: calc(100% - 32px); }
     .palace-redesign .dep-domain { width: calc(100% - 32px); }
