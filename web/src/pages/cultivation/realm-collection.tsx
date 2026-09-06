@@ -33,7 +33,7 @@ export function RealmCollection({ realmId }: { realmId: string }) {
     return (
         <section className="realm-collection" aria-labelledby="realm-collection-title">
             <header className="realm-collection-heading">
-                <div><span className="realm-eyebrow">境界藏阁 · 成长之证</span><h2 id="realm-collection-title" className="font-display">十二境 · 一路生辉</h2><p>每一次创作，都是通往下一重天地的足迹。</p></div>
+                <div><span className="realm-eyebrow">境界荣光 · 万古留名</span><h2 id="realm-collection-title" className="font-display">十二境 · 登天之路</h2><p>自微末而起，至诸天独尊。</p></div>
                 <div className="realm-collection-count"><strong>{String(Math.max(0, currentIndex + 1)).padStart(2, "0")}</strong><span>/ 12 境已点亮</span></div>
             </header>
             <div className="realm-collection-layout">

@@ -110,9 +110,10 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                             <img src="/cultivation-realms/dou-emperor-character.png" alt="" width={1024} height={1536} decoding="async" fetchPriority="high" />
                         </span>
                     </div>
+                    <div className="dep-sovereign-copy">
                     <span className="dep-arrival-mark">
                         <span aria-hidden="true" />
-                        万法来朝 · 帝境已成
+                        万道归一 · 诸天共尊
                         <span aria-hidden="true" />
                     </span>
                     <div className="dep-emperor-title-wrap">
@@ -121,9 +122,9 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                             斗帝
                         </h1>
                     </div>
-                    <p className="font-display dep-emperor-rank">诸天至尊</p>
+                    <p className="font-display dep-emperor-rank">诸天之上，唯我独尊。</p>
                     <p className="font-display dep-emperor-state">手握日月摘星辰，世间无我这般人。</p>
-                    <p className="dep-emperor-decree">天地已无更高境界。唯有创作，可令诸天再开。</p>
+                    <p className="dep-emperor-decree">万界俯首，诸法皆臣。<br />此身已登绝巅，落笔再造诸天。</p>
 
                     <dl className="dep-hero-metrics" aria-label="帝境创作总览">
                         <HeroMetric label="累计修为" value={profile.totalXp.toLocaleString()} />
@@ -133,9 +134,10 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
 
                     <Link to="/image" className="dep-create-action">
                         <Sparkles className="size-4" aria-hidden="true" />
-                        执笔天地
+                        执笔 · 开天辟地
                         <ArrowUpRight className="size-4" aria-hidden="true" />
                     </Link>
+                    </div>
                 </div>
 
                 <div className="dep-hero-footnote" aria-hidden="true">
