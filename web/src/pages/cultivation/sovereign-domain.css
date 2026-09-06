@@ -1,0 +1,48 @@
+.sovereign-domain{color:#eee8dc;padding-top:24px}
+.sovereign-section-heading{display:flex;justify-content:space-between;align-items:end;gap:24px;padding:28px 0;border-bottom:1px solid #d5b77b30}
+.sovereign-section-heading h2{margin:10px 0 0;font-size:clamp(28px,3vw,42px);font-weight:500;letter-spacing:.12em}
+.sovereign-section-heading>p{margin:0;color:#aaa49a;font-size:14px}
+.sovereign-section-heading>p strong{color:#ead09a;font-size:24px}
+.sovereign-law-groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:32px;padding:32px 0 48px}
+.sovereign-law-group{min-width:0}
+.sovereign-law-group h3{color:#e2c589;font-size:17px;margin:0 0 6px}
+.sovereign-law-group>p{color:#96938d;font-size:12px;margin:0 0 24px}
+.sovereign-law-group ul{list-style:none;padding:0;margin:0;display:grid;gap:22px}
+.sovereign-law-group li{display:flex;align-items:start;gap:12px}
+.sovereign-law-group li>svg{flex:none;width:20px;height:20px;color:#baa06b;margin-top:2px;stroke-width:1.5}
+.sovereign-law-group li div{min-width:0}
+.sovereign-law-group li strong{display:block;font-size:14px;font-weight:500;overflow-wrap:anywhere}
+.sovereign-law-group li span{display:block;color:#aaa49a;font-size:12px;line-height:1.7;margin-top:4px;overflow-wrap:anywhere}
+.sovereign-works{border-top:1px solid #d5b77b20}
+.sovereign-achievements{display:grid;grid-template-columns:1fr 2fr;gap:40px;padding:40px 0;align-items:center}
+.sovereign-work-total>span{font-size:13px;color:#c9b582}
+.sovereign-work-total>strong{display:flex;align-items:baseline;gap:14px;font-size:clamp(56px,6vw,84px);font-weight:400;line-height:1.3;font-variant-numeric:tabular-nums;color:#f1dcaa;overflow-wrap:anywhere}
+.sovereign-work-total small{font-size:14px;color:#aaa49a}
+.sovereign-work-total p{margin:8px 0 0;font-size:12px;color:#aaa49a;letter-spacing:.12em}
+.sovereign-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;gap:24px}
+.sovereign-metrics>div{min-width:0;padding-left:24px;border-left:1px solid #d5b77b30}
+.sovereign-metrics dt{display:flex;align-items:center;gap:8px;font-size:12px;color:#aaa49a}
+.sovereign-metrics dt svg{width:16px;height:16px;color:#bca16a}
+.sovereign-metrics dd{margin:14px 0 0;font-size:clamp(22px,2.5vw,34px);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.sovereign-model-details{border-block:1px solid #d5b77b20;font-size:13px}
+.sovereign-model-details summary{cursor:pointer;padding:20px 0;color:#d6c59f}
+.sovereign-model-details summary span{margin-left:16px;color:#aaa49a;font-size:12px}
+.sovereign-model-details summary:focus-visible,.sovereign-creed a:focus-visible{outline:2px solid #f0d59b;outline-offset:5px}
+.sovereign-model-details ul{list-style:none;padding:0 0 20px;margin:0;display:grid;gap:14px}
+.sovereign-model-details li{display:flex;justify-content:space-between;gap:24px}
+.sovereign-model-details li span{overflow-wrap:anywhere;min-width:0}
+.sovereign-model-details li strong{white-space:nowrap;font-weight:500;color:#d6c59f}
+.sovereign-model-details>p{padding-bottom:20px;color:#aaa49a}
+.sovereign-creed{padding:80px 24px;margin-top:32px;text-align:center;background:radial-gradient(ellipse at 50% 50%,#b78c3918,transparent 70%)}
+.sovereign-creed p{margin:24px 0;font-size:clamp(28px,4vw,52px);line-height:1.7;letter-spacing:.12em;color:#ddd5c6}
+.sovereign-creed strong{font-weight:500;color:#edcf8d}
+.sovereign-creed a{display:inline-flex;align-items:center;gap:12px;padding:12px 0;color:#d7bd84;border-bottom:1px solid #d7bd8466;font-size:14px}
+@media(max-width:760px){
+.sovereign-achievements{grid-template-columns:1fr;gap:32px}
+.sovereign-section-heading{align-items:start;flex-direction:column;gap:12px}
+.sovereign-metrics{gap:12px}
+.sovereign-metrics>div{padding-left:12px}
+.sovereign-metrics>div:first-child{border-left:0;padding-left:0}
+.sovereign-metrics dd{font-size:22px}
+.sovereign-creed{padding:56px 0}
+}

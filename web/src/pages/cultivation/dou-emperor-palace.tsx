@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 import type { CultivationProfile } from "@/services/server-api";
 import "./dou-emperor-palace.css";
+import "./sovereign-domain.css";
 import { RealmCollection } from "./realm-collection";
 
 type DouEmperorPalaceProps = {
@@ -51,14 +52,11 @@ const GROUP_LABELS: Array<{ key: CapabilityMeta["group"]; title: string; subtitl
     { key: "other", title: "其他法则", subtitle: "已授权的扩展能力" },
 ];
 
-const MODEL_COLORS = ["#d9b96f", "#7db2d8", "#dce8f2", "#7789a4", "#a96858", "#5f958c"];
 
 export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarInputRef, onAvatarChange, admin }: DouEmperorPalaceProps) {
     const capabilities = profile.capabilities.map((key) => ({ key, ...(CAPABILITY_META[key] || fallbackCapabilityMeta(key)) }));
     const capabilityGroups = GROUP_LABELS.map((group) => ({ ...group, items: capabilities.filter((item) => item.group === group.key) })).filter((group) => group.items.length);
     const modelUsage = profile.modelUsage || [];
-    const totalModelImages = modelUsage.reduce((total, item) => total + item.images, 0);
-    const modelGradient = buildModelGradient(modelUsage);
 
     return (
         <main className="dep-page palace-redesign">
@@ -157,142 +155,50 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
 
                 <RealmCollection realmId="realm-dou-emperor" />
 
-                <div className="dep-core-grid">
-                    <section className="dep-module dep-law-module" aria-labelledby="law-control-title">
-                        <div className="dep-section-heading dep-module-heading">
-                            <div>
-                                <span>LAW CONTROL</span>
-                                <h2 id="law-control-title" className="font-display">
-                                    法则掌控
-                                </h2>
-                            </div>
-                            <p>万法归一，诸天俯首。已掌之法，皆可随一念而动。</p>
-                        </div>
-
-                        <div className="dep-law-layout">
-                            <div className="dep-law-core" aria-label={`已掌握 ${capabilities.length} 项能力`}>
-                                <span className="dep-law-core-kicker">帝境法旨</span>
-                                <div className="dep-law-core-rings" aria-hidden="true">
-                                    <span />
-                                    <span />
-                                    <span />
-                                </div>
-                                <InfinityIcon aria-hidden="true" />
-                                <strong>{capabilities.length}</strong>
-                                <span className="dep-law-core-count">道创作法则，皆应帝念</span>
-                                <div className="dep-law-core-mantra" aria-hidden="true">
-                                    <span>万法归一</span>
-                                    <strong className="font-display">诸天俯首</strong>
-                                </div>
-                            </div>
-
-                            <div className="dep-capability-groups">
-                                {capabilityGroups.map((group) => (
-                                    <div key={group.key} className="dep-capability-group">
-                                        <div className="dep-capability-group-heading">
-                                            <strong>{group.title}</strong>
-                                            <span>{group.subtitle}</span>
-                                        </div>
-                                        <div className="dep-capability-list">
-                                            {group.items.map((capability) => {
-                                                const Icon = capability.icon;
-                                                return (
-                                                    <div key={capability.key} className="dep-capability-row">
-                                                        <span className="dep-capability-icon" aria-hidden="true">
-                                                            <Icon className="size-4" />
-                                                        </span>
-                                                        <span className="dep-capability-copy">
-                                                            <strong>{capability.label}</strong>
-                                                            <small>{capability.detail}</small>
-                                                        </span>
-                                                        <span className="dep-capability-energy" aria-hidden="true">
-                                                            <i />
-                                                        </span>
-                                                        <span className="dep-capability-state">已掌控</span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </section>
-
-                    <section className="dep-module dep-epoch-module" aria-labelledby="creation-epoch-title">
-                        <div className="dep-section-heading dep-module-heading">
-                            <div>
-                                <span>CREATION EPOCH</span>
-                                <h2 id="creation-epoch-title" className="font-display">
-                                    创作纪元
-                                </h2>
-                            </div>
-                            <p>天地已无更高境界，创作永无止境。此处记下每一次执笔留下的纪元刻度。</p>
-                        </div>
-
-                        <div className="dep-epoch-primary">
-                            <span>累计作品</span>
-                            <strong>{profile.totalImages.toLocaleString()}</strong>
-                            <small>幅画卷已镌入此方创作纪元</small>
-                        </div>
-
-                        <dl className="dep-epoch-metrics">
-                            <EpochMetric icon={CalendarDays} label="创作天数" value={`${profile.activeDays.toLocaleString()} 天`} />
-                            <EpochMetric icon={Gauge} label="累计修为" value={profile.totalXp.toLocaleString()} />
-                            <EpochMetric icon={Aperture} label="掌控能力" value={`${capabilities.length} 项`} />
-                            <EpochMetric icon={Activity} label="今日创作" value={`${profile.usedToday.toLocaleString()} 次`} />
-                        </dl>
-
-                        <div className="dep-model-usage">
-                            <div className="dep-model-visual" style={{ backgroundImage: modelGradient }} aria-hidden="true">
-                                <span>
-                                    <Cpu className="size-5" />
-                                </span>
-                            </div>
-                            <div className="dep-model-copy">
-                                <div className="dep-model-heading">
-                                    <div>
-                                        <strong>模型使用情况</strong>
-                                        <span>{modelUsage.length ? `${modelUsage.length} 个模型留下创作记录` : "尚未形成模型使用记录"}</span>
-                                    </div>
-                                    <Cpu className="size-4" aria-hidden="true" />
-                                </div>
-                                {modelUsage.length ? (
-                                    <ol className="dep-model-list">
-                                        {modelUsage.map((item, index) => {
-                                            const percent = totalModelImages ? Math.round((item.images / totalModelImages) * 100) : 0;
-                                            return (
-                                                <li key={item.model}>
-                                                    <span className="dep-model-dot" style={{ backgroundColor: MODEL_COLORS[index % MODEL_COLORS.length] }} aria-hidden="true" />
-                                                    <span className="dep-model-name" title={item.model}>
-                                                        {formatModelName(item.model)}
-                                                    </span>
-                                                    <span className="dep-model-bar" aria-hidden="true">
-                                                        <i style={{ width: `${percent}%`, backgroundColor: MODEL_COLORS[index % MODEL_COLORS.length] }} />
-                                                    </span>
-                                                    <strong>{item.images.toLocaleString()} 幅</strong>
-                                                </li>
-                                            );
+                <div className="sovereign-domain">
+                    <section className="sovereign-laws" aria-labelledby="law-control-title">
+                        <header className="sovereign-section-heading">
+                            <div><span className="realm-eyebrow">一念御万法</span><h2 id="law-control-title" className="font-display">万法皆臣</h2></div>
+                            <p>已掌 <strong>{capabilities.length}</strong> 道创作法则</p>
+                        </header>
+                        <div className="sovereign-law-groups">
+                            {capabilityGroups.map((group) => (
+                                <section className="sovereign-law-group" key={group.key} aria-label={group.title}>
+                                    <h3>{group.title}</h3>
+                                    <p>{group.subtitle}</p>
+                                    <ul>
+                                        {group.items.map((capability) => {
+                                            const Icon = capability.icon;
+                                            return <li key={capability.key}><Icon aria-hidden="true" /><div><strong>{capability.label}</strong><span>{capability.detail}</span></div></li>;
                                         })}
-                                    </ol>
-                                ) : (
-                                    <p className="dep-model-empty">完成首批图像创作后，这里会自动形成真实的模型使用分布。</p>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="dep-epoch-manifesto" aria-label="斗帝创作箴言">
-                            <img className="dep-epoch-manifesto-art" src="/cultivation-realms/realm-dou-emperor-calligraphy-wide.webp" alt="" width={1600} height={696} loading="lazy" decoding="async" aria-hidden="true" />
-                            <span className="dep-epoch-manifesto-kicker">IMPERIAL CREED · 帝境创作箴言</span>
-                            <blockquote className="font-display">
-                                <p>已登临斗帝之境，诸天尽在一念之间。</p>
-                                <p>
-                                    天地已无更高境界，<strong>创作永无止境。</strong>
-                                </p>
-                            </blockquote>
-                            <span className="dep-epoch-manifesto-signature">一念落笔，诸天再添一卷</span>
+                                    </ul>
+                                </section>
+                            ))}
                         </div>
                     </section>
+                    <section className="sovereign-works" aria-labelledby="creation-epoch-title">
+                        <header className="sovereign-section-heading">
+                            <div><span className="realm-eyebrow">功业镌星河</span><h2 id="creation-epoch-title" className="font-display">落笔成诸天</h2></div>
+                            <p>每一幅作品，皆是此世留名。</p>
+                        </header>
+                        <div className="sovereign-achievements">
+                            <div className="sovereign-work-total"><span>累计作品</span><strong>{profile.totalImages.toLocaleString()}<small>幅</small></strong><p>一笔一界，尽入星河</p></div>
+                            <dl className="sovereign-metrics">
+                                <EpochMetric icon={CalendarDays} label="创作天数" value={`${profile.activeDays.toLocaleString()} 天`} />
+                                <EpochMetric icon={Gauge} label="累计修为" value={profile.totalXp.toLocaleString()} />
+                                <EpochMetric icon={Activity} label="今日创作" value={`${profile.usedToday.toLocaleString()} 次`} />
+                            </dl>
+                        </div>
+                        <details className="sovereign-model-details">
+                            <summary>模型使用明细 <span>{modelUsage.length} 个模型</span></summary>
+                            {modelUsage.length ? <ul>{modelUsage.map((item) => <li key={item.model}><span>{item.model}</span><strong>{item.images.toLocaleString()} 幅</strong></li>)}</ul> : <p>完成图像创作后，这里会显示真实的模型使用记录。</p>}
+                        </details>
+                    </section>
+                    <footer className="sovereign-creed">
+                        <span className="realm-eyebrow">万界俯首 · 诸法皆臣</span>
+                        <p className="font-display">此身已登绝巅，<br /><strong>落笔再造诸天。</strong></p>
+                        <Link to="/image">执笔 · 开天辟地 <ArrowUpRight className="size-4" aria-hidden="true" /></Link>
+                    </footer>
                 </div>
             </div>
         </main>
@@ -325,22 +231,4 @@ function EpochMetric({ icon: Icon, label, value }: { icon: LucideIcon; label: st
 
 function fallbackCapabilityMeta(key: string): CapabilityMeta {
     return { label: key, detail: "已由当前境界授权", icon: Sparkles, group: "other" };
-}
-
-function formatModelName(model: string) {
-    const value = model.trim();
-    if (value.length <= 26) return value;
-    return `${value.slice(0, 23)}...`;
-}
-
-function buildModelGradient(items: CultivationProfile["modelUsage"]) {
-    const total = items.reduce((sum, item) => sum + item.images, 0);
-    if (!total) return "conic-gradient(from 210deg, rgba(217,185,111,.22), rgba(125,178,216,.08), rgba(217,185,111,.22))";
-    let cursor = 0;
-    const segments = items.map((item, index) => {
-        const start = cursor;
-        cursor += (item.images / total) * 100;
-        return `${MODEL_COLORS[index % MODEL_COLORS.length]} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
-    });
-    return `conic-gradient(from 210deg, ${segments.join(", ")})`;
 }
