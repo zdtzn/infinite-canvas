@@ -18,44 +18,10 @@ type DouEmperorPalaceProps = {
     admin: boolean;
 };
 
-type CapabilityMeta = {
-    label: string;
-    detail: string;
-    icon: LucideIcon;
-    group: "generation" | "feature" | "model" | "product" | "other";
-};
-
-const CAPABILITY_META: Record<string, CapabilityMeta> = {
-    "generation.hd": { label: "高清生成", detail: "高规格画面输出", icon: ScanLine, group: "generation" },
-    "generation.references": { label: "参考图创作", detail: "多图引导与视觉融合", icon: ImagePlus, group: "generation" },
-    "generation.inpaint": { label: "局部重绘", detail: "精确修改局部区域", icon: Focus, group: "generation" },
-    "generation.outpaint": { label: "扩图", detail: "延展画面边界与构图", icon: Expand, group: "generation" },
-    "feature.lora": { label: "LoRA", detail: "风格与角色定向控制", icon: Layers3, group: "feature" },
-    "feature.controlnet": { label: "ControlNet", detail: "结构、姿态与空间约束", icon: Orbit, group: "feature" },
-    "model.gpt-image": { label: "GPT Image", detail: "通用图像生成领域", icon: Cpu, group: "model" },
-    "model.gemini": { label: "Gemini", detail: "多模态图像创作领域", icon: Cpu, group: "model" },
-    "model.flux": { label: "Flux", detail: "高质量视觉生成领域", icon: Cpu, group: "model" },
-    "product.basic": { label: "基础商品视觉", detail: "商品素材基础炼制", icon: Palette, group: "product" },
-    "product.main_image": { label: "商品主图", detail: "平台主视觉生成", icon: Palette, group: "product" },
-    "product.analysis": { label: "商品分析", detail: "识别卖点与视觉方向", icon: Aperture, group: "product" },
-    "product.detail_page": { label: "商品详情页", detail: "完整详情视觉规划", icon: Palette, group: "product" },
-    "product.multi_style": { label: "多视觉方案", detail: "同品多风格演化", icon: Sparkles, group: "product" },
-    "product.batch_generate": { label: "批量商品创作", detail: "多商品并行规划", icon: Activity, group: "product" },
-    "product.brand_design": { label: "品牌视觉体系", detail: "统一品牌表达与规范", icon: Layers3, group: "product" },
-};
-
-const GROUP_LABELS: Array<{ key: CapabilityMeta["group"]; title: string; subtitle: string }> = [
-    { key: "generation", title: "生成法则", subtitle: "画面质量与编辑控制" },
-    { key: "feature", title: "控制法则", subtitle: "结构、风格与定向能力" },
-    { key: "model", title: "模型领域", subtitle: "可调动的模型能力" },
-    { key: "product", title: "商品领域", subtitle: "商业视觉创作能力" },
-    { key: "other", title: "其他法则", subtitle: "已授权的扩展能力" },
-];
 
 
 export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarInputRef, onAvatarChange, admin }: DouEmperorPalaceProps) {
-    const capabilities = profile.capabilities.map((key) => ({ key, ...(CAPABILITY_META[key] || fallbackCapabilityMeta(key)) }));
-    const capabilityGroups = GROUP_LABELS.map((group) => ({ ...group, items: capabilities.filter((item) => item.group === group.key) })).filter((group) => group.items.length);
+    const capabilities = profile.capabilities;
     const modelUsage = profile.modelUsage || [];
 
     return (
@@ -155,26 +121,14 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
 
                 <RealmCollection realmId="realm-dou-emperor" />
 
-                <div className="sovereign-domain">
+                <div className="sovereign-domain sovereign-scroll">
+                    <img className="sovereign-scroll-art" src="/cultivation-realms/realm-dou-emperor.webp" alt="" width={1600} height={900} loading="lazy" decoding="async" aria-hidden="true" />
                     <section className="sovereign-laws" aria-labelledby="law-control-title">
                         <header className="sovereign-section-heading">
                             <div><span className="realm-eyebrow">一念御万法</span><h2 id="law-control-title" className="font-display">万法皆臣</h2></div>
                             <p>已掌 <strong>{capabilities.length}</strong> 道创作法则</p>
                         </header>
-                        <div className="sovereign-law-groups">
-                            {capabilityGroups.map((group) => (
-                                <section className="sovereign-law-group" key={group.key} aria-label={group.title}>
-                                    <h3>{group.title}</h3>
-                                    <p>{group.subtitle}</p>
-                                    <ul>
-                                        {group.items.map((capability) => {
-                                            const Icon = capability.icon;
-                                            return <li key={capability.key}><Icon aria-hidden="true" /><div><strong>{capability.label}</strong><span>{capability.detail}</span></div></li>;
-                                        })}
-                                    </ul>
-                                </section>
-                            ))}
-                        </div>
+                        <p className="sovereign-law-declaration">万法随心，一念皆应。</p>
                     </section>
                     <section className="sovereign-works" aria-labelledby="creation-epoch-title">
                         <header className="sovereign-section-heading">
@@ -229,6 +183,3 @@ function EpochMetric({ icon: Icon, label, value }: { icon: LucideIcon; label: st
     );
 }
 
-function fallbackCapabilityMeta(key: string): CapabilityMeta {
-    return { label: key, detail: "已由当前境界授权", icon: Sparkles, group: "other" };
-}
