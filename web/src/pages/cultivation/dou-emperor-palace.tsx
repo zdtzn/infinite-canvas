@@ -119,7 +119,9 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                     </section>
                 ) : null}
 
-                <RealmCollection realmId="realm-dou-emperor" />
+                <div className="dep-below-fold">
+                    <RealmCollection realmId="realm-dou-emperor" />
+                </div>
 
                 <div className="sovereign-domain sovereign-scroll">
                     <img className="sovereign-scroll-art" src="/cultivation-realms/realm-dou-emperor.webp" alt="" width={1600} height={900} loading="lazy" decoding="async" aria-hidden="true" />

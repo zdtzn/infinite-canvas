@@ -53,7 +53,7 @@ export function RealmCollection({ realmId }: { realmId: string }) {
                                 if (window.matchMedia("(max-width: 680px)").matches) inspectionRef.current?.scrollIntoView({ block: "start", behavior: "instant" });
                             }}>
                                 <span className="realm-card-index">{String(index + 1).padStart(2, "0")}</span>
-                                <img src={palaceInsignia(item.id)} alt="" width={640} height={640} loading={index === currentIndex ? "eager" : "lazy"} decoding="async" />
+                                <img src={palaceInsignia(item.id)} alt="" width={640} height={640} loading="lazy" decoding="async" />
                                 <strong>{item.name}</strong>
                                 <span className="realm-card-state">{stateLabel(index)}</span>
                             </button>

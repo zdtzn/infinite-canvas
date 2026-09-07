@@ -1574,3 +1574,11 @@
         }
     }
 }
+
+/* Keep the first viewport focused on the imperial hero; below-fold modules keep
+   their layout footprint but do not compete with the hero during first paint. */
+.dep-below-fold {
+    content-visibility: auto;
+    contain-intrinsic-size: 900px;
+}
+
