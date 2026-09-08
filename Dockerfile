@@ -9,6 +9,11 @@ COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
 RUN bun run build
 
+FROM oven/bun:1.3.13 AS server-deps
+WORKDIR /app/server
+COPY server/package.json server/bun.lock ./
+RUN bun install --frozen-lockfile --production
+
 # Run the static frontend and Bun monolith as an unprivileged user.
 FROM oven/bun:1.3.13
 
@@ -17,6 +22,7 @@ ARG APP_COMMIT=unknown
 COPY --from=web-build /app/web/dist /app/web
 COPY --from=web-build /app/VERSION /app/VERSION
 COPY server /app/server
+COPY --from=server-deps /app/server/node_modules /app/server/node_modules
 RUN mkdir -p /data && chown -R bun:bun /app /data
 
 USER bun

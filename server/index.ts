@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, statSync, unlinkSync } from "node:fs";
 import { isIP } from "node:net";
+import { createEmailRegistration, normalizeRegistrationEmail, smtpConfigured } from "./lib/email-registration";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, personalPasswordIssue, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
@@ -215,6 +216,7 @@ if (appDatabase.raw && appDatabase.loadSetting("prompt_index_taxonomy_revision")
     console.info(JSON.stringify({ event: "prompt_index_taxonomy_migrated", revision: PROMPT_TAXONOMY_REVISION, updated }));
 }
 let state = appDatabase.loadState();
+const emailRegistration = appDatabase.raw ? createEmailRegistration(appDatabase.raw, state.auth.sessionSecret) : null;
 const assetBytesByUser = new Map<string, number>();
 for (const asset of Object.values(state.assets)) assetBytesByUser.set(asset.userId, (assetBytesByUser.get(asset.userId) || 0) + asset.bytes);
 const jobFileBytesByUser = new Map<string, number>();
@@ -408,6 +410,10 @@ async function route(request: Request, requestId: string) {
         return proxyPromptAsset(request, url, requestId);
     }
     if (url.pathname === "/api/auth/status") return authStatus(request);
+    if (["/api/auth/register-code", "/api/auth/register"].includes(url.pathname) && request.method === "POST") {
+        enforceSameOrigin(request);
+        return registerWithEmail(request, url.pathname.endsWith("register-code"));
+    }
     if (url.pathname === "/api/auth/setup" && request.method === "POST") {
         enforceSameOrigin(request);
         if (!isLoopbackSetupRequest(request.url, requestPeerIps.get(request) || "unknown")) throw new HttpError(403, "管理员初始化只能通过服务器回环地址完成");
@@ -633,6 +639,7 @@ async function authStatus(request: Request) {
         authenticated: Boolean(session),
         user: session && user ? publicAuthUser(user) : null,
         publicMode: true,
+        emailRegistrationEnabled: ALLOW_NEW_USERS && smtpConfigured() && Boolean(emailRegistration) && Boolean(state.auth.accessCodeHash),
     });
 }
 
@@ -675,6 +682,39 @@ async function setupAuth(request: Request) {
     });
 }
 
+async function registerWithEmail(request: Request, codeOnly: boolean) {
+    enforceRateLimit(`register:${clientIp(request)}`, codeOnly ? 5 : 12);
+    if (!ALLOW_NEW_USERS || !emailRegistration || !smtpConfigured() || !state.auth.accessCodeHash) throw new HttpError(503, "邮箱注册暂未开放，请联系管理员");
+    const body = await readJson<{ email?: unknown; code?: unknown; displayName?: unknown; personalCode?: unknown }>(request, 16 * 1024);
+    let email: string;
+    try { email = normalizeRegistrationEmail(body.email); } catch { throw new HttpError(400, "请输入有效邮箱"); }
+    if (codeOnly) {
+        if (Object.keys(state.users).length >= MAX_REGISTERED_USERS) throw new HttpError(403, "站点成员已达到上限，请联系管理员");
+        try { await emailRegistration.request(email, clientIp(request)); }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : "邮件发送失败"); }
+        return json({ ok: true, message: "若邮箱可用于注册，验证码将发送至该邮箱，请查收或检查垃圾邮件", retryAfter: 60 });
+    }
+    const displayName = normalizeDisplayName(body.displayName);
+    const password = normalizeNewPersonalCode(body.personalCode, 8);
+    return withAuthMutation(async () => {
+        try { emailRegistration.verify(email, body.code); }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : "验证码无效"); }
+        if (emailRegistration.registered(email)) throw new HttpError(409, "无法注册，请检查邮箱或登录已有账号");
+        if (Object.values(state.users).some((user) => sameDisplayName(user.displayName, displayName))) throw new HttpError(409, "用户名已被使用");
+        if (Object.keys(state.users).length >= MAX_REGISTERED_USERS) throw new HttpError(403, "站点成员已达到上限，请联系管理员");
+        const user: UserRecord = { userId: randomUUID(), displayName, admin: false, sessionVersion: 1, status: "NORMAL", createdAt: Date.now(), loginHash: await hashAccessCode(password) };
+        state.users[user.userId] = user;
+        try {
+            appDatabase.raw!.transaction(() => {
+                writeState();
+                emailRegistration.bind(user.userId, email);
+                cultivation?.ensureUser(user.userId, false);
+            })();
+        } catch (error) { delete state.users[user.userId]; throw error; }
+        return authenticatedResponse(user);
+    });
+}
+
 async function login(request: Request) {
     enforceRateLimit(`login:${clientIp(request)}`, 20);
     const body = await readJson<{
@@ -687,7 +727,9 @@ async function login(request: Request) {
     const personalCode = normalizePersonalCode(body.personalCode);
     return withAuthMutation(async () => {
         if (!state.auth.accessCodeHash) return json({ error: { message: "站点尚未初始化" } }, 409);
-        if (!(await verifyAccessCode(String(body.accessCode || "").trim(), state.auth.accessCodeHash))) {
+        const passwordAccount = Object.values(state.users).find((user) => sameDisplayName(user.displayName, displayName));
+        if (!passwordAccount) return json({ error: { message: "用户名或密码错误，请先注册账号" } }, 401);
+        if (!passwordAccount.loginHash && !(await verifyAccessCode(String(body.accessCode || "").trim(), state.auth.accessCodeHash))) {
             cultivation?.recordLogin({
                 displayName: rawDisplayName || "unknown",
                 result: "invalid-access-code",
@@ -730,18 +772,8 @@ async function login(request: Request) {
                 },
                 409,
             );
-        if (!existing && !ALLOW_NEW_USERS) return json({ error: { message: "新用户注册已关闭，请联系管理员开通账号" } }, 403);
-        if (!existing && Object.keys(state.users).length >= MAX_REGISTERED_USERS)
-            return json({ error: { message: `站点成员已达到上限（${MAX_REGISTERED_USERS} 人），请联系管理员` } }, 403);
-        const user = existing || {
-            userId: randomUUID(),
-            displayName,
-            admin: false,
-            sessionVersion: 1,
-            status: "NORMAL" as const,
-            createdAt: Date.now(),
-            loginHash: await hashAccessCode(personalCode),
-        };
+        if (!existing) return json({ error: { message: "请先通过邮箱验证码注册账号" } }, 401);
+        const user = existing;
         user.sessionVersion = currentSessionVersion(user);
         if (!user.loginHash) user.loginHash = await hashAccessCode(personalCode);
         user.disabled = false;

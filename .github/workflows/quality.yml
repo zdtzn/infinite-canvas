@@ -36,6 +36,14 @@ jobs:
             sleep "$delay"
           done
 
+      - name: Install mail transport
+        working-directory: server
+        run: bun install --frozen-lockfile
+
+      - name: Registration API smoke test
+        working-directory: .
+        run: bun run ops/email-registration-smoke.ts
+
       - name: Type check
         run: bun run typecheck
 

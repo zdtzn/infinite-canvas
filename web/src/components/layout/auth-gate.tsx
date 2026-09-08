@@ -3,7 +3,7 @@ import { type ReactNode, Suspense, useEffect, useState } from "react";
 
 import { LOGIN_TRANSITION_MS, LoginRealmBackground, LoginTransition, selectLoginTransitionMessage } from "@/components/auth/login-realm";
 import { preloadAccountSessionRuntime } from "@/components/layout/account-session-controller";
-import { fetchAuthStatus, loginAccess, setupAccess } from "@/services/server-api";
+import { fetchAuthStatus, loginAccess, setupAccess, registerAccess } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 
@@ -12,13 +12,14 @@ import { lazyRoute } from "@/lib/lazy-route";
 const loadLoginForm = () => import("./login-form");
 const LoginFormView = lazyRoute(loadLoginForm);
 
-type AccessForm = { displayName: string; accessCode: string; personalCode: string };
+type AccessForm = { displayName: string; accessCode: string; personalCode: string; email?: string; code?: string; register?: boolean };
 
 export function AuthGate({ children }: { children: ReactNode }) {
     const user = useUserStore((state) => state.user);
     const setSession = useUserStore((state) => state.setSession);
     const clearSession = useUserStore((state) => state.clearSession);
     const [configured, setConfigured] = useState(true);
+    const [registrationEnabled, setRegistrationEnabled] = useState(false);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
@@ -34,6 +35,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             .then((status) => {
                 if (!active) return;
                 setConfigured(status.configured);
+                setRegistrationEnabled(Boolean(status.emailRegistrationEnabled));
                 if (status.user) {
                     void preloadAccountSessionRuntime();
                     setSession({ id: status.user.userId, username: status.user.displayName, displayName: status.user.displayName, avatarUrl: status.user.avatarUrl || "", admin: status.user.admin });
@@ -63,7 +65,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setSubmitting(true);
         setError("");
         try {
-            const result = configured ? await loginAccess(values) : await setupAccess(values);
+            const result = configured ? values.register ? await registerAccess(values) : await loginAccess(values) : await setupAccess(values);
             void preloadAccountSessionRuntime();
             setTransitionMessage(selectLoginTransitionMessage(result.user.userId));
             const transitionDuration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 160 : LOGIN_TRANSITION_MS;
@@ -84,7 +86,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
     return (
         <Suspense fallback={<AuthLoadingScreen />}>
-            <LoginFormView configured={configured} error={error} submitting={submitting} submit={submit} />
+            <LoginFormView configured={configured} registrationEnabled={registrationEnabled} error={error} submitting={submitting} submit={submit} />
         </Suspense>
     );
 }

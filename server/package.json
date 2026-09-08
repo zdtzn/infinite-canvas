@@ -1,5 +1,8 @@
 {
     "name": "infinite-canvas-server",
     "private": true,
-    "type": "module"
+    "type": "module",
+    "dependencies": {
+        "nodemailer": "^10.0.1"
+    }
 }
