@@ -50,7 +50,9 @@ export function DeferredImage({ src, rootMargin = "160px 0px", ...imageProps }: 
         };
     }, [rootMargin, src]);
 
-    return <img {...imageProps} ref={imageRef} src={resolvedSrc} loading="lazy" decoding="async" data-image-deferred={resolvedSrc ? "loaded" : "waiting"} />;
+    // Visibility is already gated above. Avoid a second browser lazy-loading delay,
+    // especially for images inside the canvas's transformed coordinate system.
+    return <img {...imageProps} ref={imageRef} src={resolvedSrc} loading="eager" decoding="async" data-image-deferred={resolvedSrc ? "loaded" : "waiting"} />;
 }
 
 function isNearViewport(element: HTMLElement, margin: number) {

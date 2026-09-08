@@ -11,7 +11,7 @@ describe("canvas image loading", () => {
 
     test("uses the lightweight thumbnail for an idle canvas node", () => {
         expect(canvasImageDisplaySource(metadata, false)).toBe(metadata.thumbnailUrl);
-        expect(canvasImageLoadingAttributes(false)).toEqual({ loading: "lazy", fetchPriority: "low" });
+        expect(canvasImageLoadingAttributes(false)).toEqual({ loading: "lazy", fetchPriority: "auto" });
     });
 
     test("loads the original image when the canvas node is selected", () => {

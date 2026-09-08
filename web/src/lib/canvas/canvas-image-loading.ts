@@ -4,7 +4,7 @@ export const CANVAS_THUMBNAIL_MAX_EDGE = 1280;
 
 type CanvasImageLoadingAttributes = {
     loading: "eager" | "lazy";
-    fetchPriority: "high" | "low";
+    fetchPriority: "high" | "auto";
 };
 
 export function canvasImageDisplaySource(metadata: Pick<CanvasNodeMetadata, "content" | "thumbnailUrl"> | undefined, selected: boolean) {
@@ -13,7 +13,7 @@ export function canvasImageDisplaySource(metadata: Pick<CanvasNodeMetadata, "con
 }
 
 export function canvasImageLoadingAttributes(selected: boolean): CanvasImageLoadingAttributes {
-    return selected ? { loading: "eager", fetchPriority: "high" } : { loading: "lazy", fetchPriority: "low" };
+    return selected ? { loading: "eager", fetchPriority: "high" } : { loading: "lazy", fetchPriority: "auto" };
 }
 
 export function needsCanvasImageThumbnail(node: CanvasNodeData) {
