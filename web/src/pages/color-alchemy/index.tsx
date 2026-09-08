@@ -31,7 +31,7 @@ const SETTINGS_CLIPBOARD_KEY = "infinite-canvas:color-alchemy:clipboard";
 const ColorSourceDialog = lazyRoute(() => import("@/features/color-alchemy/color-source-dialog").then(({ ColorSourceDialog: Component }) => ({ default: Component })));
 
 export default function ColorAlchemyPage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const location = useLocation();
     const navigate = useNavigate();
     const userId = useUserStore((state) => state.user?.id || "");
@@ -498,7 +498,17 @@ export default function ColorAlchemyPage() {
                                     />
                                 </div>
                             ) : null}
-                            <ColorPreviewStage source={document.source} settings={workingSettings || document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} onPickColor={setPickedColor} />
+                            <ColorPreviewStage source={document.source} settings={workingSettings || document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} onPickColor={setPickedColor} onRemove={() => {
+                                const id = document.id;
+                                modal.confirm({
+                                    title: "移除当前图片？",
+                                    content: "将删除这张图片的灵彩调色草稿和调整记录，原始素材及已保存的作品不受影响。",
+                                    okText: "移除图片",
+                                    cancelText: "取消",
+                                    okButtonProps: { danger: true },
+                                    onOk: () => discardDocument(id),
+                                });
+                            }} />
                             {desktopLayout ? (
                                 <div className="min-h-0">
                                     <ColorControlPanel

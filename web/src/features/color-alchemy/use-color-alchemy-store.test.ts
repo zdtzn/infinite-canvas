@@ -9,6 +9,25 @@ describe("Color Alchemy store", () => {
         useColorAlchemyStore.setState({ ownerUserId: "", activeDocumentId: null, documents: [], hydrated: true });
     });
 
+    test("removes the last draft and permits reopening the same image", () => {
+        const source = { key: "image:a", title: "A", url: "/a.png" };
+        const id = useColorAlchemyStore.getState().openSource(source);
+        useColorAlchemyStore.getState().removeDocument(id);
+        expect(useColorAlchemyStore.getState().documents).toHaveLength(0);
+        expect(useColorAlchemyStore.getState().activeDocumentId).toBeNull();
+        const reopened = useColorAlchemyStore.getState().openSource(source);
+        expect(reopened).not.toBe(id);
+        expect(useColorAlchemyStore.getState().activeDocumentId).toBe(reopened);
+    });
+
+    test("selects the remaining draft when the active image is removed", () => {
+        const first = useColorAlchemyStore.getState().openSource({ key: "image:a", title: "A", url: "/a.png" });
+        const second = useColorAlchemyStore.getState().openSource({ key: "image:b", title: "B", url: "/b.png" });
+        useColorAlchemyStore.getState().removeDocument(second);
+        expect(useColorAlchemyStore.getState().activeDocumentId).toBe(first);
+        expect(useColorAlchemyStore.getState().documents.map((item) => item.id)).toEqual([first]);
+    });
+
     test("isolates working documents when the website account changes", () => {
         const store = useColorAlchemyStore.getState();
         store.prepareForUser("user-a");

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Maximize, Minus, MoveHorizontal, Pipette, Plus, ScanSearch } from "lucide-react";
+import { Maximize, Minus, MoveHorizontal, Pipette, Plus, ScanSearch, Trash2 } from "lucide-react";
 import { Tooltip } from "antd";
 
 import { analyzedColorFromRgb } from "./color-engine";
@@ -20,12 +20,14 @@ export function ColorPreviewStage({
     forceOriginal,
     onAnalysis,
     onPickColor,
+    onRemove,
 }: {
     source: ColorAlchemySource;
     settings: ColorSettings;
     forceOriginal: boolean;
     onAnalysis: (analysis: ColorAnalysis) => void;
     onPickColor: (color: AnalyzedColor) => void;
+    onRemove?: () => void;
 }) {
     const stageRef = useRef<HTMLDivElement>(null);
     const originalCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -367,12 +369,18 @@ export function ColorPreviewStage({
                 <PreviewButton title="100% 查看" icon={<ScanSearch className="size-4" />} onClick={showAtOneHundredPercent} />
             </div>
 
+            {onRemove ? (
+                <button type="button" onClick={onRemove} className="absolute right-4 top-4 z-20 inline-flex min-h-10 items-center gap-2 rounded-md border border-white/15 bg-black/75 px-3 text-xs text-white/80 shadow-lg transition hover:border-red-300/40 hover:text-red-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white" aria-label="移除当前图片">
+                    <Trash2 className="size-4" aria-hidden="true" />
+                    移除图片
+                </button>
+            ) : null}
             {loading ? (
                 <div className="absolute inset-0 grid place-items-center bg-[#0e1012]/88 text-white/70">
                     <div className="color-processing-status">正在载入画面…</div>
                 </div>
             ) : null}
-            {rendering && !loading ? <div className="color-processing-status absolute right-4 top-4 rounded bg-black/48 px-2.5 py-1.5 backdrop-blur-md">正在更新预览…</div> : null}
+            {rendering && !loading ? <div className="color-processing-status absolute left-4 top-4 rounded bg-black/48 px-2.5 py-1.5 backdrop-blur-md">正在更新预览…</div> : null}
             {error ? <div className="absolute left-1/2 top-4 -translate-x-1/2 rounded-md border border-red-300/20 bg-red-950/70 px-3 py-2 text-xs text-red-100 backdrop-blur-md">{error}</div> : null}
         </div>
     );
