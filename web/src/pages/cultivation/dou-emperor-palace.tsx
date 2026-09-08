@@ -27,7 +27,7 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
     return (
         <main className="dep-page palace-redesign">
             <section className="dep-hero" aria-labelledby="dou-emperor-title">
-                <img className="dep-hero-art" src="/cultivation-realms/realm-dou-emperor.webp" alt="星河、天地法则与中央帝座构成的斗帝帝境" width={1600} height={900} decoding="async" fetchPriority="high" />
+                <img className="dep-hero-art" src="/cultivation-realms/realm-dou-emperor.webp" alt="星河、天地法则与中央帝座构成的斗帝帝境" width={1600} height={900} decoding="async" fetchPriority="auto" />
                 <div className="dep-hero-depth" aria-hidden="true" />
                 <div className="dep-star-field" aria-hidden="true" />
                 <div className="dep-space-cracks" aria-hidden="true" />
@@ -38,7 +38,7 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                 <div className="dep-hero-toolbar">
                     <div className="dep-profile">
                         <div className="dep-avatar-wrap">
-                            <ProfileAvatarImage src={avatarUrl} alt={`${profile.displayName} 的头像`} fallback={profile.displayName.slice(0, 1).toUpperCase()} width={48} height={48} loading="eager" fetchPriority="high" className="dep-avatar" />
+                            <ProfileAvatarImage src={avatarUrl} alt={`${profile.displayName} 的头像`} fallback={profile.displayName.slice(0, 1).toUpperCase()} width={48} height={48} loading="eager" fetchPriority="auto" className="dep-avatar" />
                             <button type="button" className="dep-avatar-button" onClick={() => avatarInputRef.current?.click()} disabled={avatarUploading} aria-label="上传头像" title="上传头像">
                                 {avatarUploading ? <LoaderCircle className="size-3 animate-spin" /> : <Camera className="size-3" />}
                             </button>
@@ -71,7 +71,7 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                 <div className="dep-hero-center">
                     <div className="dep-imperial-crest" aria-hidden="true">
                         <span className="dep-imperial-crest-frame">
-                            <img src="/cultivation-realms/dou-emperor-character.png" alt="" width={1024} height={1536} decoding="async" fetchPriority="high" />
+                            <img src="/cultivation-realms/dou-emperor-character-960.webp" srcSet="/cultivation-realms/dou-emperor-character-640.webp 640w, /cultivation-realms/dou-emperor-character-960.webp 960w" sizes="(max-width: 400px) 90vw, (max-width: 680px) 360px, (max-width: 1100px) 45vw, 480px" alt="" width={960} height={1440} loading="eager" decoding="async" fetchPriority="high" />
                         </span>
                     </div>
                     <div className="dep-sovereign-copy">
