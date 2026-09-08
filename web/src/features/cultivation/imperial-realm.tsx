@@ -13,8 +13,8 @@ export default function ImperialRealm({ preview = false }: { preview?: boolean }
     return (
         <section className={`imperial-realm${preview ? " imperial-realm--preview" : ""}`} aria-label={preview ? "帝境外观预览" : "帝境首页"}>
             <picture className="imperial-realm-scene" aria-hidden="true">
-                <source media="(max-width: 640px)" srcSet="/imperial/realm-scene-mobile-v1.webp" />
-                <img src="/imperial/realm-scene-v1.webp" width={1536} height={1024} alt="" fetchPriority="high" decoding="async" />
+                <source media="(max-width: 640px)" srcSet="/imperial/realm-scene-mobile-v2.webp" />
+                <img src="/imperial/realm-scene-v2.webp" width={1672} height={941} alt="" loading="eager" fetchPriority="high" decoding="async" />
             </picture>
             <div className="imperial-realm-veil" aria-hidden="true" />
             <LightRays

@@ -14,6 +14,9 @@ for (const preview of [false, true]) {
         expect(html.match(/light-rays-container/g)).toHaveLength(1);
         expect(html).toContain("homepage-light-rays is-imperial");
         expect(html).toContain("imperial-realm-scene");
+        expect(html).toContain("/imperial/realm-scene-v2.webp");
+        expect(html).toContain("/imperial/realm-scene-mobile-v2.webp");
+        expect(html).toContain('loading="eager"');
         expect(html).toContain("imperial-seal-v1.webp");
     });
 }
