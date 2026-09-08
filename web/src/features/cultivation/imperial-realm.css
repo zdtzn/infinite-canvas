@@ -39,9 +39,19 @@
     text-align: center;
     width: min(100%, 900px);
     padding: 22px 24px 56px;
+    isolation: isolate;
+    text-shadow: 0 2px 4px rgb(0 0 0 / 95%), 0 4px 16px rgb(0 0 0 / 80%);
+}
+.imperial-realm-heading::before {
+    content: "";
+    position: absolute;
+    inset: -8% -12%;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, rgb(5 10 16 / 72%) 0%, rgb(5 10 16 / 60%) 36%, rgb(5 10 16 / 24%) 62%, transparent 76%);
 }
 .imperial-realm-kicker {
-    color: #d4bf92;
+    color: #f0dbad;
     font-size: 11px;
     border-bottom: 1px solid rgb(212 191 146 / 40%);
     padding-bottom: 8px;
@@ -79,13 +89,13 @@
     line-height: 1.12;
     letter-spacing: 0;
     color: #f1f4ee;
-    text-shadow: 0 4px 28px rgb(6 16 15 / 55%);
+    text-shadow: 0 2px 3px rgb(0 0 0 / 85%), 0 6px 18px rgb(0 0 0 / 80%), 0 12px 36px rgb(0 0 0 / 55%);
 }
 .imperial-realm-heading > p {
     margin: 0;
     font-size: 20px;
     line-height: 1.6;
-    color: #dae3de;
+    color: #f2f3ec;
 }
 .imperial-realm-actions {
     display: flex;
