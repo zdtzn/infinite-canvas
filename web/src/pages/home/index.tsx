@@ -1,6 +1,6 @@
 import { ArrowRight } from "lucide-react";
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { App, Image } from "antd";
+import { Image } from "antd";
 import { Link, useNavigate } from "react-router-dom";
 
 import { DriftWall } from "@/components/home/drift-wall";
@@ -29,8 +29,9 @@ const ImperialRealm = lazyRoute(() => import("@/features/cultivation/imperial-re
  */
 
 export default function IndexPage() {
-    const { message } = App.useApp();
     const navigate = useNavigate();
+    const [showcaseStatus, setShowcaseStatus] = useState<"loading" | "ready" | "error">("loading");
+    const [showcaseRetry, setShowcaseRetry] = useState(0);
     const [promptShowcase, setPromptShowcase] = useState<PromptCover[]>([]);
     const [showcaseOffset, setShowcaseOffset] = useState(0);
     const [showcaseHovered, setShowcaseHovered] = useState(false);
@@ -55,17 +56,23 @@ export default function IndexPage() {
 
     useEffect(() => {
         let active = true;
+        setShowcaseStatus("loading");
+        setPromptShowcase([]);
+        setPreviewOpen(false);
         void fetchHomepagePromptCovers()
             .then((items) => {
                 if (!active) return;
                 setPromptShowcase(selectHomepagePromptShowcase(items));
                 setShowcaseOffset(0);
+                setShowcaseStatus("ready");
             })
-            .catch((error) => message.error(error instanceof Error ? error.message : "获取提示词失败"));
+            .catch(() => {
+                if (active) setShowcaseStatus("error");
+            });
         return () => {
             active = false;
         };
-    }, [message, promptSourcesRevision]);
+    }, [promptSourcesRevision, showcaseRetry]);
 
     useEffect(() => {
         if (showcaseHovered || promptShowcase.length <= HOMEPAGE_PROMPT_WINDOW_SIZE) return;
@@ -238,8 +245,17 @@ export default function IndexPage() {
                             }}
                         />
                     ) : (
-                        <div className="flex h-full items-center justify-center text-sm tracking-[0.12em] text-[#777783]" role="status">
-                            正在展开功法画卷...
+                        <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-sm text-[#b5b5bf]" role="status" aria-live="polite" aria-busy={showcaseStatus === "loading"}>
+                            <p>{showcaseStatus === "loading" ? "正在展开功法画卷…" : showcaseStatus === "error" ? "功法画卷暂时未能加载" : "暂无精选功法"}</p>
+                            {showcaseStatus !== "loading" && (
+                                <>
+                                    <p className="max-w-sm text-xs leading-6">{showcaseStatus === "error" ? "请稍后重试，也可以先进入功法楼浏览。" : "可以前往功法楼浏览提示词，或配置提示词来源。"}</p>
+                                    <div className="flex items-center gap-5">
+                                        {showcaseStatus === "error" && <button type="button" onClick={() => setShowcaseRetry((value) => value + 1)} className="min-h-11 rounded-md border border-[#c9a86a]/40 px-5 text-[#e7d2a6] hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e7d2a6]">重新加载</button>}
+                                        <Link to="/prompts" className="inline-flex min-h-11 items-center gap-2 rounded text-[#e7d2a6] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e7d2a6]">前往功法楼<ArrowRight size={16} aria-hidden="true" /></Link>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
                 </div>
