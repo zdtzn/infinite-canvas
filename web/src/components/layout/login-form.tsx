@@ -13,7 +13,6 @@ export default function LoginFormView({ configured, registrationEnabled, error, 
     const [remaining, setRemaining] = useState(0);
     const [mailError, setMailError] = useState("");
     const [mailNotice, setMailNotice] = useState("");
-    const [legacy, setLegacy] = useState(false);
     useEffect(() => {
         if (!remaining) return;
         const timer = window.setTimeout(() => setRemaining((value) => Math.max(0, value - 1)), 1000);
@@ -72,7 +71,7 @@ export default function LoginFormView({ configured, registrationEnabled, error, 
                             <Form.Item label="用户名" name="displayName" rules={[{ required: true, min: 2, message: "请输入至少 2 个字符" }]}>
                                 <Input className="login-realm-input" prefix={<UserRound className="size-4 text-[#777984]" />} autoComplete="username" maxLength={32} placeholder="例如：小明" />
                             </Form.Item>
-                            {!register && (!configured || legacy) ? <Form.Item label={configured ? "旧账号访问口令" : "设置访问口令"} name="accessCode" rules={[{ required: true, min: 8, message: "口令至少 8 位" }]}>
+                            {!register && !configured ? <Form.Item label="设置访问口令" name="accessCode" rules={[{ required: true, min: 8, message: "口令至少 8 位" }]}>
                                 <Input.Password className="login-realm-input" prefix={<KeyRound className="size-4 text-[#777984]" />} autoComplete={configured ? "current-password" : "new-password"} placeholder="至少 8 位" />
                             </Form.Item> : null}
                             <Form.Item label={register ? "设置密码" : configured ? "个人密码（兼容旧账号）" : "设置个人密码"} name="personalCode" rules={[{ required: true, min: register ? 8 : configured ? 6 : 10, message: `个人密码至少 ${register ? 8 : configured ? 6 : 10} 位` }]}>
@@ -89,7 +88,6 @@ export default function LoginFormView({ configured, registrationEnabled, error, 
                                 {submitting ? "正在叩问天地……" : register ? "完成注册" : configured ? "进入画界" : "完成初始化"}
                             </Button>
                             {configured && registrationEnabled ? <Button type="link" block onClick={() => { setRegister((value) => !value); setEmail(""); setMailError(""); setMailNotice(""); }}>{register ? "已有账号？返回登录" : "首次使用？邮箱注册"}</Button> : null}
-                            {configured && !register ? <Button type="text" block onClick={() => setLegacy((value) => !value)}>{legacy ? "收起旧账号升级" : "旧账号尚未设置密码"}</Button> : null}
                             {configured && !registrationEnabled ? <p className="mt-3 text-center text-xs text-[#9f9eaa]">邮箱注册暂未开放</p> : null}
                         </Form>
                     </section>

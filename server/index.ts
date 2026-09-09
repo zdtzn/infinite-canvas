@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 import { createEmailRegistration, normalizeRegistrationEmail, smtpConfigured } from "./lib/email-registration";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
-import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, personalPasswordIssue, readCookie, readIdentityToken, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
+import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, personalPasswordIssue, readCookie, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./lib/asset-library";
 import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
 import { AsyncSemaphore } from "./lib/async-semaphore";
@@ -729,17 +729,6 @@ async function login(request: Request) {
         if (!state.auth.accessCodeHash) return json({ error: { message: "站点尚未初始化" } }, 409);
         const passwordAccount = Object.values(state.users).find((user) => sameDisplayName(user.displayName, displayName));
         if (!passwordAccount) return json({ error: { message: "用户名或密码错误，请先注册账号" } }, 401);
-        if (!passwordAccount.loginHash && !(await verifyAccessCode(String(body.accessCode || "").trim(), state.auth.accessCodeHash))) {
-            cultivation?.recordLogin({
-                displayName: rawDisplayName || "unknown",
-                result: "invalid-access-code",
-                ip: clientIp(request),
-                userAgent: request.headers.get("user-agent") || "",
-                secret: state.auth.sessionSecret,
-            });
-            return json({ error: { message: "访问口令错误" } }, 401);
-        }
-        const identityUserId = readIdentityToken(readCookie(request, "canvas_identity"), state.auth.sessionSecret);
         const existing = Object.values(state.users).find((user) => sameDisplayName(user.displayName, displayName));
         if (existing && isUserDisabled(existing)) {
             cultivation?.recordLogin({
@@ -763,19 +752,9 @@ async function login(request: Request) {
             });
             return json({ error: { message: "个人密码错误" } }, 401);
         }
-        if (existing && !existing.loginHash && existing.userId !== identityUserId)
-            return json(
-                {
-                    error: {
-                        message: "该旧账号尚未设置个人密码，请先在原设备登录后完成升级",
-                    },
-                },
-                409,
-            );
         if (!existing) return json({ error: { message: "请先通过邮箱验证码注册账号" } }, 401);
         const user = existing;
         user.sessionVersion = currentSessionVersion(user);
-        if (!user.loginHash) user.loginHash = await hashAccessCode(personalCode);
         user.disabled = false;
         user.status = "NORMAL";
         state.users[user.userId] = user;

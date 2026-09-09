@@ -22,9 +22,9 @@ The login page exposes email registration only when the server is configured.
 Users request a six-digit code, then submit email, code, username and password.
 Registration creates a normal account and a session, never an administrator.
 The existing nickname is the username; existing account IDs and data stay intact.
-Existing password accounts no longer need the shared access code. Passwordless
-legacy accounts still require the old device identity and shared access code.
-The old login endpoint cannot create accounts anymore.
+Existing password accounts use username and password. Passwordless legacy
+accounts are no longer accepted; they must be recreated through email
+registration. The old login endpoint cannot create accounts anymore.
 
 Codes expire after ten minutes, permit at most five verification attempts, and
 are stored as keyed hashes in SQLite. Sending is limited to one per address per
