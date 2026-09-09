@@ -1,4 +1,5 @@
 import { FolderPlus, Search } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Suspense, type ReactNode, type UIEvent, useEffect, useState } from "react";
 import { App, Button, Empty, Input, Spin, Tag } from "antd";
 
@@ -13,6 +14,7 @@ import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
 const PromptDetailDialog = lazyRoute(() => import("./components/prompt-detail-dialog").then(({ PromptDetailDialog: Component }) => ({ default: Component })));
 
 export default function PromptsPage() {
+    const navigate = useNavigate();
     const { message } = App.useApp();
     const [titleKeyword, setTitleKeyword] = useState("");
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -112,7 +114,7 @@ export default function PromptsPage() {
                         </div>
                     }
                 >
-                    <PromptDetailDialog prompt={selectedPrompt} onClose={() => setSelectedPrompt(null)} onCopy={(prompt) => copyText(prompt, "提示词已复制")} onSaveAsset={savePromptAsset} />
+                    <PromptDetailDialog prompt={selectedPrompt} onClose={() => setSelectedPrompt(null)} onCopy={(prompt) => copyText(prompt, "提示词已复制")} onSaveAsset={savePromptAsset} onUse={(item) => navigate("/image", { state: { promptTransfer: item.prompt } })} />
                 </Suspense>
             ) : null}
         </div>

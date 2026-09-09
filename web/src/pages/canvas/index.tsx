@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { App, Button } from "antd";
+import { App, Button, Dropdown, Input } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 
 import { setMediaBlob } from "@/services/file-storage";
@@ -14,6 +14,7 @@ import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
 
 export default function CanvasPage() {
+    const [keyword, setKeyword] = useState("");
     const { message } = App.useApp();
     const location = useLocation();
     const navigate = useNavigate();
@@ -22,6 +23,7 @@ export default function CanvasPage() {
     const autoOpenRef = useRef(false);
     const hydrated = useCanvasStore((state) => state.hydrated);
     const projects = useCanvasStore((state) => state.projects);
+    const visibleProjects = projects.filter((project) => project.title.toLocaleLowerCase().includes(keyword.trim().toLocaleLowerCase()));
     const createProject = useCanvasStore((state) => state.createProject);
     const importProject = useCanvasStore((state) => state.importProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
@@ -92,7 +94,7 @@ export default function CanvasPage() {
                         <h1 className="font-brush mt-4 text-5xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:text-6xl">洞天</h1>
                         <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">{projects.length ? `${projects.length} 方天地,各自生长` : "一方属于你的天地,由此而开"}</p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         {selectedIds.length ? (
                             <>
                                 <Button disabled={!hydrated} icon={<Download className="size-4" />} onClick={() => void exportSelectedProjects()}>
@@ -104,9 +106,9 @@ export default function CanvasPage() {
                             </>
                         ) : null}
                         {projects.length ? (
-                            <Button disabled={!hydrated} onClick={() => setDeleteIds(projects.map((project) => project.id))}>
-                                删除全部
-                            </Button>
+                            <Dropdown trigger={["click"]} menu={{ items: [{ key: "delete-all", label: "删除全部画布", danger: true, onClick: () => setDeleteIds(projects.map((project) => project.id)) }] }}>
+                                <Button disabled={!hydrated}>更多操作</Button>
+                            </Dropdown>
                         ) : null}
                         <Button disabled={!hydrated} icon={<FileUp className="size-4" />} onClick={() => inputRef.current?.click()}>
                             导入画布
@@ -119,13 +121,15 @@ export default function CanvasPage() {
             </section>
 
             <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10">
+                {hydrated && projects.length > 0 && <Input.Search value={keyword} onChange={(event) => setKeyword(event.target.value)} allowClear placeholder="搜索画布名称" aria-label="搜索画布名称" className="max-w-md" />}
                 {!hydrated ? (
                     <section className="imperial-route-loading flex min-h-[360px] items-center justify-center border-y border-[rgb(237_237_230/0.1)] text-sm text-[#8a8a96]">{loadingLabel}</section>
                 ) : projects.length ? (
                     <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                        {projects.map((project) => (
+                        {visibleProjects.map((project) => (
                             <CanvasProjectCard key={project.id} project={project} />
                         ))}
+                        {!visibleProjects.length && <div className="col-span-full py-12 text-center text-sm text-stone-400">没有找到匹配的画布。<Button type="link" onClick={() => setKeyword("")}>清除搜索</Button></div>}
                     </div>
                 ) : (
                     <section className="flex min-h-[360px] flex-col items-center justify-center border-y border-[rgb(237_237_230/0.1)] text-center">

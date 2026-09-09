@@ -109,6 +109,7 @@ export default function AssetsPage() {
     const [imageDraft, setImageDraft] = useState<ImageDraft>(null);
     const [remoteLibrary, setRemoteLibrary] = useState<ServerAssetLibrary | null>(null);
     const [remoteRefresh, setRemoteRefresh] = useState(0);
+    const [remoteStatus, setRemoteStatus] = useState<"loading" | "ready" | "error">("loading");
     const coverUrl = Form.useWatch("coverUrl", form) || "";
     const title = Form.useWatch("title", form) || "";
     const tags = Form.useWatch("tags", form) || [];
@@ -137,6 +138,8 @@ export default function AssetsPage() {
         }
         let active = true;
         const controller = new AbortController();
+        setRemoteStatus("loading");
+        setRemoteLibrary(null);
         void fetchServerAssetLibrary(userId, {
             page,
             pageSize,
@@ -145,10 +148,16 @@ export default function AssetsPage() {
             signal: controller.signal,
         })
             .then((result) => {
-                if (active) setRemoteLibrary(result);
+                if (active) {
+                    setRemoteLibrary(result);
+                    setRemoteStatus("ready");
+                }
             })
             .catch(() => {
-                if (active) setRemoteLibrary(null);
+                if (active) {
+                    setRemoteLibrary(null);
+                    setRemoteStatus("error");
+                }
             });
         return () => {
             active = false;
@@ -157,14 +166,16 @@ export default function AssetsPage() {
     }, [kindFilter, keyword, page, pageSize, remoteRefresh, useRemoteLibrary, userId]);
 
     const serverLibraryReady = Boolean(useRemoteLibrary && remoteLibrary?.initialized);
-    const displayedAssets = serverLibraryReady ? remoteLibrary!.items : visibleAssets;
-    const displayedTotal = serverLibraryReady ? remoteLibrary!.total || 0 : filteredAssets.length;
+    const remoteBlocked = useRemoteLibrary && remoteStatus !== "ready";
+    const displayedAssets = remoteBlocked ? [] : serverLibraryReady ? remoteLibrary!.items : visibleAssets;
+    const displayedTotal = remoteBlocked ? 0 : serverLibraryReady ? remoteLibrary!.total || 0 : filteredAssets.length;
     const displayedCount = serverLibraryReady ? remoteLibrary!.total || 0 : validAssets.length;
 
     useEffect(() => {
+        if (useRemoteLibrary) return;
         const maxPage = Math.max(1, Math.ceil(filteredAssets.length / pageSize));
         setPage((value) => Math.min(value, maxPage));
-    }, [filteredAssets.length, pageSize]);
+    }, [filteredAssets.length, pageSize, useRemoteLibrary]);
 
     useEffect(() => {
         const legacyAsset = validAssets.find((asset) => assetNeedsThumbnail(asset));
@@ -407,7 +418,12 @@ export default function AssetsPage() {
                         ))}
                     </div>
 
-                    {!displayedAssets.length &&
+                    {remoteBlocked && <div className="flex flex-col items-center gap-4 py-16 text-center text-sm text-[#c9c4b9]" role="status" aria-live="polite">
+                        <p>{remoteStatus === "loading" ? "正在加载云端藏卷…" : "云端藏卷加载失败，请重试。"}</p>
+                        {remoteStatus === "error" && <Button onClick={() => setRemoteRefresh((value) => value + 1)}>重新加载</Button>}
+                    </div>}
+                    {useRemoteLibrary && remoteStatus === "ready" && !serverLibraryReady && <p className="text-sm text-[#c9c4b9]" role="status">云端素材库尚未就绪，当前展示本机素材。</p>}
+                    {!remoteBlocked && !displayedAssets.length &&
                         (displayedCount === 0 ? (
                             <div className="flex flex-col items-center justify-center gap-5 py-24 text-center">
                                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="font-display text-sm tracking-[0.1em] text-[#8a8a96]">阁中尚无一卷,落笔即是开山之作</span>} />

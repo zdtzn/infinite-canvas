@@ -1,7 +1,7 @@
 import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { App, Button, Checkbox, Input, Modal, Pagination, Select, Tag, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -90,6 +90,7 @@ function getLogStore() {
 }
 
 export default function ImagePage() {
+    const location = useLocation();
     const { message } = App.useApp();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
@@ -107,6 +108,13 @@ export default function ImagePage() {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
     const [prompt, setPrompt] = useState("");
+    useEffect(() => {
+        const state = location.state;
+        if (!state || typeof state.promptTransfer !== "string") return;
+        setPrompt(state.promptTransfer);
+        const { promptTransfer: _consumed, ...remainingState } = state;
+        navigate(`${location.pathname}${location.search}${location.hash}`, { replace: true, state: remainingState });
+    }, [location, navigate]);
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [historySearchDraft, setHistorySearchDraft] = useState("");
