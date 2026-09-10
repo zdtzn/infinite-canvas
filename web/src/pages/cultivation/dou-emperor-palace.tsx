@@ -134,27 +134,18 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                     </section>
                     <section className="sovereign-works" aria-labelledby="creation-epoch-title">
                         <header className="sovereign-section-heading">
-                            <div><span className="realm-eyebrow">功业镌星河</span><h2 id="creation-epoch-title" className="font-display">落笔成诸天</h2></div>
-                            <p>每一幅作品，皆是此世留名。</p>
+                            <div><span className="realm-eyebrow">功业镌星河</span><h2 id="creation-epoch-title" className="font-display">创作足迹</h2></div>
+                            <Link to="/assets" className="sovereign-archive-link">前往藏卷阁 <ArrowUpRight size={16} aria-hidden="true" /></Link>
                         </header>
                         <div className="sovereign-achievements">
-                            <div className="sovereign-work-total"><span>累计作品</span><strong>{profile.totalImages.toLocaleString()}<small>幅</small></strong><p>一笔一界，尽入星河</p></div>
-                            <dl className="sovereign-metrics">
-                                <EpochMetric icon={CalendarDays} label="创作天数" value={`${profile.activeDays.toLocaleString()} 天`} />
-                                <EpochMetric icon={Gauge} label="累计修为" value={profile.totalXp.toLocaleString()} />
-                                <EpochMetric icon={Activity} label="今日创作" value={`${profile.usedToday.toLocaleString()} 次`} />
-                            </dl>
+                            <div className="sovereign-work-total"><span>今日创作</span><strong>{profile.usedToday.toLocaleString()}<small>次</small></strong><p>{profile.usedToday > 0 ? "今日落笔，已留新篇。" : "今日尚未落笔，随时可启新篇。"}</p></div>
+                            <p className="sovereign-record-note">作品可在藏卷阁中查看与整理；下方记录各模型的累计创作情况。</p>
                         </div>
                         <details className="sovereign-model-details">
                             <summary>模型使用明细 <span>{modelUsage.length} 个模型</span></summary>
                             {modelUsage.length ? <ul>{modelUsage.map((item) => <li key={item.model}><span>{item.model}</span><strong>{item.images.toLocaleString()} 幅</strong></li>)}</ul> : <p>完成图像创作后，这里会显示真实的模型使用记录。</p>}
                         </details>
                     </section>
-                    <footer className="sovereign-creed">
-                        <span className="realm-eyebrow">万界俯首 · 诸法皆臣</span>
-                        <p className="font-display">此身已登绝巅，<br /><strong>落笔再造诸天。</strong></p>
-                        <Link to="/image">执笔 · 开天辟地 <ArrowUpRight className="size-4" aria-hidden="true" /></Link>
-                    </footer>
                 </div>
             </div>
         </main>

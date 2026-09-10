@@ -12,8 +12,6 @@ type ColorAlchemyToolbarProps = {
     onReturn: () => void;
     onUndo: () => void;
     onRedo: () => void;
-    onCompareStart: () => void;
-    onCompareEnd: () => void;
     onToggleOriginal: () => void;
     onReset: () => void;
     onCopy: () => void;
@@ -34,8 +32,6 @@ export function ColorAlchemyToolbar({
     onReturn,
     onUndo,
     onRedo,
-    onCompareStart,
-    onCompareEnd,
     onToggleOriginal,
     onReset,
     onCopy,
@@ -44,11 +40,6 @@ export function ColorAlchemyToolbar({
     onExport,
     onOpenSources,
 }: ColorAlchemyToolbarProps) {
-    const endCompare = (target?: HTMLElement, pointerId?: number) => {
-        if (target && pointerId !== undefined && target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
-        onCompareEnd();
-    };
-
     return (
         <header className="color-alchemy-toolbar">
             <div className="flex min-w-0 items-center gap-2">
@@ -77,24 +68,13 @@ export function ColorAlchemyToolbar({
                 <button
                     type="button"
                     className="color-toolbar-compare hidden md:flex"
-                    aria-label="按住查看原图"
-                    title="按住查看原图"
-                    onPointerDown={(event) => {
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                        onCompareStart();
-                    }}
-                    onPointerUp={(event) => endCompare(event.currentTarget, event.pointerId)}
-                    onPointerCancel={(event) => endCompare(event.currentTarget, event.pointerId)}
-                    onLostPointerCapture={onCompareEnd}
-                    onKeyDown={(event) => {
-                        if (event.key === " " || event.key === "Enter") onCompareStart();
-                    }}
-                    onKeyUp={(event) => {
-                        if (event.key === " " || event.key === "Enter") onCompareEnd();
-                    }}
+                    aria-label="查看原图"
+                    aria-pressed={originalPinned}
+                    title={originalPinned ? "点击返回调色效果" : "点击查看原图"}
+                    onClick={onToggleOriginal}
                 >
                     <Columns2 className="size-4" />
-                    对比
+                    {originalPinned ? "返回效果" : "查看原图"}
                 </button>
 
                 <Dropdown
@@ -117,11 +97,11 @@ export function ColorAlchemyToolbar({
                 <span className="mx-1 hidden h-5 w-px bg-white/8 lg:block" />
                 <button type="button" className="color-toolbar-save hidden lg:flex" disabled={saving} onClick={onSave}>
                     <Save className="size-4" />
-                    {saving ? "保存中" : "保存"}
+                    {saving ? "保存中" : "保存到藏卷阁"}
                 </button>
                 <button type="button" className="color-toolbar-export hidden lg:flex" onClick={onExport}>
                     <Download className="size-4" />
-                    导出
+                    导出文件
                 </button>
             </div>
         </header>

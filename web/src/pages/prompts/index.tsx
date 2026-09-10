@@ -1,6 +1,6 @@
 import { FolderPlus, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { Suspense, type ReactNode, type UIEvent, useEffect, useState } from "react";
+import { Suspense, type ReactNode, type UIEvent, useState } from "react";
 import { App, Button, Empty, Input, Spin, Tag } from "antd";
 
 import { PromptCard } from "@/components/prompts/prompt-card";
@@ -24,12 +24,6 @@ export default function PromptsPage() {
     const copyText = useCopyText();
     const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts, indexed } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory });
 
-    useEffect(() => {
-        if (query.isError) {
-            message.error(query.error instanceof Error ? query.error.message : "获取提示词失败");
-        }
-    }, [message, query.error, query.isError]);
-
     const toggleTag = (tag: string) => {
         if (tag === ALL_PROMPTS_OPTION) return setSelectedTags([]);
         setSelectedTags((items) => (items[0] === tag ? [] : [tag]));
@@ -42,7 +36,7 @@ export default function PromptsPage() {
 
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {
         const target = event.currentTarget;
-        if (query.hasNextPage && !query.isFetchingNextPage && target.scrollTop + target.clientHeight >= target.scrollHeight - 160) {
+        if (query.hasNextPage && !query.isFetching && !query.isError && target.scrollTop + target.clientHeight >= target.scrollHeight - 160) {
             void query.fetchNextPage();
         }
     };
@@ -54,7 +48,7 @@ export default function PromptsPage() {
                 <section className="relative overflow-hidden">
                     <img src="/images/ref/misty-dawn.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
                     <div className="absolute inset-0 bg-gradient-to-b from-[#0e0e12]/78 via-[#0e0e12]/55 to-[#0e0e12]" aria-hidden />
-                    <div className="relative mx-auto max-w-7xl px-6 pb-10 pt-14 text-center">
+                    <div className="relative mx-auto max-w-7xl px-6 pb-6 pt-8 text-center lg:pb-10 lg:pt-14">
                         <p className="shj-hero-eyebrow inline-flex">Gong Fa Lou</p>
                         <h1 className="font-brush mt-4 text-5xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:text-6xl">功法楼</h1>
                         <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">楼藏功法 {totalPrompts} 卷 · 每一卷,皆可助你落笔成象</p>
@@ -62,8 +56,17 @@ export default function PromptsPage() {
                 </section>
 
                 <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:py-8">
+                    <Input size="large" allowClear aria-label="搜索功法" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder="搜索标题、内容或主分类" onChange={(event) => setTitleKeyword(event.target.value)} className="mb-5" />
+                    <details className="mb-5 rounded-md border border-white/10 p-3 lg:hidden">
+                        <summary className="cursor-pointer py-2 text-sm text-[#e7d2a6]">筛选功法{selectedCategory !== ALL_PROMPTS_OPTION || selectedTags.length ? " · 已筛选" : " · 来源与分类"}</summary>
+                        <div className="max-h-60 space-y-4 overflow-y-auto pt-3">
+                            <PromptFilter label="来源" options={promptCategoryOptions} selected={selectedCategory} onChange={setSelectedCategory} />
+                            <PromptFilter label="主分类" options={promptTags} selected={selectedTags[0] || ALL_PROMPTS_OPTION} onChange={toggleTag} />
+                            <Button size="small" onClick={() => { setSelectedCategory(ALL_PROMPTS_OPTION); setSelectedTags([]); }}>清除筛选</Button>
+                        </div>
+                    </details>
                     <div className="grid items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-6">
-                        <aside className="thin-scrollbar max-h-72 overflow-y-auto border-b border-stone-200 pb-5 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-6rem)] lg:border-b-0 lg:border-r lg:pb-8 lg:pr-5 dark:border-stone-800">
+                        <aside className="thin-scrollbar hidden overflow-y-auto lg:block lg:sticky lg:top-0 lg:max-h-[calc(100dvh-6rem)] lg:border-r lg:pb-8 lg:pr-5 dark:border-stone-800">
                             <PromptFilter label="来源" options={promptCategoryOptions} selected={selectedCategory} onChange={setSelectedCategory} />
                             <div className="mt-6">
                                 <div className="mb-2 text-xs font-semibold text-stone-400 dark:text-stone-500">主分类</div>
@@ -80,12 +83,15 @@ export default function PromptsPage() {
                             </div>
                         </aside>
                         <section className="min-w-0">
-                            <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder="搜索标题、内容或主分类" onChange={(event) => setTitleKeyword(event.target.value)} />
+                            {query.isError && <div className="my-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-400/20 p-4 text-sm text-[#e7d2a6]" role="alert">
+                                <span>{promptItems.length ? "加载未完成，已加载的功法仍可浏览。" : "功法加载失败，请重试。"}</span>
+                                <Button loading={query.isFetching} onClick={() => void (query.isFetchNextPageError ? query.fetchNextPage() : query.refetch())}>重新加载</Button>
+                            </div>}
                             {query.isLoading ? (
                                 <div className="flex h-60 items-center justify-center">
                                     <Spin />
                                 </div>
-                            ) : (
+                            ) : !query.isError || promptItems.length > 0 ? (
                                 <div className="mt-5">
                                     <PromptGrid
                                         items={promptItems}
@@ -99,8 +105,9 @@ export default function PromptsPage() {
                                         )}
                                     />
                                 </div>
-                            )}
-                            <div className="mt-6 text-center text-xs text-stone-500 dark:text-stone-400">{query.isFetchingNextPage ? "加载中..." : query.hasNextPage ? "继续向下滚动加载更多" : promptItems.length > 0 ? "已经到底了" : null}</div>
+                            ) : null}
+                            {!query.isError && indexed === false && !query.isLoading && <div className="text-center"><Button loading={query.isFetching} onClick={() => void query.refetch()}>刷新同步状态</Button></div>}
+                            {!query.isError && <div className="mt-6 text-center text-xs text-stone-500 dark:text-stone-400">{query.isFetchingNextPage ? "加载中..." : query.hasNextPage ? <Button onClick={() => void query.fetchNextPage()} disabled={query.isFetching}>加载更多功法</Button> : promptItems.length > 0 ? "已经到底了" : null}</div>}
                         </section>
                     </div>
                 </div>

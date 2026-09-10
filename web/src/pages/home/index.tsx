@@ -193,7 +193,7 @@ export default function IndexPage() {
                         <div className="home-cultivation-identity flex items-center gap-4">
                             {isImperialMode ? <ImperialSeal className="size-11" /> : <span className="shj-seal">{cultivation.realmName}</span>}
                             <div className="flex flex-col gap-0.5">
-                                <span className="font-display text-sm tracking-[0.15em] text-[#edede6]">今日修行</span>
+                                <span className="font-display text-sm tracking-[0.15em] text-[#edede6]">{isImperialMode ? "今日创作" : "今日修行"}</span>
                                 <span className="home-cultivation-description text-xs text-[#8a8a96]">{quotaText(cultivation.remainingToday, cultivation.unlimited)} · 笔耕不辍,境界自现</span>
                             </div>
                         </div>
@@ -205,7 +205,7 @@ export default function IndexPage() {
                             onTouchStart={() => void preloadRoute("/cultivation")}
                             className="home-cultivation-link group inline-flex items-center gap-2 text-sm tracking-[0.1em] text-[#c9a86a] transition-colors hover:text-[#edede6]"
                         >
-                            入命宫修行
+                            {isImperialMode ? "进入命宫" : "入命宫修行"}
                             <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-0.5" />
                         </Link>
                     </div>
@@ -234,7 +234,7 @@ export default function IndexPage() {
                 </div>
                 <hr className="shj-gold-hairline mb-10" />
 
-                <div className="h-[480px] sm:h-[570px] lg:h-[650px]">
+                <div className={driftWallItems.length ? "h-[480px] sm:h-[570px] lg:h-[650px]" : "h-[240px] sm:h-[280px]"}>
                     {driftWallItems.length > 0 ? (
                         <DriftWall
                             items={driftWallItems}

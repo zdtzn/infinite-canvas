@@ -465,8 +465,6 @@ export default function ColorAlchemyPage() {
                                 discardSettingsDraft();
                                 redo(document.id);
                             }}
-                            onCompareStart={() => setOriginalHeld(true)}
-                            onCompareEnd={() => setOriginalHeld(false)}
                             onToggleOriginal={() => setOriginalPinned((value) => !value)}
                             onReset={() => {
                                 discardSettingsDraft();
@@ -530,8 +528,7 @@ export default function ColorAlchemyPage() {
                                 saving={saving}
                                 originalActive={forceOriginal}
                                 onSources={() => setMobilePanel("sources")}
-                                onCompareStart={() => setOriginalHeld(true)}
-                                onCompareEnd={() => setOriginalHeld(false)}
+                                onToggleOriginal={() => setOriginalPinned((value) => !value)}
                                 onControls={() => setMobilePanel("controls")}
                                 onSave={() => void saveToAssets()}
                                 onExport={() => setExportOpen(true)}
@@ -740,8 +737,7 @@ function MobileColorDock({
     saving,
     originalActive,
     onSources,
-    onCompareStart,
-    onCompareEnd,
+    onToggleOriginal,
     onControls,
     onSave,
     onExport,
@@ -749,17 +745,11 @@ function MobileColorDock({
     saving: boolean;
     originalActive: boolean;
     onSources: () => void;
-    onCompareStart: () => void;
-    onCompareEnd: () => void;
+    onToggleOriginal: () => void;
     onControls: () => void;
     onSave: () => void;
     onExport: () => void;
 }) {
-    const endCompare = (target?: HTMLElement, pointerId?: number) => {
-        if (target && pointerId !== undefined && target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
-        onCompareEnd();
-    };
-
     return (
         <nav className="color-mobile-dock lg:hidden" aria-label="灵彩快捷操作">
             <button type="button" onClick={onSources}>
@@ -769,17 +759,13 @@ function MobileColorDock({
             <button
                 type="button"
                 className={originalActive ? "is-primary" : ""}
-                title="按住查看原图"
-                onPointerDown={(event) => {
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                    onCompareStart();
-                }}
-                onPointerUp={(event) => endCompare(event.currentTarget, event.pointerId)}
-                onPointerCancel={(event) => endCompare(event.currentTarget, event.pointerId)}
-                onLostPointerCapture={onCompareEnd}
+                title={originalActive ? "点击返回调色效果" : "点击查看原图"}
+                aria-label="查看原图"
+                aria-pressed={originalActive}
+                onClick={onToggleOriginal}
             >
                 <Columns2 className="size-4" />
-                对比
+                {originalActive ? "返回效果" : "查看原图"}
             </button>
             <button type="button" onClick={onControls}>
                 <SlidersHorizontal className="size-4" />
@@ -787,11 +773,11 @@ function MobileColorDock({
             </button>
             <button type="button" disabled={saving} onClick={onSave}>
                 <Save className="size-4" />
-                {saving ? "保存中" : "保存"}
+                {saving ? "保存中" : "存藏卷阁"}
             </button>
             <button type="button" className="is-primary" onClick={onExport}>
                 <Download className="size-4" />
-                导出
+                导出文件
             </button>
         </nav>
     );
