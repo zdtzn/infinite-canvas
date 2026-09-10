@@ -19,6 +19,7 @@ export type PromptIndexItem = {
 };
 
 export type PromptIndexQuery = {
+  order?: "asc" | "desc";
   sourceId?: string;
   keyword?: string;
   category?: string;
@@ -174,7 +175,8 @@ export function queryPromptIndex(database: Database, options: PromptIndexQuery =
   const indexState = database
     .query("SELECT CASE WHEN EXISTS (SELECT 1 FROM prompt_index) OR EXISTS (SELECT 1 FROM prompt_index_status WHERE last_success_at IS NOT NULL) THEN 1 ELSE 0 END AS indexed")
     .get() as { indexed?: number };
-  const rows = database.query(`SELECT * FROM prompt_index WHERE ${condition} ORDER BY indexed_at DESC, rowid DESC LIMIT ? OFFSET ?`).all(...params, pageSize, (page - 1) * pageSize) as PromptIndexRow[];
+  const direction = options.order === "asc" ? "ASC" : "DESC";
+  const rows = database.query(`SELECT * FROM prompt_index WHERE ${condition} ORDER BY indexed_at ${direction}, rowid ${direction} LIMIT ? OFFSET ?`).all(...params, pageSize, (page - 1) * pageSize) as PromptIndexRow[];
   const tagParams: Array<string | number> = [];
   const tagWhere = ["1 = 1"];
   if (sourceId) {

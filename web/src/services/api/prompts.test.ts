@@ -63,3 +63,15 @@ test("builds a bounded server-side prompt query with source, primary category an
     assert.equal(query.get("page"), "3");
     assert.equal(query.get("pageSize"), "30");
 });
+
+test("preserves sorting alongside filters and pagination", () => {
+    for (const order of ["asc", "desc"] as const) {
+        const query = buildPromptIndexQuery({ sourceId: "gallery", keyword: "example", tag: ["商品商业"], category: "全部", page: 2, pageSize: 10, order });
+        assert.equal(query.get("order"), order);
+        assert.equal(query.get("sourceId"), "gallery");
+        assert.equal(query.get("keyword"), "example");
+        assert.equal(query.get("page"), "2");
+        assert.deepEqual(query.getAll("tag"), ["商品商业"]);
+    }
+    assert.equal(buildPromptIndexQuery({ keyword: "", tag: [], category: "全部", page: 1, pageSize: 20 }).has("order"), false);
+});

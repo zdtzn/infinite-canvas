@@ -196,8 +196,8 @@ function toPromptCover(item: Prompt): PromptCover {
     return { id: item.id, title: item.title, coverUrl: item.coverUrl, category: item.category };
 }
 
-export async function fetchPrompts({ sourceId = "", keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { sourceId?: string; keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
-    const serverResult = await fetchPromptIndex({ sourceId, keyword, tag, category, page, pageSize });
+export async function fetchPrompts({ sourceId = "", keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20, order = "desc" }: { sourceId?: string; keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number; order?: "asc" | "desc" } = {}) {
+    const serverResult = await fetchPromptIndex({ sourceId, keyword, tag, category, page, pageSize, order });
     if (serverResult) return { ...serverResult, items: serverResult.items.map(withPromptTaxonomy), tags: sortPromptTaxonomyTags(serverResult.tags.filter(isPromptTaxonomyTag)) };
     const items = (await getAllPrompts()).map(withPromptTaxonomy);
     const normalizedKeyword = keyword.trim().toLowerCase();
@@ -205,6 +205,7 @@ export async function fetchPrompts({ sourceId = "", keyword = "", tag = [], cate
     const normalizedPageSize = Math.max(1, Math.min(100, pageSize));
     const withoutTagFilter = filterPrompts(items, { sourceId, keyword: normalizedKeyword, category, tags: [] });
     const filtered = filterPrompts(items, { sourceId, keyword: normalizedKeyword, category, tags: tag });
+    if (order === "desc") filtered.reverse();
 
     return {
         items: filtered.slice((normalizedPage - 1) * normalizedPageSize, normalizedPage * normalizedPageSize),
@@ -216,14 +217,15 @@ export async function fetchPrompts({ sourceId = "", keyword = "", tag = [], cate
     };
 }
 
-export function buildPromptIndexQuery({ sourceId = "", keyword, tag, category, page, pageSize }: { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number }) {
+export function buildPromptIndexQuery({ sourceId = "", keyword, tag, category, page, pageSize, order }: { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number; order?: "asc" | "desc" }) {
     const params = new URLSearchParams({ sourceId, keyword, category, page: String(page), pageSize: String(pageSize) });
     for (const value of tag) params.append("tag", value);
+    if (order) params.set("order", order);
     return params;
 }
 
-async function fetchPromptIndex({ sourceId = "", keyword, tag, category, page, pageSize }: { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number }) {
-    const params = buildPromptIndexQuery({ sourceId, keyword, tag, category, page, pageSize });
+async function fetchPromptIndex({ sourceId = "", keyword, tag, category, page, pageSize, order }: { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number; order?: "asc" | "desc" }) {
+    const params = buildPromptIndexQuery({ sourceId, keyword, tag, category, page, pageSize, order });
     try {
         return await serverRequest<PromptListResponse>(`/api/prompt-index?${params.toString()}`, { timeoutMs: 5_000, expectedUserId: useUserStore.getState().user?.id });
     } catch {

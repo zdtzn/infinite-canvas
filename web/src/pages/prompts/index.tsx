@@ -1,7 +1,7 @@
 import { FolderPlus, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Suspense, type ReactNode, type UIEvent, useState } from "react";
-import { App, Button, Empty, Input, Spin, Tag } from "antd";
+import { App, Button, Empty, Input, Select, Spin, Tag } from "antd";
 
 import { PromptCard } from "@/components/prompts/prompt-card";
 import { usePromptList } from "@/components/prompts/use-prompt-list";
@@ -17,12 +17,13 @@ export default function PromptsPage() {
     const navigate = useNavigate();
     const { message } = App.useApp();
     const [titleKeyword, setTitleKeyword] = useState("");
+    const [order, setOrder] = useState<"asc" | "desc">("asc");
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const [selectedCategory, setSelectedCategory] = useState(ALL_PROMPTS_OPTION);
     const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
     const addAsset = useAssetStore((state) => state.addAsset);
     const copyText = useCopyText();
-    const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts, indexed } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory });
+    const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts, indexed } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory, order });
 
     const toggleTag = (tag: string) => {
         if (tag === ALL_PROMPTS_OPTION) return setSelectedTags([]);
@@ -56,7 +57,10 @@ export default function PromptsPage() {
                 </section>
 
                 <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:py-8">
-                    <Input size="large" allowClear aria-label="搜索功法" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder="搜索标题、内容或主分类" onChange={(event) => setTitleKeyword(event.target.value)} className="mb-5" />
+                    <div className="mb-5 flex flex-wrap items-center gap-3">
+                        <Input size="large" allowClear aria-label="搜索功法" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder="搜索标题、内容或主分类" onChange={(event) => setTitleKeyword(event.target.value)} className="min-w-48 flex-1" />
+                        <Select size="large" aria-label="功法排序" value={order} onChange={setOrder} className="w-48" options={[{value:"asc",label:"来源顺序 · 升序"},{value:"desc",label:"来源顺序 · 降序"}]} />
+                    </div>
                     <details className="mb-5 rounded-md border border-white/10 p-3 lg:hidden">
                         <summary className="cursor-pointer py-2 text-sm text-[#e7d2a6]">筛选功法{selectedCategory !== ALL_PROMPTS_OPTION || selectedTags.length ? " · 已筛选" : " · 来源与分类"}</summary>
                         <div className="max-h-60 space-y-4 overflow-y-auto pt-3">

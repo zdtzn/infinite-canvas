@@ -1408,6 +1408,7 @@ function listPromptIndex(url: URL) {
     const database = appDatabase.raw;
     if (!database) return json({ items: [], tags: [], categories: [], total: 0, page: 1, pageSize: 20, indexed: false });
     return json(queryPromptIndex(database, {
+        order: url.searchParams.get("order") === "asc" ? "asc" : "desc",
         keyword: url.searchParams.get("keyword") || "",
         sourceId: url.searchParams.get("sourceId") || "",
         category: url.searchParams.get("category") || "",

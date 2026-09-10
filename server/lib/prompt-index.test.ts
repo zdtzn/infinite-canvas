@@ -31,6 +31,36 @@ afterEach(() => {
 });
 
 describe("prompt index", () => {
+  test("sorts the full filtered result before pagination in both directions", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-prompt-order-"));
+    directories.push(dataDir);
+    const store = openAppDatabase({ dataDir });
+    try {
+      replacePromptIndex(store.raw!, "ordered", normalizePromptIndexItems("ordered",
+        Array.from({ length: 45 }, (_, index) => ({
+          id: `example-${index}`, title: `Example ${index}`, prompt: "landscape illustration",
+          category: index % 2 === 0 ? "selected" : "other",
+        })),
+      ));
+      const expected = Array.from({ length: 23 }, (_, index) => `example-${index * 2}`);
+      for (const order of ["asc", "desc"] as const) {
+        const ids: string[] = [];
+        for (let page = 1; page <= 3; page++) {
+          const result = queryPromptIndex(store.raw!, {
+            sourceId: "ordered", category: "selected", keyword: "Example",
+            order, page, pageSize: 10,
+          });
+          expect(result.total).toBe(23);
+          ids.push(...result.items.map((item) => item.id));
+        }
+        expect(ids).toEqual(order === "asc" ? expected : [...expected].reverse());
+      }
+      expect(queryPromptIndex(store.raw!, { sourceId: "ordered", pageSize: 1 }).items[0].id).toBe("example-44");
+    } finally {
+      store.close();
+    }
+  });
+
   test("cover projection retains every item and source order without prompt bodies", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-prompt-covers-"));
     directories.push(dataDir);
