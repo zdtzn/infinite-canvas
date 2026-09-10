@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Maximize, Minus, MoveHorizontal, Pipette, Plus, ScanSearch, Trash2 } from "lucide-react";
 import { Tooltip } from "antd";
+import { useCopyText } from "@/hooks/use-copy-text";
 
 import { analyzedColorFromRgb } from "./color-engine";
 import { createColorPreviewWorkerClient, type ColorPreviewWorkerClient } from "./color-preview-worker-client";
@@ -29,6 +30,7 @@ export function ColorPreviewStage({
     onPickColor: (color: AnalyzedColor) => void;
     onRemove?: () => void;
 }) {
+    const copyText = useCopyText();
     const stageRef = useRef<HTMLDivElement>(null);
     const originalCanvasRef = useRef<HTMLCanvasElement>(null);
     const adjustedCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -42,6 +44,9 @@ export function ColorPreviewStage({
     const [rendering, setRendering] = useState(false);
     const [error, setError] = useState("");
     const [eyedropperActive, setEyedropperActive] = useState(false);
+    const [colorSample, setColorSample] = useState<{ color: AnalyzedColor; origin: string; x: number; y: number; u: number; v: number } | null>(null);
+    const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const magnifierRef = useRef<HTMLCanvasElement>(null);
     const pointerRef = useRef<{ mode: "compare" | "pan"; pointerId: number; startX: number; startY: number; panX: number; panY: number } | null>(null);
     const settingsRef = useRef(settings);
     const sourceGenerationRef = useRef(0);
@@ -156,6 +161,7 @@ export function ColorPreviewStage({
         setZoom(1);
         setPan({ x: 0, y: 0 });
         setEyedropperActive(false);
+        setColorSample(null);
         loadedRef.current?.dispose();
         loadedRef.current = null;
         void loadColorImage(source)
@@ -258,7 +264,7 @@ export function ColorPreviewStage({
         setCompare(Math.min(100, Math.max(0, ((clientX - rect.left) / Math.max(1, rect.width)) * 100)));
     };
 
-    const pickColor = (clientX: number, clientY: number) => {
+    const sampleColor = (clientX: number, clientY: number) => {
         const frame = stageRef.current?.querySelector<HTMLElement>("[data-color-preview-frame]");
         if (!frame || !dimensions) return;
         const rect = frame.getBoundingClientRect();
@@ -267,12 +273,40 @@ export function ColorPreviewStage({
         if (localX < 0 || localY < 0 || localX > rect.width || localY > rect.height) return;
         const inAdjustedPreview = !forceOriginal && localX <= rect.width * (compare / 100);
         const canvas = inAdjustedPreview ? adjustedCanvasRef.current : originalCanvasRef.current;
-        const context = canvas?.getContext("2d", { willReadFrequently: true });
-        if (!canvas || !context) return;
-        const x = Math.min(canvas.width - 1, Math.max(0, Math.floor((localX / Math.max(1, rect.width)) * canvas.width)));
-        const y = Math.min(canvas.height - 1, Math.max(0, Math.floor((localY / Math.max(1, rect.height)) * canvas.height)));
-        const pixel = context.getImageData(x, y, 1, 1).data;
-        onPickColor(analyzedColorFromRgb([pixel[0], pixel[1], pixel[2]]));
+        const loaded = loadedRef.current;
+        if (!canvas || !loaded || loading || (inAdjustedPreview && rendering)) return;
+        // Read original pixels directly; adjusted samples match the displayed frame.
+        const width = inAdjustedPreview ? canvas.width : loaded.width;
+        const height = inAdjustedPreview ? canvas.height : loaded.height;
+        const u = localX / Math.max(1, rect.width);
+        const v = localY / Math.max(1, rect.height);
+        const x = Math.min(width - 1, Math.max(0, Math.floor(u * width)));
+        const y = Math.min(height - 1, Math.max(0, Math.floor(v * height)));
+        const sampleCanvas = sampleCanvasRef.current || document.createElement("canvas");
+        sampleCanvasRef.current = sampleCanvas;
+        sampleCanvas.width = sampleCanvas.height = 9;
+        const context = sampleCanvas.getContext("2d", { willReadFrequently: true });
+        if (!context) return;
+        // The preview frame has a black background, including behind transparent pixels.
+        context.fillStyle = "#000";
+        context.fillRect(0, 0, 9, 9);
+        context.imageSmoothingEnabled = false;
+        context.drawImage(inAdjustedPreview ? canvas : loaded.image, 4 - x, 4 - y);
+        const pixel = context.getImageData(4, 4, 1, 1).data;
+        const sample = { color: analyzedColorFromRgb([pixel[0], pixel[1], pixel[2]]), origin: inAdjustedPreview ? "调整后 · 预览像素" : "原图 · 原始像素", x, y, u, v };
+        const magnifier = magnifierRef.current?.getContext("2d");
+        if (magnifier) {
+            magnifier.imageSmoothingEnabled = false;
+            magnifier.drawImage(sampleCanvas, 0, 0, 90, 90);
+        }
+        setColorSample(sample);
+        return sample;
+    };
+
+    const pickColor = (clientX: number, clientY: number) => {
+        const sample = sampleColor(clientX, clientY);
+        if (!sample) return;
+        onPickColor(sample.color);
         setEyedropperActive(false);
     };
 
@@ -309,6 +343,7 @@ export function ColorPreviewStage({
             <div className="absolute inset-0 flex items-center justify-center px-4 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-10">
                 <div
                     data-color-preview-frame
+                    onPointerMove={(event) => { if (eyedropperActive) sampleColor(event.clientX, event.clientY); }}
                     className="relative shrink-0 overflow-hidden bg-black shadow-[0_26px_90px_rgba(0,0,0,.48)]"
                     style={{ width: fit.width, height: fit.height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center", cursor: eyedropperActive ? "crosshair" : zoom > 1 ? "grab" : "default" }}
                     onPointerDown={(event) => {
@@ -327,6 +362,7 @@ export function ColorPreviewStage({
                     <div className="absolute inset-y-0 left-0 overflow-hidden" style={{ width: forceOriginal ? 0 : `${compare}%` }}>
                         <canvas ref={adjustedCanvasRef} className="absolute inset-0 h-full max-w-none" style={{ width: fit.width, height: fit.height }} aria-label="调色结果" />
                     </div>
+                    {colorSample ? <span aria-hidden="true" className="pointer-events-none absolute z-20 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white shadow-[0_0_0_1px_black]" style={{ left: `${colorSample.u * 100}%`, top: `${colorSample.v * 100}%` }} /> : null}
                     {!forceOriginal ? (
                         <button
                             type="button"
@@ -335,6 +371,7 @@ export function ColorPreviewStage({
                             style={{ left: `${compare}%` }}
                             aria-label="拖动查看调色前后对比"
                             onPointerDown={(event) => {
+                                if (eyedropperActive) return;
                                 event.stopPropagation();
                                 event.currentTarget.setPointerCapture(event.pointerId);
                                 pointerRef.current = { mode: "compare", pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, panX: pan.x, panY: pan.y };
@@ -355,6 +392,25 @@ export function ColorPreviewStage({
                             <span className="absolute right-3 top-3 rounded bg-black/55 px-2 py-1 text-[10px] font-medium text-white/78 backdrop-blur-md">原图</span>
                         </>
                     )}
+                </div>
+            </div>
+
+            <div className={`pointer-events-none absolute left-3 top-14 z-30 max-w-[calc(100%-24px)] rounded-md border border-white/20 bg-black/90 p-3 text-xs text-white ${eyedropperActive || colorSample ? "" : "hidden"}`}>
+                <div className="flex items-center gap-3">
+                    <div className={`relative shrink-0 ${eyedropperActive && colorSample ? "" : "hidden"}`}>
+                        <canvas ref={magnifierRef} width={90} height={90} className="size-[90px]" />
+                        <span className="pointer-events-none absolute left-10 top-10 size-2.5 border border-white shadow-[0_0_0_1px_black]" />
+                    </div>
+                    <div role="status" aria-live={eyedropperActive ? "off" : "polite"}>
+                        <p>{eyedropperActive ? "点击图片取色 · Esc 退出" : "已取色"}</p>
+                        {colorSample ? <>
+                            <p className="mt-2 flex items-center gap-2 font-mono"><span className="size-5 rounded border border-white/30" style={{ background: colorSample.color.hex }} />{colorSample.color.hex}</p>
+                            <p className="mt-1 text-white/65">{colorSample.origin} · {colorSample.x + 1}, {colorSample.y + 1}</p>
+                            {!eyedropperActive ? <button type="button" className="pointer-events-auto mt-2 text-[#e5c783]" onClick={() => void copyText(colorSample.color.hex)}>复制色值</button> : null}
+                        </> : null}
+                        {eyedropperActive && rendering ? <p className="mt-1 text-amber-200">预览更新中，请稍后取调整后的颜色</p> : null}
+                    </div>
+                    {!eyedropperActive ? <button type="button" aria-label="关闭取色结果" className="pointer-events-auto self-start p-2" onClick={() => setColorSample(null)}>×</button> : null}
                 </div>
             </div>
 
