@@ -63,11 +63,11 @@ export function nodeBounds(nodes: CanvasNodeData[]) {
 
 export function findGroupDropTarget(movedIds: Set<string>, nodes: CanvasNodeData[]) {
     if (nodes.some((node) => movedIds.has(node.id) && node.type === CanvasNodeType.Group)) return null;
-    const movingNodes = nodes.filter((node) => movedIds.has(node.id) && node.type !== CanvasNodeType.Group);
+    const movingNodes = collectGroupMemberNodes(movedIds, nodes);
     if (!movingNodes.length) return null;
     return (
         [...nodes].reverse().find((group) => {
-            if (group.type !== CanvasNodeType.Group || movedIds.has(group.id)) return false;
+            if (group.type !== CanvasNodeType.Group || group.metadata?.locked || movedIds.has(group.id)) return false;
             return movingNodes.some((node) => {
                 const centerX = node.position.x + node.width / 2;
                 const centerY = node.position.y + node.height / 2;
@@ -78,8 +78,10 @@ export function findGroupDropTarget(movedIds: Set<string>, nodes: CanvasNodeData
 }
 
 export function snapNodesIntoGroup(movedIds: Set<string>, nodes: CanvasNodeData[], group: CanvasNodeData) {
-    const movingNodes = nodes.filter((node) => movedIds.has(node.id) && node.type !== CanvasNodeType.Group);
+    if (group.metadata?.locked) return nodes;
+    const movingNodes = collectGroupMemberNodes(movedIds, nodes).filter((node) => movedIds.has(node.id));
     if (!movingNodes.length) return nodes;
+    const movableIds = new Set(movingNodes.map((node) => node.id));
     const pad = 24;
     const bounds = nodeBounds(movingNodes);
     const left = group.position.x + pad;
@@ -89,7 +91,7 @@ export function snapNodesIntoGroup(movedIds: Set<string>, nodes: CanvasNodeData[
     const dx = bounds.right - bounds.left > right - left ? left - bounds.left : bounds.left < left ? left - bounds.left : bounds.right > right ? right - bounds.right : 0;
     const dy = bounds.bottom - bounds.top > bottom - top ? top - bounds.top : bounds.top < top ? top - bounds.top : bounds.bottom > bottom ? bottom - bounds.bottom : 0;
     return nodes.map((node) => {
-        if (!movedIds.has(node.id) || node.type === CanvasNodeType.Group) return node;
+        if (!movableIds.has(node.id)) return node;
         return { ...node, position: { x: node.position.x + dx, y: node.position.y + dy }, metadata: { ...node.metadata, groupId: group.id } };
     });
 }
@@ -100,8 +102,16 @@ export function findContainingGroupId(node: CanvasNodeData, nodes: CanvasNodeDat
     return (
         [...nodes]
             .reverse()
-            .find((group) => group.type === CanvasNodeType.Group && group.id !== node.id && centerX >= group.position.x && centerX <= group.position.x + group.width && centerY >= group.position.y && centerY <= group.position.y + group.height)?.id ||
-        undefined
+            .find(
+                (group) =>
+                    group.type === CanvasNodeType.Group &&
+                    !group.metadata?.locked &&
+                    group.id !== node.id &&
+                    centerX >= group.position.x &&
+                    centerX <= group.position.x + group.width &&
+                    centerY >= group.position.y &&
+                    centerY <= group.position.y + group.height,
+            )?.id || undefined
     );
 }
 
@@ -132,9 +142,9 @@ export function isHiddenBatchChild(node: CanvasNodeData, nodes: CanvasNodeData[]
     return Boolean(root && !root.metadata?.imageBatchExpanded);
 }
 
-export function isHiddenBatchConnectionEndpoint(node: CanvasNodeData, nodes: CanvasNodeData[]) {
+export function isHiddenBatchConnectionEndpoint(node: CanvasNodeData, nodes: CanvasNodeData[], nodeById?: ReadonlyMap<string, CanvasNodeData>) {
     const rootId = node.metadata?.batchRootId;
     if (!rootId) return false;
-    const root = nodes.find((item) => item.id === rootId);
+    const root = nodeById ? nodeById.get(rootId) : nodes.find((item) => item.id === rootId);
     return Boolean(root && !root.metadata?.imageBatchExpanded);
 }

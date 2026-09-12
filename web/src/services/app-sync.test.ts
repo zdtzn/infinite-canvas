@@ -16,6 +16,23 @@ test("legacy manifests without tombstones retain projects and repeated merge is 
     expect(mergeCanvasData(first, first)).toEqual(first);
 });
 
+test("two-device round trips propagate deletions without discarding edits to other projects", () => {
+    const deleted = normalizeCanvasProject({ id: "removed", updatedAt: "2026-01-01T00:00:00Z" })!;
+    const old = normalizeCanvasProject({ id: "kept", title: "old", updatedAt: "2026-01-01T00:00:00Z" })!;
+    const edited = { ...old, title: "offline edit", updatedAt: "2026-01-02T00:00:00Z" };
+    let a = { projects: [old], deleted: [{ id: deleted.id, deletedAt: "2026-01-03T00:00:00Z", serverDeleted: true, serverRevision: 7 }] };
+    let b = mergeCanvasData({ projects: [deleted, edited] }, a);
+    for (let round = 0; round < 5; round++) {
+        b = mergeCanvasData(b, a);
+        const merged = mergeCanvasData(a, b);
+        a = { projects: merged.projects, deleted: merged.deleted as typeof a.deleted };
+    }
+    expect(a.projects.map((project) => [project.id, project.title])).toEqual([["kept", "offline edit"]]);
+    expect(b.projects).toEqual(a.projects);
+    expect(a.deleted).toHaveLength(1);
+    expect(a.deleted[0].serverRevision).toBe(7);
+});
+
 test("a newer authoritative cloud revision cancels only an unconfirmed local deletion", () => {
     const project = normalizeCanvasProject({ id: "conflict", serverRevision: 3 })!;
     useCanvasStore.setState({ ownerUserId: "alice", projects: [project], deletedProjects: [] });

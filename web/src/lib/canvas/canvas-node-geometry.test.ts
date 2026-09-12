@@ -1,9 +1,50 @@
 import { expect, test } from "bun:test";
-import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, getGroupWrapRect, isHiddenBatchChild } from "./canvas-node-geometry";
+import {
+    applyGroupSelection,
+    applyUngroupSelection,
+    canGroupSelectedNodes,
+    canUngroupSelectedNodes,
+    findContainingGroupId,
+    findGroupDropTarget,
+    snapNodesIntoGroup,
+    getGroupWrapRect,
+    isHiddenBatchChild,
+    isHiddenBatchConnectionEndpoint,
+} from "./canvas-node-geometry";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const makeNode = (id: string, groupId?: string, locked = false): CanvasNodeData => ({ id, title: id, type: CanvasNodeType.Text, position: { x: 10, y: 20 }, width: 100, height: 80, metadata: { groupId, locked } });
 const makeGroup = (id: string, locked = false): CanvasNodeData => ({ ...makeNode(id, undefined, locked), type: CanvasNodeType.Group });
+
+test("dragging cannot add members to a locked group", () => {
+    const locked = { ...makeGroup("locked", true), width: 400, height: 400 };
+    const node = makeNode("a");
+    const nodes = [locked, node];
+    expect(findGroupDropTarget(new Set([node.id]), nodes)).toBeNull();
+    expect(findContainingGroupId(node, nodes)).toBeUndefined();
+    expect(snapNodesIntoGroup(new Set([node.id]), nodes, locked)).toBe(nodes);
+});
+
+test("drag grouping preserves locked members and positions", () => {
+    const target = { ...makeGroup("target"), width: 400, height: 400 };
+    const locked = makeNode("locked", undefined, true);
+    const movable = makeNode("movable");
+    const result = snapNodesIntoGroup(new Set([locked.id, movable.id]), [target, locked, movable], target);
+    expect(result[1]).toBe(locked);
+    expect(result[2].metadata?.groupId).toBe(target.id);
+});
+
+test("connection visibility uses the supplied index without scanning all nodes", () => {
+    const root = { ...makeNode("root"), metadata: { imageBatchExpanded: false } };
+    const child = { ...makeNode("child"), metadata: { batchRootId: root.id } };
+    const nodes = [root, child];
+    const indexed = new Map(nodes.map((node) => [node.id, node]));
+    nodes.find = () => {
+        throw new Error("linear scan");
+    };
+    expect(isHiddenBatchConnectionEndpoint(child, nodes, indexed)).toBe(true);
+    expect(isHiddenBatchConnectionEndpoint({ ...child, metadata: { batchRootId: "missing" } }, nodes, indexed)).toBe(false);
+});
 
 test("grouping preserves unrelated empty groups, positions and member connections", () => {
     const nodes = [makeGroup("empty"), makeGroup("old"), makeNode("a", "old"), makeNode("b")];

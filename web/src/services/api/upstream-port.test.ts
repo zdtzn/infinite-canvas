@@ -1,7 +1,8 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import axios from "axios";
 import { requestEdit } from "./image";
-import { createVideoGenerationTask, requestVideoGeneration } from "./video";
+import { createVideoGenerationTask, pollVideoGenerationTask, requestVideoGeneration } from "./video";
+import { useUserStore } from "@/stores/use-user-store";
 import { createModelChannel, defaultConfig, encodeChannelModel } from "@/stores/use-config-store";
 import { resolveVideoMode, videoImageLabel } from "@/lib/video-reference-mode";
 import { getPluginAuthoringPrompt, runModelPlugin } from "./model-plugin";
@@ -85,4 +86,28 @@ test("old scripts still run and new scripts receive video/audio files without ke
     const file = new File(["x"], "ref.mp4", { type: "video/mp4" });
     expect(await runModelPlugin({ config: config("video"), capability: "video", script: "return [videos[0].name, audios.length];", videos: [file] })).toEqual(["ref.mp4", 0]);
     expect(getPluginAuthoringPrompt("video", "test-video")).not.toContain("test-only");
+});
+
+test("resuming a saved video task after a network failure never creates a second task", async () => {
+    const currentConfig = config("video");
+    const task = { id: "saved/task?x", provider: "openai" as const, model: currentConfig.model, ownerUserId: useUserStore.getState().user?.id || "" };
+    const post = spyOn(axios, "post").mockRejectedValue(new Error("must not create"));
+    const get = spyOn(axios, "get")
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce({ data: { status: "running" } })
+        .mockResolvedValueOnce({ data: { status: "expired" } });
+    mocks.push(post, get);
+    await expect(pollVideoGenerationTask(currentConfig, task)).rejects.toThrow();
+    expect(await pollVideoGenerationTask(currentConfig, task)).toEqual({ status: "pending" });
+    expect((await pollVideoGenerationTask(currentConfig, task)).status).toBe("failed");
+    expect(post).not.toHaveBeenCalled();
+    expect(get.mock.calls.every(([url]) => String(url).includes("saved%2Ftask%3Fx"))).toBe(true);
+    expect(task.id).toBe("saved/task?x");
+});
+
+test("another account cannot poll a saved task", async () => {
+    const get = spyOn(axios, "get").mockRejectedValue(new Error("must not request"));
+    mocks.push(get);
+    await expect(pollVideoGenerationTask(config("video"), { id: "private", provider: "openai", model: config("video").model, ownerUserId: `${useUserStore.getState().user?.id || ""}-other` })).rejects.toThrow("账号已切换");
+    expect(get).not.toHaveBeenCalled();
 });

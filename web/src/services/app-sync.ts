@@ -2,7 +2,7 @@ import localforage from "localforage";
 
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
 import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
-import { downloadWebdavFile, uploadWebdavFile, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
+import { downloadWebdavFile, downloadWebdavFileSnapshot, uploadWebdavFile, WebdavConflictError, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { generationHistoryCacheKey, recordBelongsToUser } from "@/services/generation-history";
 import type { Asset } from "@/stores/use-asset-store";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -48,6 +48,7 @@ type SyncDomainOptions<T> = {
     emptyData: T;
     mergeData: (local: T, remote: T) => T;
     applyData?: (data: T) => Promise<void>;
+    finalizeData?: (data: T) => Promise<T>;
 };
 
 type SyncDomainResult<T> = {
@@ -91,83 +92,100 @@ const storageKeyPattern = /^(image|video|audio|file|video-reference|audio-refere
 
 export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?: AppSyncProgress): Promise<AppSyncResult> {
     const userId = useUserStore.getState().user?.id || "local";
+    let active = true;
+    const unsubscribe = useUserStore.subscribe((state) => {
+        if ((state.user?.id || "local") !== userId) active = false;
+    });
     const assertOwner = () => {
-        if ((useUserStore.getState().user?.id || "local") !== userId || (useCanvasStore.getState().ownerUserId && useCanvasStore.getState().ownerUserId !== userId)) throw new Error("账户已切换，请重新开始同步");
+        if (!active || (useUserStore.getState().user?.id || "local") !== userId || [useCanvasStore.getState().ownerUserId, useAssetStore.getState().ownerUserId].some((owner) => owner && owner !== userId)) throw new Error("账户已切换，请重新开始同步");
     };
-    const notify = onProgress;
-    onProgress = (event) => {
+    try {
+        const notify = onProgress;
+        onProgress = (event) => {
+            assertOwner();
+            notify?.(event);
+        };
+        const sessionConfig = { ...config, assertActive: assertOwner, directory: `${config.directory.replace(/\/+$/, "")}/users/${encodeURIComponent(userId)}` };
+        config = sessionConfig;
+        emitProgress(onProgress, { stage: "等待本地数据加载" });
+        await Promise.all([waitForHydration(useCanvasStore), waitForHydration(useAssetStore)]);
         assertOwner();
-        notify?.(event);
-    };
-    config = { ...config, directory: `${config.directory.replace(/\/+$/, "")}/users/${encodeURIComponent(userId)}` };
-    emitProgress(onProgress, { stage: "等待本地数据加载" });
-    await Promise.all([waitForHydration(useCanvasStore), waitForHydration(useAssetStore)]);
-    await useAssetStore.getState().loadAllServerAssets();
-    assertOwner();
+        await useAssetStore.getState().loadAllServerAssets();
+        assertOwner();
 
-    const [canvas, assets, imageLogs, videoLogs] = await Promise.all([
-        syncDomain<CanvasDomainData>(config, onProgress, {
-            key: "canvas",
-            label: "画布",
-            emptyData: { projects: [], deleted: [] },
-            localData: async () => {
-                assertOwner();
-                const state = useCanvasStore.getState();
-                return { projects: state.projects, deleted: state.deletedProjects.filter((item) => !PUBLIC_MODE || item.serverDeleted) };
-            },
-            mergeData: mergeCanvasData,
-            applyData: async (data) => {
-                assertOwner();
-                useCanvasStore.getState().replaceProjects(data.projects, data.deleted);
-            },
-        }),
-        syncDomain<AssetDomainData>(config, onProgress, {
-            key: "assets",
-            label: "我的资产",
-            emptyData: { assets: [] },
-            localData: async () => ({ assets: useAssetStore.getState().assets }),
-            mergeData: (local, remote) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt") }),
-            applyData: async (data) => {
-                const assets = await Promise.all(data.assets.map(hydrateAsset));
-                assertOwner();
-                useAssetStore.getState().replaceAssets(assets);
-            },
-        }),
-        syncDomain<LogDomainData>(config, onProgress, {
-            key: "image-workbench",
-            label: "生图工作台",
-            emptyData: { logs: [] },
-            localData: async () => ({ logs: await readStoredLogs(imageLogStore, userId) }),
-            mergeData: (local, remote) => ({ logs: mergeById(local.logs, ownedLogs(remote.logs, userId), "updatedAt") }),
-            applyData: async (data) => replaceStoredLogs(imageLogStore, data.logs, userId),
-        }),
-        syncDomain<LogDomainData>(config, onProgress, {
-            key: "video-workbench",
-            label: "视频创作台",
-            emptyData: { logs: [] },
-            localData: async () => ({ logs: await readStoredLogs(videoLogStore, userId) }),
-            mergeData: (local, remote) => ({ logs: mergeById(local.logs, ownedLogs(remote.logs, userId), "updatedAt") }),
-            applyData: async (data) => replaceStoredLogs(videoLogStore, data.logs, userId),
-        }),
-    ]);
+        const [canvas, assets, imageLogs, videoLogs] = await Promise.all([
+            syncDomain<CanvasDomainData>(config, onProgress, {
+                key: "canvas",
+                label: "画布",
+                emptyData: { projects: [], deleted: [] },
+                localData: async () => {
+                    assertOwner();
+                    const state = useCanvasStore.getState();
+                    return { projects: state.projects, deleted: state.deletedProjects.filter((item) => !PUBLIC_MODE || item.serverDeleted) };
+                },
+                mergeData: mergeCanvasData,
+                finalizeData: async (data) => {
+                    assertOwner();
+                    // New edits wait for the next sync so their media is uploaded with their snapshot.
+                    const deleted = useCanvasStore.getState().deletedProjects.filter((item) => !PUBLIC_MODE || item.serverDeleted);
+                    return mergeCanvasData({ projects: [], deleted }, data);
+                },
+                applyData: async (data) => {
+                    assertOwner();
+                    useCanvasStore.getState().replaceProjects(data.projects, data.deleted);
+                },
+            }),
+            syncDomain<AssetDomainData>(config, onProgress, {
+                key: "assets",
+                label: "我的资产",
+                emptyData: { assets: [] },
+                localData: async () => ({ assets: useAssetStore.getState().assets }),
+                mergeData: (local, remote) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt") }),
+                applyData: async (data) => {
+                    const assets = await Promise.all(data.assets.map(hydrateAsset));
+                    assertOwner();
+                    useAssetStore.getState().replaceAssets(assets);
+                },
+            }),
+            syncDomain<LogDomainData>(config, onProgress, {
+                key: "image-workbench",
+                label: "生图工作台",
+                emptyData: { logs: [] },
+                localData: async () => ({ logs: await readStoredLogs(imageLogStore, userId) }),
+                mergeData: (local, remote) => ({ logs: mergeById(local.logs, ownedLogs(remote.logs, userId), "updatedAt") }),
+                applyData: async (data) => replaceStoredLogs(imageLogStore, data.logs, userId),
+            }),
+            syncDomain<LogDomainData>(config, onProgress, {
+                key: "video-workbench",
+                label: "视频创作台",
+                emptyData: { logs: [] },
+                localData: async () => ({ logs: await readStoredLogs(videoLogStore, userId) }),
+                mergeData: (local, remote) => ({ logs: mergeById(local.logs, ownedLogs(remote.logs, userId), "updatedAt") }),
+                applyData: async (data) => replaceStoredLogs(videoLogStore, data.logs, userId),
+            }),
+        ]);
 
-    const result = {
-        syncedAt: new Date().toISOString(),
-        mergedRemote: [canvas, assets, imageLogs, videoLogs].some((item) => item.mergedRemote),
-        projects: canvas.data.projects.length,
-        assets: assets.data.assets.length,
-        imageLogs: imageLogs.data.logs.length,
-        videoLogs: videoLogs.data.logs.length,
-        files: canvas.files + assets.files + imageLogs.files + videoLogs.files,
-        manifestBytes: canvas.manifestBytes + assets.manifestBytes + imageLogs.manifestBytes + videoLogs.manifestBytes,
-        uploadedFiles: canvas.uploadedFiles + assets.uploadedFiles + imageLogs.uploadedFiles + videoLogs.uploadedFiles,
-        uploadedBytes: canvas.uploadedBytes + assets.uploadedBytes + imageLogs.uploadedBytes + videoLogs.uploadedBytes,
-    };
-    emitProgress(onProgress, { stage: "同步完成", status: "success" });
-    return result;
+        const result = {
+            syncedAt: new Date().toISOString(),
+            mergedRemote: [canvas, assets, imageLogs, videoLogs].some((item) => item.mergedRemote),
+            projects: canvas.data.projects.length,
+            assets: assets.data.assets.length,
+            imageLogs: imageLogs.data.logs.length,
+            videoLogs: videoLogs.data.logs.length,
+            files: canvas.files + assets.files + imageLogs.files + videoLogs.files,
+            manifestBytes: canvas.manifestBytes + assets.manifestBytes + imageLogs.manifestBytes + videoLogs.manifestBytes,
+            uploadedFiles: canvas.uploadedFiles + assets.uploadedFiles + imageLogs.uploadedFiles + videoLogs.uploadedFiles,
+            uploadedBytes: canvas.uploadedBytes + assets.uploadedBytes + imageLogs.uploadedBytes + videoLogs.uploadedBytes,
+        };
+        emitProgress(onProgress, { stage: "同步完成", status: "success" });
+        return result;
+    } finally {
+        active = false;
+        unsubscribe();
+    }
 }
 
-async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgress | undefined, options: SyncDomainOptions<T>): Promise<SyncDomainResult<T>> {
+async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgress | undefined, options: SyncDomainOptions<T>, attempt = 0): Promise<SyncDomainResult<T>> {
     try {
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "读取远端清单", status: "active" });
         const remoteManifest = await readDomainManifest(config, options.key, options.emptyData);
@@ -186,11 +204,11 @@ async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgre
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "上传新增媒体", status: "active" });
         const uploaded = await uploadChangedFiles(config, options.key, mergedData, remoteManifest?.files || [], onProgress);
         // A deletion made while media uploads are in flight must reach this manifest too.
-        if (options.key === "canvas") mergedData = options.mergeData(await options.localData(), mergedData);
+        if (options.finalizeData) mergedData = await options.finalizeData(mergedData);
         const manifest: DomainManifest<T> = { app: "infinite-canvas", version: 1, domain: options.key, exportedAt: new Date().toISOString(), data: mergedData, files: uploaded.files };
         const manifestFile = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: `上传清单 ${formatBytes(manifestFile.size)}`, status: "active" });
-        await uploadWebdavFile(config, domainPath(options.key, WEBDAV_MANIFEST_FILE_NAME), manifestFile, "application/json");
+        await uploadWebdavFile(config, domainPath(options.key, WEBDAV_MANIFEST_FILE_NAME), manifestFile, "application/json", remoteManifest?.etag ?? null);
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "完成", current: 1, total: 1, status: "success" });
 
         return {
@@ -202,17 +220,21 @@ async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgre
             uploadedBytes: uploaded.uploadedBytes,
         };
     } catch (error) {
+        if (error instanceof WebdavConflictError && attempt < 2) return syncDomain(config, onProgress, options, attempt + 1);
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: error instanceof Error ? error.message : "同步失败", status: "exception" });
         throw error;
     }
 }
 
-async function readDomainManifest<T>(config: WebdavSyncConfig, domain: DomainKey, emptyData: T): Promise<DomainManifest<T> | null> {
-    const file = await downloadWebdavFile(config, domainPath(domain, WEBDAV_MANIFEST_FILE_NAME));
-    if (!file) return null;
+async function readDomainManifest<T>(config: WebdavSyncConfig, domain: DomainKey, emptyData: T): Promise<(DomainManifest<T> & { etag: string }) | null> {
+    const snapshot = await downloadWebdavFileSnapshot(config, domainPath(domain, WEBDAV_MANIFEST_FILE_NAME));
+    if (!snapshot) return null;
+    const { file, etag } = snapshot;
+    if (!etag || etag.startsWith("W/")) throw new Error("WebDAV 未提供强 ETag，无法安全合并；请检查服务及 CORS 的 ETag 暴露设置");
     const data = JSON.parse(await file.text()) as DomainManifest<T>;
     if (data.app !== "infinite-canvas" || data.domain !== domain) throw new Error(`${domain} 同步清单不是当前应用的数据`);
     return {
+        etag,
         app: "infinite-canvas",
         version: 1,
         domain,
@@ -246,6 +268,7 @@ async function downloadMissingFiles<T>(config: WebdavSyncConfig, domain: DomainK
     await runWithConcurrency(tasks, FILE_CONCURRENCY, async (remoteFile) => {
         const blob = await downloadWebdavFile(config, remoteFile.path);
         if (!blob) return;
+        emitProgress(onProgress, { domain, label: domainLabel(domain), stage: "保存下载媒体", status: "active" });
         const typedBlob = blob.type ? blob : blob.slice(0, blob.size, remoteFile.mimeType);
         await (remoteFile.storageKey.startsWith("image:") ? setImageBlob(remoteFile.storageKey, typedBlob) : setMediaBlob(remoteFile.storageKey, typedBlob));
         downloaded += 1;

@@ -1,5 +1,12 @@
-import type { WebdavSyncConfig } from "@/stores/use-config-store";
+import type { WebdavSyncConfig as StoredWebdavSyncConfig } from "@/stores/use-config-store";
 import { withLocalProxy } from "@/services/api/local-proxy";
+
+type WebdavSyncConfig = StoredWebdavSyncConfig & { assertActive?: () => void };
+export class WebdavConflictError extends Error {
+    constructor() {
+        super("WebDAV 清单已被其他设备更新，请重新同步");
+    }
+}
 
 export const WEBDAV_MANIFEST_FILE_NAME = "manifest.json";
 const WEBDAV_REQUEST_TIMEOUT_MS = 120000;
@@ -17,27 +24,33 @@ export async function downloadWebdavSyncFile(config: WebdavSyncConfig) {
 }
 
 export async function downloadWebdavFile(config: WebdavSyncConfig, path: string) {
+    return (await downloadWebdavFileSnapshot(config, path))?.file ?? null;
+}
+
+export async function downloadWebdavFileSnapshot(config: WebdavSyncConfig, path: string) {
     await ensureWebdavDirectory(config);
     const response = await webdavFetch(config, path, { method: "GET" });
     if (response.status === 404) return null;
     if (!response.ok) await throwWebdavError(response, "读取 WebDAV 同步文件失败");
     const file = await withTimeout(response.blob(), "读取 WebDAV 同步文件超时");
-    return file.size ? file : null;
+    config.assertActive?.();
+    return { file, etag: response.headers.get("ETag") };
 }
 
 export async function uploadWebdavSyncFile(config: WebdavSyncConfig, file: Blob) {
     return uploadWebdavFile(config, WEBDAV_MANIFEST_FILE_NAME, file, "application/json");
 }
 
-export async function uploadWebdavFile(config: WebdavSyncConfig, path: string, file: Blob, contentType = "application/octet-stream") {
+export async function uploadWebdavFile(config: WebdavSyncConfig, path: string, file: Blob, contentType = "application/octet-stream", expectedEtag?: string | null) {
     if (!file.size) throw new Error("上传文件为空，已取消上传");
     await ensureWebdavDirectory(config);
     await ensureWebdavSubdirectory(config, path);
     const response = await webdavFetch(config, path, {
         method: "PUT",
-        headers: { "Content-Type": contentType },
+        headers: { "Content-Type": contentType, ...(expectedEtag === null ? { "If-None-Match": "*" } : expectedEtag ? { "If-Match": expectedEtag } : {}) },
         body: file,
     });
+    if (response.status === 412) throw new WebdavConflictError();
     if (!response.ok) await throwWebdavError(response, "上传 WebDAV 同步文件失败");
 }
 
@@ -72,6 +85,7 @@ async function webdavDirectoryExists(config: WebdavSyncConfig, path: string) {
 }
 
 async function webdavFetch(config: WebdavSyncConfig, path: string, init: RequestInit) {
+    config.assertActive?.();
     const headers = new Headers(init.headers);
     if (config.username || config.password) headers.set("Authorization", `Basic ${encodeBasicAuth(`${config.username}:${config.password}`)}`);
     const controller = new AbortController();
