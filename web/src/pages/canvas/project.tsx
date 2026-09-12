@@ -6,8 +6,10 @@ import { Group, ImagePlus, Sparkles, Type, Video } from "lucide-react";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
-import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
-import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { requestVideoGeneration, pollVideoGenerationTask, storeGeneratedVideo } from "@/services/api/video";
+import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { useUserStore } from "@/stores/use-user-store";
+import { CanvasSelectionToolbar } from "@/components/canvas/canvas-selection-toolbar";
 import { createThumbnailFromImageElement, deleteStoredImages, fitImageWithinEdge, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -49,9 +51,26 @@ import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildCanvasResourceIndex, buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, createPendingImageUploadNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
-import { findContainingGroupId, findGroupDropTarget, getConnectionTargetAnchor, isHiddenBatchChild, isHiddenBatchConnectionEndpoint, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
+import {
+    applyGroupSelection,
+    applyUngroupSelection,
+    canGroupSelectedNodes,
+    canUngroupSelectedNodes,
+    collectGroupMemberNodes,
+    getGroupWrapRect,
+    nodeBounds,
+    findContainingGroupId,
+    findGroupDropTarget,
+    getConnectionTargetAnchor,
+    isHiddenBatchChild,
+    isHiddenBatchConnectionEndpoint,
+    normalizeConnection,
+    snapNodesIntoGroup,
+} from "@/lib/canvas/canvas-node-geometry";
 import {
     audioExtension,
+    assertCanvasVideoTaskOwner,
+    canvasVideoTaskBinding,
     buildAngleLabel,
     buildAnglePrompt,
     buildLightingLabel,
@@ -96,7 +115,7 @@ import {
 } from "@/types/canvas";
 
 import type { ReferenceImage } from "@/types/image";
-import type { ReferenceAudio } from "@/types/media";
+import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { branchServerProject, cancelServerJob, waitForServerJob } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useCanvasProjectLock } from "@/pages/canvas/hooks/use-canvas-project-lock";
@@ -330,6 +349,8 @@ function InfiniteCanvasPage() {
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
 
     const nodesRef = useRef(nodes);
+    const effectiveConfigRef = useRef(effectiveConfig);
+    effectiveConfigRef.current = effectiveConfig;
     const connectionsRef = useRef(connections);
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const viewportRef = useRef(viewport);
@@ -375,6 +396,109 @@ function InfiniteCanvasPage() {
         const request = generationRequestsRef.current.get(targetNodeId);
         if (request?.controller === controller) generationRequestsRef.current.delete(targetNodeId);
     }, []);
+
+    const pollCanvasVideo = useCallback(async (nodeId: string, metadata: CanvasNodeMetadata, config: AiConfig, signal: AbortSignal) => {
+        const task = metadata.videoTask!;
+        for (let attempt = 0; attempt < 120; attempt++) {
+            if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+            assertCanvasVideoTaskOwner(metadata, effectiveConfigRef.current, useUserStore.getState().user?.id || "");
+            const state = await pollVideoGenerationTask(config, task, { signal, expectedUserId: task.ownerUserId });
+            if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+            if (state.status === "completed") return state.result;
+            if (state.status === "failed") {
+                setNodes((current) => current.map((n) => (n.id === nodeId && n.metadata?.videoTask?.id === task.id ? { ...n, metadata: { ...n.metadata, videoTask: undefined, videoTaskBinding: undefined } } : n)));
+                throw new Error(state.error);
+            }
+            await new Promise<void>((resolve, reject) => {
+                const abort = () => {
+                    clearTimeout(timer);
+                    reject(new DOMException("Aborted", "AbortError"));
+                };
+                const timer = setTimeout(
+                    () => {
+                        signal.removeEventListener("abort", abort);
+                        resolve();
+                    },
+                    task.provider === "seedance" ? 5000 : 2500,
+                );
+                signal.addEventListener("abort", abort, { once: true });
+                if (signal.aborted) abort();
+            });
+        }
+        throw new Error("视频仍未完成，可稍后获取任务结果");
+    }, []);
+
+    const requestCanvasVideo = useCallback(async (nodeId: string, config: AiConfig, prompt: string, images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[], signal: AbortSignal) => {
+        const ownerUserId = useUserStore.getState().user?.id || "";
+        try {
+            return await requestVideoGeneration(config, prompt, images, videos, audios, {
+                signal,
+                expectedUserId: ownerUserId,
+                onTaskCreated: (task) => {
+                    if (signal.aborted || (useUserStore.getState().user?.id || "") !== ownerUserId) throw new DOMException("Aborted", "AbortError");
+                    const metadata = { videoTask: { ...task, ownerUserId }, videoTaskBinding: canvasVideoTaskBinding(config, task.model) };
+                    setNodes((current) => current.map((n) => (n.id === nodeId ? { ...n, metadata: { ...n.metadata, ...metadata } } : n)));
+                },
+            });
+        } catch (error) {
+            // A rejected remote job is terminal; transient network failures retain the task for recovery.
+            if (!signal.aborted && error instanceof Error && error.name === "VideoTaskFailed" && (useUserStore.getState().user?.id || "") === ownerUserId) {
+                setNodes((current) => current.map((n) => (n.id === nodeId ? { ...n, metadata: { ...n.metadata, videoTask: undefined, videoTaskBinding: undefined } } : n)));
+            }
+            throw error;
+        }
+    }, []);
+
+    const resumeCanvasVideoTask = useCallback(
+        async (node: CanvasNodeData) => {
+            if (!node.metadata?.videoTask || generationRequestsRef.current.has(node.id)) return;
+            const controller = startGenerationRequest(node.id, node.id);
+            const metadata = node.metadata;
+            const isCurrent = () => !controller.signal.aborted && generationRequestsRef.current.get(node.id)?.controller === controller;
+            try {
+                const config = effectiveConfigRef.current;
+                assertCanvasVideoTaskOwner(metadata, config, useUserStore.getState().user?.id || "");
+                setNodes((current) => current.map((n) => (n.id === node.id ? { ...n, metadata: { ...n.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : n)));
+                const result = await pollCanvasVideo(node.id, metadata, config, controller.signal);
+                if (!isCurrent()) return;
+                const video = await storeGeneratedVideo(result);
+                if (!isCurrent()) return;
+                const fitted = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+                setNodes((current) =>
+                    current.map((n) =>
+                        n.id === node.id && n.metadata?.videoTask?.id === metadata.videoTask?.id
+                            ? { ...n, width: fitted.width, height: fitted.height, metadata: { ...n.metadata, ...videoMetadata(video), videoTask: undefined, videoTaskBinding: undefined, errorDetails: undefined } }
+                            : n,
+                    ),
+                );
+            } catch (error) {
+                if (!isCurrent()) return;
+                setNodes((current) => current.map((n) => (n.id === node.id ? { ...n, metadata: { ...n.metadata, status: NODE_STATUS_ERROR, errorDetails: friendlyErrorMessage(error) } } : n)));
+            } finally {
+                finishGenerationRequest(node.id, controller);
+            }
+        },
+        [finishGenerationRequest, pollCanvasVideo, startGenerationRequest],
+    );
+
+    useEffect(
+        () =>
+            useUserStore.subscribe((state, previous) => {
+                if (state.user?.id === previous.user?.id) return;
+                generationRequestsRef.current.forEach((request) => request.controller.abort());
+                generationRequestsRef.current.clear();
+            }),
+        [],
+    );
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        // Use this render's nodes: the ref synchronization effect runs later on first hydration.
+        // Wait for channel hydration rather than failing a recoverable task against the default channel.
+        nodes
+            .filter((node) => node.type === CanvasNodeType.Video && node.metadata?.status === NODE_STATUS_LOADING && node.metadata.videoTask && effectiveConfig.channels.some((channel) => channel.id === node.metadata?.videoTaskBinding?.channelId))
+            .forEach((node) => void resumeCanvasVideoTask(node));
+    }, [projectLoaded, nodes, effectiveConfig.channels, resumeCanvasVideoTask]);
 
     const imageRequestOptions = useCallback(
         (targetNodeId: string, controller: AbortController) => ({
@@ -735,7 +859,8 @@ function InfiniteCanvasPage() {
         const viewBottom = viewTop + height / viewport.k + padding * 2;
 
         return nodes.filter(
-            (node) => !node.metadata?.hidden && !isHiddenBatchChild(node, nodes, collapsingBatchIds, nodeById) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom,
+            (node) =>
+                !node.metadata?.hidden && !isHiddenBatchChild(node, nodes, collapsingBatchIds, nodeById) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom,
         );
     }, [collapsingBatchIds, nodes, nodeById, size.height, size.width, viewport.k, viewport.x, viewport.y]);
     const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
@@ -754,6 +879,35 @@ function InfiniteCanvasPage() {
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const selectedNodes = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id)), [nodes, selectedNodeIds]);
+    const selectionBounds = hasMultipleSelectedNodes ? nodeBounds(selectedNodes) : null;
+    const canGroupSelection = canGroupSelectedNodes(selectedNodeIds, nodes);
+    const canUngroupSelection = canUngroupSelectedNodes(selectedNodeIds, nodes);
+    const changeSelectionGroup = (ungroup: boolean) => {
+        const ids = selectedNodeIdsRef.current;
+        const current = nodesRef.current;
+        let result;
+        if (ungroup) result = applyUngroupSelection(ids, current, connectionsRef.current);
+        else {
+            if (!canGroupSelectedNodes(ids, current)) return;
+            const rect = getGroupWrapRect(collectGroupMemberNodes(ids, current));
+            result = applyGroupSelection(ids, current, connectionsRef.current, { id: nanoid(), type: CanvasNodeType.Group, title: "组合", position: { x: rect.x, y: rect.y }, width: rect.width, height: rect.height });
+        }
+        if (!result) return;
+        if (historyCommitTimerRef.current) clearTimeout(historyCommitTimerRef.current);
+        historyCommitTimerRef.current = null;
+        const before = createHistoryEntry();
+        historyRef.current.past = [...historyRef.current.past.slice(-49), before];
+        historyRef.current.future = [];
+        lastHistoryRef.current = { ...before, nodes: result.nodes, connections: result.connections };
+        nodesRef.current = result.nodes;
+        connectionsRef.current = result.connections;
+        setNodes(result.nodes);
+        setConnections(result.connections);
+        setSelectedNodeIds(new Set(result.selectedIds));
+        setToolbarNodeId(null);
+        setContextMenu(null);
+        setHistoryState({ canUndo: true, canRedo: false });
+    };
     const allSelectedLocked = selectedNodes.length > 0 && selectedNodes.every((node) => Boolean(node.metadata?.locked));
     const allSelectedHidden = selectedNodes.length > 0 && selectedNodes.every((node) => Boolean(node.metadata?.hidden));
     const activeNodeId = hasMultipleSelectedNodes ? null : hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
@@ -3040,8 +3194,9 @@ function InfiniteCanvasPage() {
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
                         const video = await storeGeneratedVideo(
-                            await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal }),
+                            await requestCanvasVideo(videoId, generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, controller.signal),
                         );
+                        if (controller.signal.aborted) return;
                         const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                         setNodes((prev) =>
                             prev.map((node) =>
@@ -3054,6 +3209,8 @@ function InfiniteCanvasPage() {
                                           metadata: {
                                               ...node.metadata,
                                               ...videoMetadata(video),
+                                              videoTask: undefined,
+                                              videoTaskBinding: undefined,
                                               prompt: effectivePrompt,
                                               model: generationConfig.model,
                                               size: generationConfig.size,
@@ -3181,7 +3338,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [cultivationProfile?.maxConcurrency, effectiveConfig, finishGenerationRequest, generationSuccessMessage, isAiConfigReady, isDouEmperor, message, openConfigDialog, queryClient, startGenerationRequest],
+        [cultivationProfile?.maxConcurrency, effectiveConfig, finishGenerationRequest, generationSuccessMessage, isAiConfigReady, isDouEmperor, message, openConfigDialog, queryClient, startGenerationRequest, requestCanvasVideo],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
@@ -3189,6 +3346,10 @@ function InfiniteCanvasPage() {
 
     const handleRetryNode = useCallback(
         async (node: CanvasNodeData) => {
+            if (node.type === CanvasNodeType.Video && node.metadata?.videoTask) {
+                await resumeCanvasVideoTask(node);
+                return;
+            }
             const sourceNode = findRetrySourceNode(node.id, nodesRef.current, connectionsRef.current) || node;
             const batchRoot = node.metadata?.batchRootId ? nodesRef.current.find((item) => item.id === node.metadata?.batchRootId) : null;
             const savedImageMetadata = node.type === CanvasNodeType.Image ? { ...batchRoot?.metadata, ...node.metadata } : undefined;
@@ -3263,7 +3424,8 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal }));
+                    const video = await storeGeneratedVideo(await requestCanvasVideo(node.id, generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], controller.signal));
+                    if (controller.signal.aborted) return;
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     setNodes((prev) =>
                         prev.map((item) =>
@@ -3276,6 +3438,8 @@ function InfiniteCanvasPage() {
                                       metadata: {
                                           ...item.metadata,
                                           ...videoMetadata(video),
+                                          videoTask: undefined,
+                                          videoTaskBinding: undefined,
                                           prompt,
                                           model: generationConfig.model,
                                           size: generationConfig.size,
@@ -3344,7 +3508,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, isDouEmperor, message, openConfigDialog, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, isDouEmperor, message, openConfigDialog, startGenerationRequest, requestCanvasVideo, resumeCanvasVideoTask],
     );
 
     const generateImageFromTextNode = useCallback(
@@ -3728,6 +3892,14 @@ function InfiniteCanvasPage() {
                         />
                     ))}
 
+                    {selectionBounds && !isNodeDragging ? (
+                        <svg
+                            className="pointer-events-none absolute z-[100] overflow-visible"
+                            style={{ left: selectionBounds.left - 8, top: selectionBounds.top - 8, width: selectionBounds.right - selectionBounds.left + 16, height: selectionBounds.bottom - selectionBounds.top + 16 }}
+                        >
+                            <rect width="100%" height="100%" fill="none" stroke={theme.canvas.selectionStroke} strokeWidth={1 / viewport.k} strokeDasharray={`${6 / viewport.k} ${4 / viewport.k}`} />
+                        </svg>
+                    ) : null}
                     {selectionBox ? (
                         <svg
                             className="pointer-events-none absolute z-[100] overflow-visible"
@@ -3754,8 +3926,23 @@ function InfiniteCanvasPage() {
                     ) : null}
                 </InfiniteCanvas>
 
+                {!isNodeDragging && !isNodeResizing && (hasMultipleSelectedNodes || canUngroupSelection) ? (
+                    <CanvasSelectionToolbar count={selectedNodes.length} canGroup={canGroupSelection} canUngroup={canUngroupSelection} onGroup={() => changeSelectionGroup(false)} onUngroup={() => changeSelectionGroup(true)} />
+                ) : null}
+                {toolbarNode?.type === CanvasNodeType.Video && toolbarNode.metadata?.videoTask && !isNodeDragging ? (
+                    <div className="absolute right-4 top-14 z-[110] flex gap-2 text-xs" style={{ color: theme.toolbar.item, background: theme.toolbar.panel }}>
+                        <button type="button" className="px-3 py-2 hover:bg-black/5 dark:hover:bg-white/10" disabled={generationRequestsRef.current.has(toolbarNode.id)} onClick={() => void resumeCanvasVideoTask(toolbarNode)}>
+                            获取任务结果
+                        </button>
+                        {toolbarNode.metadata.status === NODE_STATUS_LOADING ? (
+                            <button type="button" className="px-3 py-2 hover:bg-black/5 dark:hover:bg-white/10" onClick={() => stopGenerationByRunningId(generationRequestsRef.current.get(toolbarNode.id)?.runningNodeId || toolbarNode.id)}>
+                                暂停获取
+                            </button>
+                        ) : null}
+                    </div>
+                ) : null}
                 <CanvasNodeHoverToolbar
-                    node={isNodeDragging || isNodeResizing || nodeImageSettingsOpen ? null : toolbarNode}
+                    node={hasMultipleSelectedNodes || isNodeDragging || isNodeResizing || nodeImageSettingsOpen ? null : toolbarNode}
                     viewport={viewport}
                     extraTools={toolbarNode ? buildNodeToolbarItems(toolbarNode) : undefined}
                     onKeep={keepNodeToolbar}

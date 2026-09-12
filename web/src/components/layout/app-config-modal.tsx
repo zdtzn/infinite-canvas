@@ -12,6 +12,7 @@ import { deleteServerChannel, reorderServerChannels, saveServerChannel } from "@
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { ConfigMembers } from "@/components/layout/config-members";
 import { ConfigLocalStorage } from "@/components/layout/config-local-storage";
+import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
 import { ImperialModePreferences } from "@/features/cultivation/imperial-mode-preferences";
 import { useUserStore } from "@/stores/use-user-store";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
@@ -308,6 +309,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                     <Input.TextArea rows={4} value={config.systemPrompt} placeholder="例如：你是一位擅长电影感写实摄影的视觉导演。" onChange={(event) => updateConfig("systemPrompt", event.target.value)} />
                                 </Form.Item>
                                 <ImperialModePreferences />
+                                <ConfigLocalProxy />
                             </Form>
                         ),
                     },
@@ -328,7 +330,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                                 <Cloud className="size-4" />
                                                 WebDAV 同步
                                             </div>
-                                            <div className="mt-1 text-xs text-stone-500">同步画布、我的资产、生成记录和本地媒体文件，不包含 AI API Key；浏览器会直接连接 WebDAV 服务。</div>
+                                            <div className="mt-1 text-xs text-stone-500">按账户同步画布、我的资产、生成记录和本地媒体文件，不包含 AI API Key；可在偏好设置中启用本地代理。</div>
                                         </div>
                                         <div className="text-xs text-stone-500">{webdav.lastSyncedAt ? `上次同步 ${formatWebdavTime(webdav.lastSyncedAt)}` : "尚未同步"}</div>
                                     </div>
@@ -336,7 +338,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         <Form.Item label="WebDAV 地址" className="mb-4">
                                             <Input value={webdav.url} placeholder="https://nas.example.com/webdav" onChange={(event) => updateWebdavConfig("url", event.target.value)} />
                                         </Form.Item>
-                                        <Form.Item label="远程目录" extra={`会在该目录下分业务目录保存，每个目录包含 ${WEBDAV_MANIFEST_FILE_NAME} 和 files/`} className="mb-4">
+                                        <Form.Item label="远程目录" extra={`会在该目录下按 users/账户/业务 保存，每个目录包含 ${WEBDAV_MANIFEST_FILE_NAME} 和 files/；原有未分账户的备份保留不动。`} className="mb-4">
                                             <Input value={webdav.directory} placeholder="infinite-canvas" onChange={(event) => updateWebdavConfig("directory", event.target.value)} />
                                         </Form.Item>
                                         <Form.Item label="用户名" className="mb-0">

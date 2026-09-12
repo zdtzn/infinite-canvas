@@ -35,8 +35,8 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     }
 
     const upstreamText = inputs
-        .map((input) => input.text)
-        .filter(Boolean)
+        .filter((input) => input.text)
+        .map((input, index) => `【文本${index + 1}】\n${input.text}`)
         .join("\n\n");
     const referenceImages = inputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
     const referenceVideos = inputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));

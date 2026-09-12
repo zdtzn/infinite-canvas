@@ -1,4 +1,5 @@
 import type { WebdavSyncConfig } from "@/stores/use-config-store";
+import { withLocalProxy } from "@/services/api/local-proxy";
 
 export const WEBDAV_MANIFEST_FILE_NAME = "manifest.json";
 const WEBDAV_REQUEST_TIMEOUT_MS = 120000;
@@ -77,7 +78,7 @@ async function webdavFetch(config: WebdavSyncConfig, path: string, init: Request
     const timer = window.setTimeout(() => controller.abort(), WEBDAV_REQUEST_TIMEOUT_MS);
     try {
         const url = buildWebdavUrl(config, path);
-        return await fetch(url, { ...init, headers, signal: controller.signal });
+        return await fetch(withLocalProxy(url), { ...init, headers, signal: controller.signal });
     } catch (error) {
         if (error instanceof Error && error.name === "AbortError") throw new Error("WebDAV 请求超时，请检查网络或远端服务状态");
         if (error instanceof TypeError) throw new Error("无法连接 WebDAV，请检查地址、HTTPS 证书、CORS 或网络状态");

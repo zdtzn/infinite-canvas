@@ -35,10 +35,29 @@ export type CanvasProjectSnapshot = {
     viewport: ViewportTransform;
 };
 
+export type CanvasDeletedProject = { id: string; deletedAt: string; serverRevision?: number; serverDeleted?: boolean };
+
+export function mergeCanvasDeletedProjects(...lists: CanvasDeletedProject[][]): CanvasDeletedProject[] {
+    const merged = new Map<string, CanvasDeletedProject>();
+    for (const item of lists.flat()) {
+        if (!item || typeof item.id !== "string" || !item.id || !Number.isFinite(Date.parse(item.deletedAt))) continue;
+        const previous = merged.get(item.id);
+        merged.set(item.id, {
+            id: item.id,
+            deletedAt: previous && Date.parse(previous.deletedAt) > Date.parse(item.deletedAt) ? previous.deletedAt : item.deletedAt,
+            serverRevision: Math.max(previous?.serverRevision || 0, item.serverRevision || 0),
+            serverDeleted: Boolean(previous?.serverDeleted || item.serverDeleted),
+        });
+    }
+    return [...merged.values()];
+}
+
 type CanvasStore = {
     hydrated: boolean;
     ownerUserId: string;
     projects: CanvasProject[];
+    deletedProjects: CanvasDeletedProject[];
+    deletedProjectsByUser: Record<string, CanvasDeletedProject[]>;
     prepareForUser: (userId: string) => void;
     createProject: (title?: string) => string;
     importProject: (project: Partial<CanvasProject>) => string;
@@ -46,7 +65,8 @@ type CanvasStore = {
     openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
-    replaceProjects: (projects: CanvasProject[]) => void;
+    replaceProjects: (projects: CanvasProject[], deletedProjects?: CanvasDeletedProject[]) => void;
+    restoreDeleteConflict: (project: CanvasProject) => void;
     setProjectServerRevision: (id: string, revision: number) => void;
     createSnapshot: (projectId: string, snapshot: Omit<CanvasProjectSnapshot, "id" | "createdAt"> & Partial<Pick<CanvasProjectSnapshot, "id" | "createdAt">>) => CanvasProjectSnapshot | null;
     deleteSnapshot: (projectId: string, snapshotId: string) => void;
@@ -56,7 +76,7 @@ type CanvasStore = {
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
-type PersistedCanvasState = Pick<CanvasStore, "ownerUserId" | "projects">;
+type PersistedCanvasState = Pick<CanvasStore, "ownerUserId" | "projects" | "deletedProjects" | "deletedProjectsByUser">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
 let queuedPersistValue: StorageValue<CanvasStore> | null = null;
@@ -92,7 +112,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
     },
     setItem: (name, value) => {
         const nextState = value.state as PersistedCanvasState;
-        if (queuedPersistState && queuedPersistState.ownerUserId === nextState.ownerUserId && queuedPersistState.projects === nextState.projects) return;
+        if (queuedPersistState && queuedPersistState.ownerUserId === nextState.ownerUserId && queuedPersistState.projects === nextState.projects && queuedPersistState.deletedProjects === nextState.deletedProjects) return;
         queuedPersistState = nextState;
         queuedPersistValue = value;
         queuedPersistName = name;
@@ -111,6 +131,8 @@ export const useCanvasStore = create<CanvasStore>()(
             hydrated: false,
             ownerUserId: "",
             projects: [],
+            deletedProjects: [],
+            deletedProjectsByUser: {},
             prepareForUser: (userId) => {
                 const nextUserId = userId.trim();
                 if (!nextUserId) return;
@@ -120,7 +142,8 @@ export const useCanvasStore = create<CanvasStore>()(
                     set({ ownerUserId: nextUserId });
                     return;
                 }
-                set({ ownerUserId: nextUserId, projects: [] });
+                const deletedProjectsByUser = { ...current.deletedProjectsByUser, [current.ownerUserId]: current.deletedProjects };
+                set({ ownerUserId: nextUserId, projects: [], deletedProjects: Object.hasOwn(deletedProjectsByUser, nextUserId) ? deletedProjectsByUser[nextUserId] : [], deletedProjectsByUser });
             },
             createProject: (title = "未命名画布") => {
                 const now = new Date().toISOString();
@@ -163,7 +186,7 @@ export const useCanvasStore = create<CanvasStore>()(
             },
             insertProject: (source) => {
                 const project = normalizeCanvasProject(source);
-                if (!project) return;
+                if (!project || get().deletedProjects.some((item) => item.id === project.id)) return;
                 set((state) => ({ projects: [project, ...state.projects.filter((item) => item.id !== project.id)] }));
             },
             openProject: (id) => {
@@ -176,9 +199,28 @@ export const useCanvasStore = create<CanvasStore>()(
             deleteProjects: (ids) =>
                 set((state) => {
                     const projects = state.projects.filter((project) => !ids.includes(project.id));
-                    return { projects };
+                    const deletedProjects = mergeCanvasDeletedProjects(
+                        state.deletedProjects,
+                        state.projects.filter((project) => ids.includes(project.id)).map((project) => ({ id: project.id, deletedAt: new Date().toISOString(), serverRevision: project.serverRevision })),
+                    );
+                    return { projects, deletedProjects };
                 }),
-            replaceProjects: (projects) => set({ projects: projects.map(normalizeCanvasProject).filter((project): project is CanvasProject => Boolean(project)) }),
+            replaceProjects: (projects, deleted = []) =>
+                set((state) => {
+                    const deletedProjects = mergeCanvasDeletedProjects(state.deletedProjects, deleted);
+                    const deletedIds = new Set(deletedProjects.map((item) => item.id));
+                    return { deletedProjects, projects: projects.map(normalizeCanvasProject).filter((project): project is CanvasProject => Boolean(project && !deletedIds.has(project.id))) };
+                }),
+            restoreDeleteConflict: (project) =>
+                set((state) => {
+                    // Only an authoritative cloud revision may cancel a still-pending local deletion.
+                    const tombstone = state.deletedProjects.find((item) => item.id === project.id);
+                    if (!tombstone || tombstone.serverDeleted || (project.serverRevision || 0) <= (tombstone.serverRevision || 0)) return state;
+                    return {
+                        deletedProjects: state.deletedProjects.filter((item) => item.id !== project.id),
+                        projects: [project, ...state.projects.filter((item) => item.id !== project.id)],
+                    };
+                }),
             setProjectServerRevision: (id, revision) =>
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, serverRevision: revision } : project)),
@@ -199,21 +241,13 @@ export const useCanvasStore = create<CanvasStore>()(
                     viewport: input.viewport,
                 };
                 set((state) => ({
-                    projects: state.projects.map((item) =>
-                        item.id === projectId
-                            ? { ...item, snapshots: [snapshot, ...item.snapshots].slice(0, 12), updatedAt: new Date().toISOString() }
-                            : item,
-                    ),
+                    projects: state.projects.map((item) => (item.id === projectId ? { ...item, snapshots: [snapshot, ...item.snapshots].slice(0, 12), updatedAt: new Date().toISOString() } : item)),
                 }));
                 return snapshot;
             },
             deleteSnapshot: (projectId, snapshotId) =>
                 set((state) => ({
-                    projects: state.projects.map((project) =>
-                        project.id === projectId
-                            ? { ...project, snapshots: project.snapshots.filter((snapshot) => snapshot.id !== snapshotId), updatedAt: new Date().toISOString() }
-                            : project,
-                    ),
+                    projects: state.projects.map((project) => (project.id === projectId ? { ...project, snapshots: project.snapshots.filter((snapshot) => snapshot.id !== snapshotId), updatedAt: new Date().toISOString() } : project)),
                 })),
             restoreSnapshot: (projectId, snapshotId) => {
                 const project = get().projects.find((item) => item.id === projectId);
@@ -245,12 +279,14 @@ export const useCanvasStore = create<CanvasStore>()(
         }),
         {
             name: CANVAS_STORE_KEY,
-            version: 4,
+            version: 5,
             storage: canvasStorage,
             migrate: (persisted) => {
                 const value = (persisted || {}) as Partial<PersistedCanvasState>;
                 return {
                     ownerUserId: typeof value.ownerUserId === "string" ? value.ownerUserId : "",
+                    deletedProjects: mergeCanvasDeletedProjects(Array.isArray(value.deletedProjects) ? value.deletedProjects : []),
+                    deletedProjectsByUser: Object.fromEntries(Object.entries(value.deletedProjectsByUser || {}).map(([id, deleted]) => [id, mergeCanvasDeletedProjects(Array.isArray(deleted) ? deleted : [])])),
                     projects: Array.isArray(value.projects) ? value.projects.map(normalizeCanvasProject).filter((project): project is CanvasProject => Boolean(project)) : [],
                 } as CanvasStore;
             },
@@ -258,6 +294,8 @@ export const useCanvasStore = create<CanvasStore>()(
                 ({
                     ownerUserId: state.ownerUserId,
                     projects: state.projects,
+                    deletedProjects: state.deletedProjects,
+                    deletedProjectsByUser: state.deletedProjectsByUser,
                 }) as StorageValue<CanvasStore>["state"],
             onRehydrateStorage: () => () => {
                 useCanvasStore.setState({ hydrated: true });

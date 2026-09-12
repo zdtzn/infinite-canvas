@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { App } from "antd";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { planChannelImport } from "@/lib/channel-import";
 import { useProjectServerSync } from "@/hooks/use-project-server-sync";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 import { ensurePromptIndexReady } from "@/services/api/prompts";
@@ -322,22 +323,29 @@ export function ClientRootInit() {
             return;
         }
 
-        const firstChannel = config.channels[0];
-        const imported = firstChannel ? { ...firstChannel, ...(baseUrl ? { baseUrl } : {}), ...(apiKey ? { apiKey } : {}) } : createModelChannel({ id: "default", name: "默认渠道", baseUrl: baseUrl || undefined, apiKey: apiKey || "" });
         void (async () => {
             try {
-                if (PUBLIC_MODE && apiKey) await saveServerChannel(imported);
-                const saved = PUBLIC_MODE && apiKey ? { ...imported, apiKey: "", credentialState: "saved" as const } : imported;
-                updateConfig("channels", firstChannel ? config.channels.map((channel, index) => (index === 0 ? saved : channel)) : [saved]);
-                if (baseUrl) updateConfig("baseUrl", baseUrl);
-                updateConfig("apiKey", PUBLIC_MODE ? "" : apiKey || "");
+                // Validate before any request; match against the authoritative channel list.
+                planChannelImport([], baseUrl, apiKey);
+                const owner = user?.id;
+                const channels = PUBLIC_MODE ? (await fetchServerChannels()).items.map(toClientChannel) : useConfigStore.getState().config.channels;
+                if (PUBLIC_MODE && useUserStore.getState().user?.id !== owner) return;
+                const { channel: imported, created } = planChannelImport(channels, baseUrl, apiKey);
+                if (PUBLIC_MODE) {
+                    await saveServerChannel(imported);
+                    const response = await fetchServerChannels();
+                    if (useUserStore.getState().user?.id !== owner) return;
+                    setPlatformChannels(response.items.map(toClientChannel));
+                } else {
+                    updateConfig("channels", created ? [...channels, imported] : channels.map((channel) => (channel.id === imported.id ? imported : channel)));
+                }
                 openConfigDialog(false);
-                message.success(PUBLIC_MODE ? "接口配置已安全导入服务端" : "已导入本地直连配置");
+                message.success(`${created ? "已新增" : "已更新"}渠道「${imported.name}」`);
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "接口配置导入失败");
             }
         })();
-    }, [config.channels, message, openConfigDialog, updateConfig, user?.admin]);
+    }, [message, openConfigDialog, setPlatformChannels, updateConfig, user?.admin, user?.id]);
 
     return null;
 }

@@ -8,13 +8,20 @@ import type { Asset } from "@/stores/use-asset-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import type { WebdavSyncConfig } from "@/stores/use-config-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useCanvasStore, mergeCanvasDeletedProjects, type CanvasDeletedProject } from "@/stores/canvas/use-canvas-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
 
 type StoredLog = Record<string, unknown> & { id?: string; ownerUserId?: string };
 export type AppSyncDomainKey = "canvas" | "assets" | "image-workbench" | "video-workbench";
 type DomainKey = AppSyncDomainKey;
-type CanvasDomainData = { projects: CanvasProject[] };
+type CanvasDomainData = { projects: CanvasProject[]; deleted?: CanvasDeletedProject[] };
+
+export function mergeCanvasData(local: CanvasDomainData, remote: CanvasDomainData): CanvasDomainData {
+    const deleted = mergeCanvasDeletedProjects(local.deleted || [], remote.deleted || []);
+    const ids = new Set(deleted.map((item) => item.id));
+    return { projects: mergeById(local.projects || [], remote.projects || [], "updatedAt").filter((project) => !ids.has(project.id)), deleted };
+}
 type AssetDomainData = { assets: Asset[] };
 type LogDomainData = { logs: StoredLog[] };
 
@@ -83,19 +90,36 @@ type LogStore = typeof imageLogStore;
 const storageKeyPattern = /^(image|video|audio|file|video-reference|audio-reference):/;
 
 export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?: AppSyncProgress): Promise<AppSyncResult> {
+    const userId = useUserStore.getState().user?.id || "local";
+    const assertOwner = () => {
+        if ((useUserStore.getState().user?.id || "local") !== userId || (useCanvasStore.getState().ownerUserId && useCanvasStore.getState().ownerUserId !== userId)) throw new Error("账户已切换，请重新开始同步");
+    };
+    const notify = onProgress;
+    onProgress = (event) => {
+        assertOwner();
+        notify?.(event);
+    };
+    config = { ...config, directory: `${config.directory.replace(/\/+$/, "")}/users/${encodeURIComponent(userId)}` };
     emitProgress(onProgress, { stage: "等待本地数据加载" });
     await Promise.all([waitForHydration(useCanvasStore), waitForHydration(useAssetStore)]);
     await useAssetStore.getState().loadAllServerAssets();
-    const userId = useUserStore.getState().user?.id || "local";
+    assertOwner();
 
     const [canvas, assets, imageLogs, videoLogs] = await Promise.all([
         syncDomain<CanvasDomainData>(config, onProgress, {
             key: "canvas",
             label: "画布",
-            emptyData: { projects: [] },
-            localData: async () => ({ projects: useCanvasStore.getState().projects }),
-            mergeData: (local, remote) => ({ projects: mergeById(local.projects, remote.projects, "updatedAt") }),
-            applyData: async (data) => useCanvasStore.getState().replaceProjects(data.projects),
+            emptyData: { projects: [], deleted: [] },
+            localData: async () => {
+                assertOwner();
+                const state = useCanvasStore.getState();
+                return { projects: state.projects, deleted: state.deletedProjects.filter((item) => !PUBLIC_MODE || item.serverDeleted) };
+            },
+            mergeData: mergeCanvasData,
+            applyData: async (data) => {
+                assertOwner();
+                useCanvasStore.getState().replaceProjects(data.projects, data.deleted);
+            },
         }),
         syncDomain<AssetDomainData>(config, onProgress, {
             key: "assets",
@@ -103,7 +127,11 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
             emptyData: { assets: [] },
             localData: async () => ({ assets: useAssetStore.getState().assets }),
             mergeData: (local, remote) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt") }),
-            applyData: async (data) => useAssetStore.getState().replaceAssets(await Promise.all(data.assets.map(hydrateAsset))),
+            applyData: async (data) => {
+                const assets = await Promise.all(data.assets.map(hydrateAsset));
+                assertOwner();
+                useAssetStore.getState().replaceAssets(assets);
+            },
         }),
         syncDomain<LogDomainData>(config, onProgress, {
             key: "image-workbench",
@@ -145,17 +173,20 @@ async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgre
         const remoteManifest = await readDomainManifest(config, options.key, options.emptyData);
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "读取本地数据", status: "active" });
         const localData = await options.localData();
-        const mergedData = remoteManifest ? options.mergeData(localData, remoteManifest.data) : localData;
+        let mergedData = remoteManifest ? options.mergeData(localData, remoteManifest.data) : localData;
 
         if (remoteManifest) {
             emitProgress(onProgress, { domain: options.key, label: options.label, stage: "下载缺失媒体", status: "active" });
             await downloadMissingFiles(config, options.key, mergedData, remoteManifest.files, onProgress);
+            mergedData = options.mergeData(await options.localData(), mergedData);
             emitProgress(onProgress, { domain: options.key, label: options.label, stage: "写入本地合并结果", status: "active" });
             await options.applyData?.(mergedData);
         }
 
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "上传新增媒体", status: "active" });
         const uploaded = await uploadChangedFiles(config, options.key, mergedData, remoteManifest?.files || [], onProgress);
+        // A deletion made while media uploads are in flight must reach this manifest too.
+        if (options.key === "canvas") mergedData = options.mergeData(await options.localData(), mergedData);
         const manifest: DomainManifest<T> = { app: "infinite-canvas", version: 1, domain: options.key, exportedAt: new Date().toISOString(), data: mergedData, files: uploaded.files };
         const manifestFile = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: `上传清单 ${formatBytes(manifestFile.size)}`, status: "active" });

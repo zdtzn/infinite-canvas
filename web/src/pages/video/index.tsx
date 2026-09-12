@@ -7,6 +7,7 @@ import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal"
 import { ModelPicker } from "@/components/model-picker";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { videoImageLabel } from "@/lib/video-reference-mode";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
@@ -66,7 +67,7 @@ type GenerationLog = {
     error?: string;
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -303,7 +304,7 @@ export default function VideoPage() {
             openConfigDialog(true);
             return null;
         }
-        const videoReferenceError = seedanceVideoReferenceError(videoReferences);
+        const videoReferenceError = isSeedanceVideoConfig({ ...effectiveConfig, model }) ? seedanceVideoReferenceError(videoReferences) : "";
         if (videoReferenceError) {
             message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
             return null;
@@ -516,6 +517,7 @@ export default function VideoPage() {
         if (log.config.videoSeconds) updateConfig("videoSeconds", log.config.videoSeconds);
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
+        updateConfig("videoMode", log.config.videoMode || "");
         message.success("已恢复提示词与生成参数");
     };
 
@@ -606,7 +608,9 @@ export default function VideoPage() {
                                     {references.map((item, index) => (
                                         <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
                                             <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{seedanceReferenceLabel("image", index)}</span>
+                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                                {effectiveConfig.videoMode ? videoImageLabel(effectiveConfig.videoMode, references.length, index, videoReferences.length + audioReferences.length) : seedanceReferenceLabel("image", index)}
+                                            </span>
                                             <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
                                             <button
                                                 type="button"
@@ -1241,6 +1245,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         videoSeconds: log.config?.videoSeconds || log.seconds || "",
         videoGenerateAudio: log.config?.videoGenerateAudio || "true",
         videoWatermark: log.config?.videoWatermark || "false",
+        videoMode: log.config?.videoMode || "",
     };
 }
 
@@ -1277,6 +1282,7 @@ function buildLog({
         videoSeconds: config.videoSeconds,
         videoGenerateAudio: config.videoGenerateAudio,
         videoWatermark: config.videoWatermark,
+        videoMode: config.videoMode,
     };
     return {
         id: nanoid(),

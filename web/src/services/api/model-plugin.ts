@@ -1,6 +1,9 @@
 import axios, { type AxiosRequestConfig } from "axios";
 
 import { buildApiUrl, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { isServerManagedConfig, type ManagedAiConfig } from "./gateway";
+import { withLocalProxy } from "./local-proxy";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
 
 type RequestOptions = { signal?: AbortSignal };
 
@@ -24,6 +27,8 @@ export type RunPluginArgs = {
     config: AiConfig;
     prompt?: string;
     images?: string[];
+    videos?: File[];
+    audios?: File[];
     messages?: unknown[];
     params?: Record<string, unknown>;
     signal?: AbortSignal;
@@ -37,8 +42,9 @@ function pluginHeaders(extra?: Record<string, string>, hasJsonBody = false): Rec
 }
 
 function pluginUrl(config: AiConfig, path: string) {
-    if (/^https?:/i.test(path)) return path;
-    return buildApiUrl(config.baseUrl, path.startsWith("/") ? path : `/${path}`);
+    if (/^\/api(?:\/|$)/i.test(path)) return path;
+    if (/^https?:/i.test(path)) return withLocalProxy(path);
+    return withLocalProxy(buildApiUrl(config.baseUrl, path.startsWith("/") ? path : `/${path}`));
 }
 
 function createPluginHttp(config: AiConfig, options?: RequestOptions): PluginHttp {
@@ -112,6 +118,7 @@ function createPoll(signal?: AbortSignal) {
  */
 export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<T> {
     const { config } = args;
+    if (PUBLIC_MODE || isServerManagedConfig(config as ManagedAiConfig)) throw new Error("托管渠道不支持执行自定义模型脚本");
     const http = createPluginHttp(config, { signal: args.signal });
     const request = createPluginRequest(config, { signal: args.signal });
     const poll = createPoll(args.signal);
@@ -131,6 +138,8 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
         "sleep",
         "signal",
         "onDelta",
+        "videos",
+        "audios",
         `"use strict"; return (async () => {\n${args.script}\n})();`,
     ) as (...fnArgs: unknown[]) => Promise<T>;
     try {
@@ -150,6 +159,8 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
             (ms: number) => sleep(ms, args.signal),
             args.signal,
             args.onDelta,
+            args.videos || [],
+            args.audios || [],
         );
     } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
@@ -165,16 +176,23 @@ export type PluginVariable = { name: string; type: string; desc: string; capabil
 export const PLUGIN_VARIABLES: PluginVariable[] = [
     { name: "prompt", type: "string", desc: "用户输入的提示词（已拼接系统提示词）", capabilities: ["image", "video", "audio"] },
     { name: "images", type: "string[]", desc: "参考图，dataURL 数组（改图 / 图生视频时有值）", capabilities: ["image", "video"] },
+    { name: "videos", type: "File[]", desc: "参考视频文件，可直接添加到 FormData；无参考时为空数组", capabilities: ["video"] },
+    { name: "audios", type: "File[]", desc: "参考音频文件，可直接添加到 FormData；无参考时为空数组", capabilities: ["video"] },
+    { name: "params.mode", type: '"frames" | "reference"', desc: "视频模式：frames 使用 images[0] 首帧、images[1] 尾帧；超过两图或有视频／音频时自动使用 reference。请按模型文档映射字段，不要丢弃输入。", capabilities: ["video"] },
     { name: "messages", type: "{ role, content }[]", desc: "对话消息数组，含系统消息", capabilities: ["text"] },
-    { name: "params", type: "object", desc: "生成参数：生图 {size,resolution,quality,outputFormat,count}（size 为实际像素尺寸，quality 为模型质量参数，outputFormat 为 png/jpeg/webp）、视频 {seconds,size,resolution,ratio,generateAudio,watermark}、音频 {voice,format,speed,instructions}" },
+    {
+        name: "params",
+        type: "object",
+        desc: "生成参数：生图 {size,resolution,quality,outputFormat,count}（size 为实际像素尺寸，quality 为模型质量参数，outputFormat 为 png/jpeg/webp）、视频 {seconds,size,resolution,ratio,generateAudio,watermark}、音频 {voice,format,speed,instructions}",
+    },
     { name: "model", type: "string", desc: "模型名称（不含渠道前缀）" },
     { name: "baseUrl", type: "string", desc: "渠道接口地址（原样，未拼 /v1）" },
     { name: "apiKey", type: "string", desc: "渠道 API Key，请求头里自己带上" },
     { name: "systemPrompt", type: "string", desc: "系统提示词原文" },
     { name: "reasoningEffort", type: '"auto" | "low" | "medium" | "high" | "xhigh"', desc: "文本推理强度；auto 表示由脚本决定是否传递", capabilities: ["text"] },
     { name: "http", type: "object", desc: "便捷请求：http.post(path, body, {headers,params,responseType})、http.get(path, opts)、http.url(path)；默认带 Authorization: Bearer apiKey，可用 headers 覆盖；path 相对时按 baseUrl 拼 /v1" },
-    { name: "request", type: "function", desc: "原始请求 request({ method, url, headers, params, data, responseType })，不加任何默认头，鉴权头自己写；url 相对时按 baseUrl 拼接（不加 /v1）" },
-    { name: "poll", type: "function", desc: "轮询 poll(request, extract, {intervalMs,timeoutMs})，extract 返回真值即结束" },
+    { name: "request", type: "function", desc: "原始请求 request({ method, url, headers, params, data, responseType })，鉴权头自己写；相对路径沿用旧脚本规则拼 /v1，绝对 URL 原样使用；启用本地代理时转发外部 HTTP URL" },
+    { name: "poll", type: "function", desc: "轮询 poll(request, extract, {intervalMs,timeoutMs})；extract 返回非 null/undefined/false 即结束，失败状态应抛出 Error" },
     { name: "sleep", type: "function", desc: "sleep(ms) 延时" },
     { name: "signal", type: "AbortSignal", desc: "取消信号，可透传给 http/request" },
     { name: "onDelta", type: "function", desc: "onDelta(text) 推送流式文本（文本模型）", capabilities: ["text"] },
@@ -188,6 +206,18 @@ export const PLUGIN_RETURNS: Record<ModelCapability, string> = {
 };
 
 export type PluginTemplate = { label: string; script: string };
+
+export function getPluginAuthoringPrompt(capability: ModelCapability, modelName: string) {
+    return [
+        `请为模型 ${modelName || "待填写"} 编写 ${capability} 调用脚本。我会补充供应商接口文档。`,
+        "只输出异步函数体，不使用 import/export；可声明 async 函数，但最后必须 return 调用结果。留空使用内置接口。",
+        PLUGIN_RETURNS[capability],
+        ...PLUGIN_VARIABLES.filter((item) => !item.capabilities || item.capabilities.includes(capability)).map((item) => `${item.name} (${item.type}): ${item.desc}`),
+        "使用注入的 apiKey，禁止硬编码或输出密钥。通过 request/http 发请求，复用 signal/poll，遇到失败状态抛错。",
+        "参考媒体及生成参数按该模型文档处理；不支持的组合明确报错。FormData 不手动设置 Content-Type。",
+        ...PLUGIN_TEMPLATES[capability].map((item) => `${item.label}\n${item.script}`),
+    ].join("\n\n");
+}
 
 export const PLUGIN_TEMPLATES: Record<ModelCapability, PluginTemplate[]> = {
     image: [
@@ -251,41 +281,73 @@ return (data.candidates || [])
     video: [
         {
             label: "OpenAI 规范",
-            script: `// 视频（脚本内部自行轮询）。可用：prompt、images(dataURL[])、params{seconds,size,resolution,ratio}
-const headers = { "Content-Type": "application/json", Authorization: \`Bearer \${apiKey}\` };
-const task = await request({
-  method: "post",
-  url: \`\${baseUrl}/v1/videos\`,
-  headers,
-  data: { model, prompt, seconds: params.seconds },
-});
+            script: `/**
+ * OpenAI 兼容视频 multipart 模板。供应商需支持下列字段；按接口文档调整。
+ * images: dataURL[]; videos/audios: File[]; params.mode: frames | reference。
+ * params.seconds/size/resolution 为当前模型设置，不在脚本中写死。
+ * 返回视频 Blob 或 {url}；失败时抛错。旧 JSON 脚本仍可直接使用。
+ */
+const form = new FormData();
+form.set("model", model);
+form.set("prompt", prompt);
+form.set("seconds", String(params.seconds));
+if (params.size) form.set("size", params.size);
+form.set("resolution_name", params.resolution);
+form.set("mode", params.mode);
+form.set("generate_audio", String(params.generateAudio));
+form.set("watermark", String(params.watermark));
+for (const [index, dataUrl] of images.entries()) {
+  const field = params.mode === "frames" ? (index === 0 ? "first_frame" : "last_frame") : "image[]";
+  form.append(field, await (await fetch(dataUrl)).blob(), "ref.png");
+}
+for (const file of videos) form.append("video[]", file);
+for (const file of audios) form.append("audio[]", file);
+const task = await http.post("/videos", form);
+if (!task.id) throw new Error("接口没有返回任务 ID");
 return await poll(
-  () => request({ method: "get", url: \`\${baseUrl}/v1/videos/\${task.id}\`, headers }),
-  (state) => state.status === "completed" ? { url: state.video_url || state.url } : null,
+  () => http.get(\`/videos/\${encodeURIComponent(task.id)}\`),
+  (state) => {
+    if (["failed", "cancelled", "expired"].includes(state.status)) throw new Error(state.error?.message || "视频生成失败");
+    if (state.status !== "completed") return null;
+    const url = state.video_url || state.url || state.result_url;
+    return url ? { url } : http.get(\`/videos/\${encodeURIComponent(task.id)}/content\`, { responseType: "blob" });
+  },
   { intervalMs: 2500, timeoutMs: 300000 },
 );`,
         },
         {
             label: "Gemini 规范",
             script: `// Gemini(Veo) 视频：predictLongRunning 提交，轮询 operation 拿视频 URI。
-// 可用：prompt、images(dataURL[])、params、model、baseUrl、apiKey
+// images 是 dataURL[]；videos/audios 是 File[]。仅传模型文档允许的媒体类型。
+// 此模板支持图片首尾帧／参考图；视频延长与音频输入需按供应商文档单独实现。
+if (videos.length || audios.length) throw new Error("此 Veo 模板尚未配置视频或音频输入，请按供应商文档补充");
 const headers = { "Content-Type": "application/json", "x-goog-api-key": apiKey };
 const instance = { prompt };
-const first = images[0] && images[0].match(/^data:([^;]+);base64,(.*)$/);
-if (first) instance.image = { bytesBase64Encoded: first[2], mimeType: first[1] };
+const inline = (url) => {
+  const match = url.match(/^data:([^;]+);base64,(.*)$/);
+  if (!match) throw new Error("无效的参考图");
+  return { bytesBase64Encoded: match[2], mimeType: match[1] };
+};
+if (params.mode === "frames") {
+  if (images[0]) instance.image = inline(images[0]);
+  if (images[1]) instance.lastFrame = inline(images[1]);
+} else if (images.length) instance.referenceImages = images.map((url) => ({ image: inline(url), referenceType: "asset" }));
+const apiBase = /\\/(v1|v1beta)$/.test(baseUrl.replace(/\\/+$/, "")) ? baseUrl.replace(/\\/+$/, "") : baseUrl.replace(/\\/+$/, "") + "/v1beta";
 const op = await request({
   method: "post",
-  url: \`\${baseUrl}/v1beta/models/\${model}:predictLongRunning\`,
+  url: \`\${apiBase}/models/\${model}:predictLongRunning\`,
   headers,
-  data: { instances: [instance], parameters: { aspectRatio: params.ratio } },
+  data: { instances: [instance], parameters: { aspectRatio: params.ratio, durationSeconds: Number(params.seconds), resolution: params.resolution } },
 });
 return await poll(
-  () => request({ method: "get", url: \`\${baseUrl}/v1beta/\${op.name}\`, headers }),
+  () => request({ method: "get", url: \`\${apiBase}/\${op.name}\`, headers }),
   (state) => {
+    if (state.error) throw new Error(state.error.message || "视频生成失败");
     if (!state.done) return null;
     const uri = state.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
     if (!uri) throw new Error("Gemini 未返回视频 URI");
-    return { url: uri.includes("key=") ? uri : \`\${uri}\${uri.includes("?") ? "&" : "?"}key=\${apiKey}\` };
+    // 在请求头中鉴权，避免把密钥写入持久化的视频 URL。
+    return request({ method: "get", url: uri, headers: { "x-goog-api-key": apiKey }, responseType: "blob" });
   },
   { intervalMs: 5000, timeoutMs: 300000 },
 );`,

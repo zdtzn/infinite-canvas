@@ -36,6 +36,7 @@ import { ImageJobReferenceInputError, imageJobReferenceTotalBytes, parseClientIm
 import { resolveServerImageCapabilityProfile, validateServerImageCapabilityRequest } from "./lib/image-capabilities";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, imageResponseItemValue, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
+import { imageEditReferenceField, geminiImageGenerationConfig } from "./lib/image-provider-protocol";
 import { createDeferredImageResult, hasDeferredImageResults, isCompletedUuResultRecovery, isRecoverableImageDownloadError, recoverDeferredImageResults } from "./lib/image-result-recovery";
 import { createResultImageRelayConfig, isRelayEligibleResultUrl, resultImageDownloadUrl } from "./lib/result-image-relay";
 import { KeyedSerialExecutor } from "./lib/keyed-serial-executor";
@@ -4153,7 +4154,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         Object.entries(requestOptions).forEach(([key, value]) => form.set(key, String(value)));
         input.references.forEach((dataUrl, index) => {
             const image = dataUrlBlob(dataUrl);
-            form.append("image", image, `reference-${index + 1}${imageExtension(image.type)}`);
+            form.append(imageEditReferenceField(input.references.length), image, `reference-${index + 1}${imageExtension(image.type)}`);
         });
         if (input.mask) {
             const mask = dataUrlBlob(input.mask);
@@ -4315,10 +4316,7 @@ async function generateGeminiImages(channel: ChannelRecord, apiKey: string, inpu
                         },
                         body: JSON.stringify({
                             contents: [{ role: "user", parts }],
-                            generationConfig: {
-                                responseModalities: ["TEXT", "IMAGE"],
-                                ...(Object.keys(image).length ? { responseFormat: { image } } : {}),
-                            },
+                            generationConfig: geminiImageGenerationConfig(image),
                         }),
                         signal,
                     },

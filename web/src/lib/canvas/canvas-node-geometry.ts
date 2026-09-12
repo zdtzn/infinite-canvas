@@ -1,4 +1,53 @@
-import { CanvasNodeType, type CanvasNodeData, type ConnectionHandle } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle } from "@/types/canvas";
+
+export function collectGroupMemberNodes(ids: Set<string>, nodes: CanvasNodeData[]) {
+    const groups = new Set(nodes.filter((n) => ids.has(n.id) && n.type === CanvasNodeType.Group && !n.metadata?.locked).map((n) => n.id));
+    const lockedGroups = new Set(nodes.filter((n) => n.type === CanvasNodeType.Group && n.metadata?.locked).map((n) => n.id));
+    return nodes.filter((n) => n.type !== CanvasNodeType.Group && !n.metadata?.locked && !lockedGroups.has(n.metadata?.groupId || "") && (ids.has(n.id) || groups.has(n.metadata?.groupId || "")));
+}
+
+export function getGroupWrapRect(members: CanvasNodeData[]) {
+    const b = nodeBounds(members);
+    return { x: b.left - 24, y: b.top - 52, width: b.right - b.left + 48, height: b.bottom - b.top + 76 };
+}
+
+export function canGroupSelectedNodes(ids: Set<string>, nodes: CanvasNodeData[]) {
+    const members = collectGroupMemberNodes(ids, nodes);
+    return members.length >= 2 && (!members[0].metadata?.groupId || members.some((n) => n.metadata?.groupId !== members[0].metadata?.groupId));
+}
+
+export function canUngroupSelectedNodes(ids: Set<string>, nodes: CanvasNodeData[]) {
+    return collectGroupMemberNodes(ids, nodes).some((n) => n.metadata?.groupId) || nodes.some((n) => ids.has(n.id) && n.type === CanvasNodeType.Group && !n.metadata?.locked && !nodes.some((child) => child.metadata?.groupId === n.id));
+}
+
+function finishGrouping(nodes: CanvasNodeData[], connections: CanvasConnection[], affected: Set<string>) {
+    // Only groups touched by this operation may be removed. Locked members keep their group alive.
+    const used = new Set(nodes.map((n) => n.metadata?.groupId));
+    const removed = new Set(nodes.filter((n) => n.type === CanvasNodeType.Group && !n.metadata?.locked && affected.has(n.id) && !used.has(n.id)).map((n) => n.id));
+    return { nodes: nodes.filter((n) => !removed.has(n.id)), connections: connections.filter((c) => !removed.has(c.fromNodeId) && !removed.has(c.toNodeId)) };
+}
+
+export function applyGroupSelection(ids: Set<string>, nodes: CanvasNodeData[], connections: CanvasConnection[], group: CanvasNodeData) {
+    if (!canGroupSelectedNodes(ids, nodes)) return null;
+    const members = collectGroupMemberNodes(ids, nodes);
+    const memberIds = new Set(members.map((n) => n.id));
+    const affected = new Set(members.flatMap((n) => (n.metadata?.groupId ? [n.metadata.groupId] : [])));
+    const next = finishGrouping([group, ...nodes.map((n) => (memberIds.has(n.id) ? { ...n, metadata: { ...n.metadata, groupId: group.id } } : n))], connections, affected);
+    return { ...next, selectedIds: [group.id] };
+}
+
+export function applyUngroupSelection(ids: Set<string>, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    if (!canUngroupSelectedNodes(ids, nodes)) return null;
+    const members = collectGroupMemberNodes(ids, nodes).filter((n) => n.metadata?.groupId);
+    const memberIds = new Set(members.map((n) => n.id));
+    const affected = new Set([...members.map((n) => n.metadata!.groupId!), ...nodes.filter((n) => ids.has(n.id) && n.type === CanvasNodeType.Group).map((n) => n.id)]);
+    const next = finishGrouping(
+        nodes.map((n) => (memberIds.has(n.id) ? { ...n, metadata: { ...n.metadata, groupId: undefined } } : n)),
+        connections,
+        affected,
+    );
+    return { ...next, selectedIds: next.nodes.filter((n) => ids.has(n.id) || memberIds.has(n.id)).map((n) => n.id) };
+}
 
 export function nodeBounds(nodes: CanvasNodeData[]) {
     return nodes.reduce(

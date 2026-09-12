@@ -50,10 +50,7 @@ type ResponseToolCall = {
     thoughtSignature?: string;
 };
 
-type ResponseInputMessage =
-    | AiTextMessage
-    | { type: "function_call"; call_id: string; name: string; arguments: string; thoughtSignature?: string }
-    | { role: "tool"; tool_call_id: string; content: string };
+type ResponseInputMessage = AiTextMessage | { type: "function_call"; call_id: string; name: string; arguments: string; thoughtSignature?: string } | { role: "tool"; tool_call_id: string; content: string };
 
 type ResponseFunctionTool = {
     type: "function";
@@ -73,10 +70,7 @@ type ToolResponseResult = {
 type ToolChoice = "auto" | "required" | { type: "function"; name: string };
 type ResponseMessageContent = AiTextMessage["content"] | string;
 type ResponseInputContent = { type: "input_text"; text: string } | { type: "input_image"; image_url: string };
-type ResponseInputItem =
-    | { role: "system" | "user" | "assistant"; content: string | ResponseInputContent[] }
-    | { type: "function_call"; call_id: string; name: string; arguments: string }
-    | { type: "function_call_output"; call_id: string; output: string };
+type ResponseInputItem = { role: "system" | "user" | "assistant"; content: string | ResponseInputContent[] } | { type: "function_call"; call_id: string; name: string; arguments: string } | { type: "function_call_output"; call_id: string; output: string };
 type ResponseApiToolDefinition = {
     type: "function";
     name: string;
@@ -84,9 +78,7 @@ type ResponseApiToolDefinition = {
     parameters: Record<string, unknown>;
     strict?: boolean;
 };
-type ResponseApiOutputItem =
-    | { type?: "message"; content?: Array<{ type?: string; text?: string }> }
-    | { type?: "function_call"; id?: string; call_id?: string; name?: string; arguments?: string };
+type ResponseApiOutputItem = { type?: "message"; content?: Array<{ type?: string; text?: string }> } | { type?: "function_call"; id?: string; call_id?: string; name?: string; arguments?: string };
 type ResponseApiPayload = {
     id?: string;
     output?: ResponseApiOutputItem[];
@@ -149,20 +141,26 @@ const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1"
 const GEMINI_IMAGE_SIZE_BY_RESOLUTION: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
 
 function normalizeResolution(resolution: string | undefined) {
-    const value = String(resolution || "low").trim().toLowerCase();
+    const value = String(resolution || "low")
+        .trim()
+        .toLowerCase();
     if (!value || value === "auto") return "low";
     const normalized = RESOLUTION_ALIASES[value] || value;
     return RESOLUTION_BASE[normalized] ? normalized : undefined;
 }
 
 function normalizeImageQuality(quality: string | undefined) {
-    const value = String(quality || "auto").trim().toLowerCase();
+    const value = String(quality || "auto")
+        .trim()
+        .toLowerCase();
     if (!value || value === "auto") return undefined;
     return ["low", "medium", "high", "standard", "hd"].includes(value) ? value : undefined;
 }
 
 function normalizeImageOutputFormat(format: string | undefined) {
-    const value = String(format || "auto").trim().toLowerCase();
+    const value = String(format || "auto")
+        .trim()
+        .toLowerCase();
     if (!value || value === "auto") return undefined;
     return ["png", "jpeg", "webp"].includes(value) ? value : undefined;
 }
@@ -220,7 +218,7 @@ function resolveGeminiImageConfig(config: AiConfig) {
     const aspectRatio = closestGeminiAspectRatio(ratio);
     const imageSize = supportsGeminiImageSize(config.model) ? resolveGeminiImageSize(config.quality, dimensions) : undefined;
     const image = { ...(aspectRatio ? { aspectRatio } : {}), ...(imageSize ? { imageSize } : {}) };
-    return Object.keys(image).length ? { responseFormat: { image } } : {};
+    return Object.keys(image).length ? { imageConfig: image } : {};
 }
 
 function closestGeminiAspectRatio(value: string) {
@@ -516,12 +514,7 @@ async function requestStreamingChatCompletion(config: AiConfig, messages: AiText
 }
 
 function toGeminiBody(config: AiConfig, messages: ResponseInputMessage[], extra?: Record<string, unknown>) {
-    const systemText = [
-        config.systemPrompt.trim(),
-        ...messages.flatMap((message) => (!("type" in message) && message.role === "system" ? [geminiTextContent(message.content)] : [])),
-    ]
-        .filter(Boolean)
-        .join("\n\n");
+    const systemText = [config.systemPrompt.trim(), ...messages.flatMap((message) => (!("type" in message) && message.role === "system" ? [geminiTextContent(message.content)] : []))].filter(Boolean).join("\n\n");
     const contents = toGeminiContents(messages.filter((message) => ("type" in message ? true : message.role !== "system")));
     return {
         contents,
@@ -581,10 +574,7 @@ function toGeminiToolOptions(tools: ResponseFunctionTool[], toolChoice: ToolChoi
         description: tool.function.description,
         parameters: tool.function.parameters,
     }));
-    const functionCallingConfig =
-        typeof toolChoice === "object"
-            ? { mode: "ANY", allowedFunctionNames: [toolChoice.name] }
-            : { mode: toolChoice === "required" ? "ANY" : "AUTO" };
+    const functionCallingConfig = typeof toolChoice === "object" ? { mode: "ANY", allowedFunctionNames: [toolChoice.name] } : { mode: toolChoice === "required" ? "ANY" : "AUTO" };
     return {
         tools: [{ functionDeclarations }],
         toolConfig: { functionCallingConfig },
@@ -888,7 +878,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         formData.set("background", background);
     }
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-    files.forEach((file) => formData.append("image", file));
+    files.forEach((file) => formData.append(files.length > 1 ? "image[]" : "image", file));
     if (mask) formData.set("mask", dataUrlToFile(mask));
 
     try {
@@ -991,25 +981,28 @@ async function requestServerImageJob(
     const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
     const size = normalizeImageSizeSelection(requestConfig.size);
     validateImageRequest(capabilities, { resolution, imageQuality: imageQuality || "auto", imageOutputFormat: imageOutputFormat || "auto", size, background: requestConfig.background || "", referenceCount: references.length, count });
-    const preferOptimizedReferences =
-        !mask && normalizeResolution(resolution) === "low" && requestConfig.apiFormat === "openai" && isUuAsyncGptImageModel(requestConfig.baseUrl, requestConfig.model);
+    const preferOptimizedReferences = !mask && normalizeResolution(resolution) === "low" && requestConfig.apiFormat === "openai" && isUuAsyncGptImageModel(requestConfig.baseUrl, requestConfig.model);
     const referenceData = await Promise.all(references.map((reference) => serverImageReferenceInput(reference, preferOptimizedReferences) || imageToDataUrl(reference, expectedUserId)));
     const maskData = mask ? serverImageReferenceInput(mask) || (await imageToDataUrl(mask, expectedUserId)) : undefined;
-    const { job } = await submitImageJob({
-        channelId: requestConfig.channelId,
-        apiFormat: requestConfig.apiFormat,
-        model: requestConfig.model,
-        prompt: withSystemPrompt(requestConfig, prompt),
-        count,
-        quality: resolution,
-        imageQuality,
-        imageOutputFormat,
-        size,
-        background: normalizeBackground(requestConfig.background),
-        references: referenceData,
-        mask: maskData,
-        source: options?.source,
-    }, expectedUserId, options?.idempotencyKey);
+    const { job } = await submitImageJob(
+        {
+            channelId: requestConfig.channelId,
+            apiFormat: requestConfig.apiFormat,
+            model: requestConfig.model,
+            prompt: withSystemPrompt(requestConfig, prompt),
+            count,
+            quality: resolution,
+            imageQuality,
+            imageOutputFormat,
+            size,
+            background: normalizeBackground(requestConfig.background),
+            references: referenceData,
+            mask: maskData,
+            source: options?.source,
+        },
+        expectedUserId,
+        options?.idempotencyKey,
+    );
     options?.onJobCreated?.(job.id);
     const abort = () => void cancelServerJob(job.id, expectedUserId).catch(() => undefined);
     options?.signal?.addEventListener("abort", abort, { once: true });

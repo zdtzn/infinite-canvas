@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { DeferredImage } from "@/components/ui/deferred-image";
+import { readAssetDownload } from "./asset-download";
 
 type AssetFormValues = {
     kind: AssetKind;
@@ -287,11 +288,15 @@ export default function AssetsPage() {
 
     const downloadImage = async (asset: Asset) => {
         if (asset.kind !== "image" && asset.kind !== "video") return;
+        const owner = useUserStore.getState().user?.id || "";
         try {
             const { saveAs } = await import("file-saver");
-            saveAs(asset.kind === "video" ? asset.data.url : asset.data.dataUrl, `${asset.title || "asset"}.${asset.data.mimeType.split("/")[1] || "png"}`);
-        } catch {
-            message.error("下载组件加载失败，请刷新后重试");
+            if ((useUserStore.getState().user?.id || "") !== owner) return;
+            const { blob, filename } = await readAssetDownload(asset, owner);
+            if ((useUserStore.getState().user?.id || "") !== owner) return;
+            saveAs(blob, filename);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "文件下载失败，请重试");
         }
     };
 
@@ -418,12 +423,19 @@ export default function AssetsPage() {
                         ))}
                     </div>
 
-                    {remoteBlocked && <div className="flex flex-col items-center gap-4 py-16 text-center text-sm text-[#c9c4b9]" role="status" aria-live="polite">
-                        <p>{remoteStatus === "loading" ? "正在加载云端藏卷…" : "云端藏卷加载失败，请重试。"}</p>
-                        {remoteStatus === "error" && <Button onClick={() => setRemoteRefresh((value) => value + 1)}>重新加载</Button>}
-                    </div>}
-                    {useRemoteLibrary && remoteStatus === "ready" && !serverLibraryReady && <p className="text-sm text-[#c9c4b9]" role="status">云端素材库尚未就绪，当前展示本机素材。</p>}
-                    {!remoteBlocked && !displayedAssets.length &&
+                    {remoteBlocked && (
+                        <div className="flex flex-col items-center gap-4 py-16 text-center text-sm text-[#c9c4b9]" role="status" aria-live="polite">
+                            <p>{remoteStatus === "loading" ? "正在加载云端藏卷…" : "云端藏卷加载失败，请重试。"}</p>
+                            {remoteStatus === "error" && <Button onClick={() => setRemoteRefresh((value) => value + 1)}>重新加载</Button>}
+                        </div>
+                    )}
+                    {useRemoteLibrary && remoteStatus === "ready" && !serverLibraryReady && (
+                        <p className="text-sm text-[#c9c4b9]" role="status">
+                            云端素材库尚未就绪，当前展示本机素材。
+                        </p>
+                    )}
+                    {!remoteBlocked &&
+                        !displayedAssets.length &&
                         (displayedCount === 0 ? (
                             <div className="flex flex-col items-center justify-center gap-5 py-24 text-center">
                                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="font-display text-sm tracking-[0.1em] text-[#8a8a96]">阁中尚无一卷,落笔即是开山之作</span>} />

@@ -51,6 +51,7 @@ export type UserGenerationPreferences = {
   vquality: string;
   videoGenerateAudio: string;
   videoWatermark: string;
+  videoMode: string;
   quality: string;
   imageQuality: string;
   imageOutputFormat: string;
@@ -178,6 +179,7 @@ export function normalizeUserGenerationPreferences(
       source.videoWatermark,
       "视频水印偏好",
     ),
+    videoMode: enumPreferenceString(source.videoMode ?? "", "视频参考模式", ["", "frames", "reference"]),
     quality: enumPreferenceString(source.quality, "默认分辨率", [
       "low",
       "medium",

@@ -1,4 +1,4 @@
-import { defaultConfig, normalizeImageSizeSelection, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, normalizeImageSizeSelection, resolveModelForCapability, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
@@ -123,7 +123,23 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
-    return nodes.map((node) => (node.metadata?.status === "loading" && !node.metadata.jobId ? { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新前任务尚未提交到服务端，请重新生成。" } } : node));
+    return nodes.map((node) =>
+        node.metadata?.status === "loading" && !node.metadata.jobId && !node.metadata.videoTask ? { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新前任务尚未提交到服务端，请重新生成。" } } : node,
+    );
+}
+
+export function canvasVideoTaskBinding(config: AiConfig, model: string) {
+    const resolved = resolveModelRequestConfig(config, model);
+    return { channelId: resolved.channelId, baseUrl: resolved.baseUrl, apiFormat: resolved.apiFormat, channelMode: config.channelMode };
+}
+
+export function assertCanvasVideoTaskOwner(metadata: CanvasNodeMetadata, config: AiConfig, userId: string) {
+    const task = metadata.videoTask;
+    const binding = metadata.videoTaskBinding;
+    if (!task || task.ownerUserId !== userId) throw new Error("视频任务属于其他账户，无法恢复");
+    if (!binding || !config.channels.some((channel) => channel.id === binding.channelId)) throw new Error("原视频渠道已不可用，无法恢复任务");
+    const current = canvasVideoTaskBinding(config, task.model);
+    if (current.channelId !== binding.channelId || current.baseUrl !== binding.baseUrl || current.apiFormat !== binding.apiFormat || current.channelMode !== binding.channelMode) throw new Error("视频渠道配置已变化，请恢复原渠道后获取结果");
 }
 
 export function isGenerationCanceled(error: unknown) {

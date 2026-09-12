@@ -96,9 +96,7 @@ export function useProjectServerSync(userId?: string) {
                 key,
                 duration: 0,
                 message: "检测到画布版本冲突",
-                description: remoteAligned
-                    ? `本地修改已保存为“${copy.title}”，原画布已对齐云端版本。`
-                    : `本地修改已保存为“${copy.title}”，云端版本将在网络恢复后重新同步。`,
+                description: remoteAligned ? `本地修改已保存为“${copy.title}”，原画布已对齐云端版本。` : `本地修改已保存为“${copy.title}”，云端版本将在网络恢复后重新同步。`,
                 actions: createElement(
                     "div",
                     { className: "flex flex-wrap gap-2" },
@@ -143,10 +141,14 @@ export function useProjectServerSync(userId?: string) {
 
             try {
                 const latest = await fetchServerProjects(userId);
+                if (!ownsCurrentStore()) return;
                 const remote = latest.items.find((item) => String(item.project.id || "") === originalProjectId);
                 const remoteProject = remote ? normalizeCanvasProject({ ...remote.project, serverRevision: remote.revision }) : null;
                 const currentProjects = useCanvasStore.getState().projects.filter((item) => item.id !== originalProjectId);
-                useCanvasStore.getState().replaceProjects(remoteProject ? [remoteProject, ...currentProjects] : currentProjects);
+                useCanvasStore.getState().replaceProjects(
+                    remoteProject ? [remoteProject, ...currentProjects] : currentProjects,
+                    latest.deleted.map((item) => ({ id: item.projectId, deletedAt: new Date(item.deletedAt).toISOString(), serverRevision: item.revision, serverDeleted: true })),
+                );
                 if (remote) revisions.set(originalProjectId, remote.revision);
                 else revisions.delete(originalProjectId);
                 if (active) showConflictActions(copy, originalProjectId, true);
@@ -169,16 +171,40 @@ export function useProjectServerSync(userId?: string) {
         };
 
         const deleteRemoteProject = async (projectId: string) => {
-            if (!active) return;
-            const revision = revisions.get(projectId) ?? 0;
+            if (!ownsCurrentStore()) return;
+            const tombstone = useCanvasStore.getState().deletedProjects.find((item) => item.id === projectId);
+            if (tombstone?.serverDeleted) return;
+            const revision = revisions.get(projectId) ?? tombstone?.serverRevision ?? 0;
             try {
                 await deleteServerProject(projectId, revision, userId);
+                if (!ownsCurrentStore()) return;
+                const state = useCanvasStore.getState();
+                state.replaceProjects(state.projects, [{ id: projectId, deletedAt: new Date().toISOString(), serverRevision: revision + 1, serverDeleted: true }]);
                 revisions.delete(projectId);
                 const retryTimer = deletionRetryTimers.get(projectId);
                 if (retryTimer) window.clearTimeout(retryTimer);
                 deletionRetryTimers.delete(projectId);
             } catch (error) {
                 if (isProjectConflict(error)) {
+                    try {
+                        const latest = await fetchServerProjects(userId);
+                        if (!ownsCurrentStore()) return;
+                        const remote = latest.items.find((item) => String(item.project.id) === projectId);
+                        if (remote) {
+                            const project = normalizeCanvasProject({ ...remote.project, serverRevision: remote.revision });
+                            revisions.set(projectId, remote.revision);
+                            if (project) useCanvasStore.getState().restoreDeleteConflict(project);
+                        } else {
+                            const deleted = latest.deleted.find((item) => item.projectId === projectId);
+                            if (deleted) {
+                                const state = useCanvasStore.getState();
+                                state.replaceProjects(state.projects, [{ id: projectId, deletedAt: new Date(deleted.deletedAt).toISOString(), serverRevision: deleted.revision, serverDeleted: true }]);
+                            }
+                        }
+                    } catch (refreshError) {
+                        showSaveError(refreshError);
+                        scheduleDeleteRetry(projectId);
+                    }
                     if (active) message.warning("画布已在其他位置更新，本次删除未覆盖云端版本");
                     return;
                 }
@@ -196,7 +222,13 @@ export function useProjectServerSync(userId?: string) {
             .then((response) => {
                 if (!response || !ownsCurrentStore()) return;
                 const { items, deleted } = response;
+                const state = useCanvasStore.getState();
+                state.replaceProjects(
+                    state.projects,
+                    deleted.map((item) => ({ id: item.projectId, deletedAt: new Date(item.deletedAt).toISOString(), serverRevision: item.revision, serverDeleted: true })),
+                );
                 const localProjects = useCanvasStore.getState().projects;
+                const localDeleted = new Map(useCanvasStore.getState().deletedProjects.map((item) => [item.id, item]));
                 const remoteById = new Map(items.map((item) => [String(item.project.id || ""), item]));
                 const deletedById = new Map(deleted.map((item) => [item.projectId, item]));
                 const projectsToSave = new Set<string>();
@@ -227,10 +259,16 @@ export function useProjectServerSync(userId?: string) {
                 const localIds = new Set(localProjects.map((project) => project.id));
                 const recovered = items
                     .map((item) => normalizeCanvasProject({ ...item.project, serverRevision: item.revision }))
-                    .filter((project): project is CanvasProject => Boolean(project && !localIds.has(project.id)));
+                    .filter((project): project is CanvasProject => Boolean(project && !localIds.has(project.id) && !localDeleted.has(project.id)));
                 useCanvasStore.getState().replaceProjects([...recovered, ...merged]);
                 recovered.forEach((project) => revisions.set(project.id, project.serverRevision || 0));
                 initialized = true;
+                for (const tombstone of localDeleted.values()) {
+                    if (tombstone.serverDeleted) continue;
+                    // Keep the revision observed at deletion; never overwrite a newer cloud edit.
+                    revisions.set(tombstone.id, tombstone.serverRevision ?? 0);
+                    void enqueueProjectOperation(tombstone.id, () => deleteRemoteProject(tombstone.id));
+                }
                 for (const projectId of projectsToSave) scheduleSave(projectId);
             })
             .catch((error) => {
@@ -256,6 +294,7 @@ export function useProjectServerSync(userId?: string) {
 
             for (const project of state.projects) {
                 const before = previousById.get(project.id);
+                if (!before && previous.deletedProjects.some((item) => item.id === project.id) && project.serverRevision === revisions.get(project.id)) continue;
                 if (!before || before.updatedAt !== project.updatedAt) scheduleSave(project.id);
             }
         });

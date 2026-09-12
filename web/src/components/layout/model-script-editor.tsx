@@ -3,7 +3,8 @@ import CodeMirror from "@uiw/react-codemirror";
 import { Button, Modal } from "antd";
 import { useEffect, useState } from "react";
 
-import { PLUGIN_RETURNS, PLUGIN_TEMPLATES, PLUGIN_VARIABLES } from "@/services/api/model-plugin";
+import { getPluginAuthoringPrompt, PLUGIN_RETURNS, PLUGIN_TEMPLATES, PLUGIN_VARIABLES } from "@/services/api/model-plugin";
+import { useCopyText } from "@/hooks/use-copy-text";
 import type { ModelCapability } from "@/stores/use-config-store";
 
 const capabilityLabels: Record<ModelCapability, string> = { image: "生图", video: "视频", text: "文本", audio: "音频" };
@@ -13,6 +14,7 @@ function isDarkMode() {
 }
 
 export function ModelScriptEditor({ open, capability, modelName, value, onSave, onClose }: { open: boolean; capability: ModelCapability; modelName: string; value: string; onSave: (script: string) => void; onClose: () => void }) {
+    const copyText = useCopyText();
     const [draft, setDraft] = useState(value);
     useEffect(() => {
         if (open) setDraft(value);
@@ -32,8 +34,9 @@ export function ModelScriptEditor({ open, capability, modelName, value, onSave, 
                     <div className="mt-1 text-xs font-normal text-stone-500">脚本是一段异步函数体，直接使用下方变量，最后 return 结果；留空则使用系统默认调用。</div>
                 </div>
             }
-            width={1080}
-            centered
+            width="100vw"
+            style={{ top: 0, margin: 0, maxWidth: "100vw", paddingBottom: 0 }}
+            wrapClassName="[&_.ant-modal-container]:!rounded-none [&_.ant-modal-container]:!h-dvh [&_.ant-modal-container]:!flex [&_.ant-modal-container]:!flex-col [&_.ant-modal-body]:!min-h-0 [&_.ant-modal-body]:!flex-1 [&_.ant-modal-body]:!overflow-hidden"
             onCancel={onClose}
             styles={{ body: { padding: 0 } }}
             footer={
@@ -63,11 +66,17 @@ export function ModelScriptEditor({ open, capability, modelName, value, onSave, 
                 </div>
             }
         >
-            <div className="flex h-[60vh] min-h-[420px] border-t border-stone-200 dark:border-stone-800">
-                <aside className="flex w-[320px] shrink-0 flex-col overflow-y-auto border-r border-stone-200 bg-stone-50/80 dark:border-stone-800 dark:bg-stone-900/40">
+            <div className="flex h-full min-h-0 flex-col border-t border-stone-200 md:flex-row dark:border-stone-800">
+                <aside className="flex max-h-[35vh] w-full shrink-0 flex-col overflow-y-auto border-r border-stone-200 bg-stone-50/80 md:max-h-none md:w-[360px] dark:border-stone-800 dark:bg-stone-900/40">
                     <div className="border-b border-stone-200/70 px-4 py-3 dark:border-stone-800/70">
-                        <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone-400">返回要求</div>
+                        <div className="mb-1.5 text-sm font-semibold">1. 了解调用规则</div>
+                        <p className="mb-2 text-xs leading-5 text-stone-500">脚本仅用于自定义本地渠道。现有脚本无需改写；留空恢复内置接口。</p>
                         <div className="text-xs leading-6 text-stone-600 dark:text-stone-300">{PLUGIN_RETURNS[capability]}</div>
+                    </div>
+                    <div className="border-b border-stone-200/70 px-4 py-3 dark:border-stone-800/70">
+                        <div className="mb-2 text-sm font-semibold">2. 让 AI 帮你编写</div>
+                        <p className="mb-3 text-xs leading-5 text-stone-500">复制说明，连同供应商接口文档交给 AI，再将返回的脚本粘贴到编辑区。说明包含变量和模板，不包含渠道密钥或当前草稿。</p>
+                        <Button onClick={() => copyText(getPluginAuthoringPrompt(capability, modelName), "脚本编写说明已复制")}>复制编写说明</Button>
                     </div>
                     <div className="px-4 py-3">
                         <div className="mb-2.5 flex items-center justify-between">
@@ -94,17 +103,20 @@ export function ModelScriptEditor({ open, capability, modelName, value, onSave, 
                         </div>
                     </div>
                 </aside>
-                <div className="min-w-0 flex-1 overflow-hidden bg-white dark:bg-stone-950">
-                    <CodeMirror
-                        value={draft}
-                        onChange={setDraft}
-                        height="100%"
-                        theme={isDarkMode() ? "dark" : "light"}
-                        extensions={[javascript()]}
-                        placeholder={"// 留空使用系统默认调用；点击右下角「插入模板」查看示例。"}
-                        style={{ height: "100%", fontSize: 13 }}
-                        className="h-full [&_.cm-editor]:h-full [&_.cm-gutters]:border-none [&_.cm-scroller]:overflow-auto"
-                    />
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-stone-950">
+                    <div className="shrink-0 border-b border-stone-200 px-4 py-3 text-sm font-semibold dark:border-stone-800">3. 编辑并保存脚本</div>
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                        <CodeMirror
+                            value={draft}
+                            onChange={setDraft}
+                            height="100%"
+                            theme={isDarkMode() ? "dark" : "light"}
+                            extensions={[javascript()]}
+                            placeholder={"// 留空使用系统默认调用；点击底部「插入模板」查看示例。"}
+                            style={{ height: "100%", fontSize: 13 }}
+                            className="h-full [&_.cm-editor]:h-full [&_.cm-gutters]:border-none [&_.cm-scroller]:overflow-auto"
+                        />
+                    </div>
                 </div>
             </div>
         </Modal>

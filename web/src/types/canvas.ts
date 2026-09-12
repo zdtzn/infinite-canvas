@@ -1,4 +1,5 @@
 import type { ColorSettings } from "@/features/color-alchemy/types";
+import type { VideoGenerationTask } from "@/services/api/video";
 
 export type Position = {
     x: number;
@@ -36,6 +37,8 @@ export type CanvasNodeMetadata = {
     uploading?: boolean;
     errorDetails?: string;
     jobId?: string;
+    videoTask?: VideoGenerationTask;
+    videoTaskBinding?: { channelId: string; baseUrl: string; apiFormat: string; channelMode: string };
     fontSize?: number;
     generationMode?: CanvasGenerationMode;
     generationType?: CanvasImageGenerationType;

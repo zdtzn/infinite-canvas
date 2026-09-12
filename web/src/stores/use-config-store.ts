@@ -46,6 +46,7 @@ export type AiConfig = {
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
+    videoMode: string;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
     models: string[];
@@ -81,6 +82,7 @@ export type GenerationPreferences = {
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
+    videoMode: string;
     quality: string;
     imageQuality: string;
     imageOutputFormat: string;
@@ -136,6 +138,7 @@ export const defaultConfig: AiConfig = {
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
+    videoMode: "",
     systemPrompt: "",
     reasoningEffort: "auto",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
@@ -168,6 +171,7 @@ const generationPreferenceConfigKeys = new Set<keyof AiConfig>([
     "vquality",
     "videoGenerateAudio",
     "videoWatermark",
+    "videoMode",
     "quality",
     "imageQuality",
     "imageOutputFormat",
@@ -397,6 +401,7 @@ export const useConfigStore = create<ConfigStore>()(
                         vquality: config.vquality || "720",
                         videoGenerateAudio: config.videoGenerateAudio || "true",
                         videoWatermark: config.videoWatermark || "false",
+                        videoMode: config.videoMode === "frames" || config.videoMode === "reference" ? config.videoMode : "",
                         canvasImageCount: config.canvasImageCount || "3",
                         imageQuality: normalizeImageQuality(config.imageQuality),
                         imageOutputFormat: normalizeImageOutputFormat(config.imageOutputFormat),
@@ -426,6 +431,7 @@ export function generationPreferencesFromConfig(config: AiConfig, snapDimensionT
         vquality: config.vquality,
         videoGenerateAudio: config.videoGenerateAudio,
         videoWatermark: config.videoWatermark,
+        videoMode: config.videoMode,
         quality: config.quality,
         imageQuality: config.imageQuality,
         imageOutputFormat: config.imageOutputFormat,
@@ -451,6 +457,7 @@ export function normalizeGenerationPreferences(value: unknown): GenerationPrefer
         vquality: preferenceString(source.vquality, defaultConfig.vquality, 32),
         videoGenerateAudio: booleanPreferenceString(source.videoGenerateAudio, true),
         videoWatermark: booleanPreferenceString(source.videoWatermark, false),
+        videoMode: enumPreference(source.videoMode, ["", "frames", "reference"], ""),
         quality: enumPreference(source.quality, ["low", "medium", "high"], defaultConfig.quality),
         imageQuality: normalizeImageQuality(source.imageQuality),
         imageOutputFormat: normalizeImageOutputFormat(source.imageOutputFormat),
@@ -478,6 +485,7 @@ export function applyGenerationPreferences(config: AiConfig, value: GenerationPr
         vquality: preferences.vquality,
         videoGenerateAudio: preferences.videoGenerateAudio,
         videoWatermark: preferences.videoWatermark,
+        videoMode: preferences.videoMode,
         quality: preferences.quality,
         imageQuality: preferences.imageQuality,
         imageOutputFormat: preferences.imageOutputFormat,
@@ -660,7 +668,8 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         sortOrder: normalizeChannelSortOrder(channel?.sortOrder),
         baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
         apiKey: channel?.apiKey || "",
-        credentialState: channel?.credentialState || (channel?.apiKey ? "saved" : "missing"),
+        // A browser key does not mean that this channel exists in the encrypted server store.
+        credentialState: channel?.credentialState || "missing",
         apiFormat,
         models: normalizeChannelModels(channel?.models),
     };

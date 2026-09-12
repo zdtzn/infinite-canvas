@@ -100,6 +100,7 @@ describe("user preferences", () => {
     });
 
     expect(preference).toEqual({
+      videoMode: "",
       imageModel: "uu::gpt-image-2",
       videoModel: "video::seedance",
       audioModel: "audio::tts",
@@ -121,6 +122,9 @@ describe("user preferences", () => {
       snapDimensionToStep: false,
     });
     expect(readStoredUserGenerationPreferences(preference)).toEqual(preference);
+    expect(normalizeUserGenerationPreferences({ ...preference, videoMode: "frames" }).videoMode).toBe("frames");
+    expect(normalizeUserGenerationPreferences({ ...preference, videoMode: "reference" }).videoMode).toBe("reference");
+    expect(() => normalizeUserGenerationPreferences({ ...preference, videoMode: "invalid" })).toThrow();
     expect(() =>
       normalizeUserGenerationPreferences({ ...preference, count: "16" }),
     ).toThrow();
