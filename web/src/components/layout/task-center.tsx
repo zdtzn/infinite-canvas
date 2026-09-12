@@ -116,9 +116,10 @@ export function TaskCenter() {
     };
 
     const openJob = (job: ServerJob) => {
-        if (job.source?.route) {
-            void preloadRoute(job.source.route);
-            navigate(job.source.route);
+        const route = job.source?.route;
+        if (route && route !== "/product-lab" && route !== "/product-lab-batch") {
+            void preloadRoute(route);
+            navigate(route);
         }
         setOpen(false);
     };
@@ -235,7 +236,7 @@ function sortJobs(a: ServerJob, b: ServerJob) {
 function jobWorkspaceLabel(job: ServerJob) {
     if (job.source?.route === "/image") return "丹青台";
     if (job.source?.route === "/video") return "流光阁";
-    if (job.source?.route === "/product-lab") return job.source.label || "商品幻境";
+    if (job.source?.route === "/product-lab" || job.source?.route === "/product-lab-batch") return "已下线的商品任务";
     if (job.source?.route?.startsWith("/canvas")) return "洞天画布";
     return job.source?.label || "生成任务";
 }

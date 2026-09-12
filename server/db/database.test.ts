@@ -203,7 +203,10 @@ describe("SQLite application database", () => {
         )
         .get() as { name: string } | null;
 
-      expect(Number(migration.version)).toBeGreaterThanOrEqual(13);
+      expect(Number(migration.version)).toBeGreaterThanOrEqual(25);
+      expect(
+        store.raw!.query("SELECT COUNT(*) AS count FROM capability_definitions WHERE capability_key LIKE 'product.%'").get(),
+      ).toEqual({ count: 0 });
       const userPreferenceTables = (
         store
           .raw!.query(

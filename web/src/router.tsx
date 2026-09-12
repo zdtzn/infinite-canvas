@@ -20,7 +20,6 @@ const DocsPage = lazyRoute(routeLoaders["/docs"]);
 const AdminCultivationPage = lazyRoute(routeLoaders["/admin/cultivation"]);
 const HomePage = lazyRoute(routeLoaders["/"]);
 const ImagePage = lazyRoute(routeLoaders["/image"]);
-const ProductLabPage = lazyRoute(routeLoaders["/product-lab"]);
 const NotFound = lazyRoute(() => import("@/pages/not-found"));
 const PromptsPage = lazyRoute(routeLoaders["/prompts"]);
 const VideoPage = lazyRoute(routeLoaders["/video"]);
@@ -44,7 +43,6 @@ function routeLoadingMeta(pathname: string) {
         "/canvas": { eyebrow: "DONG TIAN", title: "洞天", split: false },
         "/chat": { eyebrow: "WEN DAO TAI", title: "问道台", split: true },
         "/color-alchemy": { eyebrow: "LING CAI", title: "灵彩", split: true },
-        "/product-lab": { eyebrow: "SHANG PIN HUAN JING", title: "商品幻境", split: true },
         "/video": { eyebrow: "LIU GUANG GE", title: "流光阁", split: true },
         "/assets": { eyebrow: "CANG JUAN GE", title: "藏卷阁", split: false },
         "/announcements": { eyebrow: "SYSTEM NOTICE", title: "系统公告", split: false },
@@ -160,14 +158,6 @@ export const router = createBrowserRouter([
                 element: (
                     <RoutePage>
                         <ChatPage />
-                    </RoutePage>
-                ),
-            },
-            {
-                path: "/product-lab",
-                element: (
-                    <RoutePage>
-                        <ProductLabPage />
                     </RoutePage>
                 ),
             },

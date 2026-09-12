@@ -6,12 +6,17 @@ import { navigationSceneNames, navigationTools, primaryNavigationTools, secondar
 test("keeps the core creation workspaces available in the primary navigation", () => {
     assert.deepEqual(
         primaryNavigationTools.map((tool) => tool.slug),
-        ["canvas", "image", "chat", "product-lab", "assets", "color-alchemy"],
+        ["canvas", "image", "chat", "assets", "color-alchemy"],
     );
 });
 
+test("does not expose the retired product workspace", () => {
+    assert.ok(!navigationTools.some((tool) => tool.slug === "product-lab"));
+    assert.ok(!Object.prototype.hasOwnProperty.call(navigationSceneNames, "product-lab"));
+});
+
 test("keeps secondary navigation separate from the core work routes", () => {
-    assert.ok(secondaryNavigationTools.every((tool) => !["canvas", "image", "chat", "product-lab", "assets", "color-alchemy"].includes(tool.slug)));
+    assert.ok(secondaryNavigationTools.every((tool) => !["canvas", "image", "chat", "assets", "color-alchemy"].includes(tool.slug)));
 });
 
 test("exposes Wen Dao Tai as a primary AI chat workspace", () => {

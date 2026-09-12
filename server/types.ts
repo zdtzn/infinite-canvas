@@ -106,8 +106,6 @@ export type ImageJobInput = {
     projectId?: string;
     nodeId?: string;
     label?: string;
-    productBatchId?: string;
-    productGenerationId?: string;
   };
   retryOf?: string;
   recoveryOnly?: boolean;

@@ -88,7 +88,7 @@ export function PromptOptimizerAdminSetting({ config }: { config: AiConfig }) {
                         <Sparkles className="size-4" />
                         全站文本模型
                     </div>
-                    <div className="mt-1 text-xs text-stone-500">仅管理员配置。问道台、提示词优化和商品分析都会优先使用这里选择的文本模型，普通用户不会看到或选择。</div>
+                    <div className="mt-1 text-xs text-stone-500">仅管理员配置。问道台和提示词优化会优先使用这里选择的文本模型，普通用户不会看到或选择。</div>
                 </div>
                 <div className="w-full shrink-0 md:w-[320px]">
                     <Select

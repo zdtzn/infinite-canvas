@@ -11,7 +11,6 @@ import {
     LayoutDashboard,
     ListChecks,
     Maximize2,
-    PackageSearch,
     Palette,
     Search,
     Settings2,
@@ -35,7 +34,6 @@ const sectionIcons: Record<string, LucideIcon> = {
     canvas: Maximize2,
     "color-alchemy": Palette,
     "image-workbench": ImagePlus,
-    "product-lab": PackageSearch,
     "video-workbench": Video,
     prompts: FileText,
     assets: Images,
@@ -68,7 +66,7 @@ export default function DocsPage() {
                         Infinite Canvas 帮助中心
                     </div>
                     <h1 className="mt-3 text-3xl font-semibold tracking-normal text-stone-950 sm:text-4xl dark:text-[#f2efe6]">网站使用说明</h1>
-                    <p className="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base dark:text-stone-400">当前指南覆盖丹青台、洞天、灵彩、商品幻境、功法楼、藏卷阁、命宫、Canvas Agent 与掌教殿，并说明模型能力、任务恢复和账号数据的边界。</p>
+                    <p className="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base dark:text-stone-400">当前指南覆盖丹青台、洞天、灵彩、功法楼、藏卷阁、命宫、Canvas Agent 与掌教殿，并说明模型能力、任务恢复和账号数据的边界。</p>
 
                     <div className="relative mt-7 max-w-2xl">
                         <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
@@ -101,9 +99,6 @@ export default function DocsPage() {
                         </Link>
                         <Link to="/color-alchemy" className="inline-flex items-center gap-1.5 font-medium !text-stone-700 transition hover:!text-[#b44735] dark:!text-stone-300 dark:hover:!text-[#d8b36d]">
                             进入灵彩 <ChevronRight className="size-3.5" />
-                        </Link>
-                        <Link to="/product-lab" className="inline-flex items-center gap-1.5 font-medium !text-stone-700 transition hover:!text-[#b44735] dark:!text-stone-300 dark:hover:!text-[#d8b36d]">
-                            制作商品图 <ChevronRight className="size-3.5" />
                         </Link>
                     </div>
                 </div>

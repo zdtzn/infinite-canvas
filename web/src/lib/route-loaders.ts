@@ -15,7 +15,6 @@ export const routeLoaders = {
     "/docs": () => import("@/pages/docs"),
     "/admin/cultivation": () => import("@/pages/admin/cultivation"),
     "/image": () => import("@/pages/image"),
-    "/product-lab": () => import("@/pages/product-lab"),
     "/prompts": () => import("@/pages/prompts"),
     "/assets": () => import("@/pages/assets"),
     "/video": () => import("@/pages/video"),
@@ -46,7 +45,6 @@ const routeWarmupTargets: readonly RouteWarmupTarget[] = [
     { route: "/cultivation", delayMs: 1_500 },
     { route: "/image", delayMs: 1_800 },
     { route: "/color-alchemy", delayMs: 1_800 },
-    { route: "/product-lab", delayMs: 1_800 },
     { route: "/video", delayMs: 1_800 },
 ];
 

@@ -65,15 +65,6 @@ import {
     normalizePromptOptimizationInput,
     resolvePromptOptimizationTarget,
 } from "./lib/prompt-optimizer";
-import {
-    ProductAnalysisInputError,
-    buildGeminiProductAnalysisBody,
-    buildOpenAiProductAnalysisBody,
-    buildOpenAiResponsesProductAnalysisBody,
-    buildProductAnalysisMessages,
-    normalizeProductAnalysisInput,
-    normalizeProductAnalysisResult,
-} from "./lib/product-analysis";
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
@@ -95,7 +86,6 @@ import { createChatService, ChatError, type ChatAttachment, type ChatMessage } f
 import { AnnouncementError, createAnnouncementService, type AnnouncementInput } from "./modules/announcements/service";
 import { createColorAlchemyService, ColorAlchemyError } from "./modules/color-alchemy/service";
 import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
-import { createProductLabService, productOutputCapability, ProductLabError } from "./modules/product-lab/service";
 import { createDouQiLifeService, DouQiLifeError } from "./modules/dou-qi-life/service";
 import { buildDouQiLifeTurnPrompt, DOU_QI_LIFE_SYSTEM_PROMPT, parseDouQiLifeTurnResult } from "./modules/dou-qi-life/prompt";
 import type { ChannelModelRecord, ChannelRecord, GenerationHistoryKind, ImageJobImage, ImageJobInput, ImageJobOutput, StoredAsset, StoredImageJob, StoredImageReference, UserRecord } from "./types";
@@ -168,9 +158,6 @@ const PROMPT_OPTIMIZE_MODEL = String(process.env.PROMPT_OPTIMIZE_MODEL || "").tr
 const PROMPT_OPTIMIZE_ENV_LOCKED = Boolean(PROMPT_OPTIMIZE_CHANNEL_ID || PROMPT_OPTIMIZE_MODEL);
 const MAX_PROMPT_OPTIMIZE_JSON_BYTES = 64 * 1024;
 const MAX_PROMPT_OPTIMIZE_RESPONSE_BYTES = 512 * 1024;
-const MAX_PRODUCT_ANALYSIS_JSON_BYTES = 16 * 1024;
-const MAX_PRODUCT_ANALYSIS_RESPONSE_BYTES = 512 * 1024;
-const PRODUCT_ANALYSIS_RATE_LIMIT = Math.max(1, Math.min(30, positiveInt(process.env.PRODUCT_ANALYSIS_RATE_LIMIT, 6)));
 const MAX_CHAT_JSON_BYTES = 64 * 1024;
 const MAX_CHAT_IMPORT_JSON_BYTES = 512 * 1024;
 const MAX_CHAT_UPSTREAM_ERROR_BYTES = 256 * 1024;
@@ -233,7 +220,6 @@ for (const job of Object.values(state.jobs)) {
 }
 const cultivation = appDatabase.raw ? createCultivationService(appDatabase.raw) : null;
 const announcements = appDatabase.raw ? createAnnouncementService(appDatabase.raw) : null;
-const productLab = appDatabase.raw ? createProductLabService(appDatabase.raw) : null;
 const chat = appDatabase.raw
     ? createChatService(appDatabase.raw, {
           dailyLimit: CHAT_DAILY_LIMIT,
@@ -323,7 +309,6 @@ const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
     onChange: async (job) => {
         state.jobs[job.id] = job;
         appDatabase.saveJob(job);
-        await syncProductBatchJob(job);
         if (["succeeded", "failed", "canceled"].includes(job.status)) pruneTerminalJobs();
         if (job.status === "succeeded" && job.result?.recoveryPending) scheduleJobImageRecovery(job.id);
     },
@@ -331,7 +316,6 @@ const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
         if (!job.input.recoveryOnly) cultivation?.refundGeneration(job.id, "initial job persistence failed");
     },
 });
-const productBatchSyncExecutor = new KeyedSerialExecutor();
 
 for (const job of Object.values(state.jobs)) {
     if (job.status === "running") {
@@ -550,37 +534,6 @@ async function route(request: Request, requestId: string) {
             return saveColorAlchemyDocument(request, session, decodeRouteSegment(colorAlchemyDocumentMatch[1], "灵彩草稿 ID"));
         if (colorAlchemyDocumentMatch && request.method === "DELETE")
             return deleteColorAlchemyDocument(session, decodeRouteSegment(colorAlchemyDocumentMatch[1], "灵彩草稿 ID"));
-        if (url.pathname === "/api/product-lab/context" && request.method === "GET") return productLabContext(session);
-        if (url.pathname === "/api/product-lab/projects" && request.method === "GET") return listProductProjects(session);
-        if (url.pathname === "/api/product-lab/projects" && request.method === "POST") return createProductProject(request, session);
-        if (url.pathname === "/api/product-lab/generations" && request.method === "POST") return saveProductGeneration(request, session);
-        if (url.pathname === "/api/product-lab/batches" && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => createProductBatch(request, session));
-        if (url.pathname === "/api/product-lab/analyze" && request.method === "POST") {
-            enforceRateLimit(`${session.userId}:${clientIp(request)}:product-analysis`, PRODUCT_ANALYSIS_RATE_LIMIT);
-            return promptOptimizeSemaphore.run(request.signal, () => analyzeProductImage(request, session, requestId));
-        }
-        const productGenerationsMatch = url.pathname.match(/^\/api\/product-lab\/projects\/([^/]+)\/generations$/);
-        if (productGenerationsMatch && request.method === "GET")
-            return listProductGenerations(session, decodeRouteSegment(productGenerationsMatch[1], "商品项目 ID"));
-        const productBatchesMatch = url.pathname.match(/^\/api\/product-lab\/projects\/([^/]+)\/batches$/);
-        if (productBatchesMatch && request.method === "GET")
-            return listProductBatches(session, decodeRouteSegment(productBatchesMatch[1], "商品项目 ID"));
-        const productBatchMatch = url.pathname.match(/^\/api\/product-lab\/batches\/([^/]+)$/);
-        if (productBatchMatch && request.method === "GET")
-            return getProductBatch(session, decodeRouteSegment(productBatchMatch[1], "商品批任务 ID"));
-        const productBatchCancelMatch = url.pathname.match(/^\/api\/product-lab\/batches\/([^/]+)\/cancel$/);
-        if (productBatchCancelMatch && request.method === "POST")
-            return cancelProductBatch(session, decodeRouteSegment(productBatchCancelMatch[1], "商品批任务 ID"));
-        const productBatchRetryMatch = url.pathname.match(/^\/api\/product-lab\/batches\/([^/]+)\/retry-failed$/);
-        if (productBatchRetryMatch && request.method === "POST")
-            return heavyRequestSemaphore.run(request.signal, () => retryProductBatch(request, session, decodeRouteSegment(productBatchRetryMatch[1], "商品批任务 ID")));
-        const productProjectMatch = url.pathname.match(/^\/api\/product-lab\/projects\/([^/]+)$/);
-        if (productProjectMatch && request.method === "GET")
-            return getProductProject(session, decodeRouteSegment(productProjectMatch[1], "商品项目 ID"));
-        if (productProjectMatch && request.method === "PATCH")
-            return updateProductProject(request, session, decodeRouteSegment(productProjectMatch[1], "商品项目 ID"));
-        if (productProjectMatch && request.method === "DELETE")
-            return deleteProductProject(session, decodeRouteSegment(productProjectMatch[1], "商品项目 ID"));
         if (url.pathname === "/api/library-assets" && request.method === "GET") return listLibraryAssets(url, session);
         if (url.pathname === "/api/library-assets" && request.method === "PUT") return heavyRequestSemaphore.run(request.signal, () => replaceLibraryAssets(request, session));
         const libraryAssetMatch = url.pathname.match(/^\/api\/library-assets\/([^/]+)$/);
@@ -2544,523 +2497,6 @@ function chatFailureMessage(status: number | undefined, error: unknown) {
     return detail || "此次问道未能得到回应，请稍后再试";
 }
 
-function requireProductLab() {
-    if (!productLab) throw new HttpError(503, "SQLite 迁移尚未完成，商品幻境暂不可用");
-    return productLab;
-}
-
-function productLabContext(session: SessionPayload) {
-    const service = requireProductLab();
-    requireCultivation().ensureUser(session.userId, Boolean(state.users[session.userId]?.admin));
-    return json({
-        analysisAvailable: Boolean(resolvePromptOptimizationTarget(listPlatformChannels(state), promptOptimizationPreferredTarget())),
-        templates: service.listTemplates("pinduoduo"),
-    });
-}
-
-function listProductProjects(session: SessionPayload) {
-    return json({
-        items: requireProductLab().listProjects(session.userId).map((project) => publicProductProject(session.userId, project)),
-    });
-}
-
-function getProductProject(session: SessionPayload, projectId: string) {
-    const project = requireProductLab().getProject(session.userId, projectId);
-    if (!project) throw new HttpError(404, "商品项目不存在");
-    return json({ project: publicProductProject(session.userId, project) });
-}
-
-async function createProductProject(request: Request, session: SessionPayload) {
-    const service = requireProductLab();
-    requireProductCapability(session.userId, "product.basic");
-    const body = await readJson<unknown>(request, 32 * 1024);
-    const project = service.createProject(session.userId, body as Parameters<typeof service.createProject>[1]);
-    return json({ project: publicProductProject(session.userId, project) }, 201);
-}
-
-async function updateProductProject(request: Request, session: SessionPayload, projectId: string) {
-    const service = requireProductLab();
-    const body = await readJson<unknown>(request, 384 * 1024);
-    const project = service.updateProject(session.userId, projectId, body as Parameters<typeof service.updateProject>[2]);
-    return json({ project: publicProductProject(session.userId, project) });
-}
-
-function deleteProductProject(session: SessionPayload, projectId: string) {
-    requireProductLab().deleteProject(session.userId, projectId);
-    return new Response(null, { status: 204 });
-}
-
-function listProductGenerations(session: SessionPayload, projectId: string) {
-    const service = requireProductLab();
-    if (!service.getProject(session.userId, projectId)) throw new HttpError(404, "商品项目不存在");
-    return json({
-        items: service.listGenerations(session.userId, projectId).map((generation) => publicProductGeneration(session.userId, generation)),
-    });
-}
-
-function listProductBatches(session: SessionPayload, projectId: string) {
-    const service = requireProductLab();
-    if (!service.getProject(session.userId, projectId)) throw new HttpError(404, "商品项目不存在");
-    return json({ items: service.listBatches(session.userId, projectId).map((batch) => publicProductBatch(session.userId, batch)) });
-}
-
-async function saveProductGeneration(request: Request, session: SessionPayload) {
-    const service = requireProductLab();
-    const body = await readJson<Record<string, unknown>>(request, 64 * 1024);
-    const capabilityKey = productOutputCapability(body.outputKind);
-    if (!capabilityKey) throw new HttpError(400, "商品输出类型无效");
-    requireProductCapability(session.userId, capabilityKey);
-    const generation = service.saveGeneration(session.userId, body as Parameters<typeof service.saveGeneration>[1]);
-    return json({ generation: publicProductGeneration(session.userId, generation) }, 201);
-}
-
-async function createProductBatch(request: Request, session: SessionPayload) {
-    const service = requireProductLab();
-    const body = await readJson<Record<string, unknown>>(request, 512 * 1024);
-    const projectId = String(body.projectId || "").trim();
-    const project = service.getProject(session.userId, projectId);
-    if (!project) throw new HttpError(404, "商品项目不存在");
-    const rawItems = Array.isArray(body.items) ? body.items : [];
-    if (!rawItems.length) throw new HttpError(400, "请至少选择一幅商品画卷");
-    const itemCapabilities = rawItems.map((rawItem) => {
-        if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) throw new HttpError(400, "商品批任务项目无效");
-        const capability = productOutputCapability((rawItem as Record<string, unknown>).outputKind);
-        if (!capability) throw new HttpError(400, "商品输出类型无效");
-        return capability;
-    });
-    for (const capability of new Set(itemCapabilities)) requireProductCapability(session.userId, capability);
-    if (rawItems.length > 1) requireProductCapability(session.userId, "product.batch_generate");
-
-    const batchId = String(body.batchId || "").trim();
-    if (!/^[A-Za-z0-9_-]{8,80}$/.test(batchId)) throw new HttpError(400, "商品批任务 ID 无效");
-    const existing = service.getBatch(session.userId, batchId);
-    if (existing) {
-        if (existing.batch.projectId !== project.id) throw new HttpError(409, "商品批任务已经绑定到其他项目");
-        return json({ ...publicProductBatch(session.userId, existing), recovered: true }, 200);
-    }
-
-    const channelId = String(body.channelId || "").trim();
-    const model = String(body.model || "").trim();
-    if (!channelId || !model) throw new HttpError(400, "请先选择生图渠道和模型");
-    platformChannel(channelId);
-    assertPlatformModelAllowed(channelId, model, "image");
-    const preparedItems = rawItems.map((rawItem, index) => {
-        if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) throw new HttpError(400, "商品批任务项目无效");
-        const item = rawItem as Record<string, unknown>;
-        const generationId = String(item.generationId || randomUUID());
-        const idempotencyKey = `product-batch-${batchId}-${generationId}`;
-        const jobId = createHash("sha256").update(`${session.userId}:${idempotencyKey}`).digest("hex");
-        return {
-            itemId: String(item.itemId || `${batchId}-${index}`),
-            generationId,
-            jobId,
-            idempotencyKey,
-            outputKind: item.outputKind,
-            pageIndex: item.pageIndex,
-            title: item.title,
-            prompt: item.prompt,
-            aspectRatio: item.aspectRatio,
-            size: item.size,
-            quality: item.quality,
-            imageQuality: item.imageQuality,
-            imageOutputFormat: item.imageOutputFormat,
-            background: item.background,
-        };
-    });
-    service.createBatch(session.userId, { batchId, projectId, items: preparedItems });
-    for (const item of preparedItems) {
-        try {
-            const jobRequest = new Request("http://product-batch.internal/api/jobs/images", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "Idempotency-Key": String(item.idempotencyKey) },
-                body: JSON.stringify({
-                    channelId,
-                    model,
-                    prompt: item.prompt,
-                    count: 1,
-                    quality: item.quality ?? body.quality,
-                    imageQuality: item.imageQuality ?? body.imageQuality,
-                    imageOutputFormat: item.imageOutputFormat ?? body.imageOutputFormat,
-                    size: item.size ?? item.aspectRatio ?? body.size,
-                    background: item.background ?? body.background,
-                    references: [{ assetKey: project.sourceAssetKey }],
-                    source: {
-                        route: "/product-lab-batch",
-                        projectId,
-                        productBatchId: batchId,
-                        productGenerationId: String(item.generationId),
-                        label: `商品幻境 · ${String(item.title || "商品画卷")}`,
-                    },
-                }),
-            });
-            await createImageJob(jobRequest, session);
-        } catch (error) {
-            service.updateBatchItem(session.userId, {
-                batchId,
-                generationId: String(item.generationId),
-                jobId: String(item.jobId),
-                status: "failed",
-                error: error instanceof Error ? error.message : "商品画卷提交失败",
-            });
-        }
-    }
-    return json(publicProductBatch(session.userId, service.getBatch(session.userId, batchId)!), 202);
-}
-
-function getProductBatch(session: SessionPayload, batchId: string) {
-    const batch = requireProductLab().getBatch(session.userId, batchId);
-    if (!batch) throw new HttpError(404, "商品批任务不存在");
-    return json(publicProductBatch(session.userId, batch));
-}
-
-async function cancelProductBatch(session: SessionPayload, batchId: string) {
-    const service = requireProductLab();
-    const current = service.getBatch(session.userId, batchId);
-    if (!current) throw new HttpError(404, "商品批任务不存在");
-    const jobIds = current.items
-        .filter((item) => ["pending", "running"].includes(item.status) && item.jobId)
-        .map((item) => item.jobId as string);
-    const canceled = service.cancelBatch(session.userId, batchId);
-    await Promise.all(
-        jobIds.map(async (jobId) => {
-            if (!imageQueue.get(jobId)) return;
-            try {
-                await deleteJob(new URL(`http://product-batch.internal/api/jobs/${encodeURIComponent(jobId)}`), session, jobId);
-            } catch (error) {
-                console.warn(
-                    JSON.stringify({
-                        event: "product_batch_cancel_job_failed",
-                        batchId,
-                        jobId,
-                        message: error instanceof Error ? error.message : "unknown error",
-                    }),
-                );
-            }
-        }),
-    );
-    return json(publicProductBatch(session.userId, canceled));
-}
-
-async function retryProductBatch(request: Request, session: SessionPayload, batchId: string) {
-    const service = requireProductLab();
-    const current = service.getBatch(session.userId, batchId);
-    if (!current) throw new HttpError(404, "商品批任务不存在");
-    const project = service.getProject(session.userId, current.batch.projectId);
-    if (!project) throw new HttpError(404, "商品项目不存在");
-    const body = await readJson<Record<string, unknown>>(request, 512 * 1024);
-    const channelId = String(body.channelId || "").trim();
-    const model = String(body.model || "").trim();
-    if (!channelId || !model) throw new HttpError(400, "请先选择生图渠道和模型");
-    platformChannel(channelId);
-    assertPlatformModelAllowed(channelId, model, "image");
-
-    const failedItems = current.items.filter((item) => item.status === "failed");
-    if (!failedItems.length) throw new HttpError(409, "当前批次没有可重试的失败画卷");
-    const rawItems = Array.isArray(body.items) ? body.items : [];
-    const selectedItems = rawItems.length
-        ? rawItems.map((rawItem) => {
-              if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) throw new HttpError(400, "商品批任务重试项目无效");
-              const input = rawItem as Record<string, unknown>;
-              const generationId = String(input.generationId || "").trim();
-              const currentItem = failedItems.find((item) => item.generationId === generationId);
-              if (!currentItem) throw new HttpError(409, "只能重试当前批次中失败的商品画卷");
-              return { currentItem, input };
-          })
-        : failedItems.map((currentItem) => ({ currentItem, input: {} as Record<string, unknown> }));
-    const capabilities = selectedItems.map(({ currentItem }) => productOutputCapability(currentItem.generation.outputKind));
-    for (const capability of new Set(capabilities)) if (capability) requireProductCapability(session.userId, capability);
-    const retryNonce = randomUUID();
-    const preparedItems = selectedItems.map(({ currentItem, input }, index) => {
-        const generationId = currentItem.generationId;
-        const idempotencyKey = `product-batch-${batchId}-${generationId}-retry-${retryNonce}-${index}`;
-        const jobId = createHash("sha256").update(`${session.userId}:${idempotencyKey}`).digest("hex");
-        return {
-            generationId,
-            jobId,
-            idempotencyKey,
-            outputKind: currentItem.generation.outputKind,
-            pageIndex: currentItem.generation.pageIndex,
-            title: input.title,
-            prompt: currentItem.generation.prompt,
-            aspectRatio: input.aspectRatio,
-            size: input.size,
-            quality: input.quality ?? body.quality,
-            imageQuality: input.imageQuality ?? body.imageQuality,
-            imageOutputFormat: input.imageOutputFormat ?? body.imageOutputFormat,
-            background: input.background ?? body.background,
-        };
-    });
-    service.retryFailedBatch(session.userId, {
-        batchId,
-        items: preparedItems.map((item) => ({ generationId: item.generationId, jobId: item.jobId })),
-    });
-    for (const item of preparedItems) {
-        try {
-            const jobRequest = new Request("http://product-batch.internal/api/jobs/images", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "Idempotency-Key": item.idempotencyKey },
-                body: JSON.stringify({
-                    channelId,
-                    model,
-                    prompt: item.prompt,
-                    count: 1,
-                    quality: item.quality,
-                    imageQuality: item.imageQuality,
-                    imageOutputFormat: item.imageOutputFormat,
-                    size: item.size ?? item.aspectRatio,
-                    background: item.background,
-                    references: [{ assetKey: project.sourceAssetKey }],
-                    source: {
-                        route: "/product-lab-batch",
-                        projectId: project.id,
-                        productBatchId: batchId,
-                        productGenerationId: item.generationId,
-                        label: `商品幻境 · ${String(item.title || "商品画卷")}`,
-                    },
-                }),
-            });
-            await createImageJob(jobRequest, session);
-        } catch (error) {
-            service.updateBatchItem(session.userId, {
-                batchId,
-                generationId: item.generationId,
-                jobId: item.jobId,
-                status: "failed",
-                error: error instanceof Error ? error.message : "商品画卷重试提交失败",
-            });
-        }
-    }
-    return json(publicProductBatch(session.userId, service.getBatch(session.userId, batchId)!), 202);
-}
-
-async function analyzeProductImage(request: Request, session: SessionPayload, requestId: string) {
-    const service = requireProductLab();
-    requireProductCapability(session.userId, "product.analysis");
-    let input;
-    try {
-        input = normalizeProductAnalysisInput(await readJson<unknown>(request, MAX_PRODUCT_ANALYSIS_JSON_BYTES));
-    } catch (error) {
-        if (error instanceof ProductAnalysisInputError) throw new HttpError(400, error.message);
-        throw error;
-    }
-
-    const asset = ownedAsset(session.userId, input.assetKey);
-    if (!isAllowedImageMimeType(asset.mimeType)) throw new HttpError(400, "商品图片格式无效");
-    const path = existingAssetPath(session.userId, asset.key);
-    if (!path) throw new HttpError(404, "商品图片文件不存在");
-    const bytes = readFileSync(path);
-    if (!bytes.byteLength || bytes.byteLength > MAX_IMAGE_ASSET_BYTES) throw new HttpError(413, "商品图片不能超过 16 MB");
-
-    const target = resolvePromptOptimizationTarget(listPlatformChannels(state), promptOptimizationPreferredTarget());
-    if (!target) throw new HttpError(503, "管理员尚未配置可用的商品分析模型");
-    const channel = platformChannel(target.channelId);
-    assertPlatformModelAllowed(target.channelId, target.model, "text");
-    const apiKey = decryptChannelApiKey(channel);
-    const messages = buildProductAnalysisMessages(input);
-    const image = {
-        mimeType: asset.mimeType,
-        base64: bytes.toString("base64"),
-        dataUrl: `data:${asset.mimeType};base64,${bytes.toString("base64")}`,
-    };
-    const startedAt = Date.now();
-    let response: Response | undefined;
-    let payload: unknown;
-
-    try {
-        if (channel.apiFormat === "gemini") {
-            const model = target.model.replace(/^models\//, "");
-            response = await upstreamFetch(
-                buildUpstreamUrl(channel.baseUrl, "gemini", `/models/${encodeURIComponent(model)}:generateContent`),
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "x-goog-api-key": apiKey,
-                        "Idempotency-Key": upstreamIdempotencyKey(requestId),
-                    },
-                    body: JSON.stringify(buildGeminiProductAnalysisBody(messages, image)),
-                    signal: request.signal,
-                },
-                false,
-                PROMPT_OPTIMIZE_TIMEOUT_MS,
-            );
-        } else {
-            response = await upstreamFetch(
-                buildUpstreamUrl(channel.baseUrl, "openai", "/responses"),
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${apiKey}`,
-                        "Idempotency-Key": upstreamIdempotencyKey(requestId),
-                    },
-                    body: JSON.stringify(buildOpenAiResponsesProductAnalysisBody(target.model, messages, image)),
-                    signal: request.signal,
-                },
-                false,
-                PROMPT_OPTIMIZE_TIMEOUT_MS,
-            );
-            if ([404, 405, 501].includes(response.status)) {
-                await response.body?.cancel();
-                response = await upstreamFetch(
-                    buildUpstreamUrl(channel.baseUrl, "openai", "/chat/completions"),
-                    {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            Authorization: `Bearer ${apiKey}`,
-                            "Idempotency-Key": upstreamIdempotencyKey(requestId, 1),
-                        },
-                        body: JSON.stringify(buildOpenAiProductAnalysisBody(target.model, messages, image)),
-                        signal: request.signal,
-                    },
-                    false,
-                    PROMPT_OPTIMIZE_TIMEOUT_MS,
-                );
-            }
-        }
-        payload = await parseUpstreamJson(response, {
-            maxBytes: MAX_PRODUCT_ANALYSIS_RESPONSE_BYTES,
-            tooLargeMessage: "商品分析响应过大",
-        });
-    } catch (error) {
-        if (request.signal.aborted) throw error;
-        if (error instanceof HttpError && error.status === 504) throw new HttpError(504, "商品分析响应超时，请稍后重试");
-        throw new HttpError(502, productAnalysisFailureMessage(response?.status, error));
-    }
-
-    let analysis;
-    try {
-        analysis = normalizeProductAnalysisResult(extractPromptOptimizationText(payload));
-    } catch (error) {
-        throw new HttpError(502, error instanceof Error ? error.message : "文本模型未返回可用的商品分析结果");
-    }
-
-    console.info(
-        JSON.stringify({
-            event: "product_analyzed",
-            requestId,
-            userId: session.userId,
-            channelId: target.channelId,
-            model: target.model,
-            assetKey: input.assetKey,
-            durationMs: Date.now() - startedAt,
-        }),
-    );
-    return json({ analysis }, 200, { "Cache-Control": "no-store" });
-}
-
-function productAnalysisFailureMessage(status: number | undefined, error: unknown) {
-    if (status === 400 || status === 422) return "当前文本模型无法识别这张商品图片，请更换清晰原图后重试";
-    if (status === 401 || status === 403) return "商品分析渠道鉴权失败，请联系管理员检查文本模型配置";
-    if (status === 404 || status === 405 || status === 501) return "当前文本渠道不支持商品图片分析，请联系管理员更换多模态文本模型";
-    if (status === 429) return "商品分析渠道繁忙或额度不足，请稍后重试";
-    if (status && status >= 500) return `商品分析上游服务暂不可用（${status}），请稍后重试`;
-    const detail = error instanceof Error ? error.message.replace(/\s+/g, " ").trim().slice(0, 180) : "";
-    return detail ? `商品分析暂不可用：${detail}` : "商品分析暂不可用，请稍后重试";
-}
-
-function requireProductCapability(userId: string, capabilityKey: string) {
-    if (!capabilityKey || !requireProductLab().hasCapability(userId, capabilityKey))
-        throw new HttpError(403, "当前境界尚不足以开启此项商品法则。继续修炼即可掌握。");
-}
-
-function publicProductProject(userId: string, project: ReturnType<ReturnType<typeof createProductLabService>["createProject"]>) {
-    const asset = state.assets[assetKey(userId, project.sourceAssetKey)];
-    return {
-        ...project,
-        sourceUrl: asset ? assetUrl(asset.key, asset.createdAt) : "",
-    };
-}
-
-function publicProductGeneration(userId: string, generation: ReturnType<ReturnType<typeof createProductLabService>["saveGeneration"]>) {
-    const asset = generation.assetKey ? state.assets[assetKey(userId, generation.assetKey)] : undefined;
-    return {
-        ...generation,
-        assetUrl: asset ? assetUrl(asset.key, asset.createdAt) : "",
-    };
-}
-
-function publicProductBatch(userId: string, details: ReturnType<ReturnType<typeof createProductLabService>["getBatch"]>) {
-    if (!details) throw new HttpError(404, "商品批任务不存在");
-    return {
-        batch: details.batch,
-        items: details.items.map((item) => ({
-            id: item.id,
-            batchId: item.batchId,
-            generationId: item.generationId,
-            jobId: item.jobId,
-            status: item.status,
-            error: item.error,
-            generation: publicProductGeneration(userId, item.generation),
-        })),
-    };
-}
-
-async function syncProductBatchJob(job: StoredImageJob) {
-    const source = job.input.source;
-    if (!source?.productBatchId || !source.productGenerationId || !productLab) return;
-    const userId = job.input.userId;
-    await productBatchSyncExecutor.run(`${userId}:${source.productBatchId}:${source.productGenerationId}`, () => syncProductBatchJobLocked(job));
-}
-
-async function syncProductBatchJobLocked(job: StoredImageJob) {
-    const source = job.input.source;
-    if (!source?.productBatchId || !source.productGenerationId || !productLab) return;
-    const userId = job.input.userId;
-    const details = productLab.getBatch(userId, source.productBatchId);
-    const item = details?.items.find((candidate) => candidate.generationId === source.productGenerationId);
-    if (!item || (item.jobId && item.jobId !== job.id)) return;
-    if (["succeeded", "failed", "canceled"].includes(item.status)) return;
-    if (job.status === "queued") return;
-    if (job.status === "running") {
-        productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "running" });
-        return;
-    }
-    if (job.status === "failed" || job.status === "canceled") {
-        productLab.updateBatchItem(userId, {
-            batchId: source.productBatchId,
-            generationId: source.productGenerationId,
-            jobId: job.id,
-            status: job.status,
-            error: job.error || (job.status === "canceled" ? "商品画卷已取消" : "商品画卷生成失败"),
-        });
-        return;
-    }
-    const image = job.result?.images[0];
-    if (!image) {
-        productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "failed", error: "生图任务没有返回图片" });
-        return;
-    }
-    let storedImage = image;
-    if (storedImage.persisted === false) {
-        try {
-            storedImage = await persistJobImage(userId, job.id, storedImage.dataUrl, storedImage.durationMs, new AbortController().signal, { downloadAttempts: 1 });
-            job.result = { ...job.result!, images: [storedImage, ...job.result!.images.slice(1)], recoveryPending: job.result!.images.length > 1 };
-            state.jobs[job.id] = job;
-            appDatabase.saveJob(job);
-        } catch (error) {
-            productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "failed", error: error instanceof Error ? error.message : "结果图片无法保存" });
-            return;
-        }
-    }
-    const path = jobImagePath(userId, job.id, storedImage.dataUrl);
-    if (!path || !existsSync(path)) {
-        productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "failed", error: "结果图片文件不存在" });
-        return;
-    }
-    try {
-        const { asset } = await storeAssetForUser(userId, `image:${randomUUID()}`, Bun.file(path), storedImage.mimeType);
-        const updated = productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "succeeded", assetKey: asset.key });
-        if (updated.batch.status === "completed") {
-            const project = productLab.getProject(userId, source.projectId || "");
-            if (project && project.status !== "completed") productLab.updateProject(userId, project.id, { status: "completed" });
-        }
-    } catch (error) {
-        productLab.updateBatchItem(userId, { batchId: source.productBatchId, generationId: source.productGenerationId, jobId: job.id, status: "failed", error: error instanceof Error ? error.message : "商品结果保存失败" });
-    }
-}
-
 function jobImagePath(userId: string, jobId: string, dataUrl: string) {
     const match = dataUrl.match(/^\/api\/job-files\/([^/?#]+)\/([^/?#]+)$/);
     if (!match) return "";
@@ -3414,7 +2850,7 @@ async function deleteAsset(session: SessionPayload, key: string) {
 async function removeAsset(session: SessionPayload, key: string, allowReferenced = false) {
     return withAssetMutation(async () => {
         const asset = ownedAsset(session.userId, key);
-        if (!allowReferenced && collectLiveAssetReferences().has(assetReferenceId(asset.userId, asset.key))) throw new HttpError(409, "素材仍被画布、商品项目、藏卷阁或生成历史使用，请先移除相关引用");
+        if (!allowReferenced && collectLiveAssetReferences().has(assetReferenceId(asset.userId, asset.key))) throw new HttpError(409, "素材仍被画布、历史商品项目、藏卷阁或生成历史使用，请先移除相关引用");
         removeStoredAssetRecord(asset);
     });
 }
@@ -3514,7 +2950,7 @@ function collectLiveAssetReferences() {
             ...appDatabase.loadAssetLibrary(userId).items.map((item) => item.payload),
             ...appDatabase.loadGenerationHistory(userId, "image").map((item) => item.payload),
             ...appDatabase.loadGenerationHistory(userId, "video").map((item) => item.payload),
-            ...(productLab?.assetReferenceRoots(userId) || []),
+            ...legacyProductAssetReferenceRoots(userId),
             ...(chat?.assetReferenceRoots(userId) || []),
             ...(colorAlchemy?.assetReferenceRoots(userId) || []),
         ];
@@ -3522,6 +2958,19 @@ function collectLiveAssetReferences() {
         for (const id of collectReferencedAssetIds(userId, roots, avatarKey)) referenced.add(id);
     }
     return referenced;
+}
+
+function legacyProductAssetReferenceRoots(userId: string) {
+    if (!appDatabase.raw) return [];
+    try {
+        return appDatabase.raw
+            .query(
+                "SELECT source_asset_key AS storageKey FROM product_projects WHERE user_id = ? UNION ALL SELECT asset_key AS storageKey FROM product_generations WHERE user_id = ? AND asset_key IS NOT NULL",
+            )
+            .all(userId, userId) as Array<{ storageKey: string }>;
+    } catch {
+        return [];
+    }
 }
 
 function pruneUntrackedAssetFiles(now: number) {
@@ -4972,9 +4421,9 @@ function withSecurityHeaders(response: Response, requestId: string, request: Req
 
 function errorResponse(error: unknown, requestId: string) {
     const status =
-        error instanceof HttpError || error instanceof CultivationError || error instanceof AnnouncementError || error instanceof ProductLabError || error instanceof ChatError || error instanceof ColorAlchemyError || error instanceof DouQiLifeError
+        error instanceof HttpError || error instanceof CultivationError || error instanceof AnnouncementError || error instanceof ChatError || error instanceof ColorAlchemyError || error instanceof DouQiLifeError
             ? error.status
-            : error instanceof AssetLibraryInputError || error instanceof GenerationHistoryInputError || error instanceof ProductAnalysisInputError
+            : error instanceof AssetLibraryInputError || error instanceof GenerationHistoryInputError
               ? 400
               : error instanceof DOMException && error.name === "TimeoutError"
                 ? 504
@@ -4983,13 +4432,11 @@ function errorResponse(error: unknown, requestId: string) {
         error instanceof HttpError ||
         error instanceof CultivationError ||
         error instanceof AnnouncementError ||
-        error instanceof ProductLabError ||
         error instanceof ChatError ||
         error instanceof ColorAlchemyError ||
         error instanceof DouQiLifeError ||
         error instanceof AssetLibraryInputError ||
         error instanceof GenerationHistoryInputError ||
-        error instanceof ProductAnalysisInputError ||
         (error instanceof DOMException && error.name === "TimeoutError");
     const message = publicError && error instanceof Error ? error.message : status === 500 ? "服务器内部错误" : "请求处理失败";
     console.error(
@@ -5551,17 +4998,13 @@ function normalizeJobSource(value: unknown): ImageJobInput["source"] {
     const projectId = optionalString(input.projectId);
     const nodeId = optionalString(input.nodeId);
     const label = optionalString(input.label);
-    const productBatchId = optionalString(input.productBatchId);
-    const productGenerationId = optionalString(input.productGenerationId);
-    const fields = [route, projectId, nodeId, label, productBatchId, productGenerationId];
+    const fields = [route, projectId, nodeId, label];
     if (fields.some((item) => item && item.length > 180)) throw new HttpError(400, "任务来源信息过长");
     return {
         ...(route ? { route } : {}),
         ...(projectId ? { projectId } : {}),
         ...(nodeId ? { nodeId } : {}),
         ...(label ? { label } : {}),
-        ...(productBatchId ? { productBatchId } : {}),
-        ...(productGenerationId ? { productGenerationId } : {}),
     };
 }
 

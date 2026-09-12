@@ -22,5 +22,4 @@ test("bounds idle warmup while leaving all routes available on intent", () => {
     const order = buildRouteWarmupOrder("/").map((target) => target.route);
     assert.equal(order.length, 3);
     assert.ok(!order.includes("/image"));
-    assert.ok(!order.includes("/product-lab"));
 });

@@ -4,7 +4,6 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   DEFAULT_CAPABILITIES,
   DEFAULT_REALMS,
-  PRODUCT_CAPABILITIES,
   requiredXp,
   stageLabel,
 } from "./defaults";
@@ -1170,14 +1169,6 @@ function seedDefaults(database: Database) {
           insertGrant.run(stage.id, key);
       if (stage.stageOrder >= 37)
         for (const key of ["feature.lora", "feature.controlnet"])
-          insertGrant.run(stage.id, key);
-      for (const [
-        key,
-        _label,
-        _category,
-        minimumRealmSortOrder,
-      ] of PRODUCT_CAPABILITIES)
-        if (stage.realmSortOrder >= minimumRealmSortOrder)
           insertGrant.run(stage.id, key);
     }
     const insertSetting = database.query(

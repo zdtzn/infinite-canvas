@@ -1,6 +1,6 @@
 import type { PromotionPolicy } from "./policy";
 
-export const PRODUCT_CAPABILITIES = [
+export const LEGACY_PRODUCT_CAPABILITIES = [
   ["product.basic", "基础商品视觉", "product", 1],
   ["product.main_image", "商品主图", "product", 2],
   ["product.analysis", "商品分析", "product", 3],
@@ -20,9 +20,6 @@ export const DEFAULT_CAPABILITIES = [
   ["model.gpt-image", "GPT Image", "model"],
   ["model.gemini", "Gemini", "model"],
   ["model.flux", "Flux", "model"],
-  ...PRODUCT_CAPABILITIES.map(
-    ([key, label, category]) => [key, label, category] as const,
-  ),
 ] as const;
 
 type RealmSeed = {

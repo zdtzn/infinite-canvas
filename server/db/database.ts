@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { extname, join } from "node:path";
 
 import { decodeImageDataUrl } from "../lib/image-mime";
-import { PRODUCT_CAPABILITIES } from "../modules/cultivation/defaults";
+import { LEGACY_PRODUCT_CAPABILITIES } from "../modules/cultivation/defaults";
 import type {
   GenerationHistoryKind,
   ImageJobInput,
@@ -521,7 +521,7 @@ function runMigrations(database: Database) {
         label,
         category,
         minimumRealmSortOrder,
-      ] of PRODUCT_CAPABILITIES) {
+      ] of LEGACY_PRODUCT_CAPABILITIES) {
         insertCapability.run(key, label, category);
         insertGrant.run(key, minimumRealmSortOrder);
       }
@@ -1081,6 +1081,21 @@ function runMigrations(database: Database) {
         .query(
           "INSERT INTO schema_migrations(version, applied_at) VALUES (24, ?)",
         )
+        .run(Date.now());
+    })();
+
+  if (
+    !database.query("SELECT 1 FROM schema_migrations WHERE version = 25").get()
+  )
+    database.transaction(() => {
+      database
+        .query("DELETE FROM stage_capabilities WHERE capability_key LIKE 'product.%'")
+        .run();
+      database
+        .query("DELETE FROM capability_definitions WHERE capability_key LIKE 'product.%'")
+        .run();
+      database
+        .query("INSERT INTO schema_migrations(version, applied_at) VALUES (25, ?)")
         .run(Date.now());
     })();
 }
