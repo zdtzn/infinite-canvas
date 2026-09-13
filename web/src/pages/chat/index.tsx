@@ -909,7 +909,7 @@ export default function ChatPage() {
                     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-stone-200/80 bg-white/55 p-4 dark:border-white/10 dark:bg-black/10">
                         {detailLoading ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
                         {!detailLoading && !messages.length ? <WelcomeEmpty preset={activePreset} /> : null}
-                        <div className="mx-auto max-w-[880px] space-y-7">
+                        <div className="space-y-6">
                             {messages.map((item, index) => (
                                 <ChatBubble key={item.id} item={item} isLatest={index === messages.length - 1} onAction={handleMessageAction} />
                             ))}
@@ -1208,8 +1208,8 @@ const ChatBubble = memo(function ChatBubble({ item, isLatest, onAction }: { item
         <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
             <div
                 className={cn(
-                    "min-w-0 max-w-full overflow-hidden rounded-xl px-4 py-4 text-base leading-7 tracking-normal shadow-sm sm:max-w-[90%] sm:px-5 sm:leading-8",
-                    isUser ? "bg-stone-900 text-white dark:bg-[#f2dfb0] dark:text-stone-950" : "border border-stone-200 bg-white text-stone-800 dark:border-white/10 dark:bg-white/[0.04] dark:text-[#f5efe3]",
+                    "min-w-0 max-w-full overflow-hidden rounded-xl px-4 py-4 text-base leading-7 tracking-normal shadow-sm sm:px-5",
+                    isUser ? "sm:max-w-[90%] bg-stone-900 text-white dark:bg-[#f2dfb0] dark:text-stone-950" : "w-full border border-stone-200 bg-white text-stone-800 dark:border-white/10 dark:bg-white/[0.04] dark:text-[#f5efe3]",
                 )}
             >
                 {item.attachments.length ? (
