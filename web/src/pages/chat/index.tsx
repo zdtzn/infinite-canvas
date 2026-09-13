@@ -909,7 +909,7 @@ export default function ChatPage() {
                     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-stone-200/80 bg-white/55 p-4 dark:border-white/10 dark:bg-black/10">
                         {detailLoading ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
                         {!detailLoading && !messages.length ? <WelcomeEmpty preset={activePreset} /> : null}
-                        <div className="space-y-5">
+                        <div className="mx-auto max-w-[880px] space-y-7">
                             {messages.map((item, index) => (
                                 <ChatBubble key={item.id} item={item} isLatest={index === messages.length - 1} onAction={handleMessageAction} />
                             ))}
@@ -995,6 +995,7 @@ export default function ChatPage() {
                             </Dropdown>
                             <Input.TextArea
                                 value={draft}
+                                className="!text-base !leading-7"
                                 onChange={(event) => setDraft(event.target.value)}
                                 autoSize={{ minRows: 1, maxRows: 6 }}
                                 maxLength={20_000}
@@ -1207,7 +1208,7 @@ const ChatBubble = memo(function ChatBubble({ item, isLatest, onAction }: { item
         <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
             <div
                 className={cn(
-                    "min-w-0 max-w-[82%] overflow-hidden rounded-xl px-4 py-3 text-sm leading-6 shadow-sm",
+                    "min-w-0 max-w-full overflow-hidden rounded-xl px-4 py-4 text-base leading-7 tracking-normal shadow-sm sm:max-w-[90%] sm:px-5 sm:leading-8",
                     isUser ? "bg-stone-900 text-white dark:bg-[#f2dfb0] dark:text-stone-950" : "border border-stone-200 bg-white text-stone-800 dark:border-white/10 dark:bg-white/[0.04] dark:text-[#f5efe3]",
                 )}
             >
@@ -1226,14 +1227,14 @@ const ChatBubble = memo(function ChatBubble({ item, isLatest, onAction }: { item
                     <div className="whitespace-pre-wrap break-words">正在推演...</div>
                 ) : markdownContent ? (
                     <Suspense fallback={<div className="whitespace-pre-wrap break-words">{markdownContent}</div>}>
-                        <ChatMarkdown className="agent-streamdown" content={markdownContent} />
+                        <ChatMarkdown className="agent-streamdown chat-prose" content={markdownContent} />
                     </Suspense>
                 ) : (
                     <div className="whitespace-pre-wrap break-words">{item.status === "failed" ? item.error || "未返回内容" : "未返回内容"}</div>
                 )}
                 {item.status === "failed" ? <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">{item.error || "本次问道未能完成"}</div> : null}
                 {copyValue || menuItems.length ? (
-                    <div className={cn("mt-1.5 flex items-center gap-1", isUser ? "justify-end" : "justify-start")}>
+                    <div className={cn("mt-3 flex items-center gap-1", isUser ? "justify-end" : "justify-start")}>
                         {copyValue ? (
                             <Tooltip title="复制文字">
                                 <Button

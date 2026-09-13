@@ -1,0 +1,52 @@
+.agent-streamdown.chat-prose {
+    font-size: inherit;
+    line-height: inherit;
+    letter-spacing: 0;
+}
+
+.chat-prose p {
+    margin-block: 0.9em;
+}
+
+.chat-prose :is(h1, h2, h3, h4, h5, h6) {
+    margin-block: 1.4em 0.6em;
+    font-weight: 600;
+    line-height: 1.5;
+    letter-spacing: 0;
+}
+
+.chat-prose h1 { font-size: 1.4em; }
+.chat-prose h2 { font-size: 1.25em; }
+.chat-prose h3 { font-size: 1.125em; }
+.chat-prose :is(h4, h5, h6) { font-size: 1em; }
+
+.chat-prose :is(ul, ol) {
+    margin-block: 0.9em;
+    padding-left: 1.5em;
+}
+
+.chat-prose li + li { margin-top: 0.45em; }
+.chat-prose li > p { margin-block: 0.4em; }
+.chat-prose li > :is(ul, ol) { margin-block: 0.4em; }
+
+.chat-prose blockquote {
+    margin-block: 1em;
+    padding-block: 0.25em;
+    padding-inline: 1em;
+}
+
+.chat-prose :is(th, td) {
+    padding: 0.65em 0.9em;
+    line-height: 1.75;
+}
+
+.chat-prose [data-streamdown="code-block"] { margin-block: 1em; }
+
+.chat-prose [data-streamdown="code-block-body"] {
+    padding: 1rem 2.5rem 1rem 1rem;
+    font-size: 0.875rem;
+    line-height: 1.75;
+}
+
+.chat-prose > :first-child { margin-top: 0; }
+.chat-prose > :last-child { margin-bottom: 0; }
