@@ -1,5 +1,5 @@
 import { ArrowRight } from "lucide-react";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Image } from "antd";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -13,14 +13,13 @@ import { promptImageCandidates, promptOriginalUrl } from "@/components/prompts/p
 import { SpecularButton } from "@/components/ui/specular-button";
 import { fetchHomepagePromptCovers, type PromptCover } from "@/services/api/prompts";
 import { preloadRoute } from "@/lib/route-loaders";
-import { lazyRoute } from "@/lib/lazy-route";
+import ImperialRealm from "@/features/cultivation/imperial-realm";
 import { cn } from "@/lib/utils";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 
 import { HOMEPAGE_PROMPT_ROTATION_MS, HOMEPAGE_PROMPT_WINDOW_SIZE, promptIdentity, selectHomepagePromptShowcase, selectHomepagePromptWindow } from "./showcase";
 import "./home.css";
-
-const ImperialRealm = lazyRoute(() => import("@/features/cultivation/imperial-realm"));
+import { observeHomepageShowcase } from "./loading";
 
 /**
  * 山门 · 首页(方案B「山海境」开场版)
@@ -37,7 +36,9 @@ export default function IndexPage() {
     const [showcaseHovered, setShowcaseHovered] = useState(false);
     const [previewIndex, setPreviewIndex] = useState(0);
     const [previewOpen, setPreviewOpen] = useState(false);
-    const { data: cultivation } = useCultivationProfile();
+    const { data: cultivation, isLoading: loadingRealm } = useCultivationProfile();
+    const showcaseRef = useRef<HTMLElement>(null);
+    const [showcaseEnabled, setShowcaseEnabled] = useState(false);
     const { isImperialMode } = useImperialMode();
     const promptSourcesRevision = usePromptSourceStore((state) => state.sources.map((source) => [source.id, source.name, source.githubUrl, source.enabled ? "1" : "0", source.script].join("\n")).join("\n---\n"));
     const visiblePromptShowcase = useMemo(() => selectHomepagePromptWindow(promptShowcase, showcaseOffset), [promptShowcase, showcaseOffset]);
@@ -54,7 +55,10 @@ export default function IndexPage() {
     );
     const previewItems = useMemo(() => promptShowcase.map((item) => ({ src: promptOriginalUrl(item.coverUrl), alt: item.title, decoding: "async" as const, referrerPolicy: "no-referrer" as const })), [promptShowcase]);
 
+    useEffect(() => observeHomepageShowcase(showcaseRef.current, () => setShowcaseEnabled(true)), []);
+
     useEffect(() => {
+        if (!showcaseEnabled) return;
         let active = true;
         setShowcaseStatus("loading");
         setPromptShowcase([]);
@@ -72,7 +76,7 @@ export default function IndexPage() {
         return () => {
             active = false;
         };
-    }, [promptSourcesRevision, showcaseRetry]);
+    }, [promptSourcesRevision, showcaseRetry, showcaseEnabled]);
 
     useEffect(() => {
         if (showcaseHovered || promptShowcase.length <= HOMEPAGE_PROMPT_WINDOW_SIZE) return;
@@ -86,20 +90,10 @@ export default function IndexPage() {
         <main className={cn("home-page h-full overflow-y-auto bg-background text-foreground", isImperialMode && "home-page--imperial")}>
             {/* ── 山门 · 全屏 Hero ─────────────────────────── */}
             {isImperialMode ? (
-                <Suspense
-                    fallback={
-                        <section className="flex h-[calc(100svh-116px)] flex-col items-center justify-center gap-8 bg-[#1c2425]">
-                            <h1 className="font-brush text-6xl text-[#f2f3ec]">无限画布</h1>
-                            <Link to="/canvas?mode=new" className="p-3 text-[#e7d2a6]">
-                                起笔 · 新建画布
-                            </Link>
-                        </section>
-                    }
-                >
-                    <ImperialRealm />
-                </Suspense>
+                <ImperialRealm />
             ) : (
                 <section className="shj-hero relative flex min-h-[calc(100dvh-3.5rem)] flex-col items-center justify-center overflow-hidden">
+                    {!loadingRealm && <img className="shj-hero-image" src="/images/hero-main.webp" alt="" aria-hidden="true" loading="eager" fetchPriority="high" decoding="async" />}
                     <div className="shj-hero-stars" aria-hidden />
                     <div className="shj-hero-mist" aria-hidden />
                     <LightRays
@@ -213,7 +207,7 @@ export default function IndexPage() {
             ) : null}
 
             {/* ── 功法精选 ───────────────────────────────── */}
-            <section className="home-showcase mx-auto max-w-6xl px-6 pb-24 pt-20">
+            <section ref={showcaseRef} className="home-showcase mx-auto max-w-6xl px-6 pb-24 pt-20">
                 <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
                     <div>
                         <h2 className="font-display text-3xl text-[#edede6] sm:text-4xl">功法精选</h2>
@@ -251,8 +245,19 @@ export default function IndexPage() {
                                 <>
                                     <p className="max-w-sm text-xs leading-6">{showcaseStatus === "error" ? "请稍后重试，也可以先进入功法楼浏览。" : "可以前往功法楼浏览提示词，或配置提示词来源。"}</p>
                                     <div className="flex items-center gap-5">
-                                        {showcaseStatus === "error" && <button type="button" onClick={() => setShowcaseRetry((value) => value + 1)} className="min-h-11 rounded-md border border-[#c9a86a]/40 px-5 text-[#e7d2a6] hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e7d2a6]">重新加载</button>}
-                                        <Link to="/prompts" className="inline-flex min-h-11 items-center gap-2 rounded text-[#e7d2a6] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e7d2a6]">前往功法楼<ArrowRight size={16} aria-hidden="true" /></Link>
+                                        {showcaseStatus === "error" && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowcaseRetry((value) => value + 1)}
+                                                className="min-h-11 rounded-md border border-[#c9a86a]/40 px-5 text-[#e7d2a6] hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e7d2a6]"
+                                            >
+                                                重新加载
+                                            </button>
+                                        )}
+                                        <Link to="/prompts" className="inline-flex min-h-11 items-center gap-2 rounded text-[#e7d2a6] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e7d2a6]">
+                                            前往功法楼
+                                            <ArrowRight size={16} aria-hidden="true" />
+                                        </Link>
                                     </div>
                                 </>
                             )}

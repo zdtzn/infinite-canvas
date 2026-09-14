@@ -1,6 +1,6 @@
 import { Search } from "lucide-react";
-import { type UIEvent, useEffect, useState } from "react";
-import { App, Empty, Input, Modal, Spin, Tag } from "antd";
+import { type UIEvent, useEffect, useRef, useState } from "react";
+import { App, Empty, Input, Modal, Select, Spin, Tag } from "antd";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { cn } from "@/lib/utils";
@@ -12,11 +12,13 @@ import { usePromptList } from "./use-prompt-list";
 export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boolean; onOpenChange: (open: boolean) => void; onSelect: (prompt: string) => void }) {
     const { message } = App.useApp();
     const [keyword, setKeyword] = useState("");
+    const [order, setOrder] = useState<"asc" | "desc">("asc");
+    const listRef = useRef<HTMLDivElement>(null);
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const [selectedCategory, setSelectedCategory] = useState(ALL_PROMPTS_OPTION);
     const [previewPrompt, setPreviewPrompt] = useState<Prompt | null>(null);
     const copyText = useCopyText();
-    const { query, items, tags: promptTags, categories: promptCategories } = usePromptList({ keyword, tags: selectedTags, category: selectedCategory, enabled: open });
+    const { query, items, tags: promptTags, categories: promptCategories } = usePromptList({ keyword, tags: selectedTags, category: selectedCategory, order, enabled: open });
     const toggleTag = (tag: string) => {
         if (tag === ALL_PROMPTS_OPTION) return setSelectedTags([]);
         setSelectedTags((items) => (items[0] === tag ? [] : [tag]));
@@ -37,8 +39,12 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
 
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {
         const target = event.currentTarget;
-        if (query.hasNextPage && !query.isFetchingNextPage && target.scrollTop + target.clientHeight >= target.scrollHeight - 160) void query.fetchNextPage();
+        if (query.hasNextPage && !query.isFetching && !query.isError && target.scrollTop + target.clientHeight >= target.scrollHeight - 160) void query.fetchNextPage();
     };
+
+    useEffect(() => {
+        if (listRef.current) listRef.current.scrollTop = 0;
+    }, [order, keyword, selectedCategory, selectedTags]);
 
     return (
         <>
@@ -58,8 +64,11 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
                         </div>
                     </aside>
                     <section className="flex min-h-0 min-w-0 flex-col">
-                        <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="按标题查询" />
-                        <div className="thin-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-2" data-canvas-no-zoom onScroll={handleListScroll} onWheelCapture={(event) => event.stopPropagation()}>
+                        <div className="flex flex-wrap gap-3">
+                            <Input size="large" aria-label="搜索提示词" className="min-w-40 flex-1" prefix={<Search className="size-4 text-stone-400" />} value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="按标题查询" />
+                            <Select size="large" aria-label="提示词排序" value={order} onChange={setOrder} className="w-44" options={[{ value: "asc", label: "来源顺序 · 升序" }, { value: "desc", label: "来源顺序 · 降序" }]} />
+                        </div>
+                        <div ref={listRef} className="thin-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-2" data-canvas-no-zoom onScroll={handleListScroll} onWheelCapture={(event) => event.stopPropagation()}>
                             {query.isLoading ? <div className="flex h-40 items-center justify-center"><Spin /></div> : null}
                             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                                 {items.map((item) => <PromptCard key={item.id} item={item} onOpen={() => setPreviewPrompt(item)} onCopy={() => setPreviewPrompt(item)} compact />)}

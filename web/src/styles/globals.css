@@ -1459,7 +1459,7 @@ html:not(.dark) .canvas-cinematic-wash {
     .shj-hero {
         position: relative;
         isolation: isolate;
-        background: #0b0b0f url("/images/hero-main.webp") center 58% / cover no-repeat;
+        background: #0b0b0f;
     }
 
     .shj-hero::before {
