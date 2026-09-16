@@ -28,7 +28,8 @@ export type PromptOptimizerAdminConfiguration = {
     effective: PromptOptimizerTarget | null;
     lockedByEnvironment: boolean;
 };
-export type ServerAssetLibrary = { initialized: boolean; items: Asset[]; page?: number; pageSize?: number; total?: number; hasMore?: boolean };
+export type AssetLibraryFacets = { categories: string[]; tags: string[]; uncategorized: number; total: number };
+export type ServerAssetLibrary = { initialized: boolean; items: Asset[]; page?: number; pageSize?: number; total?: number; hasMore?: boolean; facets?: AssetLibraryFacets };
 export type ServerJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durationMs: number; mimeType: string; width?: number; height?: number; persisted?: boolean; expiresAt?: string; recoveryUrl?: string };
 export type ServerJob = {
@@ -344,13 +345,15 @@ export async function deleteServerAsset(storageKey: string, expectedUserId?: str
     await serverRequest(`/api/assets/${encodeURIComponent(storageKey)}`, { method: "DELETE", expectedUserId });
 }
 
-export async function fetchServerAssetLibrary(expectedUserId?: string, options: { page?: number; pageSize?: number; keyword?: string; kind?: string; tag?: string; signal?: AbortSignal } = {}) {
+export async function fetchServerAssetLibrary(expectedUserId?: string, options: { page?: number; pageSize?: number; keyword?: string; kind?: string; category?: string; tags?: string[]; tag?: string; signal?: AbortSignal } = {}) {
     const params = new URLSearchParams();
     if (options.page) params.set("page", String(options.page));
     if (options.pageSize) params.set("pageSize", String(options.pageSize));
     if (options.keyword) params.set("keyword", options.keyword);
     if (options.kind) params.set("kind", options.kind);
     if (options.tag) params.set("tag", options.tag);
+    if (options.category !== undefined) params.set("category", options.category);
+    for (const tag of options.tags || []) params.append("tag", tag);
     const query = params.toString();
     return serverRequest<ServerAssetLibrary>(`/api/library-assets${query ? `?${query}` : ""}`, { timeoutMs: 20_000, expectedUserId, signal: options.signal });
 }

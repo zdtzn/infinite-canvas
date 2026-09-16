@@ -23,6 +23,7 @@ type AssetBase<T extends AssetKind> = {
     title: string;
     coverUrl: string;
     tags: string[];
+    category?: string;
     source?: string;
     note?: string;
     createdAt: string;
@@ -315,7 +316,8 @@ async function fetchAllServerAssets(userId: string, firstPage: Awaited<ReturnTyp
 
 function normalizeAssetRecord<T extends Asset>(asset: T): T {
     const source = normalizeAssetSource(asset.source);
-    return source === asset.source ? asset : ({ ...asset, source } as T);
+    const category = typeof asset.category === "string" ? asset.category.trim().slice(0, 80) || undefined : undefined;
+    return { ...asset, source, category };
 }
 
 async function prepareAssetForServer(asset: Asset, expectedUserId: string): Promise<Asset> {

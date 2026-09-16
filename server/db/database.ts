@@ -47,6 +47,7 @@ export type AppDatabase = {
       pageSize: number;
       keyword?: string;
       kind?: string;
+      category?: string;
       tags?: string[];
     },
   ): {
@@ -56,6 +57,12 @@ export type AppDatabase = {
     pageSize: number;
     total: number;
     hasMore: boolean;
+    facets: {
+      categories: string[];
+      tags: string[];
+      uncategorized: number;
+      total: number;
+    };
   };
   replaceAssetLibrary(userId: string, items: StoredLibraryAsset[]): void;
   upsertAssetLibraryItem(userId: string, item: StoredLibraryAsset): void;
@@ -1089,13 +1096,19 @@ function runMigrations(database: Database) {
   )
     database.transaction(() => {
       database
-        .query("DELETE FROM stage_capabilities WHERE capability_key LIKE 'product.%'")
+        .query(
+          "DELETE FROM stage_capabilities WHERE capability_key LIKE 'product.%'",
+        )
         .run();
       database
-        .query("DELETE FROM capability_definitions WHERE capability_key LIKE 'product.%'")
+        .query(
+          "DELETE FROM capability_definitions WHERE capability_key LIKE 'product.%'",
+        )
         .run();
       database
-        .query("INSERT INTO schema_migrations(version, applied_at) VALUES (25, ?)")
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (25, ?)",
+        )
         .run(Date.now());
     })();
 }
@@ -1310,8 +1323,16 @@ function sqliteStore(database: Database): AppDatabase {
         params.push(kind);
       }
       if (keyword) {
-        conditions.push("LOWER(payload_json) LIKE ?");
-        params.push(`%${keyword}%`);
+        conditions.push(
+          "INSTR(LOWER(COALESCE(json_extract(payload_json, '$.title'), '') || ' ' || COALESCE(json_extract(payload_json, '$.category'), '') || ' ' || COALESCE(json_extract(payload_json, '$.source'), '') || ' ' || COALESCE(json_extract(payload_json, '$.note'), '') || ' ' || COALESCE((SELECT group_concat(value, ' ') FROM json_each(json_extract(payload_json, '$.tags'))), '') || ' ' || COALESCE(json_extract(payload_json, '$.data.content'), json_extract(payload_json, '$.data.mimeType'), '')), ?) > 0",
+        );
+        params.push(keyword);
+      }
+      if (options.category !== undefined) {
+        conditions.push(
+          "TRIM(COALESCE(json_extract(payload_json, '$.category'), '')) = ?",
+        );
+        params.push(options.category.trim());
       }
       for (const tag of tags) {
         conditions.push(
@@ -1333,15 +1354,38 @@ function sqliteStore(database: Database): AppDatabase {
       const offset = (page - 1) * pageSize;
       const rows = database
         .query(
-          `SELECT asset_id, payload_json, updated_at FROM asset_library_items WHERE ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+          `SELECT asset_id, payload_json, updated_at FROM asset_library_items WHERE ${where} ORDER BY updated_at DESC, asset_id ASC LIMIT ? OFFSET ?`,
         )
         .all(...params, pageSize, offset) as Array<{
         asset_id: string;
         payload_json: string;
         updated_at: number;
       }>;
+      const categories = database
+        .query(
+          "SELECT DISTINCT TRIM(COALESCE(json_extract(payload_json, '$.category'), '')) AS value FROM asset_library_items WHERE user_id = ?",
+        )
+        .all(userId) as { value: string }[];
+      const facetTags = database
+        .query(
+          "SELECT DISTINCT CAST(value AS TEXT) AS value FROM asset_library_items, json_each(json_extract(payload_json, '$.tags')) WHERE user_id = ? AND value != ''",
+        )
+        .all(userId) as { value: string }[];
+      const counts = database
+        .query(
+          "SELECT COUNT(*) AS total, COALESCE(SUM(TRIM(COALESCE(json_extract(payload_json, '$.category'), '')) = ''), 0) AS uncategorized FROM asset_library_items WHERE user_id = ?",
+        )
+        .get(userId) as { total: number; uncategorized: number };
       return {
         initialized,
+        facets: {
+          categories: categories
+            .map((x) => x.value)
+            .filter(Boolean)
+            .sort(),
+          tags: facetTags.map((x) => x.value).sort(),
+          ...counts,
+        },
         items: rows.map((item) => ({
           id: item.asset_id,
           payload: JSON.parse(item.payload_json),

@@ -7,18 +7,21 @@ import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { assetCardImageUrl, assetNeedsThumbnail, assetOriginalImageUrl } from "@/lib/asset-image";
 import { createThumbnailFromImageElement, deleteStoredImages, fitImageWithinEdge, uploadImage } from "@/services/image-storage";
-import { fetchServerAssetLibrary, type ServerAssetLibrary } from "@/services/server-api";
+import { fetchServerAssetLibrary, upsertServerAssetLibraryItem, type ServerAssetLibrary } from "@/services/server-api";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { DeferredImage } from "@/components/ui/deferred-image";
 import { readAssetDownload } from "./asset-download";
+import { assetFacets, matchesAssetFilters } from "@/lib/asset-filters";
+import { AssetFilterControls } from "@/components/assets/asset-filter-controls";
 
 type AssetFormValues = {
     kind: AssetKind;
     title: string;
     coverUrl: string;
     tags: string[];
+    category?: string;
     source?: string;
     note?: string;
     content?: string;
@@ -100,10 +103,13 @@ export default function AssetsPage() {
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
     const [kindFilter, setKindFilter] = useState<AssetKind | "all">("all");
+    const [category, setCategory] = useState<string | undefined>();
+    const [filterTags, setFilterTags] = useState<string[]>([]);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
     const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
     const [isAssetOpen, setIsAssetOpen] = useState(false);
+    const [savingAsset, setSavingAsset] = useState(false);
     const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
     const [deletingAsset, setDeletingAsset] = useState<Asset | null>(null);
     const [formKind, setFormKind] = useState<AssetKind>("text");
@@ -119,13 +125,9 @@ export default function AssetsPage() {
     const useRemoteLibrary = PUBLIC_MODE && Boolean(userId);
 
     const filteredAssets = useMemo(() => {
-        const query = keyword.trim().toLowerCase();
-        return validAssets.filter((asset) => {
-            if (kindFilter !== "all" && asset.kind !== kindFilter) return false;
-            if (!query) return true;
-            return assetSearchText(asset).includes(query);
-        });
-    }, [validAssets, keyword, kindFilter]);
+        return validAssets.filter((asset) => matchesAssetFilters(asset, { keyword, kind: kindFilter, category, tags: filterTags }));
+    }, [validAssets, keyword, kindFilter, category, filterTags]);
+    const localFacets = useMemo(() => assetFacets(validAssets), [validAssets]);
 
     const visibleAssets = useMemo(() => {
         const start = (page - 1) * pageSize;
@@ -146,6 +148,8 @@ export default function AssetsPage() {
             pageSize,
             keyword,
             kind: kindFilter,
+            category,
+            tags: filterTags,
             signal: controller.signal,
         })
             .then((result) => {
@@ -164,7 +168,7 @@ export default function AssetsPage() {
             active = false;
             controller.abort();
         };
-    }, [kindFilter, keyword, page, pageSize, remoteRefresh, useRemoteLibrary, userId]);
+    }, [kindFilter, keyword, category, filterTags, page, pageSize, remoteRefresh, useRemoteLibrary, userId]);
 
     const serverLibraryReady = Boolean(useRemoteLibrary && remoteLibrary?.initialized);
     const remoteBlocked = useRemoteLibrary && remoteStatus !== "ready";
@@ -218,7 +222,7 @@ export default function AssetsPage() {
         setEditingAsset(null);
         setImageDraft(null);
         setFormKind("text");
-        form.setFieldsValue({ kind: "text", title: "", coverUrl: "", tags: [], source: "手动添加", note: "", content: "" });
+        form.setFieldsValue({ kind: "text", title: "", coverUrl: "", tags: [], category: "", source: "手动添加", note: "", content: "" });
         setIsAssetOpen(true);
     };
 
@@ -231,6 +235,7 @@ export default function AssetsPage() {
             title: asset.title,
             coverUrl: asset.coverUrl,
             tags: asset.tags || [],
+            category: asset.category || "",
             source: asset.source,
             note: asset.note,
             content: asset.kind === "text" ? asset.data.content : "",
@@ -244,26 +249,52 @@ export default function AssetsPage() {
             title: values.title.trim(),
             coverUrl: values.coverUrl?.trim() || (values.kind === "image" && imageDraft ? imageDraft.dataUrl : ""),
             tags: values.tags || [],
+            category: (values.category || "").trim().slice(0, 80),
             source: values.source?.trim(),
             note: values.note?.trim(),
             metadata: editingAsset?.metadata || { source: "manual" },
         };
 
+        const now = new Date().toISOString();
+        const identity = { id: editingAsset?.id || crypto.randomUUID(), createdAt: editingAsset?.createdAt || now, updatedAt: now };
+        let asset: Asset;
         if (values.kind === "text") {
-            const asset = { ...base, kind: "text" as const, data: { content: (values.content || "").trim() } };
-            editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
+            asset = { ...base, ...identity, kind: "text", data: { content: (values.content || "").trim() } };
+        } else if (values.kind === "video" && editingAsset?.kind === "video") {
+            asset = { ...base, ...identity, kind: "video", data: editingAsset.data };
         } else {
             if (!imageDraft) {
                 message.error("请选择图片文件");
                 return;
             }
-            const asset = { ...base, kind: "image" as const, data: imageDraft };
-            editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
+            asset = { ...base, ...identity, kind: "image", data: imageDraft };
         }
 
-        message.success(editingAsset ? "资产已更新" : "资产已保存");
-        window.setTimeout(() => setRemoteRefresh((value) => value + 1), 250);
-        setIsAssetOpen(false);
+        setSavingAsset(true);
+        try {
+            if (useRemoteLibrary) {
+                // A server page may contain records absent from the local 60-item cache.
+                // Save that complete record directly and wait for confirmation before refreshing.
+                const result = await upsertServerAssetLibraryItem(asset, userId);
+                if ((useUserStore.getState().user?.id || "") !== userId) return;
+                useAssetStore.setState((state) =>
+                    state.ownerUserId !== userId
+                        ? {}
+                        : {
+                              assets: [result.item, ...state.assets.filter((item) => item.id !== result.item.id)],
+                          },
+                );
+            } else {
+                editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
+            }
+            message.success(editingAsset ? "资产已更新" : "资产已保存");
+            setRemoteRefresh((value) => value + 1);
+            setIsAssetOpen(false);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "资产保存失败，请重试");
+        } finally {
+            setSavingAsset(false);
+        }
     };
 
     const readCoverFile = async (file?: File) => {
@@ -412,6 +443,18 @@ export default function AssetsPage() {
                             ))}
                         </div>
                     </div>
+                    <div className="mt-4">
+                        <AssetFilterControls
+                            facets={useRemoteLibrary ? remoteLibrary?.facets || { categories: [], tags: [], total: 0, uncategorized: 0 } : localFacets}
+                            category={category}
+                            tags={filterTags}
+                            onChange={(nextCategory, nextTags) => {
+                                setCategory(nextCategory);
+                                setFilterTags(nextTags);
+                                setPage(1);
+                            }}
+                        />
+                    </div>
                     <hr className="shj-gold-hairline mt-6" />
                 </div>
 
@@ -486,7 +529,8 @@ export default function AssetsPage() {
                 centered
                 styles={{ body: { maxHeight: "calc(100dvh - 180px)", overflowX: "hidden", overflowY: "auto" } }}
                 onCancel={() => setIsAssetOpen(false)}
-                onOk={() => void saveAsset()}
+                confirmLoading={savingAsset}
+                onOk={() => void saveAsset().catch(() => undefined)}
                 okText="保存"
                 cancelText="取消"
                 destroyOnHidden
@@ -512,6 +556,9 @@ export default function AssetsPage() {
                                     上传
                                 </Button>
                             </Space.Compact>
+                        </Form.Item>
+                        <Form.Item name="category" label="分类">
+                            <Input maxLength={80} placeholder="如角色、场景、产品；留空为未分类" />
                         </Form.Item>
                         <Form.Item name="tags" label="标签">
                             <Select mode="tags" tokenSeparators={[",", "，"]} placeholder="输入标签后回车" />

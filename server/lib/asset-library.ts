@@ -14,8 +14,12 @@ export function normalizeAssetLibrary(
   if (!Array.isArray(input))
     throw new AssetLibraryInputError("资产目录格式无效");
   if (input.length > MAX_LIBRARY_ITEMS)
-    throw new AssetLibraryInputError(`资产目录最多保存 ${MAX_LIBRARY_ITEMS} 项`);
-  return input.map((item) => normalizeAssetLibraryItem(item, undefined, ownedAsset));
+    throw new AssetLibraryInputError(
+      `资产目录最多保存 ${MAX_LIBRARY_ITEMS} 项`,
+    );
+  return input.map((item) =>
+    normalizeAssetLibraryItem(item, undefined, ownedAsset),
+  );
 }
 
 export function normalizeAssetLibraryItem(
@@ -41,13 +45,18 @@ export function normalizeAssetLibraryItem(
   const payload: Record<string, unknown> = {
     id,
     kind,
-    title: String(source.title || "未命名资产").trim().slice(0, 200) || "未命名资产",
+    title:
+      String(source.title || "未命名资产")
+        .trim()
+        .slice(0, 200) || "未命名资产",
     coverUrl: kind === "text" ? normalizeCoverUrl(source.coverUrl) : "",
     tags: normalizeTags(source.tags),
     createdAt,
     updatedAt,
   };
   const assetSource = optionalString(source.source, 120);
+  const category = optionalString(source.category, 80);
+  if (category) payload.category = category;
   const note = optionalString(source.note, 2_000);
   if (assetSource) payload.source = assetSource;
   if (note) payload.note = note;
@@ -71,9 +80,13 @@ export function normalizeAssetLibraryItem(
       throw new AssetLibraryInputError("资产文件不是图片");
     if (kind === "video" && !stored.mimeType.startsWith("video/"))
       throw new AssetLibraryInputError("资产文件不是视频");
-    const thumbnailKey = kind === "image" ? String(content.thumbnailKey || "").trim() : "";
+    const thumbnailKey =
+      kind === "image" ? String(content.thumbnailKey || "").trim() : "";
     const thumbnail = thumbnailKey ? ownedAsset(thumbnailKey) : undefined;
-    if (thumbnailKey && (!thumbnail || !thumbnail.mimeType.startsWith("image/")))
+    if (
+      thumbnailKey &&
+      (!thumbnail || !thumbnail.mimeType.startsWith("image/"))
+    )
       throw new AssetLibraryInputError("资产缩略图不存在或不属于当前用户");
     const media = {
       storageKey,
@@ -82,7 +95,10 @@ export function normalizeAssetLibraryItem(
       bytes: stored.bytes,
       mimeType: stored.mimeType,
     };
-    payload.data = kind === "image" ? { ...media, ...(thumbnailKey ? { thumbnailKey } : {}), dataUrl: "" } : { ...media, url: "" };
+    payload.data =
+      kind === "image"
+        ? { ...media, ...(thumbnailKey ? { thumbnailKey } : {}), dataUrl: "" }
+        : { ...media, url: "" };
   }
 
   return {
@@ -97,14 +113,22 @@ export function publicAssetLibraryPayload(
   ownedAsset: (storageKey: string) => StoredAsset | undefined,
   assetUrl: (storageKey: string, version?: number) => string,
 ) {
-  if (payload.kind !== "image" || !payload.data || typeof payload.data !== "object" || Array.isArray(payload.data)) return payload;
+  if (
+    payload.kind !== "image" ||
+    !payload.data ||
+    typeof payload.data !== "object" ||
+    Array.isArray(payload.data)
+  )
+    return payload;
   const data = payload.data as Record<string, unknown>;
   const storageKey = String(data.storageKey || "").trim();
   const thumbnailKey = String(data.thumbnailKey || "").trim();
   const original = storageKey ? ownedAsset(storageKey) : undefined;
   const thumbnail = thumbnailKey ? ownedAsset(thumbnailKey) : undefined;
   const dataUrl = original ? assetUrl(original.key, original.createdAt) : "";
-  const thumbnailUrl = thumbnail ? assetUrl(thumbnail.key, thumbnail.createdAt) : "";
+  const thumbnailUrl = thumbnail
+    ? assetUrl(thumbnail.key, thumbnail.createdAt)
+    : "";
   return {
     ...payload,
     coverUrl: thumbnailUrl || dataUrl,
@@ -122,21 +146,32 @@ function normalizeTags(input: unknown) {
     new Set(
       input
         .slice(0, 30)
-        .map((tag) => String(tag || "").trim().slice(0, 50))
+        .map((tag) =>
+          String(tag || "")
+            .trim()
+            .slice(0, 50),
+        )
         .filter(Boolean),
     ),
   );
 }
 
 function normalizeCoverUrl(input: unknown) {
-  const value = String(input || "").trim().slice(0, 2_048);
-  if (!value || /^(?:javascript|vbscript):/i.test(value) || value.startsWith("data:"))
+  const value = String(input || "")
+    .trim()
+    .slice(0, 2_048);
+  if (
+    !value ||
+    /^(?:javascript|vbscript):/i.test(value) ||
+    value.startsWith("data:")
+  )
     return "";
   return value;
 }
 
 function normalizeMetadata(input: unknown) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    return undefined;
   const json = JSON.stringify(input);
   if (json.length > MAX_METADATA_JSON)
     throw new AssetLibraryInputError("资产扩展信息过大");
@@ -144,12 +179,16 @@ function normalizeMetadata(input: unknown) {
 }
 
 function optionalString(input: unknown, maxLength: number) {
-  return String(input || "").trim().slice(0, maxLength);
+  return String(input || "")
+    .trim()
+    .slice(0, maxLength);
 }
 
 function normalizeDate(input: unknown, fallback: string) {
   const value = String(input || "");
-  return Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : fallback;
+  return Number.isFinite(Date.parse(value))
+    ? new Date(value).toISOString()
+    : fallback;
 }
 
 function positiveNumber(input: unknown) {

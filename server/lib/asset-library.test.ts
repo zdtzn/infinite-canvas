@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./asset-library";
+import {
+  AssetLibraryInputError,
+  normalizeAssetLibrary,
+  normalizeAssetLibraryItem,
+  publicAssetLibraryPayload,
+} from "./asset-library";
 import type { StoredAsset } from "../types";
 
 const image: StoredAsset = {
@@ -20,6 +25,26 @@ const thumbnail: StoredAsset = {
 };
 
 describe("asset library validation", () => {
+  test("preserves optional categories through legacy import and updates", () => {
+    const legacy = {
+      id: "legacy",
+      kind: "text",
+      tags: ["参考"],
+      data: { content: "旧内容" },
+    };
+    const normalize = (item: unknown) =>
+      normalizeAssetLibraryItem(item, undefined, () => undefined).payload;
+    expect(normalize(legacy).category).toBeUndefined();
+    expect(normalize({ ...legacy, category: "  " }).category).toBeUndefined();
+    const saved = normalize({ ...legacy, category: " 人像 " });
+    expect(saved.category).toBe("人像");
+    expect(normalize(JSON.parse(JSON.stringify(saved)))).toMatchObject({
+      category: "人像",
+      tags: ["参考"],
+      data: legacy.data,
+    });
+    expect(normalize({ ...saved, category: "" }).category).toBeUndefined();
+  });
   test("normalizes user-owned image metadata without persisting browser URLs", () => {
     const item = normalizeAssetLibraryItem(
       {
@@ -38,7 +63,12 @@ describe("asset library validation", () => {
         },
       },
       "asset-one",
-      (key) => (key === image.key ? image : key === thumbnail.key ? thumbnail : undefined),
+      (key) =>
+        key === image.key
+          ? image
+          : key === thumbnail.key
+            ? thumbnail
+            : undefined,
     );
 
     expect(item.payload).toMatchObject({
@@ -123,12 +153,22 @@ describe("asset library validation", () => {
         },
       },
       "asset-one",
-      (key) => (key === image.key ? image : key === thumbnail.key ? thumbnail : undefined),
+      (key) =>
+        key === image.key
+          ? image
+          : key === thumbnail.key
+            ? thumbnail
+            : undefined,
     ).payload;
 
     const presented = publicAssetLibraryPayload(
       payload,
-      (key) => (key === image.key ? image : key === thumbnail.key ? thumbnail : undefined),
+      (key) =>
+        key === image.key
+          ? image
+          : key === thumbnail.key
+            ? thumbnail
+            : undefined,
       (key, version) => `/api/assets/${key}?v=${version}`,
     );
 

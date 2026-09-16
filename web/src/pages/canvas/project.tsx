@@ -11,12 +11,15 @@ import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from
 import { useUserStore } from "@/stores/use-user-store";
 import { CanvasSelectionToolbar } from "@/components/canvas/canvas-selection-toolbar";
 import { createThumbnailFromImageElement, deleteStoredImages, fitImageWithinEdge, uploadImage } from "@/services/image-storage";
-import { uploadMediaFile } from "@/services/file-storage";
+import { deleteStoredMedia, uploadMediaFile } from "@/services/file-storage";
+import { applyCameraPrompt, normalizeCameraSettings } from "@/lib/canvas/canvas-camera";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { collectMovableCanvasNodeIds } from "@/lib/canvas/canvas-interaction";
+import { canvasGroupShortcut } from "@/lib/canvas/canvas-shortcuts";
+import { mediaResultPosition } from "@/lib/canvas/media-result-position";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
@@ -130,6 +133,8 @@ const CanvasNodeSplitDialog = lazyRoute(() => import("@/components/canvas/canvas
 const CanvasNodeUpscaleDialog = lazyRoute(() => import("@/components/canvas/canvas-node-upscale-dialog").then(({ CanvasNodeUpscaleDialog: Component }) => ({ default: Component })));
 const CanvasNodeAngleDialog = lazyRoute(() => import("@/components/canvas/canvas-node-angle-dialog").then(({ CanvasNodeAngleDialog: Component }) => ({ default: Component })));
 const CanvasNodeLightingDialog = lazyRoute(() => import("@/components/canvas/canvas-node-lighting-dialog").then(({ CanvasNodeLightingDialog: Component }) => ({ default: Component })));
+const CanvasCameraDialog = lazyRoute(() => import("@/components/canvas/canvas-camera-dialog").then(({ CanvasCameraDialog: Component }) => ({ default: Component })));
+const CanvasMediaToolsDialog = lazyRoute(() => import("@/components/canvas/canvas-media-tools-dialog").then(({ CanvasMediaToolsDialog: Component }) => ({ default: Component })));
 const AssetPickerModal = lazyRoute(() => import("@/components/canvas/asset-picker-modal").then(({ AssetPickerModal: Component }) => ({ default: Component })));
 
 // 内置节点注册到统一注册表(模块加载时执行一次)
@@ -246,6 +251,21 @@ function InfiniteCanvasPage() {
     const [searchParams] = useSearchParams();
     const projectId = params.id || "";
     const projectLock = useCanvasProjectLock(projectId);
+    const toolUserId = useUserStore((state) => state.user?.id || "");
+    const toolSessionRef = useRef({ projectId, userId: toolUserId, canEdit: projectLock.canEdit, active: true });
+    toolSessionRef.current = { projectId, userId: toolUserId, canEdit: projectLock.canEdit, active: true };
+    useEffect(() => {
+        toolSessionRef.current.active = true;
+        return () => {
+            toolSessionRef.current.active = false;
+        };
+    }, []);
+    const [cameraNodeId, setCameraNodeId] = useState<string | null>(null);
+    const [mediaNodeId, setMediaNodeId] = useState<string | null>(null);
+    useEffect(() => {
+        setCameraNodeId(null);
+        setMediaNodeId(null);
+    }, [projectId, toolUserId]);
     const localAgentConnected = useAgentStore((state) => state.connected);
     const localAgentActivity = useAgentStore((state) => state.activity);
     const localAgentEnabled = useAgentStore((state) => state.enabled);
@@ -907,6 +927,8 @@ function InfiniteCanvasPage() {
         setContextMenu(null);
         setHistoryState({ canUndo: true, canRedo: false });
     };
+    const selectionGroupActionRef = useRef(changeSelectionGroup);
+    selectionGroupActionRef.current = changeSelectionGroup;
     const allSelectedLocked = selectedNodes.length > 0 && selectedNodes.every((node) => Boolean(node.metadata?.locked));
     const allSelectedHidden = selectedNodes.length > 0 && selectedNodes.every((node) => Boolean(node.metadata?.hidden));
     const activeNodeId = hasMultipleSelectedNodes ? null : hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
@@ -2008,12 +2030,20 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.defaultPrevented || event.isComposing || Array.from(document.querySelectorAll(".ant-modal-wrap,[role='dialog']")).some((element) => element.getClientRects().length > 0)) return;
             const target = event.target instanceof Element ? event.target : null;
             if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]"))
                 return;
 
             const key = event.key.toLowerCase();
             const isModifierShortcut = event.metaKey || event.ctrlKey;
+            const groupAction = canvasGroupShortcut(event);
+            if (groupAction) {
+                event.preventDefault();
+                if (!toolSessionRef.current.canEdit) return;
+                selectionGroupActionRef.current(groupAction === "ungroup");
+                return;
+            }
 
             if (isModifierShortcut && key === "c" && window.getSelection()?.toString()) return;
 
@@ -2957,7 +2987,7 @@ function InfiniteCanvasPage() {
             const generationContext = await hydrateNodeGenerationContext(
                 buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
             );
-            const effectivePrompt = generationContext.prompt.trim();
+            const effectivePrompt = applyCameraPrompt(generationContext.prompt.trim(), sourceNode?.metadata?.camera, mode);
             if (runController.signal.aborted) {
                 finishGenerationRequest(nodeId, runController);
                 setRunningNodeId(null);
@@ -2990,6 +3020,7 @@ function InfiniteCanvasPage() {
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = {
                         ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages),
+                        camera: normalizeCameraSettings(sourceNode?.metadata?.camera),
                         derivedFromNodeId: nodeId,
                         variantGroupId: nodeId,
                     };
@@ -3173,6 +3204,7 @@ function InfiniteCanvasPage() {
                         height: isEmptyVideoNode ? sourceNode.height : spec.height,
                         metadata: {
                             prompt: effectivePrompt,
+                            camera: normalizeCameraSettings(sourceNode?.metadata?.camera),
                             status: NODE_STATUS_LOADING,
                             model: generationConfig.model,
                             size: generationConfig.size,
@@ -3372,7 +3404,8 @@ function InfiniteCanvasPage() {
             }
 
             const context = hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, sourceNode.metadata?.prompt || node.metadata?.prompt || ""));
-            const prompt = (savedImageMetadata?.prompt || context?.prompt || "").trim();
+            const retryMode = node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Audio ? "audio" : node.type === CanvasNodeType.Video ? "video" : "image";
+            const prompt = applyCameraPrompt((savedImageMetadata?.prompt || context?.prompt || "").trim(), node.metadata?.camera || sourceNode.metadata?.camera, retryMode);
             if (!prompt) {
                 message.warning("找不到提示词，无法重试");
                 return;
@@ -3632,6 +3665,65 @@ function InfiniteCanvasPage() {
     // CanvasNode 是 React.memo,但只要这些 prop 每次渲染都是新引用,memo 就失效,
     // 导致点击/悬停/移动视角时全部节点跟着重渲染(markdown 尤其明显)。全部 useCallback 后,
     // 未变化的节点不再重渲染。依赖里的 map/handler 均已 memo 化,纯交互时保持稳定。
+    const cameraNode = cameraNodeId ? nodeById.get(cameraNodeId) : undefined;
+    const mediaToolNode = mediaNodeId ? nodeById.get(mediaNodeId) : undefined;
+    const contextToolNode = contextMenu?.type === "node" ? nodeById.get(contextMenu.nodeId) : undefined;
+    const insertMediaToolResult = async (file: File, kind: "image" | "audio", signal: AbortSignal) => {
+        const source = mediaToolNode;
+        const session = { ...toolSessionRef.current };
+        const assertCurrent = () => {
+            signal.throwIfAborted();
+            const current = source && nodesRef.current.find((node) => node.id === source.id);
+            const latest = toolSessionRef.current;
+            if (
+                !latest.active ||
+                !latest.canEdit ||
+                latest.projectId !== session.projectId ||
+                latest.userId !== session.userId ||
+                (useUserStore.getState().user?.id || "") !== session.userId ||
+                !current ||
+                current.metadata?.locked ||
+                current.metadata?.content !== source?.metadata?.content ||
+                current.metadata?.storageKey !== source?.metadata?.storageKey
+            )
+                throw new Error("画布、账号或原素材已变化，已取消插入");
+            return current;
+        };
+        assertCurrent();
+        const uploaded = kind === "image" ? await uploadImage(file, { expectedUserId: session.userId }) : await uploadMediaFile(file, "audio", session.userId);
+        try {
+            const current = assertCurrent();
+            const metadata = kind === "image" ? imageMetadata(uploaded as Awaited<ReturnType<typeof uploadImage>>) : audioMetadata(uploaded);
+            const result = createCanvasNode(kind === "image" ? CanvasNodeType.Image : CanvasNodeType.Audio, { x: 0, y: 0 }, { ...metadata, derivedFromNodeId: current.id });
+            if (kind === "image") {
+                const image = uploaded as Awaited<ReturnType<typeof uploadImage>>;
+                Object.assign(result, fitNodeSize(image.width, image.height, 480, 480));
+            }
+            result.title = `${current.title} · ${file.name.replace(/\.[^.]+$/, "")}`;
+            result.position = mediaResultPosition(current, result, nodesRef.current);
+            if (historyCommitTimerRef.current) clearTimeout(historyCommitTimerRef.current);
+            historyCommitTimerRef.current = null;
+            const before = createHistoryEntry();
+            const nextNodes = [...nodesRef.current, result];
+            const nextConnections = [...connectionsRef.current, { id: nanoid(), fromNodeId: current.id, toNodeId: result.id }];
+            historyRef.current.past = [...historyRef.current.past.slice(-49), before];
+            historyRef.current.future = [];
+            lastHistoryRef.current = { ...before, nodes: nextNodes, connections: nextConnections };
+            nodesRef.current = nextNodes;
+            connectionsRef.current = nextConnections;
+            setNodes(nextNodes);
+            setConnections(nextConnections);
+            setSelectedNodeIds(new Set([result.id]));
+            setHistoryState({ canUndo: true, canRedo: false });
+            message.success("新素材已添加到画布，原文件保持不变");
+        } catch (error) {
+            if (kind === "image") {
+                const image = uploaded as Awaited<ReturnType<typeof uploadImage>>;
+                await deleteStoredImages([image.storageKey, ...(image.thumbnailKey ? [image.thumbnailKey] : [])], session.userId);
+            } else await deleteStoredMedia([uploaded.storageKey], session.userId);
+            throw error;
+        }
+    };
     const handleNodeHoverStart = useCallback((nodeId: string) => {
         if (nodeDraggingRef.current) return;
         setHoveredNodeId(nodeId);
@@ -4018,6 +4110,23 @@ function InfiniteCanvasPage() {
                 {contextMenu ? (
                     <CanvasNodeContextMenu
                         menu={contextMenu}
+                        toolsDisabled={Boolean(contextToolNode?.metadata?.locked || contextToolNode?.metadata?.uploading || contextToolNode?.metadata?.status === "loading")}
+                        onCamera={
+                            contextToolNode && [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Config].includes(contextToolNode.type as CanvasNodeType)
+                                ? () => {
+                                      setCameraNodeId(contextToolNode.id);
+                                      setContextMenu(null);
+                                  }
+                                : undefined
+                        }
+                        onMediaTools={
+                            contextToolNode && [CanvasNodeType.Video, CanvasNodeType.Audio].includes(contextToolNode.type as CanvasNodeType) && contextToolNode.metadata?.content
+                                ? () => {
+                                      setMediaNodeId(contextToolNode.id);
+                                      setContextMenu(null);
+                                  }
+                                : undefined
+                        }
                         onClose={() => setContextMenu(null)}
                         onDuplicate={() => {
                             if (contextMenu.type !== "node") return;
@@ -4044,6 +4153,28 @@ function InfiniteCanvasPage() {
                     </Suspense>
                 ) : null}
 
+                {cameraNode ? (
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <CanvasCameraDialog
+                            open
+                            settings={cameraNode.metadata?.camera}
+                            onClose={() => setCameraNodeId(null)}
+                            onSave={(camera) => {
+                                if (nodesRef.current.find((node) => node.id === cameraNode.id)?.metadata?.locked) {
+                                    message.warning("请先解锁节点");
+                                    return;
+                                }
+                                handleConfigNodeChange(cameraNode.id, { camera });
+                                setCameraNodeId(null);
+                            }}
+                        />
+                    </Suspense>
+                ) : null}
+                {mediaToolNode ? (
+                    <Suspense fallback={<CanvasToolLoading />}>
+                        <CanvasMediaToolsDialog open node={mediaToolNode} onClose={() => setMediaNodeId(null)} onResult={insertMediaToolResult} />
+                    </Suspense>
+                ) : null}
                 {cropNode?.metadata?.content ? (
                     <Suspense fallback={<CanvasToolLoading />}>
                         <CanvasNodeCropDialog

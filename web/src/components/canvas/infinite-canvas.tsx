@@ -4,6 +4,7 @@ import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { shouldDeselectAfterCanvasPan, shouldStartCanvasPan } from "@/lib/canvas/canvas-interaction";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ViewportTransform } from "@/types/canvas";
+import { shouldStopCanvasPan } from "@/lib/canvas/canvas-shortcuts";
 
 type InfiniteCanvasProps = {
     containerRef: React.RefObject<HTMLDivElement | null>;
@@ -20,7 +21,20 @@ type InfiniteCanvasProps = {
     overlay?: React.ReactNode;
 };
 
-export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines", transparentBackground = false, onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children, overlay }: InfiniteCanvasProps) {
+export function InfiniteCanvas({
+    containerRef,
+    viewport,
+    backgroundMode = "lines",
+    transparentBackground = false,
+    onViewportChange,
+    onCanvasMouseDown,
+    onCanvasDeselect,
+    onCanvasDoubleClick,
+    onContextMenu,
+    onDrop,
+    children,
+    overlay,
+}: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const panState = useRef({
         isPanning: false,
@@ -73,6 +87,11 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         const handleBlur = () => {
             setIsSpacePressed(false);
             panState.current.isPanning = false;
+            touchPointsRef.current.clear();
+            pinchStateRef.current = null;
+            if (frameRef.current) cancelAnimationFrame(frameRef.current);
+            frameRef.current = null;
+            nextViewportRef.current = null;
             setIsPanning(false);
             document.body.style.cursor = "";
         };
@@ -173,6 +192,15 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
 
     useEffect(() => {
         const handlePointerMove = (event: PointerEvent) => {
+            if (panState.current.isPanning && shouldStopCanvasPan(event)) {
+                panState.current.isPanning = false;
+                setIsPanning(false);
+                document.body.style.cursor = "";
+                if (frameRef.current) cancelAnimationFrame(frameRef.current);
+                frameRef.current = null;
+                nextViewportRef.current = null;
+                return;
+            }
             if (event.pointerType === "touch" && touchPointsRef.current.has(event.pointerId)) {
                 touchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
                 const pinch = pinchStateRef.current;

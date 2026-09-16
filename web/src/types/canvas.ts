@@ -28,7 +28,16 @@ export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 
+export type CanvasCameraSettings = {
+    enabled: boolean;
+    cameraId?: string;
+    lensId?: string;
+    focalLength?: number;
+    aperture?: number;
+};
+
 export type CanvasNodeMetadata = {
+    camera?: CanvasCameraSettings;
     content?: string;
     composerContent?: string;
     prompt?: string;

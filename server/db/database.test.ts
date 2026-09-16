@@ -29,6 +29,85 @@ afterEach(() => {
 });
 
 describe("SQLite application database", () => {
+  test("filters categories and all tags before pagination with full owner facets", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const db = openAppDatabase({ dataDir });
+    db.raw!.query(
+      "INSERT INTO users(user_id, display_name, created_at) VALUES ('a', 'A', 1), ('b', 'B', 1)",
+    ).run();
+    const item = (
+      id: string,
+      category?: string,
+      tags = ["参考", "Portrait"],
+      updatedAt = 1,
+    ) => ({
+      id,
+      updatedAt,
+      payload: {
+        id,
+        kind: "text",
+        title: id,
+        category,
+        tags,
+        data: { content: "旧内容" },
+      },
+    });
+    try {
+      db.replaceAssetLibrary("a", [
+        item("old"),
+        item("empty", " "),
+        item("one", "人像", undefined, 3),
+        item("two", "人像", undefined, 2),
+        item("other", "风景", ["风景"], 4),
+      ]);
+      db.replaceAssetLibrary("b", [item("private", "私密", ["私密"])]);
+      const first = db.queryAssetLibrary("a", {
+        page: 1,
+        pageSize: 1,
+        category: "人像",
+        tags: ["参考", "portrait"],
+      });
+      expect(first.total).toBe(2);
+      expect(first.items.map((x) => x.id)).toEqual(["one"]);
+      expect(first.facets).toEqual({
+        categories: ["人像", "风景"],
+        tags: ["Portrait", "参考", "风景"],
+        uncategorized: 2,
+        total: 5,
+      });
+      expect(
+        db
+          .queryAssetLibrary("a", { page: 2, pageSize: 1, category: "人像" })
+          .items.map((x) => x.id),
+      ).toEqual(["two"]);
+      expect(
+        db.queryAssetLibrary("a", { page: 1, pageSize: 10, category: "" })
+          .total,
+      ).toBe(2);
+      expect(
+        db.queryAssetLibrary("a", {
+          page: 99,
+          pageSize: 1,
+          category: "不存在",
+        }),
+      ).toMatchObject({ items: [], total: 0, page: 1, facets: first.facets });
+      expect(
+        db.queryAssetLibrary("b", { page: 1, pageSize: 10 }).facets.categories,
+      ).toEqual(["私密"]);
+      db.upsertAssetLibraryItem("a", item("one", "风景"));
+      expect(
+        db.queryAssetLibrary("a", { page: 1, pageSize: 10, category: "人像" })
+          .total,
+      ).toBe(1);
+      expect(
+        db.loadAssetLibrary("a").items.find((x) => x.id === "old")?.payload
+          .data,
+      ).toEqual({ content: "旧内容" });
+    } finally {
+      db.close();
+    }
+  });
   test("migrates legacy state atomically and stores reference images as files", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
@@ -205,7 +284,11 @@ describe("SQLite application database", () => {
 
       expect(Number(migration.version)).toBeGreaterThanOrEqual(25);
       expect(
-        store.raw!.query("SELECT COUNT(*) AS count FROM capability_definitions WHERE capability_key LIKE 'product.%'").get(),
+        store
+          .raw!.query(
+            "SELECT COUNT(*) AS count FROM capability_definitions WHERE capability_key LIKE 'product.%'",
+          )
+          .get(),
       ).toEqual({ count: 0 });
       const userPreferenceTables = (
         store

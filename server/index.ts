@@ -2516,11 +2516,13 @@ function listLibraryAssets(url: URL, session: SessionPayload) {
     const keyword = (url.searchParams.get("keyword") || "").trim().toLowerCase();
     const kind = (url.searchParams.get("kind") || "").trim().toLowerCase();
     const tags = url.searchParams.getAll("tag").map((tag) => tag.trim()).filter(Boolean);
-    const library = appDatabase.queryAssetLibrary(session.userId, { page: requestedPage, pageSize, keyword, kind, tags });
+    const category = url.searchParams.has("category") ? url.searchParams.get("category")!.trim() : undefined;
+    const library = appDatabase.queryAssetLibrary(session.userId, { page: requestedPage, pageSize, keyword, kind, category, tags });
     return json({
         initialized: library.initialized,
         items: library.items.map((item) => publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl)),
         total: library.total,
+        facets: library.facets,
         page: library.page,
         pageSize: library.pageSize,
         hasMore: library.hasMore,

@@ -36,6 +36,7 @@
         "file-saver": "^2.0.5",
         "localforage": "^1.10.0",
         "lucide-react": "^1.16.0",
+        "mediabunny": "1.55.7",
         "motion": "^12.38.0",
         "nanoid": "^5.1.11",
         "ogl": "^1.0.11",

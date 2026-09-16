@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button, Empty, Input, Modal, Pagination, Tag } from "antd";
 import { Search } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { useUserStore } from "@/stores/use-user-store";
+import { fetchServerAssetLibrary } from "@/services/server-api";
+import { assetFacets, matchesAssetFilters } from "@/lib/asset-filters";
+import { AssetFilterControls } from "@/components/assets/asset-filter-controls";
 
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
-export type InsertAssetPayload = { kind: "text"; content: string; title: string } | { kind: "image"; dataUrl: string; title: string; storageKey?: string } | { kind: "video"; url: string; title: string; storageKey?: string; width?: number; height?: number };
+export type InsertAssetPayload =
+    { kind: "text"; content: string; title: string } | { kind: "image"; dataUrl: string; title: string; storageKey?: string } | { kind: "video"; url: string; title: string; storageKey?: string; width?: number; height?: number };
 
 type Props = {
     open: boolean;
@@ -17,7 +24,7 @@ type Props = {
 export function AssetPickerModal({ open, onInsert, onClose }: Props) {
     return (
         <Modal title="选择藏卷阁内容" open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden styles={{ body: { padding: "0 24px 24px", minHeight: 480 } }}>
-            <MyAssetsTab onInsert={onInsert} />
+            {open ? <MyAssetsTab onInsert={onInsert} /> : null}
         </Modal>
     );
 }
@@ -56,33 +63,42 @@ function PickerCard({ title, kind, cover, onClick }: { title: string; kind: stri
 
 function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => void }) {
     const assets = useAssetStore((state) => state.assets);
-    const serverAssetHasMore = useAssetStore((state) => state.serverAssetHasMore);
-    const serverAssetLoading = useAssetStore((state) => state.serverAssetLoading);
-    const loadMoreServerAssets = useAssetStore((state) => state.loadMoreServerAssets);
+    const userId = useUserStore((state) => state.user?.id || "");
+    const remote = PUBLIC_MODE && Boolean(userId);
     const [keyword, setKeyword] = useState("");
     const [kindFilter, setKindFilter] = useState("all");
     const [page, setPage] = useState(1);
+    const [category, setCategory] = useState<string | undefined>();
+    const [tags, setTags] = useState<string[]>([]);
+    const query = useQuery({
+        queryKey: ["asset-picker", userId, page, keyword, kindFilter, category, tags],
+        enabled: remote,
+        queryFn: ({ signal }) => fetchServerAssetLibrary(userId, { page, pageSize: PAGE_SIZE, keyword, kind: kindFilter, category, tags, signal }),
+    });
+    const localFacets = useMemo(() => assetFacets(assets), [assets]);
 
     const filtered = useMemo(() => {
-        const query = keyword.trim().toLowerCase();
-        return assets
-            .filter((a) => a.kind === "text" || a.kind === "image" || a.kind === "video")
-            .filter((a) => kindFilter === "all" || a.kind === kindFilter)
-            .filter((a) => !query || [a.title, ...(a.tags || [])].join(" ").toLowerCase().includes(query));
-    }, [assets, keyword, kindFilter]);
+        return assets.filter((a) => a.kind === "text" || a.kind === "image" || a.kind === "video").filter((a) => matchesAssetFilters(a, { keyword, kind: kindFilter, category, tags }));
+    }, [assets, keyword, kindFilter, category, tags]);
 
-    const visible = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
+    const visible = remote ? query.data?.items || [] : filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const total = remote ? query.data?.total || 0 : filtered.length;
 
     useEffect(() => {
+        if (remote) return;
         const maxPage = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
         setPage((v) => Math.min(v, maxPage));
-    }, [filtered.length]);
+    }, [filtered.length, remote]);
 
     const handleInsert = (asset: Asset) => {
         if (asset.kind === "text") {
             onInsert({ kind: "text", content: asset.data.content, title: asset.title });
         } else {
-            onInsert(asset.kind === "video" ? { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height } : { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title });
+            onInsert(
+                asset.kind === "video"
+                    ? { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height }
+                    : { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title },
+            );
         }
     };
 
@@ -118,8 +134,27 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
                 </div>
             </div>
 
+            <AssetFilterControls
+                facets={remote ? query.data?.facets || { categories: [], tags: [], total: 0, uncategorized: 0 } : localFacets}
+                category={category}
+                tags={tags}
+                onChange={(nextCategory, nextTags) => {
+                    setCategory(nextCategory);
+                    setTags(nextTags);
+                    setPage(1);
+                }}
+            />
+            {remote && query.isFetching ? <p role="status">正在读取素材…</p> : null}
+            {remote && query.isError ? (
+                <div role="alert">
+                    素材加载失败{" "}
+                    <Button type="text" onClick={() => void query.refetch()}>
+                        重试
+                    </Button>
+                </div>
+            ) : null}
             {visible.length ? (
-                <div className="grid grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                     {visible.map((asset) => (
                         <PickerCard key={asset.id} title={asset.title} kind={asset.kind} cover={asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "")} onClick={() => handleInsert(asset)} />
                     ))}
@@ -128,18 +163,11 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="藏卷阁暂无内容" className="py-12" />
             )}
 
-            {filtered.length > PAGE_SIZE && (
+            {total > PAGE_SIZE && (
                 <div className="flex justify-center">
-                    <Pagination size="small" current={page} pageSize={PAGE_SIZE} total={filtered.length} onChange={setPage} showSizeChanger={false} />
+                    <Pagination size="small" current={page} pageSize={PAGE_SIZE} total={total} onChange={setPage} showSizeChanger={false} />
                 </div>
             )}
-            {serverAssetHasMore ? (
-                <div className="flex justify-center">
-                    <Button size="small" loading={serverAssetLoading} onClick={() => void loadMoreServerAssets()}>
-                        加载更多藏卷阁
-                    </Button>
-                </div>
-            ) : null}
         </div>
     );
 }
