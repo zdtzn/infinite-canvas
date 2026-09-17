@@ -1,8 +1,35 @@
 import { describe, expect, test } from "bun:test";
 
-import { assertCanvasVideoTaskOwner, canvasVideoTaskBinding, resetInterruptedGeneration, buildLightingLabel, buildLightingPrompt } from "./canvas-generation-helpers";
+import { assertCanvasVideoTaskOwner, canvasVideoTaskBinding, resetInterruptedGeneration, buildLightingLabel, buildLightingPrompt, buildAngleLabel, buildAnglePrompt } from "./canvas-generation-helpers";
 import { defaultConfig, encodeChannelModel } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+
+describe("canvas angle prompt", () => {
+    const params = { horizontalAngle: 0, pitchAngle: 0, cameraDistance: 5, wideAngle: false, target: "scene" as const, preserveText: true, preserveBackground: false };
+    test("describes camera position and framing without ambiguous rotation or distance units", () => {
+        expect(buildAngleLabel(params)).toBe("AI 多角度：正面视角，水平视角，中景，标准镜头");
+        expect(buildAngleLabel({ ...params, horizontalAngle: -45, pitchAngle: -30, cameraDistance: 1 })).toBe("AI 多角度：左侧视角 45 度，仰视 30 度，近景，标准镜头");
+        expect(buildAngleLabel({ ...params, horizontalAngle: 60, pitchAngle: 45, cameraDistance: 10, wideAngle: true })).toBe("AI 多角度：右侧视角 60 度，俯视 45 度，远景，广角镜头");
+    });
+    test("scene defaults retain identity and lettering without freezing perspective", () => {
+        const prompt = buildAnglePrompt(params);
+        expect(prompt).toContain("相机绕主体移动");
+        expect(prompt).toContain("数量、形状比例");
+        expect(prompt).toContain("逐字保留");
+        expect(prompt).toContain("背景可随新视角自然重构");
+        expect(prompt).toContain("未展示的表面仅作合理推测");
+    });
+    test("subject, background, lens and framing choices actually change the request", () => {
+        const prompt = buildAnglePrompt({ ...params, target: "subject", preserveText: false, preserveBackground: true, wideAngle: true, cameraDistance: 10 });
+        expect(prompt).toContain("仅调整主体或商品");
+        expect(prompt).toContain("多个主体一同调整");
+        expect(prompt).toContain("保留原背景");
+        expect(prompt).not.toContain("逐字保留");
+        expect(prompt).toContain("避免鱼眼");
+        expect(prompt).toContain("远景：完整展示主体");
+        expect(buildAnglePrompt({ ...params, cameraDistance: 1 })).toContain("近景：突出主体细节");
+    });
+});
 
 test("refresh retains remote video and image jobs but marks unsubmitted jobs interrupted", () => {
     const node: CanvasNodeData = {

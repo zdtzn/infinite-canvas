@@ -7,7 +7,7 @@ import { Group, ImagePlus, Sparkles, Type, Video } from "lucide-react";
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, pollVideoGenerationTask, storeGeneratedVideo } from "@/services/api/video";
-import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { CanvasSelectionToolbar } from "@/components/canvas/canvas-selection-toolbar";
 import { createThumbnailFromImageElement, deleteStoredImages, fitImageWithinEdge, uploadImage } from "@/services/image-storage";
@@ -2650,6 +2650,10 @@ function InfiniteCanvasPage() {
                 openConfigDialog(true);
                 return;
             }
+            if (resolveImageModelSettings(generationConfig, generationConfig.model).capabilities.maxReferences < 1) {
+                message.warning("当前模型不支持参考图编辑，请在洞府中切换支持图生图的模型");
+                return;
+            }
             const childId = nanoid();
             const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
             const title = buildAngleLabel(params);
@@ -4229,7 +4233,7 @@ function InfiniteCanvasPage() {
 
                 {angleNode?.metadata?.content ? (
                     <Suspense fallback={<CanvasToolLoading />}>
-                        <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} />
+                        <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} modelLabel={modelOptionName(buildGenerationConfig(effectiveConfig, angleNode, "image").model)} open onClose={() => setAngleNodeId(null)} onConfirm={(params) => generateAngleNode(angleNode!, params)} />
                     </Suspense>
                 ) : null}
 

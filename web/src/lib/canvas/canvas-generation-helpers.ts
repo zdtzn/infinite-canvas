@@ -178,13 +178,23 @@ export function isAudioFile(file: File) {
 }
 
 export function buildAngleLabel(params: CanvasImageAngleParams) {
-    const horizontal = params.horizontalAngle === 0 ? "正面视角" : params.horizontalAngle > 0 ? `向右旋转 ${params.horizontalAngle} 度` : `向左旋转 ${Math.abs(params.horizontalAngle)} 度`;
+    const horizontal = params.horizontalAngle === 0 ? "正面视角" : params.horizontalAngle > 0 ? `右侧视角 ${params.horizontalAngle} 度` : `左侧视角 ${Math.abs(params.horizontalAngle)} 度`;
     const pitch = params.pitchAngle === 0 ? "水平视角" : params.pitchAngle > 0 ? `俯视 ${params.pitchAngle} 度` : `仰视 ${Math.abs(params.pitchAngle)} 度`;
-    return `AI 多角度：${horizontal}，${pitch}，镜头距离 ${params.cameraDistance.toFixed(1)}，${params.wideAngle ? "广角" : "标准"}镜头`;
+    const framing = params.cameraDistance <= 3 ? "近景" : params.cameraDistance >= 8 ? "远景" : "中景";
+    return `AI 多角度：${horizontal}，${pitch}，${framing}，${params.wideAngle ? "广角" : "标准"}镜头`;
 }
 
 export function buildAnglePrompt(params: CanvasImageAngleParams) {
-    return `基于参考图重新生成同一主体的新视角，保持主体、颜色、材质和画面风格一致，不要只做透视变形。${buildAngleLabel(params)}。`;
+    return [
+        "基于参考图重新生成同一主体的新视角，不要只做平面透视变形。以原图视角为正面基准，左右方向指相机移至画面左侧或右侧观察主体，正俯仰为俯视，负俯仰为仰视。",
+        "保持主体身份、数量、形状比例、颜色、材质和画面风格一致，不要增删或替换商品。",
+        params.target === "subject" ? "仅调整主体或商品的可见朝向，呈现指定相机方位下的样子；多个主体一同调整，尽量保留海报其他元素与排版，不要把整张海报当作一块平板旋转。" : "相机绕主体移动，整体场景随视角自然变化，维持合理的空间透视关系。",
+        params.preserveText ? "尽量逐字保留原有文字、包装标签和 Logo 的内容与设计，仅随所在表面产生合理透视，不得编造、改写或新增文字。" : "文字与 Logo 可随新构图自然调整。",
+        params.preserveBackground ? "保留原背景中的元素、内容与风格，不替换背景；允许随视角变化产生必要的透视与遮挡。" : "背景可随新视角自然重构，保持原画面风格。",
+        params.cameraDistance <= 3 ? "近景：突出主体细节，避免裁掉关键标识。" : params.cameraDistance >= 8 ? "远景：完整展示主体并增加环境留白。" : "中景：完整展示主体，保留适量环境。",
+        params.wideAngle ? "使用广角视野和自然空间纵深，避免鱼眼及主体过度畸变。" : "使用标准镜头的自然透视，避免夸张畸变。",
+        `${buildAngleLabel(params)}。未展示的表面仅作合理推测，不添加无依据的品牌标识。`,
+    ].join(" ");
 }
 
 const lightingDirectionLabels: Record<CanvasImageLightingParams["direction"], string> = {
