@@ -57,7 +57,8 @@ export function AgentConnectView({
         try {
             const result = await fetchAgentDiagnostics(endpoint, currentToken);
             setDiagnostics(result);
-            if (!result.origin.authorized) message.warning("Token 正确，但当前网页来源尚未授权");
+            if (!result) message.info("此版本 Agent 暂不支持详细诊断，仍可直接点击连接");
+            else if (!result.origin.authorized) message.warning("Token 正确，但当前网页来源尚未授权");
             else message.success("Agent 连接检查通过");
         } catch (error) {
             setDiagnostics(null);

@@ -581,15 +581,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             return;
         }
         try {
-            const diagnostics = await fetchAgentDiagnostics(nextEndpoint, nextToken);
-            if (!diagnostics.origin.authorized) {
-                const text = "Token 正确，但当前网页来源尚未授权。请在连接页点击“测试连接”后重新授权当前网站";
-                if (!silent) {
-                    setAgentState({ connectError: text, activeTab: "setup", activity: "等待来源授权" });
-                    if (!headless) message.warning(text);
-                }
-                return;
-            }
+            await fetchAgentDiagnostics(nextEndpoint, nextToken);
         } catch (error) {
             const text = error instanceof AgentApiError
                 ? error.status === 401 ? "连接 Token 不正确"

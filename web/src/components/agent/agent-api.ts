@@ -57,8 +57,13 @@ export async function fetchAgentJson<T>(endpoint: string, token: string, path: s
     return data;
 }
 
-export function fetchAgentDiagnostics(endpoint: string, token: string) {
-    return fetchAgentJson<AgentDiagnostics>(endpoint, token, "/diagnostics");
+export async function fetchAgentDiagnostics(endpoint: string, token: string) {
+    try {
+        return await fetchAgentJson<AgentDiagnostics>(endpoint, token, "/diagnostics", { signal: AbortSignal.timeout(6000), cache: "no-store" });
+    } catch (error) {
+        if (error instanceof AgentApiError && error.status === 404) return null;
+        throw error;
+    }
 }
 
 export function resetAgentOrigin(endpoint: string, token: string) {
