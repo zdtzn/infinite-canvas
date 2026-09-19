@@ -52,6 +52,11 @@ export class CanvasSession {
         return { ok: true, hasCanvas: Boolean(this.canvasState), clients: this.clients.size, codexBusy: this.codexState.busy };
     }
 
+    /** 返回连接诊断需要的运行状态。 */
+    diagnostics() {
+        return { ...this.health(), activeClient: Boolean(this.activeClientId), boundClient: Boolean(this.boundClientId), codex: this.codexState };
+    }
+
     /** 返回 Codex 是否正在执行任务。 */
     get codexBusy() {
         return this.codexState.busy;

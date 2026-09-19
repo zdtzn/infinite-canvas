@@ -16,7 +16,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useAgentStore, type AgentCanvasContext, type AgentChatItem, type AgentModel, type AgentPendingApproval, type AgentPendingToolCall, type AgentPermissionMode, type AgentReasoningEffort, type AgentThreadSummary } from "@/stores/use-agent-store";
 import { summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { isSiteTool, runSiteTool } from "@/lib/agent/agent-site-tools";
-import { activateAgentClient, discoverAgentConfig, fetchAgentJson, postCodexApproval, postState, postToolResult } from "./agent-api";
+import { activateAgentClient, AgentApiError, discoverAgentConfig, fetchAgentDiagnostics, fetchAgentJson, postCodexApproval, postState, postToolResult } from "./agent-api";
 import { AgentChatTimeline, AgentTaskProgress, AgentUsageBar } from "./agent-chat";
 import { AgentChatComposer } from "./agent-chat-composer";
 import { AgentConnectView } from "./agent-connect-view";
@@ -577,6 +577,29 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             if (!silent) {
                 setAgentState({ connectError: text });
                 if (!headless) message.warning(text);
+            }
+            return;
+        }
+        try {
+            const diagnostics = await fetchAgentDiagnostics(nextEndpoint, nextToken);
+            if (!diagnostics.origin.authorized) {
+                const text = "Token 正确，但当前网页来源尚未授权。请在连接页点击“测试连接”后重新授权当前网站";
+                if (!silent) {
+                    setAgentState({ connectError: text, activeTab: "setup", activity: "等待来源授权" });
+                    if (!headless) message.warning(text);
+                }
+                return;
+            }
+        } catch (error) {
+            const text = error instanceof AgentApiError
+                ? error.status === 401 ? "连接 Token 不正确"
+                    : error.status === 403 ? "当前网页来源被 Agent 拒绝"
+                        : error.code === "NETWORK_ERROR" ? "无法访问本地 Agent，请确认 Agent 已启动且地址正确"
+                            : `Agent 检查失败：${error.message}`
+                : error instanceof Error ? `Agent 检查失败：${error.message}` : "无法访问本地 Agent";
+            if (!silent) {
+                setAgentState({ connectError: text, activeTab: "setup", activity: "连接失败" });
+                if (!headless) message.error(text);
             }
             return;
         }

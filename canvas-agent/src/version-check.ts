@@ -9,9 +9,28 @@ const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
 const CODEX_VERSION = String((require("@openai/codex/package.json") as { version: string }).version);
 
+export type VersionStatus = {
+    agent: string;
+    bundledCodex: string;
+    localCodex: string;
+    compatible: boolean;
+};
+
+/** 返回可展示给连接诊断页的版本信息，不触发网络检查。 */
+export function getVersionStatus(): VersionStatus {
+    const localCodex = commandVersion("codex");
+    return {
+        agent: VERSION,
+        bundledCodex: CODEX_VERSION,
+        localCodex,
+        compatible: !localCodex || localCodex === CODEX_VERSION,
+    };
+}
+
 /** 输出当前版本，并在后台检查 npm 最新版本。 */
 export function checkVersions() {
-    const localCodexVersion = commandVersion("codex");
+    const versions = getVersionStatus();
+    const localCodexVersion = versions.localCodex;
     logger.info("Canvas Agent version", { version: VERSION });
     logger.info("Bundled Codex version", { version: CODEX_VERSION });
     logger.info("Local Codex version", { version: localCodexVersion || "not found" });

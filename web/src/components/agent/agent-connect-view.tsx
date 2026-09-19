@@ -1,9 +1,10 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { App, Button, Input, Tooltip } from "antd";
 import copyToClipboard from "copy-to-clipboard";
-import { Copy, KeyRound, Link2, PlugZap } from "lucide-react";
+import { CheckCircle2, Copy, KeyRound, Link2, LoaderCircle, PlugZap, RefreshCw, RotateCcw } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { AgentApiError, fetchAgentDiagnostics, resetAgentOrigin, type AgentDiagnostics } from "./agent-api";
 
 const AGENT_CONNECT_STEPS = [
     { title: "方式一：在 Codex 中使用插件", text: "在 Codex app 安装 Infinite Canvas 插件后，通过插件启动画布，插件会自动启动本地 Agent 并带上连接信息。" },
@@ -36,11 +37,49 @@ export function AgentConnectView({
     onToggleEnabled: () => void;
 }) {
     const { message } = App.useApp();
+    const [diagnostics, setDiagnostics] = useState<AgentDiagnostics | null>(null);
+    const [diagnosing, setDiagnosing] = useState(false);
     const statusText = connectError ? "连接失败" : connected ? activity : enabled ? "连接中" : "未连接";
     const statusColor = connectError ? "#dc2626" : connected ? "#16a34a" : enabled ? "#d97706" : theme.node.muted;
     const copyCommand = (command: string) => {
         copyToClipboard(command);
         message.success("命令已复制");
+    };
+    const testConnection = async () => {
+        const endpoint = url.trim().replace(/\/$/, "");
+        const currentToken = token.trim();
+        if (!endpoint || !currentToken) {
+            message.warning("请先填写本地地址和连接 Token");
+            return;
+        }
+        setDiagnosing(true);
+        setDiagnostics(null);
+        try {
+            const result = await fetchAgentDiagnostics(endpoint, currentToken);
+            setDiagnostics(result);
+            if (!result.origin.authorized) message.warning("Token 正确，但当前网页来源尚未授权");
+            else message.success("Agent 连接检查通过");
+        } catch (error) {
+            setDiagnostics(null);
+            const detail = error instanceof AgentApiError
+                ? error.status === 401 ? "Token 不正确"
+                    : error.status === 403 ? "当前网页来源被拒绝"
+                        : error.code === "NETWORK_ERROR" ? "Agent 未启动或地址不可访问"
+                            : error.message
+                : error instanceof Error ? error.message : "无法完成连接检查";
+            message.error(detail);
+        } finally {
+            setDiagnosing(false);
+        }
+    };
+    const reauthorizeOrigin = async () => {
+        try {
+            await resetAgentOrigin(url.trim().replace(/\/$/, ""), token.trim());
+            await testConnection();
+            message.success("当前网页已重新授权");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "重新授权失败");
+        }
     };
     const codexPluginReminder = (
         <div className="rounded-lg border px-3 py-2.5 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
@@ -116,9 +155,16 @@ export function AgentConnectView({
                                 默认自动读取 Local URL 和 Connect token，失败时再手动填写。
                             </div>
                         </div>
-                        <Button className="!h-8 !px-3" type={enabled ? "default" : "primary"} icon={<PlugZap className="size-4" />} onClick={onToggleEnabled}>
-                            {enabled ? "断开" : "连接"}
-                        </Button>
+                        <div className="flex items-center gap-2">
+                            <Tooltip title="检查 Agent、Token、来源授权和版本状态">
+                                <Button className="!h-8 !px-3" icon={diagnosing ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} onClick={() => void testConnection()} disabled={diagnosing}>
+                                    测试连接
+                                </Button>
+                            </Tooltip>
+                            <Button className="!h-8 !px-3" type={enabled ? "default" : "primary"} icon={<PlugZap className="size-4" />} onClick={onToggleEnabled}>
+                                {enabled ? "断开" : "连接"}
+                            </Button>
+                        </div>
                     </div>
                     <div className="mt-3 grid gap-2.5">
                         <label className="grid gap-1.5">
@@ -146,6 +192,19 @@ export function AgentConnectView({
                         {connectError ? (
                             <div className="rounded-md border px-2.5 py-2 text-xs leading-5" style={{ borderColor: "rgba(220,38,38,.35)", color: "#dc2626" }}>
                                 {connectError}
+                            </div>
+                        ) : null}
+                        {diagnostics ? (
+                            <div className="grid gap-2 rounded-md border px-2.5 py-2 text-xs leading-5" style={{ borderColor: diagnostics.origin.authorized ? "rgba(22,163,74,.35)" : "rgba(217,119,6,.35)", color: theme.node.muted }}>
+                                <div className="flex items-center gap-1.5 font-medium" style={{ color: diagnostics.origin.authorized ? "#16a34a" : "#d97706" }}>
+                                    {diagnostics.origin.authorized ? <CheckCircle2 className="size-3.5" /> : <RotateCcw className="size-3.5" />}
+                                    {diagnostics.origin.authorized ? "连接条件正常" : "Token 正确，但当前网页未授权"}
+                                </div>
+                                <div className="grid gap-0.5">
+                                    <span>Agent {diagnostics.versions.agent} · 内置 Codex {diagnostics.versions.bundledCodex}{diagnostics.versions.localCodex ? ` · 本机 Codex ${diagnostics.versions.localCodex}` : ""}</span>
+                                    <span>{diagnostics.versions.compatible ? "版本状态正常" : "内置 Codex 与本机 Codex 版本不同，可能影响模型列表和会话读取"} · 已授权来源 {diagnostics.origin.authorizedCount} 个</span>
+                                </div>
+                                {!diagnostics.origin.authorized ? <Button size="small" type="link" className="!h-6 !justify-start !px-0" icon={<RotateCcw className="size-3.5" />} onClick={() => void reauthorizeOrigin()}>重新授权当前网站</Button> : null}
                             </div>
                         ) : null}
                     </div>

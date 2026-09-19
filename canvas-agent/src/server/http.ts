@@ -10,7 +10,7 @@ import type { AgentAttachment, AgentPermissionMode } from "../agent/types.js";
 import { CanvasSession } from "../canvas/session.js";
 import { DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWorkspace, type CanvasAgentConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
-import { checkVersions } from "../version-check.js";
+import { checkVersions, getVersionStatus } from "../version-check.js";
 
 /** 启动仅监听本机的 Canvas Agent HTTP 服务。 */
 export function startHttpServer() {
@@ -56,6 +56,27 @@ export function startHttpServer() {
     app.use((req, res, next) => {
         if (validToken(req, requestUrl(req, config), config.token)) return next();
         res.status(401).json({ ok: false, error: "invalid token" });
+    });
+    app.get("/diagnostics", (req, res) => {
+        const origin = req.headers.origin || "";
+        res.json({
+            ok: true,
+            origin: {
+                current: origin,
+                authorized: !origin || Boolean(config.origins?.includes(origin)),
+                authorizedCount: config.origins?.length || 0,
+            },
+            versions: getVersionStatus(),
+            session: session.diagnostics(),
+        });
+    });
+    app.post("/diagnostics/origin/reset", (req, res) => {
+        const origin = req.headers.origin || "";
+        if (!origin) return res.status(400).json({ ok: false, error: "缺少当前网页来源" });
+        config.origins = (config.origins || []).filter((item) => item !== origin);
+        config.origins.push(origin);
+        saveConfig(config);
+        res.json({ ok: true, origin, authorized: true });
     });
     app.get("/events", (req, res) => session.openEvents(requestUrl(req, config), res));
     app.post("/canvas/state", (req, res) => {
@@ -291,6 +312,8 @@ function setCors(req: Request, res: Response, url: URL, config: CanvasAgentConfi
     res.setHeader("Access-Control-Allow-Private-Network", "true");
     if (!origin || req.method === "OPTIONS" || url.pathname === "/health" || url.pathname === "/config") return true;
     config.origins ||= [];
+    // 诊断与重新授权需要能在“当前来源尚未授权”时返回结果；两条接口仍会经过 token 校验。
+    if ((url.pathname === "/diagnostics" || url.pathname === "/diagnostics/origin/reset") && validToken(req, url, config.token)) return true;
     if (validToken(req, url, config.token) && !config.origins.includes(origin)) {
         config.origins.push(origin);
         saveConfig(config);
