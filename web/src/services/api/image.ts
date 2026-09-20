@@ -270,9 +270,12 @@ function parseImagePayload(payload: ImageApiResponse, mimeType = "image/png") {
     return images;
 }
 
+const DIRECT_IMAGE_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
+
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
     if (axios.isAxiosError(error)) {
+        if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") return "等待图片接口响应超时，上游可能仍在生成。请先查看渠道记录，避免重复提交扣费。";
         return extractApiErrorMessage(error.response?.data) || readStatusError(error.response?.status, fallback) || error.message || fallback;
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
@@ -675,7 +678,7 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
             ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
             contents: [{ role: "user", parts }],
         },
-        { headers: geminiHeaders(config), signal: options?.signal },
+        { headers: geminiHeaders(config), signal: options?.signal, timeout: DIRECT_IMAGE_REQUEST_TIMEOUT_MS },
     );
     return parseGeminiImagePayload(response.data);
 }
@@ -769,6 +772,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             {
                 headers: aiHeaders(requestConfig, "application/json"),
                 signal: options?.signal,
+                timeout: DIRECT_IMAGE_REQUEST_TIMEOUT_MS,
             },
         );
         const images = parseImagePayload(response.data, imageOutputFormatMimeType(imageOutputFormat));
@@ -848,7 +852,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                     ...(background ? { background } : {}),
                     response_format: "b64_json",
                 },
-                { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal },
+                { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal, timeout: DIRECT_IMAGE_REQUEST_TIMEOUT_MS },
             );
             return parseImagePayload(response.data, imageOutputFormatMimeType(imageOutputFormat));
         } catch (error) {
@@ -882,7 +886,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (mask) formData.set("mask", dataUrlToFile(mask));
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal });
+        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal, timeout: DIRECT_IMAGE_REQUEST_TIMEOUT_MS });
         const images = parseImagePayload(response.data, imageOutputFormatMimeType(imageOutputFormat));
         return images;
     } catch (error) {

@@ -1,5 +1,12 @@
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle } from "@/types/canvas";
 
+export function translateDraggedNodes(nodes: CanvasNodeData[], initial: ReadonlyMap<string, { x: number; y: number }>, dx: number, dy: number) {
+    return nodes.map((node) => {
+        const start = initial.get(node.id);
+        return start ? { ...node, position: { x: start.x + dx, y: start.y + dy } } : node;
+    });
+}
+
 export function collectGroupMemberNodes(ids: Set<string>, nodes: CanvasNodeData[]) {
     const groups = new Set(nodes.filter((n) => ids.has(n.id) && n.type === CanvasNodeType.Group && !n.metadata?.locked).map((n) => n.id));
     const lockedGroups = new Set(nodes.filter((n) => n.type === CanvasNodeType.Group && n.metadata?.locked).map((n) => n.id));
@@ -65,16 +72,18 @@ export function findGroupDropTarget(movedIds: Set<string>, nodes: CanvasNodeData
     if (nodes.some((node) => movedIds.has(node.id) && node.type === CanvasNodeType.Group)) return null;
     const movingNodes = collectGroupMemberNodes(movedIds, nodes);
     if (!movingNodes.length) return null;
-    return (
-        [...nodes].reverse().find((group) => {
-            if (group.type !== CanvasNodeType.Group || group.metadata?.locked || movedIds.has(group.id)) return false;
-            return movingNodes.some((node) => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+        const group = nodes[i];
+        if (group.type !== CanvasNodeType.Group || group.metadata?.locked || movedIds.has(group.id)) continue;
+        if (
+            movingNodes.some((node) => {
                 const centerX = node.position.x + node.width / 2;
                 const centerY = node.position.y + node.height / 2;
                 return centerX >= group.position.x && centerX <= group.position.x + group.width && centerY >= group.position.y && centerY <= group.position.y + group.height;
-            });
-        }) || null
-    );
+            })
+        ) return group;
+    }
+    return null;
 }
 
 export function snapNodesIntoGroup(movedIds: Set<string>, nodes: CanvasNodeData[], group: CanvasNodeData) {
@@ -99,19 +108,32 @@ export function snapNodesIntoGroup(movedIds: Set<string>, nodes: CanvasNodeData[
 export function findContainingGroupId(node: CanvasNodeData, nodes: CanvasNodeData[]) {
     const centerX = node.position.x + node.width / 2;
     const centerY = node.position.y + node.height / 2;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+        const group = nodes[i];
+        if (
+            group.type === CanvasNodeType.Group &&
+            !group.metadata?.locked &&
+            group.id !== node.id &&
+            centerX >= group.position.x &&
+            centerX <= group.position.x + group.width &&
+            centerY >= group.position.y &&
+            centerY <= group.position.y + group.height
+        ) return group.id;
+    }
+    return undefined;
+}
+
+export function isConnectionInViewport(from: CanvasNodeData, to: CanvasNodeData, view: { left: number; top: number; right: number; bottom: number }) {
+    const startX = from.position.x + from.width;
+    const endX = to.position.x;
+    const startY = from.position.y + from.height / 2;
+    const endY = to.position.y + to.height / 2;
+    const curvature = Math.max(Math.abs(endX - startX) * 0.5, 50);
+    // A cubic curve stays inside the hull of its four control points.
     return (
-        [...nodes]
-            .reverse()
-            .find(
-                (group) =>
-                    group.type === CanvasNodeType.Group &&
-                    !group.metadata?.locked &&
-                    group.id !== node.id &&
-                    centerX >= group.position.x &&
-                    centerX <= group.position.x + group.width &&
-                    centerY >= group.position.y &&
-                    centerY <= group.position.y + group.height,
-            )?.id || undefined
+        Math.max(startX, startX + curvature, endX - curvature, endX) >= view.left &&
+        Math.min(startX, startX + curvature, endX - curvature, endX) <= view.right &&
+        Math.max(startY, endY) >= view.top && Math.min(startY, endY) <= view.bottom
     );
 }
 

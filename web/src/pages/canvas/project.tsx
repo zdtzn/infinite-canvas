@@ -67,6 +67,8 @@ import {
     getConnectionTargetAnchor,
     isHiddenBatchChild,
     isHiddenBatchConnectionEndpoint,
+    isConnectionInViewport,
+    translateDraggedNodes,
     normalizeConnection,
     snapNodesIntoGroup,
 } from "@/lib/canvas/canvas-node-geometry";
@@ -290,13 +292,13 @@ function InfiniteCanvasPage() {
         hasMoved: boolean;
         startX: number;
         startY: number;
-        initialSelectedNodes: { id: string; x: number; y: number }[];
+        initialSelectedNodes: Map<string, { x: number; y: number }>;
     }>({
         isDraggingNode: false,
         hasMoved: false,
         startX: 0,
         startY: 0,
-        initialSelectedNodes: [],
+        initialSelectedNodes: new Map(),
     });
 
     const config = useConfigStore((state) => state.config);
@@ -867,7 +869,7 @@ function InfiniteCanvasPage() {
     );
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
-    const visibleNodes = useMemo(() => {
+    const visibleBounds = useMemo(() => {
         const padding = 280;
         const rect = containerRef.current?.getBoundingClientRect();
         const width = rect?.width || size.width;
@@ -877,12 +879,15 @@ function InfiniteCanvasPage() {
         const viewRight = viewLeft + width / viewport.k + padding * 2;
         const viewBottom = viewTop + height / viewport.k + padding * 2;
 
+        return { left: viewLeft, top: viewTop, right: viewRight, bottom: viewBottom };
+    }, [size.height, size.width, viewport.k, viewport.x, viewport.y]);
+    const visibleNodes = useMemo(() => {
+        const { left: viewLeft, top: viewTop, right: viewRight, bottom: viewBottom } = visibleBounds;
         return nodes.filter(
             (node) =>
                 !node.metadata?.hidden && !isHiddenBatchChild(node, nodes, collapsingBatchIds, nodeById) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom,
         );
-    }, [collapsingBatchIds, nodes, nodeById, size.height, size.width, viewport.k, viewport.x, viewport.y]);
-    const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
+    }, [collapsingBatchIds, nodes, nodeById, visibleBounds]);
 
     // 工具条跟随「单选节点」:点击/新建/框选/键盘选中任一节点都会显示,不再仅靠精确点中触发。
     // 多选时不显示;拖拽中由下方 isNodeDragging 守卫隐藏。
@@ -1634,7 +1639,7 @@ function InfiniteCanvasPage() {
             hasMoved: false,
             startX: event.clientX,
             startY: event.clientY,
-            initialSelectedNodes: currentNodes.filter((node) => dragIds.has(node.id)).map((node) => ({ id: node.id, x: node.position.x, y: node.position.y })),
+            initialSelectedNodes: new Map(currentNodes.filter((node) => dragIds.has(node.id)).map((node) => [node.id, { ...node.position }])),
         };
         historyPausedRef.current = true;
         nodeDraggingRef.current = true;
@@ -1648,8 +1653,8 @@ function InfiniteCanvasPage() {
         }
         if (!dragRef.current.isDraggingNode) return;
 
-        const wasClick = !dragRef.current.hasMoved && dragRef.current.initialSelectedNodes.length === 1;
-        const clickedNodeId = dragRef.current.initialSelectedNodes[0]?.id;
+        const wasClick = !dragRef.current.hasMoved && dragRef.current.initialSelectedNodes.size === 1;
+        const clickedNodeId = dragRef.current.initialSelectedNodes.keys().next().value;
         const currentViewport = viewportRef.current;
         const dx = clientX == null ? 0 : (clientX - dragRef.current.startX) / currentViewport.k;
         const dy = clientY == null ? 0 : (clientY - dragRef.current.startY) / currentViewport.k;
@@ -1660,12 +1665,9 @@ function InfiniteCanvasPage() {
         setIsNodeDragging(false);
         setDropTargetGroupId(null);
         if (dragRef.current.hasMoved && clientX != null && clientY != null) {
-            const movedIds = new Set(initialPositions.map((item) => item.id));
+            const movedIds = new Set(initialPositions.keys());
             setNodes((prev) => {
-                const moved = prev.map((node) => {
-                    const initial = initialPositions.find((item) => item.id === node.id);
-                    return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                });
+                const moved = translateDraggedNodes(prev, initialPositions, dx, dy);
                 const targetGroup = findGroupDropTarget(movedIds, moved);
                 if (targetGroup) return snapNodesIntoGroup(movedIds, moved, targetGroup);
                 return moved.map((node) => {
@@ -1679,7 +1681,7 @@ function InfiniteCanvasPage() {
 
         dragRef.current.isDraggingNode = false;
         dragRef.current.hasMoved = false;
-        dragRef.current.initialSelectedNodes = [];
+        dragRef.current.initialSelectedNodes = new Map();
         if (wasClick && clickedNodeId) {
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
             const clickedDefinition = clickedNode ? getNodeDefinition(clickedNode.type) : undefined;
@@ -1706,21 +1708,13 @@ function InfiniteCanvasPage() {
                     dragRef.current.hasMoved = true;
                 }
 
-                const movedIds = new Set(initialPositions.map((item) => item.id));
-                const previewNodes = nodesRef.current.map((node) => {
-                    const initial = initialPositions.find((item) => item.id === node.id);
-                    return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                });
-                setDropTargetGroupId(findGroupDropTarget(movedIds, previewNodes)?.id || null);
-
                 if (rafRef.current) cancelAnimationFrame(rafRef.current);
                 rafRef.current = requestAnimationFrame(() => {
-                    setNodes((prev) =>
-                        prev.map((node) => {
-                            const initial = initialPositions.find((item) => item.id === node.id);
-                            return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                        }),
-                    );
+                    const movedIds = new Set(initialPositions.keys());
+                    const currentNodes = nodesRef.current;
+                    const previewNodes = translateDraggedNodes(currentNodes, initialPositions, dx, dy);
+                    setDropTargetGroupId(findGroupDropTarget(movedIds, previewNodes)?.id || null);
+                    setNodes((prev) => prev === currentNodes ? previewNodes : translateDraggedNodes(prev, initialPositions, dx, dy));
                     rafRef.current = null;
                 });
                 return;
@@ -1814,6 +1808,10 @@ function InfiniteCanvasPage() {
             window.removeEventListener("pointermove", handleGlobalPointerMove);
         };
     }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
+
+    useEffect(() => () => {
+        if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    }, []);
 
     const startPendingImageUpload = useCallback((nodeId: string, pending: PendingImageUpload) => {
         const previous = pendingImageUploadsRef.current.get(nodeId);
@@ -3911,7 +3909,7 @@ function InfiniteCanvasPage() {
                                 const from = nodeById.get(connection.fromNodeId);
                                 const to = nodeById.get(connection.toNodeId);
                                 return Boolean(
-                                    from && to && (visibleNodeIds.has(connection.fromNodeId) || visibleNodeIds.has(connection.toNodeId)) && !isHiddenBatchConnectionEndpoint(from, nodes, nodeById) && !isHiddenBatchConnectionEndpoint(to, nodes, nodeById),
+                                    from && to && !(from.metadata?.hidden && to.metadata?.hidden) && isConnectionInViewport(from, to, visibleBounds) && !isHiddenBatchConnectionEndpoint(from, nodes, nodeById) && !isHiddenBatchConnectionEndpoint(to, nodes, nodeById),
                                 );
                             })
                             .map((connection) => {

@@ -326,8 +326,13 @@ async function createThumbnail(blob: Blob, width: number, height: number, reques
     const canvas = document.createElement("canvas");
     canvas.width = target.width;
     canvas.height = target.height;
-    canvas.getContext("2d", { alpha: false })?.drawImage(bitmap, 0, 0, target.width, target.height);
-    bitmap.close();
+    try {
+        const context = canvas.getContext("2d", { alpha: true });
+        if (!context) return null;
+        context.drawImage(bitmap, 0, 0, target.width, target.height);
+    } finally {
+        bitmap.close();
+    }
     return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
 }
 
@@ -340,7 +345,7 @@ export async function createThumbnailFromImageElement(image: HTMLImageElement, r
     const canvas = document.createElement("canvas");
     canvas.width = target.width;
     canvas.height = target.height;
-    const context = canvas.getContext("2d", { alpha: false });
+    const context = canvas.getContext("2d", { alpha: true });
     if (!context) return null;
     context.drawImage(image, 0, 0, target.width, target.height);
     return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));

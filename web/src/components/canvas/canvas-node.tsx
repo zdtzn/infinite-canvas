@@ -68,6 +68,7 @@ type CanvasNodeProps = {
 
 type NodeContentRendererProps = {
     node: CanvasNodeData;
+    scale: number;
     isSelected: boolean;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     isEditingContent: boolean;
@@ -444,6 +445,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 >
                     <NodeContent
                         node={data}
+                        scale={scale}
                         isSelected={isSelected}
                         theme={theme}
                         isEditingContent={isEditingContent}
@@ -699,6 +701,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
     return (
         <ImageContent
             node={props.node}
+            scale={props.scale}
             isSelected={props.isSelected}
             isBatchRoot={props.isBatchRoot}
             batchCount={props.batchCount}
@@ -765,6 +768,7 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
 
 function ImageContent({
     node,
+    scale,
     isSelected,
     isBatchRoot,
     batchCount,
@@ -779,6 +783,7 @@ function ImageContent({
     onImageLoad,
 }: {
     node: CanvasNodeData;
+    scale: number;
     isSelected: boolean;
     isBatchRoot: boolean;
     batchCount: number;
@@ -794,7 +799,30 @@ function ImageContent({
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
-    const imageSource = canvasImageDisplaySource(node.metadata, isSelected);
+    const [previewSize, setPreviewSize] = useState<{ url: string; edge: number } | null>(null);
+    const [failedPreview, setFailedPreview] = useState<string | null>(null);
+    const previewUrl = node.metadata?.thumbnailUrl;
+    const imageSource = canvasImageDisplaySource(
+        failedPreview === previewUrl ? { ...node.metadata, thumbnailUrl: undefined } : node.metadata,
+        {
+            width: node.width,
+            height: node.height,
+            scale,
+            pixelRatio: typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
+            thumbnailMaxEdge: previewSize?.url === previewUrl ? previewSize?.edge : undefined,
+        },
+    );
+    const handleLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
+        const image = event.currentTarget;
+        if (imageSource === previewUrl && previewUrl) {
+            const edge = Math.max(image.naturalWidth, image.naturalHeight);
+            if (edge > 0) setPreviewSize((current) => current?.url === previewUrl && current.edge === edge ? current : { url: previewUrl, edge });
+        }
+        onImageLoad?.(node, image);
+    };
+    const handleError = () => {
+        if (imageSource === previewUrl && previewUrl) setFailedPreview(previewUrl);
+    };
     const loadingAttributes = canvasImageLoadingAttributes(isSelected);
 
     return (
@@ -808,7 +836,8 @@ function ImageContent({
                         decoding="async"
                         loading={loadingAttributes.loading}
                         fetchPriority={loadingAttributes.fetchPriority}
-                        onLoad={(event) => onImageLoad?.(node, event.currentTarget)}
+                        onLoad={handleLoad}
+                        onError={handleError}
                         onDragStart={(event) => event.preventDefault()}
                         className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                     />
@@ -819,7 +848,8 @@ function ImageContent({
                         draggable={false}
                         fetchPriority={loadingAttributes.fetchPriority}
                         rootMargin="96px"
-                        onLoad={(event) => onImageLoad?.(node, event.currentTarget)}
+                        onLoad={handleLoad}
+                        onError={handleError}
                         onDragStart={(event) => event.preventDefault()}
                         className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                     />

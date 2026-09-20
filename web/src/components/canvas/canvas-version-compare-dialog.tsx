@@ -1,7 +1,6 @@
 import { Modal } from "antd";
 import { ArrowRight, GitCompare } from "lucide-react";
 
-import { canvasImageDisplaySource } from "@/lib/canvas/canvas-image-loading";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CanvasNodeData } from "@/types/canvas";
@@ -18,7 +17,7 @@ export function CanvasVersionCompareDialog({ nodes, open, onClose }: { nodes: Ca
                             <span className="shrink-0 text-xs opacity-55">{node.metadata?.isPrimaryVersion ? "主版本" : node.metadata?.versionLabel || "版本"}</span>
                         </div>
                         <div className="grid aspect-square place-items-center overflow-hidden rounded-xl border" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
-                            {node.metadata?.content ? <img src={canvasImageDisplaySource(node.metadata, true)} alt={node.title} className="block size-full object-contain" /> : <span className="text-xs opacity-50">暂无图片</span>}
+                            {node.metadata?.content ? <img src={node.metadata.content} alt={node.title} className="block size-full object-contain" /> : <span className="text-xs opacity-50">暂无图片</span>}
                         </div>
                         <div className="mt-2 flex items-center gap-2 text-xs opacity-60">
                             <span>{Math.round(node.metadata?.naturalWidth || node.width)} × {Math.round(node.metadata?.naturalHeight || node.height)}</span>

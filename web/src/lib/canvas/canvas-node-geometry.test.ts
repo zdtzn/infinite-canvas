@@ -10,11 +10,47 @@ import {
     getGroupWrapRect,
     isHiddenBatchChild,
     isHiddenBatchConnectionEndpoint,
+    isConnectionInViewport,
+    translateDraggedNodes,
 } from "./canvas-node-geometry";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const makeNode = (id: string, groupId?: string, locked = false): CanvasNodeData => ({ id, title: id, type: CanvasNodeType.Text, position: { x: 10, y: 20 }, width: 100, height: 80, metadata: { groupId, locked } });
 const makeGroup = (id: string, locked = false): CanvasNodeData => ({ ...makeNode(id, undefined, locked), type: CanvasNodeType.Group });
+
+test("connection culling keeps crossing and backwards curves with offscreen endpoints", () => {
+    const view = { left: 0, top: 0, right: 500, bottom: 500 };
+    const from = { ...makeNode("from"), position: { x: -300, y: 100 } };
+    const to = { ...makeNode("to"), position: { x: 700, y: 100 } };
+    expect(isConnectionInViewport(from, to, view)).toBe(true);
+    expect(isConnectionInViewport(to, from, view)).toBe(true);
+    expect(isConnectionInViewport(from, to, { ...view, top: 200 })).toBe(false);
+    expect(isConnectionInViewport(from, to, { ...view, left: 2000, right: 2500 })).toBe(false);
+    expect(isConnectionInViewport(from, to, { ...view, top: 140 })).toBe(true);
+    const backward = { ...to, position: { x: 550, y: 100 } };
+    expect(isConnectionInViewport(to, backward, view)).toBe(true);
+});
+
+test("drag positions use original coordinates and preserve unrelated nodes and concurrent metadata", () => {
+    const a = makeNode("a");
+    const b = makeNode("b");
+    const initial = new Map([[a.id, { ...a.position }]]);
+    const moved = translateDraggedNodes([a, b], initial, 20, 30);
+    expect(moved[0].position).toEqual({ x: 30, y: 50 });
+    expect(moved[1]).toBe(b);
+    const updated = { ...moved[0], metadata: { ...a.metadata, content: "completed" } };
+    const final = translateDraggedNodes([updated, b], initial, 100, 120);
+    expect(final[0].position).toEqual({ x: 110, y: 140 });
+    expect(final[0].metadata?.content).toBe("completed");
+    expect(a.position).toEqual({ x: 10, y: 20 });
+});
+
+test("overlapping groups keep topmost unlocked target priority", () => {
+    const a = makeNode("a");
+    const nodes = [makeGroup("lower"), makeGroup("upper"), makeGroup("locked", true), a];
+    expect(findGroupDropTarget(new Set([a.id]), nodes)?.id).toBe("upper");
+    expect(findContainingGroupId(a, nodes)).toBe("upper");
+});
 
 test("dragging cannot add members to a locked group", () => {
     const locked = { ...makeGroup("locked", true), width: 400, height: 400 };

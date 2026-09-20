@@ -1,6 +1,6 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import axios from "axios";
-import { requestEdit } from "./image";
+import { requestEdit, requestGeneration } from "./image";
 import { createVideoGenerationTask, pollVideoGenerationTask, requestVideoGeneration } from "./video";
 import { useUserStore } from "@/stores/use-user-store";
 import { createModelChannel, defaultConfig, encodeChannelModel } from "@/stores/use-config-store";
@@ -24,6 +24,7 @@ test("image edits use image for one reference and image[] for multiple without d
     mocks.push(post);
     await requestEdit(config("image"), "test", [image]);
     const single = post.mock.calls[0][1] as FormData;
+    expect(post.mock.calls[0][2]?.timeout).toBe(600_000);
     expect(single.getAll("image")).toHaveLength(1);
     expect(single.has("image[]")).toBe(false);
     await requestEdit(config("image"), "test", [image, { ...image, id: "img2" }]);
@@ -37,8 +38,25 @@ test("Gemini request places aspect ratio and resolution directly in generationCo
     mocks.push(post);
     await requestEdit(config("image", "gemini"), "test", [image]);
     const payload = post.mock.calls[0][1] as { generationConfig: Record<string, unknown> };
+    expect(post.mock.calls[0][2]?.timeout).toBe(600_000);
     expect(payload.generationConfig.imageConfig).toEqual({ aspectRatio: "16:9", imageSize: "2K" });
     expect(payload.generationConfig).not.toHaveProperty("responseFormat");
+});
+
+test("direct image generation has a bounded wait and preserves cancellation", async () => {
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { data: [{ b64_json: png.split(",")[1] }] } });
+    mocks.push(post);
+    const signal = new AbortController().signal;
+    await requestGeneration(config("image"), "test", { signal });
+    expect(post.mock.calls[0][2]?.timeout).toBe(600_000);
+    expect(post.mock.calls[0][2]?.signal).toBe(signal);
+});
+
+test("direct timeouts do not claim upstream generation failed or automatically resubmit", async () => {
+    const post = spyOn(axios, "post").mockRejectedValue(new axios.AxiosError("timeout", "ECONNABORTED"));
+    mocks.push(post);
+    await expect(requestGeneration(config("image"), "test")).rejects.toThrow("上游可能仍在生成");
+    expect(post).toHaveBeenCalledTimes(1);
 });
 
 test("video reference modes preserve old multipart requests and explicitly map first/last frames", async () => {

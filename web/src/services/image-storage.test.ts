@@ -118,11 +118,14 @@ test("creates an asset thumbnail from the image that the browser already loaded"
             set height(value: number) {
                 canvasHeight = value;
             },
-            getContext: () => ({
-                drawImage: (image: CanvasImageSource) => {
-                    drawnSource = image;
-                },
-            }),
+            getContext: (_type: string, options: CanvasRenderingContext2DSettings) => {
+                expect(options.alpha).toBe(true);
+                return {
+                    drawImage: (image: CanvasImageSource) => {
+                        drawnSource = image;
+                    },
+                };
+            },
             toBlob: (callback: BlobCallback, type?: string) => callback(new Blob(["thumbnail"], { type })),
         }),
     } as unknown as Document;
