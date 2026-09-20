@@ -1,5 +1,6 @@
 import type { ChannelImageCapabilityConfig } from "../types";
 import type { ProviderProtocol } from "./url-policy";
+import { isGptImage25Model } from "./image-request";
 
 export type ServerImageCapabilities = {
   resolutions: string[];
@@ -205,7 +206,7 @@ function documentedImageCapabilities(model: string, apiFormat: ProviderProtocol,
     });
   }
   if (name.includes("gpt-image")) {
-    return documented("GPT Image 兼容模型", {
+    return documented(isGptImage25Model(name) ? "GPT Image 2.5 兼容模型" : "GPT Image 兼容模型", {
       resolutions: OUTPUT_RESOLUTIONS,
       generationQualities: ["auto", "low", "medium", "high"],
       outputFormats: ["auto", "png", "jpeg", "webp"],

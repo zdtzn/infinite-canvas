@@ -319,11 +319,12 @@ async function restoreServerImage(serverJobId: string, expectedUserId: string, o
 }
 
 export async function generatedImageFromServerImage(image: ServerJobImage, serverJobId: string, fallbackDurationMs = 0): Promise<GeneratedImage> {
-    const meta = await resolveGeneratedImageMeta(image);
+    const dataUrl = image.persisted === false ? image.recoveryUrl || image.dataUrl : image.dataUrl;
+    const meta = await resolveGeneratedImageMeta({ ...image, dataUrl });
     return {
         id: image.id,
         serverJobId,
-        dataUrl: image.dataUrl,
+        dataUrl,
         durationMs: image.durationMs || fallbackDurationMs,
         width: meta.width,
         height: meta.height,

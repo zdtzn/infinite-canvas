@@ -19,6 +19,29 @@ function config(capability: "image" | "video", apiFormat: "openai" | "gemini" = 
     return { ...defaultConfig, channelMode: "local" as const, channels: [channel], model: encodeChannelModel(channel.id, name), imageModel: capability === "image" ? encodeChannelModel(channel.id, name) : "", count: "1", size: "16:9", quality: "medium" };
 }
 
+test("Image 2.5 direct requests prefer UU URLs but preserve other channel formats", async () => {
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { data: [{ url: "https://images.test/result.png" }] } });
+    mocks.push(post);
+    for (const baseUrl of ["https://uuapi.cc", "https://gguuai.com", "https://api.sadai.top"]) {
+        const name = "gpt-image-2.5";
+        const channel = createModelChannel({ id: "image25", baseUrl, apiKey: "test-only", apiFormat: "openai", models: [{ name, capability: "image" }] });
+        const model = encodeChannelModel(channel.id, name);
+        const selected = { ...defaultConfig, channelMode: "local" as const, channels: [channel], model, imageModel: model, count: "1", size: "9:16", quality: "low", imageQuality: "high", imageOutputFormat: "webp" };
+        const result = await requestGeneration(selected, "test");
+        const payload = post.mock.calls.at(-1)![1] as Record<string, unknown>;
+        expect(payload.model).toBe(name);
+        expect(payload.response_format).toBe(baseUrl === "https://uuapi.cc" ? "url" : "b64_json");
+        expect(payload.quality).toBe("high");
+        expect(payload.output_format).toBe("webp");
+        expect(result[0].dataUrl).toBe("https://images.test/result.png");
+        await requestEdit(selected, "edit", [image, { ...image, id: "second" }]);
+        const form = post.mock.calls.at(-1)![1] as FormData;
+        expect(form.get("model")).toBe(name);
+        expect(form.getAll("image[]")).toHaveLength(2);
+        expect(form.get("response_format")).toBe(baseUrl === "https://uuapi.cc" ? "url" : "b64_json");
+    }
+});
+
 test("image edits use image for one reference and image[] for multiple without dropping files", async () => {
     const post = spyOn(axios, "post").mockResolvedValue({ data: { data: [{ b64_json: png.split(",")[1] }] } });
     mocks.push(post);

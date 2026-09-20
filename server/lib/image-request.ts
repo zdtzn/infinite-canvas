@@ -27,7 +27,7 @@ type OpenAiImageRequestOptionsInput = {
     outputFormat?: string;
     size?: string;
     background?: string;
-    responseFormat?: "b64_json" | null;
+    responseFormat?: "b64_json" | "url" | null;
 };
 
 export function imageResponseItems(payload: unknown): Array<Record<string, unknown>> {
@@ -243,6 +243,10 @@ function validateGptImage2Size(width: number, height: number) {
 
 function isGptImage2Model(model: string) {
     return model.toLowerCase().split("::").at(-1)?.trim() === "gpt-image-2";
+}
+
+export function isGptImage25Model(model: string) {
+    return /^gpt-image-2\.5(?:-flare)?$/.test(model.toLowerCase().split("::").at(-1)?.trim() || "");
 }
 
 function isLegacyGptImageModel(model: string) {

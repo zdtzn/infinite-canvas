@@ -9,7 +9,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { imageToDataUrl } from "@/services/image-storage";
 import { archiveDeferredServerJob, cancelServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput, type ServerJob } from "@/services/server-api";
-import { deriveImageModelCapabilities, isUuAsyncGptImageModel, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
+import { deriveImageModelCapabilities, isUuAsyncGptImageModel, isUuImage25Model, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useUserStore } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -767,7 +767,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 ...(imageOutputFormat ? { output_format: imageOutputFormat } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(background ? { background } : {}),
-                response_format: "b64_json",
+                response_format: isUuImage25Model(requestConfig.baseUrl, requestConfig.model) ? "url" : "b64_json",
             },
             {
                 headers: aiHeaders(requestConfig, "application/json"),
@@ -850,7 +850,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                     ...(imageOutputFormat ? { output_format: imageOutputFormat } : {}),
                     ...(requestSize ? { size: requestSize } : {}),
                     ...(background ? { background } : {}),
-                    response_format: "b64_json",
+                    response_format: isUuImage25Model(requestConfig.baseUrl, requestConfig.model) ? "url" : "b64_json",
                 },
                 { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal, timeout: DIRECT_IMAGE_REQUEST_TIMEOUT_MS },
             );
@@ -868,7 +868,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     formData.set("model", requestConfig.model);
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
     if (n > 1) formData.set("n", String(n));
-    formData.set("response_format", "b64_json");
+    formData.set("response_format", isUuImage25Model(requestConfig.baseUrl, requestConfig.model) ? "url" : "b64_json");
     if (imageQuality) {
         formData.set("quality", imageQuality);
     }
@@ -1023,7 +1023,7 @@ async function requestServerImageJob(
         }
         return (completed.result?.images || []).map((image) => ({
             id: image.id,
-            dataUrl: image.dataUrl,
+            dataUrl: image.persisted === false ? image.recoveryUrl || image.dataUrl : image.dataUrl,
             width: image.width,
             height: image.height,
             bytes: image.bytes,

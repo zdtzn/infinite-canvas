@@ -1,4 +1,5 @@
-import { normalizeImageResponseValue } from "./image-request";
+import { buildOpenAiImageRequestOptions, isGptImage25Model, normalizeImageResponseValue, resolveOpenAiImageSize } from "./image-request";
+import { imageEditReferenceField } from "./image-provider-protocol";
 import { AsyncSemaphore } from "./async-semaphore";
 import type { ImageJobInput } from "../types";
 
@@ -79,7 +80,26 @@ export function isUuAsyncGptImage2Channel(baseUrl: string, model: string) {
 }
 
 export function isUuImageAsyncChannel(baseUrl: string, model: string, referenceCount: number, hasMask: boolean) {
+    if (isUuImage25Channel(baseUrl, model)) return referenceCount <= 16 && (!hasMask || referenceCount > 0);
     return isUuAsyncGptImage2Channel(baseUrl, model) && referenceCount <= 1 && !hasMask;
+}
+
+export function isUuImage25Channel(baseUrl: string, model: string) {
+    return isGptImage25Model(model) && isUuAsyncGptImage2Channel(baseUrl, "gpt-image-2");
+}
+
+export function uuAsyncCapabilityKey(channelId: string, model: string) {
+    return isGptImage25Model(model) ? `${channelId}:${model.trim().toLowerCase()}` : channelId;
+}
+
+export function supportsUuAsyncRequest(baseUrl: string, input: Pick<ImageJobInput, "model" | "references" | "mask" | "count">) {
+    return (input.count === 1 || isUuImage25Channel(baseUrl, input.model)) &&
+        isUuImageAsyncChannel(baseUrl, input.model, input.references.length, Boolean(input.mask));
+}
+
+export function uuTaskPollDelay(retryAfter: string | null) {
+    const seconds = Number(retryAfter);
+    return Number.isFinite(seconds) && seconds > 0 ? Math.min(30_000, Math.max(1_000, seconds * 1000)) : 2_500;
 }
 
 export function hasUuAsyncTask(input: ImageJobInput): input is ImageJobInput & {
@@ -104,6 +124,10 @@ export function buildUuAsyncImageSubmission({
     resolution,
     generationQuality,
     references,
+    outputFormat,
+    background,
+    mask,
+    count = 1,
 }: {
     model: string;
     prompt: string;
@@ -111,7 +135,24 @@ export function buildUuAsyncImageSubmission({
     resolution?: string;
     generationQuality?: string;
     references: Blob[];
+    outputFormat?: string;
+    background?: string;
+    mask?: Blob;
+    count?: number;
 }) {
+    if (isGptImage25Model(model)) {
+        const options = buildOpenAiImageRequestOptions({ count, quality: generationQuality, outputFormat, background,
+            size: resolveOpenAiImageSize(size || "1:1", resolution, model), responseFormat: "url" });
+        if (mask && !references.length) throw new Error("蒙版编辑需要参考图");
+        if (!references.length) return { path: "/images/generations/async" as const, contentType: "application/json" as const, body: JSON.stringify({ model, prompt, ...options }) };
+        const form = new FormData();
+        form.set("model", model);
+        form.set("prompt", prompt);
+        Object.entries(options).forEach(([key, value]) => form.set(key, String(value)));
+        references.forEach((image, index) => form.append(imageEditReferenceField(references.length), image, `reference-${index + 1}${imageFilenameExtension(image.type)}`));
+        if (mask) form.set("mask", mask, `mask${imageFilenameExtension(mask.type)}`);
+        return { path: "/images/edits/async" as const, contentType: undefined, body: form };
+    }
     if (references.length > 1) throw new Error("UU GPT Image 2 当前最多支持 1 张参考图");
     const { width, height } = resolveUuAsyncImageSize(size, resolution);
     const outputSize = `${width}x${height}`;
@@ -189,7 +230,7 @@ export function readUuAsyncTask(payload: unknown): UuImageAsyncTask {
     return {
         taskId,
         status,
-        expiresAt: firstString(task.expires_at, task.expiresAt, data?.expires_at, root?.expires_at),
+        expiresAt: normalizedExpiry(task.expires_at ?? task.expiresAt ?? data?.expires_at ?? root?.expires_at),
         imageUrls,
         message: firstUsefulMessage(
             error?.message,
@@ -218,6 +259,15 @@ export function readUuAsyncTask(payload: unknown): UuImageAsyncTask {
 
 function asRecord(value: unknown) {
     return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function normalizedExpiry(value: unknown) {
+    if (typeof value !== "number" && typeof value !== "string") return undefined;
+    if (typeof value === "string" && !value.trim()) return undefined;
+    const numeric = Number(value);
+    const timestamp = Number.isFinite(numeric) ? (numeric < 1e12 ? numeric * 1000 : numeric) : Date.parse(String(value));
+    if (!Number.isFinite(timestamp) || timestamp <= 0 || timestamp >= 8.64e15) return undefined;
+    return !Number.isFinite(numeric) && typeof value === "string" ? value.trim() : new Date(timestamp).toISOString();
 }
 
 function firstString(...values: unknown[]) {
@@ -271,6 +321,7 @@ function collectImageUrls(...records: Array<Record<string, unknown> | undefined>
                   record.imageUrl,
                   record.image,
                   record.results,
+                  record.data,
                   record.result,
                   record.output,
                   record.output_images,

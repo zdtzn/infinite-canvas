@@ -172,7 +172,7 @@ function documentedImageCapabilities(model: string, apiFormat: "openai" | "gemin
         });
     }
     if (name.includes("gpt-image")) {
-        return documented("GPT Image 兼容模型", {
+        return documented(isGptImage25Model(name) ? "GPT Image 2.5 兼容模型" : "GPT Image 兼容模型", {
             resolutions: OUTPUT_RESOLUTIONS,
             generationQualities: ["auto", "low", "medium", "high"],
             outputFormats: ["auto", "png", "jpeg", "webp"],
@@ -266,6 +266,14 @@ export function isUuAsyncGptImageModel(baseUrl: string, model: string) {
     } catch {
         return false;
     }
+}
+
+export function isGptImage25Model(model: string) {
+    return /^gpt-image-2\.5(?:-flare)?$/.test(model.toLowerCase().split("::").at(-1)?.trim() || "");
+}
+
+export function isUuImage25Model(baseUrl: string, model: string) {
+    return isGptImage25Model(model) && isUuAsyncGptImageModel(baseUrl, "gpt-image-2");
 }
 
 export function resolveImageSlotConcurrency(baseUrl: string, model: string, requestedConcurrency: number) {

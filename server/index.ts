@@ -68,7 +68,8 @@ import {
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
-import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, isUuImageAsyncChannel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
+import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
+import { isUuImage25Channel, supportsUuAsyncRequest, uuAsyncCapabilityKey, uuTaskPollDelay } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -3372,9 +3373,8 @@ function publicJob(job: StoredImageJob) {
     const usesUuAsync =
         job.input.apiFormat === "openai" &&
         (hasUuAsyncTask(job.input) ||
-            (job.input.count === 1 &&
-                uuAsyncCapabilityRegistry.canSubmit(job.input.channelId) &&
-                Boolean(channel && isUuImageAsyncChannel(channel.baseUrl, job.input.model, job.input.references.length, Boolean(job.input.mask)))));
+            (uuAsyncCapabilityRegistry.canSubmit(uuAsyncCapabilityKey(job.input.channelId, job.input.model)) &&
+                Boolean(channel && supportsUuAsyncRequest(channel.baseUrl, job.input))));
     const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : usesUuAsync && !hasUuAsyncTask(job.input) ? "submitting" : "waiting_upstream";
     const result = job.result
         ? {
@@ -3418,21 +3418,23 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         const useUuAsync =
             input.apiFormat === "openai" &&
             (hasUuAsyncTask(input) ||
-                (input.count === 1 &&
-                    uuAsyncCapabilityRegistry.canSubmit(input.channelId) &&
-                    isUuImageAsyncChannel(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))));
+                (uuAsyncCapabilityRegistry.canSubmit(uuAsyncCapabilityKey(input.channelId, input.model)) &&
+                    supportsUuAsyncRequest(channel.baseUrl, input)));
         const rawImages =
             input.apiFormat === "gemini"
                 ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
                 : useUuAsync
-                  ? await uuImageChannelScheduler.run(input.channelId, signal, () => generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId))
+                  ? isUuImage25Channel(channel.baseUrl, input.model)
+                      ? await generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId)
+                      : await uuImageChannelScheduler.run(input.channelId, signal, () => generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId))
                   : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
+        const upstreamFinishedAt = Date.now();
         const images: ImageJobImage[] = [];
-        const uuDimensions = useUuAsync ? resolveUuAsyncImageSize(input.size, input.quality) : undefined;
+        const uuDimensions = useUuAsync && isUuAsyncGptImage2Channel(channel.baseUrl, input.model) ? resolveUuAsyncImageSize(input.size, input.quality) : undefined;
         for (const raw of rawImages) {
             if (signal.aborted || job.status === "canceled") throw abortError(signal);
             const durationMs = Date.now() - startedAt;
-            if (useUuAsync && isRelayEligibleResultUrl(raw)) {
+            if (isRelayEligibleResultUrl(raw)) {
                 images.push(
                     createDeferredImageResult({
                         id: randomUUID(),
@@ -3479,6 +3481,9 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
             durationMs: Date.now() - startedAt,
             ...(recoveryPending ? { recoveryPending: true } : {}),
         };
+        console.info(JSON.stringify({ event: "image_job_timing", jobId: job.id, channelId: input.channelId, model: input.model,
+            mode: hasUuAsyncTask(input) ? "async" : "sync", queueMs: Math.max(0, (job.startedAt || startedAt) - job.createdAt),
+            upstreamMs: upstreamFinishedAt - startedAt, persistenceMs: Date.now() - upstreamFinishedAt, totalMs: result.durationMs }));
         if (!input.recoveryOnly)
             cultivation?.settleGeneration({
                 jobId: job.id,
@@ -3518,6 +3523,7 @@ type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & {
 };
 
 async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal, upstreamRequestId: string) {
+    const requestStartedAt = Date.now();
     const headers = {
         Authorization: `Bearer ${apiKey}`,
         "Idempotency-Key": upstreamIdempotencyKey(upstreamRequestId),
@@ -3533,7 +3539,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         outputFormat: input.imageOutputFormat,
         size,
         background: input.background,
-        responseFormat: isDragonGptImageModel(channel.baseUrl, input.model) ? null : undefined,
+        responseFormat: isDragonGptImageModel(channel.baseUrl, input.model) ? null : isUuImage25Channel(channel.baseUrl, input.model) ? "url" : undefined,
     });
     if (isDragonChatImageModel(channel.baseUrl, input.model)) {
         const outputs = await Promise.all(
@@ -3628,10 +3634,13 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
             retryPaidRequest,
         );
     }
+    const headersReceivedAt = Date.now();
     const payload = await parseUpstreamJson(response, {
         maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES,
         tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试",
     });
+    console.info(JSON.stringify({ event: "image_upstream_timing", jobId: upstreamRequestId, channelId: input.channelId, model: input.model,
+        responseHeadersMs: headersReceivedAt - requestStartedAt, responseBodyMs: Date.now() - headersReceivedAt }));
     const data = imageResponseItems(payload);
     const mimeType = imageOutputFormatMimeType(input.imageOutputFormat);
     return data.map((item) => imageResponseItemValue(item, mimeType)).filter(Boolean);
@@ -3641,7 +3650,7 @@ async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, inp
     if (!hasUuAsyncTask(input)) {
         const runtimeInput = await materializeImageInput(input);
         const fallbackImages = await uuAsyncCapabilityRegistry.runWithFallback<string[] | undefined>(
-            input.channelId,
+            uuAsyncCapabilityKey(input.channelId, input.model),
             async () => {
                 const submission = buildUuAsyncImageSubmission({
                     model: input.model,
@@ -3650,6 +3659,10 @@ async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, inp
                     resolution: input.quality,
                     generationQuality: input.imageQuality,
                     references: runtimeInput.references.map((reference) => dataUrlBlob(reference)),
+                    count: input.count,
+                    outputFormat: input.imageOutputFormat,
+                    background: input.background,
+                    mask: runtimeInput.mask ? dataUrlBlob(runtimeInput.mask) : undefined,
                 });
                 const response = await upstreamFetch(
                     buildUpstreamUrl(channel.baseUrl, "openai", submission.path),
@@ -3663,7 +3676,7 @@ async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, inp
                         body: submission.body,
                         signal,
                     },
-                    true,
+                    false,
                     UU_ASYNC_REQUEST_TIMEOUT_MS,
                 );
                 const task = readUuAsyncTask(await parseUpstreamJson(response));
@@ -3702,7 +3715,7 @@ async function pollUuImageTask(channel: ChannelRecord, apiKey: string, input: Im
         if (task.status === "failed") throw new Error(task.message || "UU 异步任务失败");
         if (task.status === "canceled") throw new Error(task.message || "UU 异步任务已取消");
         if (task.status === "unknown") throw new Error(task.message || "UU 异步任务返回了无法识别的状态");
-        await waitForAbortableDelay(UU_ASYNC_POLL_INTERVAL_MS, signal);
+        await waitForAbortableDelay(uuTaskPollDelay(response.headers.get("retry-after")), signal);
     }
     throw abortError(signal);
 }

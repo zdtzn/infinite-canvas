@@ -11,9 +11,70 @@ import {
     isUuImageAsyncChannel,
     readUuAsyncTask,
     resolveUuAsyncImageSize,
+    supportsUuAsyncRequest,
+    uuAsyncCapabilityKey,
+    uuTaskPollDelay,
 } from "./uu-image-async";
 
 const ONE_PIXEL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9JdVQAAAAASUVORK5CYII=";
+
+test("Image 2.5 uses documented UU async requests without changing unrelated hosts or old models", () => {
+    for (const model of ["gpt-image-2.5", "gpt-image-2.5-flare"]) {
+        expect(supportsUuAsyncRequest("https://uuapi.cc/v1", { model, count: 3, references: ["ref1", "ref2"], mask: "mask" })).toBe(true);
+        expect(isUuImageAsyncChannel("https://uuapi.net", model, 0, false)).toBe(true);
+        expect(isUuImageAsyncChannel("https://uuapi.cc.attacker.test", model, 0, false)).toBe(false);
+        expect(isUuImageAsyncChannel("https://gguuai.com", model, 0, false)).toBe(false);
+        expect(isUuImageAsyncChannel("https://api.sadai.top", model, 0, false)).toBe(false);
+        expect(isUuImageAsyncChannel("https://uuapi.cc", model, 0, true)).toBe(false);
+    }
+    expect(supportsUuAsyncRequest("https://uuapi.cc", { model: "gpt-image-2", count: 3, references: [] })).toBe(false);
+    expect(isUuImageAsyncChannel("https://uuapi.cc", "gpt-image-2.50", 0, false)).toBe(false);
+});
+
+test("Image 2.5 async submission preserves model, size, quality, format and count", () => {
+    const request = buildUuAsyncImageSubmission({ model: "gpt-image-2.5-flare", prompt: "keep text", size: "1536x1024", generationQuality: "low", outputFormat: "webp", background: "transparent", count: 3, references: [] });
+    expect(request.path).toBe("/images/generations/async");
+    expect(JSON.parse(request.body as string)).toEqual({ model: "gpt-image-2.5-flare", prompt: "keep text", size: "1536x1024", quality: "low", output_format: "webp", background: "transparent", n: 3, response_format: "url" });
+    const defaultQuality = buildUuAsyncImageSubmission({ model: "gpt-image-2.5", prompt: "test", size: "9:16", references: [] });
+    expect(JSON.parse(defaultQuality.body as string).quality).toBeUndefined();
+    expect(JSON.parse(defaultQuality.body as string).size).toBe("576x1024");
+});
+
+test("Image 2.5 async edits keep every reference and the mask", () => {
+    const references = [new Blob(["one"], { type: "image/png" }), new Blob(["two"], { type: "image/webp" })];
+    const request = buildUuAsyncImageSubmission({ model: "gpt-image-2.5", prompt: "edit", references, mask: references[0], size: "1:1", outputFormat: "png" });
+    const form = request.body as FormData;
+    expect(request.path).toBe("/images/edits/async");
+    expect(form.getAll("image[]")).toHaveLength(2);
+    expect(form.get("mask")).toBeInstanceOf(File);
+    expect(form.get("model")).toBe("gpt-image-2.5");
+    expect(form.get("output_format")).toBe("png");
+    expect(form.get("response_format")).toBe("url");
+});
+
+test("new UU task envelopes and numeric expiry values are understood", () => {
+    const url = "https://img.uuapi.net/result.png";
+    const task = readUuAsyncTask({ task_id: "task-25", status: "completed", expires_at: 1784179200, result: { data: [{ url }] } });
+    expect(task.status).toBe("succeeded");
+    expect(task.imageUrls).toEqual([url]);
+    expect(task.expiresAt).toBe(new Date(1784179200000).toISOString());
+    expect(readUuAsyncTask({ status: "completed", data: [{ url }] }).imageUrls).toEqual([url]);
+    expect(readUuAsyncTask({ status: "processing", expires_at: "1784179200000" }).expiresAt).toBe(task.expiresAt);
+    expect(readUuAsyncTask({ status: "processing", expires_at: "invalid" }).expiresAt).toBeUndefined();
+    expect(readUuAsyncTask({ status: "failed", http_status: 502, error: { message: "upstream failed" } }).message).toBe("upstream failed");
+    expect(uuTaskPollDelay("3")).toBe(3000);
+    expect(uuTaskPollDelay(null)).toBe(2500);
+    expect(uuTaskPollDelay("999999")).toBe(30000);
+});
+
+test("one rejected async model does not disable every model on the channel", async () => {
+    const registry = new UuAsyncCapabilityRegistry();
+    const key = uuAsyncCapabilityKey("channel", "gpt-image-2.5");
+    await registry.runWithFallback(key, () => { throw new Error("async image tasks are not enabled"); }, () => "sync");
+    expect(registry.canSubmit(key)).toBe(false);
+    expect(registry.canSubmit(uuAsyncCapabilityKey("channel", "gpt-image-2"))).toBe(true);
+    expect(registry.canSubmit(uuAsyncCapabilityKey("channel", "gpt-image-2.5-flare"))).toBe(true);
+});
 
 test("uses the UU async API for text and reference gpt-image-2 jobs without masks", () => {
     expect(isUuImageAsyncChannel("https://uuapi.cc/v1", "gpt-image-2", 0, false)).toBe(true);

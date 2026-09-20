@@ -15,6 +15,16 @@ import {
     type ImageGenerationSnapshot,
 } from "./image-generation-runtime";
 
+test("temporary images display through the available relay and saved images use the permanent asset", async () => {
+    const source = { id: "25", dataUrl: "https://img.uuapi.net/result.png", recoveryUrl: "https://relay.test/signed", width: 1254, height: 1254, bytes: 0, durationMs: 99000, mimeType: "image/png", persisted: false };
+    const temporary = await generatedImageFromServerImage(source, "job-25");
+    assert.equal(temporary.dataUrl, source.recoveryUrl);
+    assert.equal(temporary.width, 1254);
+    assert.equal(temporary.persisted, false);
+    const saved = await generatedImageFromServerImage({ ...source, persisted: true, dataUrl: "/api/job-files/25/result.png" }, "job-25");
+    assert.equal(saved.dataUrl, "/api/job-files/25/result.png");
+});
+
 test("migrates the legacy active image task into the authenticated account key", async () => {
     const values = new Map<string, unknown>();
     const legacy: ImageGenerationJob = {
