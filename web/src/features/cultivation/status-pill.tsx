@@ -52,7 +52,8 @@ export function CultivationStatusPill() {
             trigger="click"
             open={identityOpen}
             onOpenChange={setIdentityOpen}
-            styles={{ container: { background: "#18211f", border: "1px solid rgb(210 192 146 / 24%)", borderRadius: 8 } }}
+            color="#141416"
+            styles={{ container: { border: "1px solid rgb(210 192 146 / 16%)", borderRadius: 12, boxShadow: "0 16px 48px rgb(0 0 0 / 32%)" } }}
             content={
                 <Suspense
                     fallback={
