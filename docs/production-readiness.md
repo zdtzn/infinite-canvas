@@ -56,11 +56,11 @@ From a Windows development machine with the dedicated deployment key installed, 
 powershell -NoProfile -ExecutionPolicy Bypass -File ops/deploy-remote.ps1 `
   -HostName 118.190.159.129 `
   -Commit (git rev-parse HEAD) `
-  -Mode safe `
+  -Mode auto `
   -HealthUrl https://your-domain.example/health
 ```
 
-An HTTPS health URL automatically enables the production HTTPS preflight before the old container is stopped. Keep `-Mode fast` for UI, copy, and styling-only changes; use `safe` whenever persisted data, server behavior, authentication, permissions, providers, or storage can change.
+An HTTPS health URL automatically enables the production HTTPS preflight before the old container is stopped. The default `-Mode auto` compares the live container revision with the target commit (not merely the last commit). Only CSS, static image/font assets and documentation automatically select `fast`; code, configuration, unknown revisions, empty diffs and non-ancestor revisions select `safe`. A failure to read the server revision stops deployment. Use `-PlanOnly` to inspect the decision without uploading scripts or restarting the service. Explicit `-Mode fast` remains available for reviewed UI-only TSX changes; use `safe` whenever persisted data, server behavior, authentication, permissions, providers, or storage can change. CI, immutable image verification, active-job protection and failure rollback remain unchanged.
 
 The deployment script stops the app briefly, creates and verifies a full-volume backup, starts the new image by digest, checks `/health` and the source revision, and restores the previous container automatically on failure. For a specific release, bypass tag resolution and provide both immutable values explicitly:
 

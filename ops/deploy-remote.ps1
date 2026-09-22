@@ -12,13 +12,15 @@ param(
     [ValidatePattern('^[0-9a-f]{40}$')]
     [string]$Commit = '',
 
-    [ValidateSet('safe', 'fast')]
-    [string]$Mode = 'safe',
+    [ValidateSet('auto', 'safe', 'fast')]
+    [string]$Mode = 'auto',
 
     [ValidateRange(1, 65535)]
     [int]$Port = 22,
 
-    [string]$HealthUrl = ''
+    [string]$HealthUrl = '',
+
+    [switch]$PlanOnly
 )
 
 Set-StrictMode -Version Latest
@@ -35,16 +37,17 @@ if (-not (Test-Path -LiteralPath $IdentityFile)) {
 }
 
 $repoRoot = Split-Path $PSScriptRoot -Parent
+. "$PSScriptRoot/deploy-mode.ps1"
 $headCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $headCommit -ne $Commit) {
     throw "The checked-out commit must match the deployment commit: $Commit"
 }
-& git -C $repoRoot diff --quiet -- ops/deploy-commit.sh ops/deploy-pinned.sh ops/deploy-remote.ps1
-if ($LASTEXITCODE -ne 0) {
+& git -C $repoRoot diff --quiet -- ops/deploy-commit.sh ops/deploy-pinned.sh ops/deploy-remote.ps1 ops/deploy-mode.ps1
+if ($LASTEXITCODE -ne 0 -and -not $PlanOnly) {
     throw 'Deployment scripts contain uncommitted changes.'
 }
-& git -C $repoRoot diff --cached --quiet -- ops/deploy-commit.sh ops/deploy-pinned.sh ops/deploy-remote.ps1
-if ($LASTEXITCODE -ne 0) {
+& git -C $repoRoot diff --cached --quiet -- ops/deploy-commit.sh ops/deploy-pinned.sh ops/deploy-remote.ps1 ops/deploy-mode.ps1
+if ($LASTEXITCODE -ne 0 -and -not $PlanOnly) {
     throw 'Deployment scripts contain staged changes that are not in the deployment commit.'
 }
 
@@ -70,6 +73,26 @@ $requireHttps = if ($healthUri.Scheme -eq 'https') { '1' } else { '0' }
 
 $remoteDirectory = '/root/infinite-canvas-ops'
 $remoteTarget = "$UserName@$HostName"
+$onlineCommit = ''
+if ($Mode -eq 'auto') {
+    $revision = & $sshPath -i $IdentityFile -p $Port -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=8 $remoteTarget 'docker inspect -f ''{{index .Config.Labels "org.opencontainers.image.revision"}}'' infinite-canvas'
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot read the live deployment revision; no deployment was attempted.' }
+    $onlineCommit = ($revision -join '').Trim()
+    $Mode = 'safe'
+    if ($onlineCommit -match '^[0-9a-f]{40}$') {
+        & git -C $repoRoot merge-base --is-ancestor $onlineCommit $Commit 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            # --no-renames includes both old and new paths so a move cannot hide a risky deletion.
+            $changedPaths = @(& git -C $repoRoot diff --name-only --no-renames $onlineCommit $Commit)
+            if ($LASTEXITCODE -eq 0) { $Mode = Get-AutomaticDeploymentMode -ChangedPaths $changedPaths }
+        }
+    }
+    Write-Output "Automatic deployment: live=$onlineCommit target=$Commit mode=$Mode"
+}
+if ($PlanOnly) {
+    Write-Output "Plan only: mode=$Mode; no upload, backup or container restart performed."
+    return
+}
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $tempDirectory = Join-Path $tempRoot ("infinite-canvas-deploy-" + [Guid]::NewGuid().ToString('N'))
 $normalizedScripts = @()
@@ -117,6 +140,11 @@ try {
     }
 
     $remoteCommand = "set -eu; chmod 700 $remoteDirectory/deploy-commit.sh $remoteDirectory/deploy-pinned.sh; EXPECTED_COMMIT=$Commit IMAGE_TAG=$Commit DEPLOY_MODE=$Mode REQUIRE_HTTPS=$requireHttps sh $remoteDirectory/deploy-commit.sh"
+    if ($Mode -eq 'fast' -and $onlineCommit) {
+        # Do not use a stale fast-mode decision if another deployment has intervened.
+        $guard = 'test "$(docker inspect -f ''{{index .Config.Labels "org.opencontainers.image.revision"}}'' infinite-canvas)" = "' + $onlineCommit + '" || { echo "Live revision changed; rerun deployment" >&2; exit 1; }; '
+        $remoteCommand = $guard + $remoteCommand
+    }
     $deployArguments = @(
         '-i', $IdentityFile,
         '-p', [string]$Port,
