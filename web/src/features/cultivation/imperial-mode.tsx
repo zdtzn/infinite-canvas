@@ -99,14 +99,15 @@ export function writeImperialBoolean(key: string, value: boolean) {
 }
 
 export function ImperialModeProvider({ children }: { children: ReactNode }) {
-    const userId = useUserStore((state) => state.user?.id || "");
+    const user = useUserStore((state) => state.user);
+    const userId = user?.id || "";
     const { data: profile } = useCultivationProfile();
     const [imperialModeEnabled, setImperialModeEnabledState] = useState(() => readImperialBoolean(imperialPreferenceKey(userId, "mode"), true));
     const [imperialWelcomeEnabled, setImperialWelcomeEnabledState] = useState(() => readImperialBoolean(imperialPreferenceKey(userId, "welcome"), true));
     const [preferenceUserId, setPreferenceUserId] = useState(userId);
     const [activation, setActivation] = useState({ userId, sequence: 0 });
     const imperialActivation = activation.userId === userId ? activation.sequence : 0;
-    const isDouEmperor = isDouEmperorRealm(profile?.realmId);
+    const isDouEmperor = isDouEmperorRealm(profile?.realmId ?? user?.realmId);
     const isImperialMode = isDouEmperor && preferenceUserId === userId && imperialModeEnabled;
     const day = localDayKey();
     const imperialHeroQuote = useMemo(() => imperialQuoteFor(`${userId}:${day}`), [day, userId]);

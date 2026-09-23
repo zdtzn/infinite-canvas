@@ -751,6 +751,7 @@ function publicAuthUser(user: UserRecord) {
         displayName: user.displayName,
         admin: Boolean(user.admin),
         avatarUrl: avatarUrlFor(user.userId),
+        realmId: cultivation?.getProfile(user.userId).realmId,
     };
 }
 

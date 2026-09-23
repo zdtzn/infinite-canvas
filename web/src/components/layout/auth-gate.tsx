@@ -1,10 +1,12 @@
 import { LoaderCircle } from "lucide-react";
 import { type ReactNode, Suspense, useEffect, useState } from "react";
+import { preload } from "react-dom";
 
 import { LOGIN_TRANSITION_MS, LoginRealmBackground, LoginTransition, selectLoginTransitionMessage } from "@/components/auth/login-realm";
 import { preloadAccountSessionRuntime } from "@/components/layout/account-session-controller";
-import { fetchAuthStatus, loginAccess, setupAccess, registerAccess } from "@/services/server-api";
-import { useUserStore } from "@/stores/use-user-store";
+import { DOU_EMPEROR_REALM_ID } from "@/features/cultivation/imperial-mode";
+import { fetchAuthStatus, loginAccess, setupAccess, registerAccess, type AuthUser } from "@/services/server-api";
+import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 
 import { lazyRoute } from "@/lib/lazy-route";
@@ -13,6 +15,22 @@ const loadLoginForm = () => import("./login-form");
 const LoginFormView = lazyRoute(loadLoginForm);
 
 type AccessForm = { displayName: string; accessCode: string; personalCode: string; email?: string; code?: string; register?: boolean };
+
+function preloadHomeBackground(authUser: AuthUser) {
+    if (window.location.pathname === "/") {
+        if (authUser.realmId === DOU_EMPEROR_REALM_ID) {
+            preload("/imperial/realm-scene-v2.webp", { as: "image", type: "image/webp", fetchPriority: "high", media: "(min-width: 641px)" });
+            preload("/imperial/realm-scene-mobile-v2.webp", { as: "image", type: "image/webp", fetchPriority: "high", media: "(max-width: 640px)" });
+        } else {
+            preload("/images/hero-main.webp", { as: "image", type: "image/webp", fetchPriority: "high" });
+        }
+    }
+}
+
+function activateUser(authUser: AuthUser, setSession: (user: LocalUser) => void) {
+    preloadHomeBackground(authUser);
+    setSession({ id: authUser.userId, username: authUser.displayName, displayName: authUser.displayName, avatarUrl: authUser.avatarUrl || "", admin: authUser.admin, realmId: authUser.realmId });
+}
 
 export function AuthGate({ children }: { children: ReactNode }) {
     const user = useUserStore((state) => state.user);
@@ -38,7 +56,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 setRegistrationEnabled(Boolean(status.emailRegistrationEnabled));
                 if (status.user) {
                     void preloadAccountSessionRuntime();
-                    setSession({ id: status.user.userId, username: status.user.displayName, displayName: status.user.displayName, avatarUrl: status.user.avatarUrl || "", admin: status.user.admin });
+                    activateUser(status.user, setSession);
                 } else {
                     void loadLoginForm().catch(() => undefined);
                     clearSession();
@@ -67,11 +85,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
         try {
             const result = configured ? values.register ? await registerAccess(values) : await loginAccess(values) : await setupAccess(values);
             void preloadAccountSessionRuntime();
+            preloadHomeBackground(result.user);
             setTransitionMessage(selectLoginTransitionMessage(result.user.userId));
             const transitionDuration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 160 : LOGIN_TRANSITION_MS;
             await new Promise((resolve) => window.setTimeout(resolve, transitionDuration));
             setTransitionMessage("");
-            setSession({ id: result.user.userId, username: result.user.displayName, displayName: result.user.displayName, avatarUrl: result.user.avatarUrl || "", admin: result.user.admin });
+            setSession({ id: result.user.userId, username: result.user.displayName, displayName: result.user.displayName, avatarUrl: result.user.avatarUrl || "", admin: result.user.admin, realmId: result.user.realmId });
         } catch (reason) {
             setError(reason instanceof Error ? reason.message : "登录失败");
         } finally {

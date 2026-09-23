@@ -36,7 +36,7 @@ export default function IndexPage() {
     const [showcaseHovered, setShowcaseHovered] = useState(false);
     const [previewIndex, setPreviewIndex] = useState(0);
     const [previewOpen, setPreviewOpen] = useState(false);
-    const { data: cultivation, isLoading: loadingRealm } = useCultivationProfile();
+    const { data: cultivation } = useCultivationProfile();
     const showcaseRef = useRef<HTMLElement>(null);
     const [showcaseEnabled, setShowcaseEnabled] = useState(false);
     const { isImperialMode } = useImperialMode();
@@ -93,7 +93,7 @@ export default function IndexPage() {
                 <ImperialRealm />
             ) : (
                 <section className="shj-hero relative flex min-h-[calc(100dvh-3.5rem)] flex-col items-center justify-center overflow-hidden">
-                    {!loadingRealm && <img className="shj-hero-image" src="/images/hero-main.webp" alt="" aria-hidden="true" loading="eager" fetchPriority="high" decoding="async" />}
+                    <img className="shj-hero-image" src="/images/hero-main.webp" alt="" aria-hidden="true" loading="eager" fetchPriority="high" decoding="async" />
                     <div className="shj-hero-stars" aria-hidden />
                     <div className="shj-hero-mist" aria-hidden />
                     <LightRays

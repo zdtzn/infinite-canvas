@@ -1,8 +1,5 @@
-import { preload } from "react-dom";
-
 export const routeLoaders = {
     "/": () => {
-        preload("/images/hero-main.webp", { as: "image", type: "image/webp", fetchPriority: "high" });
         return import("@/pages/home");
     },
     "/announcements": () => import("@/pages/announcements"),

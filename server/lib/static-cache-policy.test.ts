@@ -8,6 +8,12 @@ describe("staticCacheControl", () => {
     expect(staticCacheControl("/assets/index-AbCdEf12.js")).toBe(
       "public, max-age=31536000, immutable",
     );
+    expect(staticCacheControl("/imperial/realm-scene-v2.webp")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect(staticCacheControl("/imperial/realm-scene-mobile-v2.webp")).toBe(
+      "public, max-age=31536000, immutable",
+    );
     expect(staticCacheControl("/favicon.ico")).toBe("public, max-age=3600");
   });
 });

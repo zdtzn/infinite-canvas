@@ -6,6 +6,7 @@ export type LocalUser = {
     displayName: string;
     avatarUrl: string;
     admin?: boolean;
+    realmId?: string;
 };
 
 type UserStore = {

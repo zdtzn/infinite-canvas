@@ -7,7 +7,7 @@ import type { ApiCallFormat, GenerationPreferences, ModelChannel } from "@/store
 import { useUserStore } from "@/stores/use-user-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
-export type AuthUser = { userId: string; displayName: string; admin?: boolean; avatarUrl?: string };
+export type AuthUser = { userId: string; displayName: string; admin?: boolean; avatarUrl?: string; realmId?: string };
 export type AuthStatus = { configured: boolean; authenticated: boolean; user: AuthUser | null; publicMode: boolean; emailRegistrationEnabled?: boolean };
 
 export async function requestRegistrationCode(email: string) {
