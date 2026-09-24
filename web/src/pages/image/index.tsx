@@ -18,7 +18,18 @@ import { formatDuration } from "@/lib/image-utils";
 import { settleWithConcurrency } from "@/lib/async-pool";
 import { getClipboardImageFiles } from "@/lib/image-clipboard";
 import { convertImageOutput, resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { clearImageGenerationJob, getImageGenerationSnapshot, replaceImageGenerationResult, retryImageGeneration, startImageGeneration, subscribeImageGeneration, type GeneratedImage, type GenerationResult } from "@/services/image-generation-runtime";
+import {
+    cancelImageGeneration,
+    getImageGenerationJobsSnapshot,
+    getImageGenerationSnapshot,
+    selectImageGenerationJob,
+    replaceImageGenerationResult,
+    retryImageGeneration,
+    startImageGeneration,
+    subscribeImageGeneration,
+    type GeneratedImage,
+    type GenerationResult,
+} from "@/services/image-generation-runtime";
 import { IMAGE_WORKBENCH_ASSET_SOURCE } from "@/stores/asset-source";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -146,7 +157,9 @@ export default function ImagePage() {
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
     const processedCommandRef = useRef(0);
     const agentTaskIdRef = useRef<string | undefined>(undefined);
+    const draftRestoredRef = useRef(false);
     const generationJob = useSyncExternalStore(subscribeImageGeneration, getImageGenerationSnapshot, getImageGenerationSnapshot);
+    const generationJobs = useSyncExternalStore(subscribeImageGeneration, getImageGenerationJobsSnapshot, getImageGenerationJobsSnapshot);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const resolvedImageSettings = resolveImageModelSettings(effectiveConfig, model, 10);
@@ -170,7 +183,9 @@ export default function ImagePage() {
             : null);
     const canGenerate = Boolean(prompt.trim()) && !generationBlockReason;
     const running = generationJob?.status === "running";
-    const generateButtonLabel = isDouEmperor ? (running || imperialGenerationCue.active ? "天地法则演化中……" : "执笔天地") : running ? "生成中……" : "开始生成";
+    const activeJobCount = generationJobs.filter((job) => job.status === "running").length;
+    const concurrencyLimit = resolveImageSlotConcurrency(resolvedImageSettings.channel.baseUrl, model, cultivationProfile?.maxConcurrency || 10);
+    const generateButtonLabel = activeJobCount ? (isDouEmperor ? "再起一卷 · 继续生成" : "继续生成下一组") : isDouEmperor ? "执笔天地" : "开始生成";
     const elapsedMs = generationJob?.elapsedMs || 0;
     const results: GenerationResult[] = previewLog
         ? previewLog.images.length
@@ -180,14 +195,17 @@ export default function ImagePage() {
               : []
         : generationJob?.results || [];
     const previewReferenceIndex = previewReference ? references.findIndex((item) => item.id === previewReference.id) : -1;
-    const archivedGenerationImages = (generationJob?.results || []).flatMap((result) => {
-        const image = result.image;
-        return result.status === "success" && image?.persisted !== false && image?.serverJobId ? [image] : [];
-    });
+    const archivedGenerationImages = generationJobs
+        .flatMap((job) => job.results)
+        .flatMap((result) => {
+            const image = result.image;
+            return result.status === "success" && image?.persisted !== false && image?.serverJobId ? [image] : [];
+        });
     const archivedResultSignature = archivedGenerationImages.map((image) => `${image.id}:${image.dataUrl}`).join("|");
 
     useEffect(() => {
-        if (!generationJob) return;
+        if (!generationJob || draftRestoredRef.current) return;
+        draftRestoredRef.current = true;
         setPrompt((value) => value || generationJob.prompt);
         setReferences((value) => (value.length ? value : generationJob.references));
     }, [generationJob?.id]);
@@ -301,16 +319,17 @@ export default function ImagePage() {
         const jobId = startImageGeneration(
             snapshot,
             generationCount,
-            async ({ successImages, successCount, failCount, error, durationMs }) => {
+            async ({ successImages, successCount, failCount, canceledCount = 0, error, durationMs }) => {
                 void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
-                const failureFeedback = successCount ? undefined : generationFailureFeedback(error, { isDouEmperor });
+                const failureFeedback = successCount || !failCount ? undefined : generationFailureFeedback(error, { isDouEmperor });
                 if (agentTaskId)
                     updateAgentTask(agentTaskId, {
                         status: successCount ? "succeeded" : "failed",
                         successCount,
                         failCount,
-                        error: failureFeedback ? generationFailureText(failureFeedback) : undefined,
+                        error: failureFeedback ? generationFailureText(failureFeedback) : canceledCount && !successCount ? "任务已取消" : undefined,
                     });
+                if (!successCount && !failCount) return;
                 const logImages = await Promise.all(
                     successImages.map(async (image) => {
                         if (image.persisted === false) return image;
@@ -344,18 +363,30 @@ export default function ImagePage() {
                 );
                 if (successCount) {
                     const settlement = failCount ? `成功 ${successCount} 张，失败 ${failCount} 张${cultivationRefundNotice(cultivationProfile?.unlimited, "failed")}` : `成功生成 ${successCount} 张图片`;
-                    message.success(generationSuccessMessage(settlement));
+                    message.success(generationSuccessMessage(`${settlement}${canceledCount ? `，已取消 ${canceledCount} 张` : ""}`));
                 } else if (failureFeedback) {
                     message.error({
-                        content: <GenerationFailureToast feedback={failureFeedback} supplementary={cultivationRefundNotice(cultivationProfile?.unlimited, "all").replace(/^，/, "")} />,
+                        content: <GenerationFailureToast feedback={failureFeedback} supplementary={cultivationRefundNotice(cultivationProfile?.unlimited, canceledCount ? "failed" : "all").replace(/^，/, "")} />,
                         duration: 2,
                     });
                 }
             },
             undefined,
-            resolveImageSlotConcurrency(resolvedImageSettings.channel.baseUrl, model, cultivationProfile?.maxConcurrency || generationCount),
+            concurrencyLimit,
+            concurrencyLimit,
         );
-        if (!jobId && agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生图工作台已有任务正在运行" });
+        if (!jobId && agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生成数量无效" });
+    };
+
+    const cancelGeneration = async (index?: number) => {
+        if (!generationJob) return;
+        try {
+            await cancelImageGeneration(generationJob.id, index);
+        } catch {
+            message.error("取消未成功，任务仍保留，请重试");
+        } finally {
+            void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
+        }
     };
 
     // 响应 Agent 面板下发的生图命令：填入提示词，并按需自动触发生成。
@@ -364,15 +395,11 @@ export default function ImagePage() {
         processedCommandRef.current = imageCommand.nonce;
         clearImageCommand();
         if (typeof imageCommand.prompt === "string") setPrompt(imageCommand.prompt);
-        if (imageCommand.run && running) {
-            if (imageCommand.taskId) updateAgentTask(imageCommand.taskId, { status: "failed", error: "生图工作台已有任务正在运行" });
-            return;
-        }
         if (imageCommand.run) {
             agentTaskIdRef.current = imageCommand.taskId;
             setAutoRunToken((value) => value + 1);
         }
-    }, [imageCommand, clearImageCommand, running, updateAgentTask]);
+    }, [imageCommand, clearImageCommand]);
 
     useEffect(() => {
         if (!autoRunToken) return;
@@ -441,16 +468,12 @@ export default function ImagePage() {
     };
 
     const restartFromResult = async (image: GeneratedImage, index: number) => {
-        if (running) {
-            message.warning("当前任务仍在生成，请等待完成后再开始新作");
-            return;
-        }
         if (activeImageCapabilities.maxReferences < 1) {
             message.warning("当前模型不支持参考图，请先切换支持图生图的模型");
             return;
         }
         const reference = await resultReference(image, index);
-        clearImageGenerationJob();
+        selectImageGenerationJob(null);
         setPrompt("");
         setReferences([reference]);
         setSelectedLogIds([]);
@@ -492,10 +515,6 @@ export default function ImagePage() {
     };
 
     const repeatOriginalGeneration = () => {
-        if (running) {
-            message.warning("当前任务仍在生成，请等待完成后再生成一组");
-            return;
-        }
         if (previewLog) {
             continueFromGenerationLog(previewLog);
             setAutoRunToken((value) => value + 1);
@@ -600,10 +619,8 @@ export default function ImagePage() {
     };
 
     const createSession = () => {
-        if (!clearImageGenerationJob()) {
-            message.warning("当前任务仍在生成，请等待完成后再新建");
-            return;
-        }
+        draftRestoredRef.current = true;
+        selectImageGenerationJob(null);
         setPrompt("");
         setReferences([]);
         setSelectedLogIds([]);
@@ -802,7 +819,15 @@ export default function ImagePage() {
     };
 
     const retryResult = async (index: number) => {
-        const snapshot = buildRequestSnapshot();
+        if (previewLog) {
+            repeatOriginalGeneration();
+            return;
+        }
+        if (running) {
+            message.info("本组其他图片仍在生成，可以先点击继续生成开启新任务");
+            return;
+        }
+        const snapshot = generationJob?.snapshot || buildRequestSnapshot();
         if (!snapshot) return;
         if (generationBlockReason) {
             message.warning(generationBlockReason);
@@ -832,7 +857,7 @@ export default function ImagePage() {
             saveLog(
                 buildLog({
                     prompt: snapshot.text,
-                    model,
+                    model: snapshot.config.imageModel || snapshot.config.model,
                     config: { ...snapshot.config, count: "1" },
                     references: snapshot.references,
                     durationMs: Date.now() - retryStartedAt,
@@ -923,7 +948,7 @@ export default function ImagePage() {
                                         value={prompt}
                                         onChange={(event) => setPrompt(event.target.value)}
                                         onKeyDown={(event) => {
-                                            if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && canGenerate && !running) {
+                                            if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.repeat && canGenerate) {
                                                 event.preventDefault();
                                                 void generate();
                                             }
@@ -1042,10 +1067,9 @@ export default function ImagePage() {
                                 size="large"
                                 block
                                 className="imperial-generate-button"
-                                icon={running ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                                aria-busy={running}
+                                icon={<Sparkles className="size-4" />}
                                 aria-live="polite"
-                                disabled={!canGenerate || running}
+                                disabled={!canGenerate}
                                 onClick={() => {
                                     imperialGenerationCue.trigger();
                                     generate();
@@ -1053,6 +1077,7 @@ export default function ImagePage() {
                             >
                                 {generateButtonLabel}
                             </Button>
+                            {activeJobCount ? <p className="mt-2 text-center text-xs text-muted-foreground">{activeJobCount} 组任务进行中 · 可继续提交，超出并发上限自动排队</p> : null}
                             {generationBlockReason ? (
                                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
                             ) : cultivationProfile ? (
@@ -1070,7 +1095,7 @@ export default function ImagePage() {
                                     <h2 className="text-xl font-semibold">{resultView === "results" ? "生成结果" : "太古遗迹"}</h2>
                                     {resultView === "results" && previewLog ? <Tag className="m-0">遗迹预览</Tag> : null}
                                     {resultView === "history" ? <Tag className="m-0">{historyTotal}</Tag> : null}
-                                    {running ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
+                                    {running && !previewLog && resultView === "results" ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
                                 </div>
                                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 sm:justify-end">
                                     {resultView === "results" && previewLog ? (
@@ -1106,6 +1131,36 @@ export default function ImagePage() {
                                     </Tooltip>
                                 </div>
                             </div>
+                            {resultView === "results" && generationJobs.length ? (
+                                <div className="mb-4 space-y-2 border-b border-stone-200 pb-4 dark:border-stone-800">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <label htmlFor="image-generation-task" className="text-sm text-muted-foreground" title="保留所有进行中任务和最近 20 组已完成任务，更多结果可在太古遗迹查看">
+                                            任务列表
+                                        </label>
+                                        <Select
+                                            id="image-generation-task"
+                                            aria-label="切换生成任务"
+                                            className="min-w-0 flex-1 sm:max-w-lg"
+                                            value={previewLog ? undefined : generationJob?.id}
+                                            placeholder="选择任务查看进度和结果"
+                                            options={[...generationJobs].reverse().map((job, index) => ({
+                                                value: job.id,
+                                                label: `任务 ${generationJobs.length - index} · ${job.prompt.slice(0, 28)} · ${job.status === "running" ? (job.results.some((result) => result.cancelRequested) ? "取消中" : job.results.some((result) => result.status === "pending" && result.startedAt) ? "生成中" : "排队中") : job.status === "canceled" ? "已取消" : job.status === "failed" ? "失败" : `已完成 ${job.successCount} 张`}`,
+                                            }))}
+                                            onChange={(id) => {
+                                                selectImageGenerationJob(id);
+                                                setPreviewLog(null);
+                                            }}
+                                        />
+                                        {!previewLog && running ? (
+                                            <Button onClick={() => void cancelGeneration()} disabled={generationJob.results.filter((result) => result.status === "pending").every((result) => result.cancelRequested)}>
+                                                取消本组
+                                            </Button>
+                                        ) : null}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">每组使用提交时的提示词与参数，切换任务不会覆盖左侧编辑内容。取消已开始的请求不保证退还上游费用。</p>
+                                </div>
+                            ) : null}
                             {resultView === "history" ? (
                                 <div>
                                     <HistoryFilters
@@ -1173,8 +1228,15 @@ export default function ImagePage() {
                                             <Suspense key={result.id} fallback={<ResultImageCardLoading />}>
                                                 <FailedImageCard id={result.id} error={result.error} isDouEmperor={isDouEmperor} onRetry={() => retryResult(index)} />
                                             </Suspense>
+                                        ) : result.status === "canceled" ? (
+                                            <div key={result.id} className="flex aspect-square flex-col items-center justify-center gap-3 rounded-lg border border-stone-200 text-muted-foreground dark:border-stone-800">
+                                                <span>已取消生成</span>
+                                                <Button disabled={running} onClick={() => void retryResult(index)}>
+                                                    重新生成
+                                                </Button>
+                                            </div>
                                         ) : (
-                                            <PendingImageCard key={result.id} />
+                                            <PendingImageCard key={result.id} result={result} onCancel={() => void cancelGeneration(index)} />
                                         ),
                                     )}
                                 </div>
@@ -1337,7 +1399,7 @@ function GenerationSettings({ config, updateConfig }: { config: AiConfig; update
     );
 }
 
-function PendingImageCard() {
+function PendingImageCard({ result, onCancel }: { result: GenerationResult; onCancel: () => void }) {
     return (
         <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
             <div
@@ -1347,9 +1409,17 @@ function PendingImageCard() {
                     backgroundSize: "16px 16px",
                 }}
             />
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
-                <span>生成中</span>
+                <span role="status">{result.cancelRequested ? "正在取消…" : result.startedAt ? "生成中" : "排队中"}</span>
+                {result.cancelError ? (
+                    <p role="alert" className="text-xs text-red-500">
+                        {result.cancelError}
+                    </p>
+                ) : null}
+                <Button onClick={onCancel} disabled={result.cancelRequested}>
+                    {result.cancelRequested ? "正在取消" : "取消这张"}
+                </Button>
             </div>
         </div>
     );
@@ -1650,9 +1720,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         quality: log.quality || config.quality || "",
         status: log.status || "成功",
         images,
-        thumbnails: images
-            .map((image) => image.thumbnailUrl || image.dataUrl)
-            .filter((image): image is string => Boolean(image)),
+        thumbnails: images.map((image) => image.thumbnailUrl || image.dataUrl).filter((image): image is string => Boolean(image)),
     };
 }
 

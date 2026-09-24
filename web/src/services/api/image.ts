@@ -117,6 +117,8 @@ type GeminiPayload = {
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
 export type RequestOptions = {
     signal?: AbortSignal;
+    /** The workbench confirms cancellation itself so a failed DELETE does not discard a running task. */
+    cancelOnAbort?: boolean;
     onJobCreated?: (jobId: string) => void;
     onJobArchived?: (job: ServerJob) => void | Promise<void>;
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
@@ -978,6 +980,7 @@ async function requestServerImageJob(
     count: number,
     options?: RequestOptions,
 ): Promise<RequestedImage[]> {
+    options?.signal?.throwIfAborted();
     const expectedUserId = options?.expectedUserId ?? useUserStore.getState().user?.id ?? "";
     const capabilities = deriveImageModelCapabilities(requestConfig.model, requestConfig.apiFormat, requestConfig.baseUrl, requestConfig.imageCapabilities);
     const resolution = requestConfig.quality || "low";
@@ -988,6 +991,7 @@ async function requestServerImageJob(
     const preferOptimizedReferences = !mask && normalizeResolution(resolution) === "low" && requestConfig.apiFormat === "openai" && isUuAsyncGptImageModel(requestConfig.baseUrl, requestConfig.model);
     const referenceData = await Promise.all(references.map((reference) => serverImageReferenceInput(reference, preferOptimizedReferences) || imageToDataUrl(reference, expectedUserId)));
     const maskData = mask ? serverImageReferenceInput(mask) || (await imageToDataUrl(mask, expectedUserId)) : undefined;
+    options?.signal?.throwIfAborted();
     const { job } = await submitImageJob(
         {
             channelId: requestConfig.channelId,
@@ -1008,8 +1012,11 @@ async function requestServerImageJob(
         options?.idempotencyKey,
     );
     options?.onJobCreated?.(job.id);
-    const abort = () => void cancelServerJob(job.id, expectedUserId).catch(() => undefined);
+    const abort = () => {
+        if (options?.cancelOnAbort !== false) void cancelServerJob(job.id, expectedUserId).catch(() => undefined);
+    };
     options?.signal?.addEventListener("abort", abort, { once: true });
+    if (options?.signal?.aborted) abort();
     try {
         let completed = await waitForServerJob(job.id, { signal: options?.signal, expectedUserId });
         if (completed.result?.recoveryPending) {
