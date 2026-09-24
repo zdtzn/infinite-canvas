@@ -29,8 +29,9 @@ type PendingChatTurn = {
     createdAt: number;
     started: boolean;
     stopped: boolean;
+    stopRequested: boolean;
     terminal: boolean;
-    completion: Promise<void>;
+    cancelRequest?: Promise<boolean>;
     userMessageId?: string;
     assistantMessageId?: string;
     retryAssistantMessageId?: string;
@@ -82,11 +83,16 @@ export default function ChatPage() {
     const pendingTurnRef = useRef<PendingChatTurn | null>(null);
     const sendingRef = useRef(false);
     const sendStartingRef = useRef(false);
+    const shouldStickToBottomRef = useRef(true);
+    const runtimePending = useChatRuntimeStore((state) => state.pending);
+    const runtimeStatus = useChatRuntimeStore((state) => state.status);
+    const runtimeConversationId = useChatRuntimeStore((state) => state.conversationId);
 
     const activeConversation = conversations.find((item) => item.id === activeConversationId) || null;
     const activePresetId = activeConversation?.presetId || presetId;
     const activePreset = chatPresetOption(activePresetId as ChatPresetId);
     const activeHasStreamingMessage = messages.some((item) => item.status === "streaming");
+    const turnRunning = sending || runtimePending || activeHasStreamingMessage;
 
     useEffect(() => {
         activeConversationIdRef.current = activeConversationId;
@@ -226,11 +232,12 @@ export default function ChatPage() {
     }, [activeConversationId, activeHasStreamingMessage, userId]);
 
     useEffect(() => {
+        if (!shouldStickToBottomRef.current) return;
         const frame = requestAnimationFrame(() => {
-            scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: sending ? "smooth" : "auto" });
+            scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "auto" });
         });
         return () => cancelAnimationFrame(frame);
-    }, [messages, sending]);
+    }, [messages, turnRunning]);
 
     useEffect(
         () => () => {
@@ -239,45 +246,130 @@ export default function ChatPage() {
         [userId],
     );
 
-    const canSend = Boolean((draft.trim() || attachments.length) && !sending && !uploading);
+    const canSend = Boolean((draft.trim() || attachments.length) && !turnRunning && !uploading);
+
+    function handleChatScroll() {
+        const element = scrollRef.current;
+        if (!element) return;
+        shouldStickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+    }
 
     function confirmPendingNavigation(action: string) {
-        if (!pendingTurnRef.current || pendingTurnRef.current.terminal) return Promise.resolve(true);
+        if ((!pendingTurnRef.current || pendingTurnRef.current.terminal) && !runtimePending) return Promise.resolve(true);
         message.info(`当前回答会在后台继续，已允许${action}`);
         return Promise.resolve(true);
     }
 
+    function markPendingAssistantStopped(pending: PendingChatTurn) {
+        if (activeConversationIdRef.current !== pending.conversationId) return;
+        const assistantId = pending.retryAssistantMessageId || pending.continueAssistantMessageId || pending.assistantMessageId || pending.optimisticAssistantId;
+        const stoppedMessage = "本次回答已停止";
+        setMessages((current) => {
+            if (current.some((item) => item.id === assistantId)) {
+                return current.map((item) => (item.id === assistantId && item.status !== "completed" ? { ...item, status: "failed", error: stoppedMessage } : item));
+            }
+            if (pending.terminal) return current;
+            return [...current, createOptimisticAssistantMessage(pending, stoppedMessage)];
+        });
+    }
+
+    async function cancelPendingTurn(pending: PendingChatTurn): Promise<boolean> {
+        if (pending.cancelRequest) return pending.cancelRequest;
+        if (!pending.assistantMessageId) return false;
+        const request = (async () => {
+            try {
+                await cancelChatMessage(pending.conversationId, pending.assistantMessageId!, userId);
+                pending.stopped = true;
+                pending.stopRequested = false;
+                markPendingAssistantStopped(pending);
+                if (!pending.terminal && pendingTurnRef.current === pending) abortRef.current?.abort();
+                return true;
+            } catch (error) {
+                pending.stopRequested = false;
+                const runtime = useChatRuntimeStore.getState();
+                if (runtime.pending && runtime.conversationId === pending.conversationId) {
+                    runtime.setRuntime({ status: pending.started ? "streaming" : "starting" });
+                }
+                message.error(error instanceof Error ? error.message : "停止回答失败；回答仍会继续");
+                return false;
+            } finally {
+                pending.cancelRequest = undefined;
+            }
+        })();
+        pending.cancelRequest = request;
+        return request;
+    }
+
     async function stopActiveTurn() {
         const pending = pendingTurnRef.current;
-        if (!pending) return;
-        if (!pending.terminal) {
-            pending.stopped = true;
+        if (pending && !pending.terminal) {
+            pending.stopRequested = true;
             useChatRuntimeStore.getState().setRuntime({ pending: true, status: "stopping", conversationId: pending.conversationId });
-            const stoppedMessage = "本次回答已停止";
-            if (activeConversationIdRef.current === pending.conversationId) {
-                setMessages((current) => {
-                    const assistantId = pending.retryAssistantMessageId || pending.continueAssistantMessageId || pending.assistantMessageId || pending.optimisticAssistantId;
-                    if (current.some((item) => item.id === assistantId)) {
-                        return current.map((item) => (item.id === assistantId ? { ...item, status: "failed", error: stoppedMessage } : item));
-                    }
-                    return [...current, createOptimisticAssistantMessage(pending, stoppedMessage)];
-                });
-            }
-            if (pending.assistantMessageId) {
-                try {
-                    await cancelChatMessage(pending.conversationId, pending.assistantMessageId, userId);
-                } catch (error) {
-                    message.error(error instanceof Error ? error.message : "停止回答失败");
+            if (pending.assistantMessageId) await cancelPendingTurn(pending);
+            return;
+        }
+
+        const runtime = useChatRuntimeStore.getState();
+        const conversationId = runtime.pending ? runtime.conversationId : activeConversationIdRef.current;
+        if (!conversationId) return;
+        const restoreStatus = runtime.pending && runtime.status === "starting" ? "starting" : "streaming";
+        let assistant = conversationId === activeConversationIdRef.current ? messages.find((item) => item.role === "assistant" && item.status === "streaming") : undefined;
+        try {
+            let fetchedMessages: ChatMessage[] | undefined;
+            if (!assistant) {
+                let detail = await fetchChatConversation(conversationId, userId);
+                fetchedMessages = detail.messages;
+                assistant = detail.messages.find((item) => item.role === "assistant" && item.status === "streaming");
+                for (let attempt = 0; !assistant && runtime.pending && attempt < 12; attempt += 1) {
+                    const latestRuntime = useChatRuntimeStore.getState();
+                    if (!latestRuntime.pending || latestRuntime.conversationId !== conversationId) break;
+                    await new Promise((resolve) => window.setTimeout(resolve, 250));
+                    detail = await fetchChatConversation(conversationId, userId);
+                    fetchedMessages = detail.messages;
+                    assistant = detail.messages.find((item) => item.role === "assistant" && item.status === "streaming");
                 }
             }
-            abortRef.current?.abort();
+            if (!assistant) {
+                const latestRuntime = useChatRuntimeStore.getState();
+                if (latestRuntime.pending && latestRuntime.conversationId === conversationId) {
+                    latestRuntime.setRuntime({ status: restoreStatus });
+                    message.info("回答仍在启动，暂未取得可停止的消息标识；稍后可再次点击停止");
+                } else {
+                    latestRuntime.clearRuntime(conversationId);
+                    message.info("这段问道已结束，已刷新消息状态");
+                }
+                if (conversationId === activeConversationIdRef.current) {
+                    const detail = await fetchChatConversation(conversationId, userId);
+                    setMessages(detail.messages);
+                }
+                return;
+            }
+            useChatRuntimeStore.getState().setRuntime({ pending: true, status: "stopping", conversationId });
+            await cancelChatMessage(conversationId, assistant.id, userId);
+            if (conversationId === activeConversationIdRef.current) {
+                const stoppedAssistant = { ...assistant, status: "failed" as const, error: "本次回答已停止" };
+                setMessages((current) => {
+                    if (current.some((item) => item.id === assistant!.id)) {
+                        return current.map((item) => (item.id === assistant!.id && item.status !== "completed" ? stoppedAssistant : item));
+                    }
+                    const latest = fetchedMessages?.find((item) => item.id === assistant!.id);
+                    return latest ? [...current, stoppedAssistant].sort((left, right) => left.createdAt - right.createdAt) : current;
+                });
+            }
+            useChatRuntimeStore.getState().clearRuntime(conversationId);
+        } catch (error) {
+            const latestRuntime = useChatRuntimeStore.getState();
+            if (latestRuntime.pending && latestRuntime.conversationId === conversationId) {
+                latestRuntime.setRuntime({ status: restoreStatus });
+            }
+            message.error(error instanceof Error ? `停止回答失败；回答仍会继续：${error.message}` : "停止回答失败；回答仍会继续");
         }
-        await pending.completion;
     }
 
     async function selectConversation(id: string) {
         if (id === activeConversationIdRef.current) return;
         if (!(await confirmPendingNavigation("切换"))) return;
+        shouldStickToBottomRef.current = true;
         activeConversationIdRef.current = id;
         setActiveConversationId(id);
         setMessages([]);
@@ -292,7 +384,9 @@ export default function ChatPage() {
         setCreating(true);
         try {
             const response = await createChatConversation({ presetId }, userId);
+            clearChatBootstrapCache(userId);
             setConversations((current) => [response.conversation, ...current]);
+            shouldStickToBottomRef.current = true;
             activeConversationIdRef.current = response.conversation.id;
             setActiveConversationId(response.conversation.id);
             setMessages([]);
@@ -354,7 +448,9 @@ export default function ChatPage() {
         try {
             const payload = JSON.parse(await file.text()) as unknown;
             const response = await importChatConversation(payload, userId);
+            clearChatBootstrapCache(userId);
             setConversations((current) => [response.conversation, ...current.filter((item) => item.id !== response.conversation.id)]);
+            shouldStickToBottomRef.current = true;
             activeConversationIdRef.current = response.conversation.id;
             setActiveConversationId(response.conversation.id);
             setMessages(response.messages);
@@ -379,14 +475,16 @@ export default function ChatPage() {
     }
 
     async function handleDeleteConversation(id: string) {
-        const deletingActiveTurn = pendingTurnRef.current?.conversationId === id;
+        const deletingActiveTurn = pendingTurnRef.current?.conversationId === id || (useChatRuntimeStore.getState().pending && useChatRuntimeStore.getState().conversationId === id);
         if (deletingActiveTurn) await stopActiveTurn();
         try {
             await deleteChatConversation(id, userId);
+            clearChatBootstrapCache(userId);
             const next = conversations.filter((item) => item.id !== id);
             setConversations(next);
             if (activeConversationIdRef.current === id) {
                 const nextId = next[0]?.id || "";
+                shouldStickToBottomRef.current = true;
                 activeConversationIdRef.current = nextId;
                 setActiveConversationId(nextId);
                 setMessages([]);
@@ -406,9 +504,14 @@ export default function ChatPage() {
             message.warning("每次最多上传 4 张图片");
             return;
         }
+        const uploadConversationId = activeConversationIdRef.current;
         setUploading(true);
         try {
             const uploaded = await Promise.all(selected.map((file) => uploadChatImage(file, userId)));
+            if (activeConversationIdRef.current !== uploadConversationId) {
+                message.warning("图片已上传，但你已切换问道会话；为避免附错会话，请在目标会话重新选择图片");
+                return;
+            }
             setAttachments((current) => [...current, ...uploaded]);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "图片上传失败");
@@ -431,10 +534,6 @@ export default function ChatPage() {
         if (sendingRef.current || pendingTurnRef.current) return;
         sendingRef.current = true;
         const createdAt = Date.now();
-        let resolveCompletion = () => {};
-        const completion = new Promise<void>((resolve) => {
-            resolveCompletion = resolve;
-        });
         const pending: PendingChatTurn = {
             conversationId: input.conversationId,
             optimisticUserId: `optimistic-user-${createdAt}-${nanoid()}`,
@@ -442,8 +541,8 @@ export default function ChatPage() {
             createdAt,
             started: false,
             stopped: false,
+            stopRequested: false,
             terminal: false,
-            completion,
             retryAssistantMessageId: input.retryAssistantMessageId,
             editUserMessageId: input.editUserMessageId,
             continueAssistantMessageId: input.continueAssistantMessageId,
@@ -452,6 +551,8 @@ export default function ChatPage() {
         const controller = new AbortController();
         abortRef.current = controller;
         setSending(true);
+        if (userId) clearChatBootstrapCache(userId);
+        shouldStickToBottomRef.current = true;
         useChatRuntimeStore.getState().setRuntime({ pending: true, status: "starting", conversationId: input.conversationId, startedAt: createdAt });
         if (input.showOptimisticUser) {
             setDraft("");
@@ -484,10 +585,13 @@ export default function ChatPage() {
                 signal: controller.signal,
                 onStarted: ({ conversation, userMessage, assistantMessage }) => {
                     pending.started = true;
-                    useChatRuntimeStore.getState().setRuntime({ pending: true, status: "streaming", conversationId: input.conversationId, startedAt: createdAt });
+                    const runtime = useChatRuntimeStore.getState();
+                    if (runtime.pending && runtime.conversationId === input.conversationId && runtime.status === "stopping") pending.stopRequested = true;
+                    useChatRuntimeStore.getState().setRuntime({ pending: true, status: pending.stopRequested ? "stopping" : "streaming", conversationId: input.conversationId, startedAt: createdAt });
                     pending.userMessageId = userMessage.id;
                     pending.assistantMessageId = assistantMessage.id;
                     setConversations((current) => upsertConversation(current, conversation));
+                    if (pending.stopRequested) void cancelPendingTurn(pending);
                     if (activeConversationIdRef.current !== input.conversationId) return;
                     setMessages((current) => mergeStartedChatMessages(current, pending, userMessage, assistantMessage, input.showOptimisticUser, pending.stopped));
                 },
@@ -534,9 +638,9 @@ export default function ChatPage() {
             abortRef.current = null;
             if (pendingTurnRef.current === pending) pendingTurnRef.current = null;
             sendingRef.current = false;
+            if (userId) clearChatBootstrapCache(userId);
             useChatRuntimeStore.getState().clearRuntime(input.conversationId);
             if (input.editUserMessageId) setEditingMessageId("");
-            resolveCompletion();
         }
     }
 
@@ -857,7 +961,7 @@ export default function ChatPage() {
                                     className="!h-8 !w-8 !min-w-8 !p-0"
                                     icon={importing ? <LoaderCircle className="size-4 animate-spin" /> : <FileUp className="size-4" />}
                                     aria-label="导入会话"
-                                    disabled={sending || importing}
+                                    disabled={turnRunning || importing}
                                     onClick={() => importInputRef.current?.click()}
                                 />
                             </Tooltip>
@@ -885,17 +989,21 @@ export default function ChatPage() {
                         </div>
                     </div>
 
-                    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-stone-200/80 bg-white/55 p-4 dark:border-white/10 dark:bg-black/10">
+                    <div ref={scrollRef} onScroll={handleChatScroll} className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-stone-200/80 bg-white/55 p-4 dark:border-white/10 dark:bg-black/10">
                         {detailLoading ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
                         {!detailLoading && !messages.length ? <WelcomeEmpty preset={activePreset} /> : null}
                         <div className="space-y-6">
                             {messages.map((item, index) => (
                                 <ChatBubble key={item.id} item={item} isLatest={index === messages.length - 1} onAction={handleMessageAction} />
                             ))}
-                            {sending ? (
+                            {turnRunning ? (
                                 <div className="flex items-center gap-2 text-xs text-stone-500">
                                     <LoaderCircle className="size-3.5 animate-spin" />
-                                    天地法则正在回应...
+                                    {runtimeConversationId && runtimeConversationId !== activeConversationId
+                                        ? "另一段问道正在后台回应..."
+                                        : runtimeStatus === "stopping"
+                                          ? "正在停止当前回答..."
+                                          : "天地法则正在回应..."}
                                 </div>
                             ) : null}
                         </div>
@@ -944,13 +1052,13 @@ export default function ChatPage() {
                                     className="!h-10 !w-10 !min-w-10"
                                     icon={uploading ? <LoaderCircle className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
                                     onClick={() => fileInputRef.current?.click()}
-                                    disabled={sending || uploading}
+                                    disabled={turnRunning || uploading}
                                 />
                             </Tooltip>
                             <Dropdown
                                 trigger={["click"]}
                                 placement="topLeft"
-                                disabled={sending}
+                                disabled={turnRunning}
                                 menu={{
                                     selectedKeys: [activePresetId],
                                     onClick: ({ key }) => void handlePresetChange(key as ChatPresetId),
@@ -965,7 +1073,7 @@ export default function ChatPage() {
                                     })),
                                 }}
                             >
-                                <Button type="text" className="!h-10 shrink-0 !px-2.5 text-stone-600 dark:text-stone-200" icon={<Sparkles className="size-4 text-amber-600" />} disabled={sending} title={activePreset.hint}>
+                                <Button type="text" className="!h-10 shrink-0 !px-2.5 text-stone-600 dark:text-stone-200" icon={<Sparkles className="size-4 text-amber-600" />} disabled={turnRunning} title={activePreset.hint}>
                                     <span className="inline-flex max-w-[92px] items-center gap-1 truncate text-xs">
                                         <span className="truncate">{activePreset.label}</span>
                                         <ChevronDown className="size-3 shrink-0" />
@@ -984,11 +1092,11 @@ export default function ChatPage() {
                                     event.preventDefault();
                                     void handleSend();
                                 }}
-                                disabled={sending}
+                                disabled={turnRunning}
                             />
-                            {sending ? (
-                                <Button className="!h-10" onClick={handleStop}>
-                                    停止
+                            {turnRunning ? (
+                                <Button className="!h-10" onClick={handleStop} disabled={runtimeStatus === "stopping"}>
+                                    {runtimeStatus === "stopping" ? "正在停止" : "停止"}
                                 </Button>
                             ) : (
                                 <Button type="primary" className="!h-10" icon={<Send className="size-4" />} disabled={!canSend} onClick={() => void handleSend()}>

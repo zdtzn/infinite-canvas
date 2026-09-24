@@ -8,10 +8,18 @@ type PendingChatTurnMessageIds = {
 };
 
 export function mergeChatHistoryWithPendingTurn(current: ChatMessage[], persisted: ChatMessage[], pending: PendingChatTurnMessageIds) {
-    const persistedIds = new Set(persisted.map((item) => item.id));
+    const currentById = new Map(current.map((item) => [item.id, item]));
+    const mergedPersisted = persisted.map((item) => {
+        const live = currentById.get(item.id);
+        if (item.role === "assistant" && item.status === "streaming" && live?.status === "streaming" && live.content.length >= item.content.length) {
+            return { ...item, content: live.content, updatedAt: Math.max(item.updatedAt, live.updatedAt) };
+        }
+        return item;
+    });
+    const persistedIds = new Set(mergedPersisted.map((item) => item.id));
     const transientIds = new Set([pending.optimisticUserId, pending.optimisticAssistantId, pending.userMessageId, pending.assistantMessageId].filter((id): id is string => Boolean(id)));
     const transientMessages = current.filter((item) => transientIds.has(item.id) && !persistedIds.has(item.id));
-    return [...persisted, ...transientMessages].sort((left, right) => left.createdAt - right.createdAt);
+    return [...mergedPersisted, ...transientMessages].sort((left, right) => left.createdAt - right.createdAt);
 }
 
 export function mergeStartedChatMessages(
