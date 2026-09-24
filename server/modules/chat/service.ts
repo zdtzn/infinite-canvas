@@ -410,6 +410,7 @@ export function createChatService(
       attachments: ChatAttachment[];
       channelId: unknown;
       model: unknown;
+      clientMessageId?: unknown;
       retryAssistantMessageId?: unknown;
       editUserMessageId?: unknown;
     },
@@ -417,6 +418,9 @@ export function createChatService(
     const conversation = requireConversation(userId, conversationId);
     const retryAssistantMessageId = input.retryAssistantMessageId
       ? validId(input.retryAssistantMessageId, "回答消息 ID")
+      : "";
+    const clientMessageId = input.clientMessageId
+      ? validId(input.clientMessageId, "问题消息 ID")
       : "";
     const editUserMessageId = input.editUserMessageId
       ? validId(input.editUserMessageId, "问题消息 ID")
@@ -469,16 +473,16 @@ export function createChatService(
       const userMessage = editedUserMessage
         ? { ...editedUserMessage, content, attachments: nextAttachments, updatedAt: timestamp }
         : retryUserMessage || {
-        id: randomUUID(),
-        conversationId: conversation.id,
-        role: "user" as const,
-        content,
-        attachments: nextAttachments,
-        status: "completed" as const,
-        error: "",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
+            id: clientMessageId || randomUUID(),
+            conversationId: conversation.id,
+            role: "user" as const,
+            content,
+            attachments: nextAttachments,
+            status: "completed" as const,
+            error: "",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          };
       const assistantMessage = existingAssistant
         ? { ...existingAssistant, content: "", status: "streaming" as const, error: "", updatedAt: timestamp }
         : {

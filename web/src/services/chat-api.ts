@@ -18,6 +18,7 @@ export type ChatMessage = {
     error: string;
     createdAt: number;
     updatedAt: number;
+    isOptimistic?: boolean;
 };
 
 export type ChatConversation = {
@@ -82,6 +83,7 @@ export type SendChatMessageInput = {
     conversationId: string;
     content: string;
     attachments: ChatAttachment[];
+    clientMessageId?: string;
     retryAssistantMessageId?: string;
     editUserMessageId?: string;
     continueAssistantMessageId?: string;
@@ -175,6 +177,7 @@ export async function sendChatMessage(input: SendChatMessageInput) {
             body: JSON.stringify({
                 content: input.content,
                 attachments: input.attachments.map(({ assetKey, mimeType, name }) => ({ assetKey, mimeType, name })),
+                ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
                 ...(input.retryAssistantMessageId ? { retryAssistantMessageId: input.retryAssistantMessageId } : {}),
                 ...(input.editUserMessageId ? { editUserMessageId: input.editUserMessageId } : {}),
                 ...(input.continueAssistantMessageId ? { continueAssistantMessageId: input.continueAssistantMessageId } : {}),

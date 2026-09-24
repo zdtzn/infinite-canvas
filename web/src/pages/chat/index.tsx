@@ -1,6 +1,7 @@
 import { App, Button, Drawer, Dropdown, Empty, Input, Popconfirm, Segmented, Skeleton, Tag, Tooltip } from "antd";
 import { BookOpen, Brain, ChevronDown, Copy, Download, FileUp, ImagePlus, LoaderCircle, MessageCircle, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import { memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { nanoid } from "nanoid";
 
 import { cn } from "@/lib/utils";
 import { lazyRoute } from "@/lib/lazy-route";
@@ -12,6 +13,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
 import { useChatRuntimeStore } from "@/stores/use-chat-runtime-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId, type ChatPresetOption } from "./chat-presets";
+import { mergeChatHistoryWithPendingTurn, mergeStartedChatMessages } from "./chat-message-reconciliation";
 
 const DouQiLifeView = lazyRoute(() => import("./dou-qi-life-view"));
 const ChatMarkdown = lazyRoute(() => import("./chat-markdown"));
@@ -184,9 +186,7 @@ export default function ChatPage() {
                 setMessages((current) => {
                     const pending = pendingTurnRef.current;
                     if (pending?.conversationId !== activeConversationId) return detail.messages;
-                    const transientIds = new Set([pending.optimisticUserId, pending.optimisticAssistantId, pending.userMessageId, pending.assistantMessageId].filter((id): id is string => Boolean(id)));
-                    const transientMessages = current.filter((item) => transientIds.has(item.id) && !detail.messages.some((message) => message.id === item.id));
-                    return [...detail.messages, ...transientMessages].sort((left, right) => left.createdAt - right.createdAt);
+                    return mergeChatHistoryWithPendingTurn(current, detail.messages, pending);
                 });
                 setConversations((current) => upsertConversation(current, detail.conversation));
             })
@@ -209,15 +209,7 @@ export default function ChatPage() {
                 setMessages((current) => {
                     const pending = pendingTurnRef.current;
                     if (pending?.conversationId !== activeConversationId) return detail.messages;
-                    const transientIds = new Set(
-                        [pending.optimisticUserId, pending.optimisticAssistantId, pending.userMessageId, pending.assistantMessageId].filter(
-                            (id): id is string => Boolean(id),
-                        ),
-                    );
-                    const transientMessages = current.filter(
-                        (item) => transientIds.has(item.id) && !detail.messages.some((message) => message.id === item.id),
-                    );
-                    return [...detail.messages, ...transientMessages].sort((left, right) => left.createdAt - right.createdAt);
+                    return mergeChatHistoryWithPendingTurn(current, detail.messages, pending);
                 });
                 setConversations((current) => upsertConversation(current, detail.conversation));
                 if (detail.messages.some((item) => item.status === "streaming")) timer = window.setTimeout(() => void poll(), 1_200);
@@ -328,7 +320,7 @@ export default function ChatPage() {
                 presetId: activeConversation.presetId,
             },
             messages: messages
-                .filter((item) => !item.id.startsWith("optimistic-") && item.status !== "streaming")
+                .filter((item) => !item.isOptimistic && item.status !== "streaming")
                 .map((item) => ({
                     role: item.role,
                     content: item.content,
@@ -445,7 +437,7 @@ export default function ChatPage() {
         });
         const pending: PendingChatTurn = {
             conversationId: input.conversationId,
-            optimisticUserId: `optimistic-user-${createdAt}`,
+            optimisticUserId: `optimistic-user-${createdAt}-${nanoid()}`,
             optimisticAssistantId: `optimistic-assistant-${createdAt}`,
             createdAt,
             started: false,
@@ -483,6 +475,7 @@ export default function ChatPage() {
                 conversationId: input.conversationId,
                 content: input.content,
                 attachments: input.attachments,
+                ...(input.showOptimisticUser ? { clientMessageId: pending.optimisticUserId } : {}),
                 ...(input.retryAssistantMessageId ? { retryAssistantMessageId: input.retryAssistantMessageId } : {}),
                 ...(input.editUserMessageId ? { editUserMessageId: input.editUserMessageId } : {}),
                 ...(input.continueAssistantMessageId ? { continueAssistantMessageId: input.continueAssistantMessageId } : {}),
@@ -496,21 +489,7 @@ export default function ChatPage() {
                     pending.assistantMessageId = assistantMessage.id;
                     setConversations((current) => upsertConversation(current, conversation));
                     if (activeConversationIdRef.current !== input.conversationId) return;
-                    setMessages((current) => {
-                        const replaceUserMessage = input.showOptimisticUser;
-                        const hasUserMessage = current.some((item) => item.id === userMessage.id);
-                        const replaceIds = new Set([
-                            pending.optimisticUserId,
-                            pending.optimisticAssistantId,
-                            assistantMessage.id,
-                            ...(replaceUserMessage ? [userMessage.id] : []),
-                        ]);
-                        return [
-                            ...current.filter((item) => !replaceIds.has(item.id)),
-                            ...(hasUserMessage ? [] : [userMessage]),
-                            pending.stopped ? { ...assistantMessage, status: "failed", error: "本次回答已停止" } : assistantMessage,
-                        ];
-                    });
+                    setMessages((current) => mergeStartedChatMessages(current, pending, userMessage, assistantMessage, input.showOptimisticUser, pending.stopped));
                 },
                 onDelta: ({ messageId, delta }) => {
                     if (pending.stopped || activeConversationIdRef.current !== input.conversationId) return;
@@ -576,7 +555,7 @@ export default function ChatPage() {
     }
 
     async function handleRetry(item: ChatMessage) {
-        if (item.role !== "assistant" || !["failed", "completed"].includes(item.status) || item.id.startsWith("optimistic-")) return;
+        if (item.role !== "assistant" || !["failed", "completed"].includes(item.status) || item.isOptimistic) return;
         if (pendingTurnRef.current) {
             message.info("请等待当前回答结束");
             return;
@@ -591,7 +570,7 @@ export default function ChatPage() {
     }
 
     async function handleContinue(item: ChatMessage) {
-        if (item.role !== "assistant" || item.status !== "completed" || item.id.startsWith("optimistic-")) return;
+        if (item.role !== "assistant" || item.status !== "completed" || item.isOptimistic) return;
         if (pendingTurnRef.current) {
             message.info("请等待当前回答结束");
             return;
@@ -606,7 +585,7 @@ export default function ChatPage() {
     }
 
     function handleEdit(item: ChatMessage) {
-        if (item.role !== "user" || item.status !== "completed" || item.id.startsWith("optimistic-") || sendingRef.current) return;
+        if (item.role !== "user" || item.status !== "completed" || item.isOptimistic || sendingRef.current) return;
         setEditingMessageId(item.id);
         setDraft(item.content);
         setAttachments(item.attachments);
@@ -619,7 +598,7 @@ export default function ChatPage() {
     }
 
     async function handleDeleteMessage(item: ChatMessage) {
-        if (item.id.startsWith("optimistic-")) return;
+        if (item.isOptimistic) return;
         if (pendingTurnRef.current?.conversationId === item.conversationId && !(await confirmPendingNavigation("删除"))) return;
         const confirmed = await new Promise<boolean>((resolve) => {
             modal.confirm({
@@ -1174,6 +1153,7 @@ function createOptimisticUserMessage(pending: PendingChatTurn, content: string, 
         error: "",
         createdAt: pending.createdAt,
         updatedAt: pending.createdAt,
+        isOptimistic: true,
     };
 }
 
@@ -1188,6 +1168,7 @@ function createOptimisticAssistantMessage(pending: PendingChatTurn, error: strin
         error,
         createdAt: pending.createdAt + 1,
         updatedAt: pending.createdAt + 1,
+        isOptimistic: true,
     };
 }
 
@@ -1196,7 +1177,7 @@ const ChatBubble = memo(function ChatBubble({ item, isLatest, onAction }: { item
     const copyText = useCopyText();
     const markdownContent = item.content;
     const copyValue = item.status === "streaming" ? "" : item.content.trim() || (item.status === "failed" ? item.error?.trim() || "" : "");
-    const canDelete = !item.id.startsWith("optimistic-") && item.status !== "streaming";
+    const canDelete = !item.isOptimistic && item.status !== "streaming";
     const menuItems = [
         ...(item.status === "completed" && item.content.trim() ? [{ key: "remember", label: "记住这句话", icon: <Brain className="size-3.5" /> }] : []),
         ...(isUser && item.status === "completed" ? [{ key: "edit", label: "编辑问题", icon: <Pencil className="size-3.5" /> }] : []),

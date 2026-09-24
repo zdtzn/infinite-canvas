@@ -2059,6 +2059,7 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
     const retryAssistantMessageId = String(source.retryAssistantMessageId || "").trim();
     const editUserMessageId = String(source.editUserMessageId || "").trim();
     const continueAssistantMessageId = String(source.continueAssistantMessageId || "").trim();
+    const clientMessageId = String(source.clientMessageId || "").trim();
     const canvasContext = retryAssistantMessageId || continueAssistantMessageId ? undefined : normalizeChatCanvasContext(source.canvasContext);
     if ((retryAssistantMessageId && editUserMessageId) || (continueAssistantMessageId && (retryAssistantMessageId || editUserMessageId))) {
         throw new HttpError(400, "一次只能执行一种消息操作");
@@ -2090,6 +2091,7 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
                 attachments,
                 channelId,
                 model,
+                ...(!retryAssistantMessageId && !editUserMessageId && clientMessageId ? { clientMessageId } : {}),
                 ...(retryAssistantMessageId ? { retryAssistantMessageId } : {}),
                 ...(editUserMessageId ? { editUserMessageId } : {}),
             });

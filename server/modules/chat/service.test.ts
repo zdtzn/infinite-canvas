@@ -23,6 +23,26 @@ afterEach(() => {
 });
 
 describe("chat service", () => {
+  test("persists the client-generated user message id for optimistic reconciliation", () => {
+    const { store, service } = setup();
+    try {
+      const conversation = service.createConversation("user-a");
+      const clientMessageId = "optimistic-user-client-request-1";
+      const turn = service.beginTurn("user-a", conversation.id, {
+        content: "你好",
+        attachments: [],
+        channelId: "text-channel",
+        model: "gpt-4o-mini",
+        clientMessageId,
+      });
+
+      expect(turn.userMessage.id).toBe(clientMessageId);
+      expect(service.getConversationWithMessages("user-a", conversation.id)?.messages[0]?.id).toBe(clientMessageId);
+    } finally {
+      store.close();
+    }
+  });
+
   test("persists conversations and keeps them isolated by user", () => {
     const { store, service } = setup();
     try {
