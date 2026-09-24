@@ -2,7 +2,7 @@ import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, Cli
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
-import { App, Button, Checkbox, Input, Modal, Pagination, Select, Tag, Tooltip } from "antd";
+import { App, Button, Checkbox, Input, Modal, Pagination, Popover, Select, Tag, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { ImagePromptOptimizer } from "@/components/prompts/image-prompt-optimizer";
@@ -102,7 +102,7 @@ function getLogStore() {
 
 export default function ImagePage() {
     const location = useLocation();
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { data: cultivationProfile } = useCultivationProfile();
@@ -138,6 +138,7 @@ export default function ImagePage() {
     const [historyRevision, setHistoryRevision] = useState(0);
     const [historyLoadError, setHistoryLoadError] = useState("");
     const [resultView, setResultView] = useState<"results" | "history">("results");
+    const [taskPanelOpen, setTaskPanelOpen] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [savingAssetIds, setSavingAssetIds] = useState<string[]>([]);
@@ -378,15 +379,25 @@ export default function ImagePage() {
         if (!jobId && agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生成数量无效" });
     };
 
-    const cancelGeneration = async (index?: number) => {
-        if (!generationJob) return;
-        try {
-            await cancelImageGeneration(generationJob.id, index);
-        } catch {
-            message.error("取消未成功，任务仍保留，请重试");
-        } finally {
-            void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
-        }
+    const cancelGeneration = (index?: number, jobId = generationJob?.id) => {
+        if (!jobId) return;
+        setTaskPanelOpen(false);
+        modal.confirm({
+            title: index === undefined ? "取消这组生成任务？" : "取消这张图片的生成？",
+            content: "已完成的图片会保留。已开始的请求可能仍产生上游费用，取消不保证退费。",
+            okText: "确认取消",
+            cancelText: "继续生成",
+            onOk: async () => {
+                try {
+                    await cancelImageGeneration(jobId, index);
+                } catch (error) {
+                    message.error("取消未成功，任务仍保留，请重试");
+                    throw error;
+                } finally {
+                    void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
+                }
+            },
+        });
     };
 
     // 响应 Agent 面板下发的生图命令：填入提示词，并按需自动触发生成。
@@ -1098,6 +1109,62 @@ export default function ImagePage() {
                                     {running && !previewLog && resultView === "results" ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
                                 </div>
                                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 sm:justify-end">
+                                    {resultView === "results" && generationJobs.length > 0 && (generationJobs.length > 1 || !generationJob || previewLog) ? (
+                                        <Popover
+                                            trigger="click"
+                                            placement="bottomRight"
+                                            arrow={false}
+                                            open={taskPanelOpen}
+                                            onOpenChange={setTaskPanelOpen}
+                                            content={
+                                                <div className="w-80 max-w-[calc(100vw-48px)]" onKeyDown={(event) => { if (event.key === "Escape") setTaskPanelOpen(false); }}>
+                                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                                        <span className="font-medium">生成任务</span>
+                                                        <Tooltip title="切换任务只查看进度和结果，不会覆盖左侧编辑内容。">
+                                                            <span className="text-xs text-muted-foreground" tabIndex={0}>切换查看</span>
+                                                        </Tooltip>
+                                                    </div>
+                                                    <div className="thin-scrollbar max-h-[min(360px,50dvh)] space-y-1 overflow-y-auto" aria-label="生成任务列表">
+                                                        {[...generationJobs].reverse().map((job) => {
+                                                            const selected = !previewLog && generationJob?.id === job.id;
+                                                            const pending = job.results.filter((result) => result.status === "pending");
+                                                            const canceling = pending.some((result) => result.cancelRequested);
+                                                            const status = job.status === "running" ? (canceling ? "取消中" : pending.some((result) => result.startedAt) ? "生成中" : "排队中") : job.status === "canceled" ? "已取消" : job.status === "failed" ? "失败" : `已完成 ${job.successCount} 张`;
+                                                            return (
+                                                                <div key={job.id} className={`flex items-center gap-2 rounded-md px-2 ${selected ? "bg-accent" : "hover:bg-accent/50"}`}>
+                                                                    <button
+                                                                        type="button"
+                                                                        aria-pressed={selected}
+                                                                        className="min-w-0 flex-1 rounded-md py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                                                                        onClick={() => {
+                                                                            selectImageGenerationJob(job.id);
+                                                                            setPreviewLog(null);
+                                                                            setTaskPanelOpen(false);
+                                                                        }}
+                                                                    >
+                                                                        <span className="block truncate text-sm" title={job.prompt}>{job.prompt || "图片生成"}</span>
+                                                                        <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                                                                            {job.status === "running" ? <LoaderCircle className="size-3 animate-spin" /> : null}
+                                                                            {status}{selected ? " · 当前查看" : ""}
+                                                                        </span>
+                                                                    </button>
+                                                                    {job.status === "running" ? (
+                                                                        <Button size="small" type="text" disabled={!pending.length || pending.every((result) => result.cancelRequested)} onClick={() => cancelGeneration(undefined, job.id)}>取消</Button>
+                                                                    ) : null}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            }
+                                        >
+                                            <Button size="small" type="text" aria-label="查看生成任务" aria-expanded={taskPanelOpen}>
+                                                任务 · {generationJobs.length}
+                                                {activeJobCount ? <span className="text-xs text-muted-foreground">生成中 {activeJobCount}</span> : null}
+                                                <ChevronDown className="size-3.5" />
+                                            </Button>
+                                        </Popover>
+                                    ) : null}
                                     {resultView === "results" && previewLog ? (
                                         <Button size="small" type="text" icon={<ArrowLeft className="size-3.5" />} onClick={() => setPreviewLog(null)}>
                                             返回本次
@@ -1131,34 +1198,12 @@ export default function ImagePage() {
                                     </Tooltip>
                                 </div>
                             </div>
-                            {resultView === "results" && generationJobs.length ? (
-                                <div className="mb-4 space-y-2 border-b border-stone-200 pb-4 dark:border-stone-800">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <label htmlFor="image-generation-task" className="text-sm text-muted-foreground" title="保留所有进行中任务和最近 20 组已完成任务，更多结果可在太古遗迹查看">
-                                            任务列表
-                                        </label>
-                                        <Select
-                                            id="image-generation-task"
-                                            aria-label="切换生成任务"
-                                            className="min-w-0 flex-1 sm:max-w-lg"
-                                            value={previewLog ? undefined : generationJob?.id}
-                                            placeholder="选择任务查看进度和结果"
-                                            options={[...generationJobs].reverse().map((job, index) => ({
-                                                value: job.id,
-                                                label: `任务 ${generationJobs.length - index} · ${job.prompt.slice(0, 28)} · ${job.status === "running" ? (job.results.some((result) => result.cancelRequested) ? "取消中" : job.results.some((result) => result.status === "pending" && result.startedAt) ? "生成中" : "排队中") : job.status === "canceled" ? "已取消" : job.status === "failed" ? "失败" : `已完成 ${job.successCount} 张`}`,
-                                            }))}
-                                            onChange={(id) => {
-                                                selectImageGenerationJob(id);
-                                                setPreviewLog(null);
-                                            }}
-                                        />
-                                        {!previewLog && running ? (
-                                            <Button onClick={() => void cancelGeneration()} disabled={generationJob.results.filter((result) => result.status === "pending").every((result) => result.cancelRequested)}>
-                                                取消本组
-                                            </Button>
-                                        ) : null}
-                                    </div>
-                                    <p className="text-xs text-muted-foreground">每组使用提交时的提示词与参数，切换任务不会覆盖左侧编辑内容。取消已开始的请求不保证退还上游费用。</p>
+                            {resultView === "results" && !previewLog && generationJob ? (
+                                <div className="mb-4 flex min-w-0 items-center gap-3 text-xs text-muted-foreground">
+                                    <span className="min-w-0 flex-1 truncate" title={generationJob.prompt}>{generationJob.prompt}</span>
+                                    {running ? (
+                                        <Button size="small" type="text" disabled={generationJob.results.filter((result) => result.status === "pending").every((result) => result.cancelRequested)} onClick={() => cancelGeneration()}>取消本组</Button>
+                                    ) : null}
                                 </div>
                             ) : null}
                             {resultView === "history" ? (
