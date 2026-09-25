@@ -50,6 +50,7 @@ import { lazyRoute } from "@/lib/lazy-route";
 import { creativeImageTransferState, type CreativeImageTransfer } from "@/lib/creative-image-transfer";
 import { preloadRoute } from "@/lib/route-loaders";
 import type { ResultContinueAction } from "./result-image-card";
+import { summarizeImageTasks } from "./task-summary";
 
 const loadPromptSelectDialog = () => import("@/components/prompts/prompt-select-dialog").then((module) => ({ default: module.PromptSelectDialog }));
 const loadAssetPickerModal = () => import("@/components/canvas/asset-picker-modal").then((module) => ({ default: module.AssetPickerModal }));
@@ -185,6 +186,7 @@ export default function ImagePage() {
     const canGenerate = Boolean(prompt.trim()) && !generationBlockReason;
     const running = generationJob?.status === "running";
     const activeJobCount = generationJobs.filter((job) => job.status === "running").length;
+    const activeTaskSummary = summarizeImageTasks(generationJobs.flatMap((job) => job.results)).activeText;
     const concurrencyLimit = resolveImageSlotConcurrency(resolvedImageSettings.channel.baseUrl, model, cultivationProfile?.maxConcurrency || 10);
     const generateButtonLabel = activeJobCount ? (isDouEmperor ? "再起一卷 · 继续生成" : "继续生成下一组") : isDouEmperor ? "执笔天地" : "开始生成";
     const elapsedMs = generationJob?.elapsedMs || 0;
@@ -1128,8 +1130,9 @@ export default function ImagePage() {
                                                         {[...generationJobs].reverse().map((job) => {
                                                             const selected = !previewLog && generationJob?.id === job.id;
                                                             const pending = job.results.filter((result) => result.status === "pending");
-                                                            const canceling = pending.some((result) => result.cancelRequested);
-                                                            const status = job.status === "running" ? (canceling ? "取消中" : pending.some((result) => result.startedAt) ? "生成中" : "排队中") : job.status === "canceled" ? "已取消" : job.status === "failed" ? "失败" : `已完成 ${job.successCount} 张`;
+                                                            const summary = summarizeImageTasks(job.results);
+                                                            const taskModel = job.snapshot?.config.imageModel || job.snapshot?.config.model;
+                                                            const submittedAt = new Date(job.startedAt);
                                                             return (
                                                                 <div key={job.id} className={`flex items-center gap-2 rounded-md px-2 ${selected ? "bg-accent" : "hover:bg-accent/50"}`}>
                                                                     <button
@@ -1143,9 +1146,16 @@ export default function ImagePage() {
                                                                         }}
                                                                     >
                                                                         <span className="block truncate text-sm" title={job.prompt}>{job.prompt || "图片生成"}</span>
-                                                                        <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                                                                        <span className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                                                                            <time dateTime={submittedAt.toISOString()} title={submittedAt.toLocaleString("zh-CN")} className="shrink-0">{submittedAt.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}</time>
+                                                                            <span className="truncate" title={taskModel}>· {taskModel ? modelOptionLabel(effectiveConfig, taskModel) : "模型未记录"}</span>
+                                                                        </span>
+                                                                        <span className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                                                                             {job.status === "running" ? <LoaderCircle className="size-3 animate-spin" /> : null}
-                                                                            {status}{selected ? " · 当前查看" : ""}
+                                                                            {summary.text || "准备中"}
+                                                                        </span>
+                                                                        <span className="mt-1 block text-xs text-muted-foreground">
+                                                                            已结束 {summary.settled}/{summary.total}{selected ? " · 当前查看" : ""}
                                                                         </span>
                                                                     </button>
                                                                     {job.status === "running" ? (
@@ -1160,7 +1170,7 @@ export default function ImagePage() {
                                         >
                                             <Button size="small" type="text" aria-label="查看生成任务" aria-expanded={taskPanelOpen}>
                                                 任务 · {generationJobs.length}
-                                                {activeJobCount ? <span className="text-xs text-muted-foreground">生成中 {activeJobCount}</span> : null}
+                                                {activeJobCount ? <Tooltip title={activeTaskSummary || "正在准备任务"}><span className="text-xs text-muted-foreground">进行中 {activeJobCount} 组</span></Tooltip> : null}
                                                 <ChevronDown className="size-3.5" />
                                             </Button>
                                         </Popover>
