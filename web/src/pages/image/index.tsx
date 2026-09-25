@@ -24,6 +24,7 @@ import {
     getImageGenerationSnapshot,
     selectImageGenerationJob,
     replaceImageGenerationResult,
+    removeCompletedImageGenerationJobs,
     retryImageGeneration,
     startImageGeneration,
     subscribeImageGeneration,
@@ -379,6 +380,16 @@ export default function ImagePage() {
             concurrencyLimit,
         );
         if (!jobId && agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生成数量无效" });
+    };
+
+    const removeGenerationTasks = (jobId?: string) => {
+        const removed = removeCompletedImageGenerationJobs(jobId);
+        if (removed) {
+            setTaskPanelOpen(false);
+            message.success(`已移除 ${removed} 组任务，图片和太古遗迹记录仍保留`);
+        } else {
+            message.info("进行中的任务请先取消，结束后再移除");
+        }
     };
 
     const cancelGeneration = (index?: number, jobId = generationJob?.id) => {
@@ -1122,8 +1133,8 @@ export default function ImagePage() {
                                                 <div className="w-80 max-w-[calc(100vw-48px)]" onKeyDown={(event) => { if (event.key === "Escape") setTaskPanelOpen(false); }}>
                                                     <div className="mb-2 flex items-center justify-between gap-3">
                                                         <span className="font-medium">生成任务</span>
-                                                        <Tooltip title="切换任务只查看进度和结果，不会覆盖左侧编辑内容。">
-                                                            <span className="text-xs text-muted-foreground" tabIndex={0}>切换查看</span>
+                                                        <Tooltip title="仅清理任务列表，图片和太古遗迹记录会保留。">
+                                                            <Button size="small" type="text" disabled={!generationJobs.some((job) => job.status !== "running")} onClick={() => removeGenerationTasks()}>清理已结束任务</Button>
                                                         </Tooltip>
                                                     </div>
                                                     <div className="thin-scrollbar max-h-[min(360px,50dvh)] space-y-1 overflow-y-auto" aria-label="生成任务列表">
@@ -1160,7 +1171,11 @@ export default function ImagePage() {
                                                                     </button>
                                                                     {job.status === "running" ? (
                                                                         <Button size="small" type="text" disabled={!pending.length || pending.every((result) => result.cancelRequested)} onClick={() => cancelGeneration(undefined, job.id)}>取消</Button>
-                                                                    ) : null}
+                                                                    ) : (
+                                                                        <Tooltip title="移除任务，保留图片和太古遗迹记录">
+                                                                            <Button size="small" type="text" aria-label={`移除任务：${job.prompt}`} onClick={() => removeGenerationTasks(job.id)}>移除</Button>
+                                                                        </Tooltip>
+                                                                    )}
                                                                 </div>
                                                             );
                                                         })}
@@ -1213,7 +1228,11 @@ export default function ImagePage() {
                                     <span className="min-w-0 flex-1 truncate" title={generationJob.prompt}>{generationJob.prompt}</span>
                                     {running ? (
                                         <Button size="small" type="text" disabled={generationJob.results.filter((result) => result.status === "pending").every((result) => result.cancelRequested)} onClick={() => cancelGeneration()}>取消本组</Button>
-                                    ) : null}
+                                    ) : (
+                                        <Tooltip title="仅移除当前任务，图片和太古遗迹记录会保留">
+                                            <Button size="small" type="text" onClick={() => removeGenerationTasks(generationJob.id)}>移除任务</Button>
+                                        </Tooltip>
+                                    )}
                                 </div>
                             ) : null}
                             {resultView === "history" ? (

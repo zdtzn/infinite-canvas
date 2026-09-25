@@ -216,6 +216,17 @@ export function clearImageGenerationJob() {
     return true;
 }
 
+/** Remove only completed runtime entries; image assets and generation history are untouched. */
+export function removeCompletedImageGenerationJobs(jobId?: string) {
+    const remaining = jobs.filter((job) => job.status === "running" || (jobId !== undefined && job.id !== jobId));
+    const removedCount = jobs.length - remaining.length;
+    if (!removedCount) return 0;
+    jobs = remaining;
+    const nextSelectedId = selectedJobId && !jobs.some((job) => job.id === selectedJobId) ? jobs.at(-1)?.id || null : selectedJobId;
+    selectImageGenerationJob(nextSelectedId);
+    return removedCount;
+}
+
 /** Confirm server cancellation before stopping polling; a failed cancellation leaves the task recoverable. */
 export async function cancelImageGeneration(jobId: string, index?: number) {
     const job = jobs.find((item) => item.id === jobId);

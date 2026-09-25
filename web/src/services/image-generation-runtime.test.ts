@@ -10,6 +10,7 @@ import {
     loadPersistedImageGenerationJob,
     loadPersistedImageGenerationJobs,
     replaceImageGenerationResult,
+    removeCompletedImageGenerationJobs,
     selectImageGenerationJob,
     startImageGeneration,
     subscribeImageGeneration,
@@ -29,6 +30,36 @@ function deferred<T>() {
 
 const testImage: GeneratedImage = { id: "test", dataUrl: "data:image/png;base64,AA==", durationMs: 10, width: 1, height: 1, bytes: 1 };
 const testSnapshot: ImageGenerationSnapshot = { text: "test", config: {} as ImageGenerationSnapshot["config"], references: [] };
+
+test("removes completed task entries without touching running work or completed images", async () => {
+    const completed = deferred<ImageGenerationCompletion>();
+    const finishedId = startImageGeneration(testSnapshot, 1, completed.resolve, async () => testImage)!;
+    await completed.promise;
+    const retainedImage = getImageGenerationSnapshot()!.results[0].image;
+    const runningComplete = deferred<ImageGenerationCompletion>();
+    const runningId = startImageGeneration(testSnapshot, 1, runningComplete.resolve, async () => new Promise<GeneratedImage>(() => undefined))!;
+    assert.equal(removeCompletedImageGenerationJobs(runningId), 0);
+    selectImageGenerationJob(finishedId);
+    assert.equal(removeCompletedImageGenerationJobs(finishedId), 1);
+    assert.equal(getImageGenerationSnapshot()?.id, runningId);
+    assert.equal(retainedImage?.dataUrl, testImage.dataUrl);
+    assert.equal(removeCompletedImageGenerationJobs(finishedId), 0);
+
+    const secondComplete = deferred<ImageGenerationCompletion>();
+    startImageGeneration(testSnapshot, 1, secondComplete.resolve, async () => testImage);
+    await secondComplete.promise;
+    selectImageGenerationJob(null);
+    assert.equal(removeCompletedImageGenerationJobs(), 1);
+    assert.equal(getImageGenerationSnapshot(), null);
+    assert.equal(getImageGenerationJobsSnapshot().find((job) => job.id === runningId)?.status, "running");
+
+    await cancelImageGeneration(runningId);
+    await runningComplete.promise;
+    selectImageGenerationJob(runningId);
+    assert.equal(removeCompletedImageGenerationJobs(), 1);
+    assert.equal(getImageGenerationSnapshot(), null);
+    assert.equal(getImageGenerationJobsSnapshot().length, 0);
+});
 
 test("bounds completed task retention without evicting a running task", async () => {
     const activeComplete = deferred<ImageGenerationCompletion>();
