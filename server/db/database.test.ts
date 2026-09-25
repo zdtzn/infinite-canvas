@@ -29,6 +29,35 @@ afterEach(() => {
 });
 
 describe("SQLite application database", () => {
+  test("upgrades pre-wallet reservations as free usage", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const db = openAppDatabase({ dataDir });
+    try {
+      db.raw!.query("INSERT INTO users(user_id, display_name, created_at) VALUES ('legacy', 'Legacy', 1)").run();
+      db.raw!.exec(`
+        DELETE FROM schema_migrations WHERE version = 26;
+        DROP TABLE wallet_ledger;
+        DROP TABLE wallet_balances;
+        ALTER TABLE generation_usage DROP COLUMN paid_count;
+        ALTER TABLE generation_usage DROP COLUMN free_count;
+        INSERT INTO daily_usage(user_id, usage_date, reserved_count) VALUES ('legacy', '2026-09-25', 2);
+        INSERT INTO generation_usage(job_id, user_id, usage_date, model, channel_id, requested_count, status, created_at)
+        VALUES ('legacy-job', 'legacy', '2026-09-25', 'gpt-image-2', 'old-channel', 2, 'reserved', 1);
+      `);
+    } finally {
+      db.close();
+    }
+    const upgraded = openAppDatabase({ dataDir });
+    try {
+      expect(upgraded.raw!.query("SELECT free_count, paid_count FROM generation_usage WHERE job_id = 'legacy-job'").get())
+        .toEqual({ free_count: 2, paid_count: 0 });
+      expect(upgraded.raw!.query("SELECT COUNT(*) AS count FROM wallet_ledger").get()).toEqual({ count: 0 });
+    } finally {
+      upgraded.close();
+    }
+  });
+
   test("filters categories and all tags before pagination with full owner facets", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);

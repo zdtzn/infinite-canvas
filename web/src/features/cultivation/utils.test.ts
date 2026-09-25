@@ -35,6 +35,8 @@ describe("cultivation presentation helpers", () => {
         const base = { remainingToday: 3, unlimited: false, maxConcurrency: 2, capabilities: ["model.gpt-image"], requestedCount: 1, requiredCapabilities: ["model.gpt-image"] };
         expect(cultivationGenerationBlockReason({ ...base, requiredCapabilities: ["generation.hd", "model.gpt-image"] })).toBe("当前境界尚未开放高清生成");
         expect(cultivationGenerationBlockReason({ ...base, requestedCount: 4 })).toBe("今日仅剩 3 次，请减少生成数量");
+        expect(cultivationGenerationBlockReason({ ...base, requestedCount: 4, paidImages: 1 })).toBeNull();
+        expect(cultivationGenerationBlockReason({ ...base, requestedCount: 5, paidImages: 1 })).toBe("今日免费次数与灵卷余额不足");
         expect(cultivationGenerationBlockReason({ ...base, remainingToday: 10, requestedCount: 3 })).toBeNull();
         expect(cultivationGenerationBlockReason(base)).toBeNull();
     });

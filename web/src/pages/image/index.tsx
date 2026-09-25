@@ -177,6 +177,7 @@ export default function ImagePage() {
         (cultivationProfile
             ? cultivationGenerationBlockReason({
                   remainingToday: cultivationProfile.remainingToday,
+                  paidImages: cultivationProfile.paidImages,
                   unlimited: cultivationProfile.unlimited,
                   maxConcurrency: cultivationProfile.maxConcurrency,
                   capabilities: cultivationProfile.capabilities,
@@ -325,6 +326,7 @@ export default function ImagePage() {
             generationCount,
             async ({ successImages, successCount, failCount, canceledCount = 0, error, durationMs }) => {
                 void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
+                void queryClient.invalidateQueries({ queryKey: ["wallet"] });
                 const failureFeedback = successCount || !failCount ? undefined : generationFailureFeedback(error, { isDouEmperor });
                 if (agentTaskId)
                     updateAgentTask(agentTaskId, {
@@ -894,6 +896,7 @@ export default function ImagePage() {
             message.success("重试成功");
         } finally {
             void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
+            void queryClient.invalidateQueries({ queryKey: ["wallet"] });
         }
     };
 
@@ -1106,7 +1109,7 @@ export default function ImagePage() {
                                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
                             ) : cultivationProfile ? (
                                 <div className="mt-2 text-center text-xs text-stone-400">
-                                    {cultivationProfile.unlimited ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量` : `本次将占用 ${generationCount} 次 · ${quotaText(cultivationProfile.remainingToday, false)} · 失败自动退还`}
+                                    {cultivationProfile.unlimited ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量` : `本次将占用 ${generationCount} 次 · ${quotaText(cultivationProfile.remainingToday, false)} · 灵卷 ${cultivationProfile.paidImages || 0} 次 · 失败自动退还`}
                                 </div>
                             ) : null}
                         </div>

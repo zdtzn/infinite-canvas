@@ -16,6 +16,7 @@ const ChatPage = lazyRoute(routeLoaders["/chat"]);
 const ColorAlchemyPage = lazyRoute(routeLoaders["/color-alchemy"]);
 const ConfigPage = lazyRoute(routeLoaders["/config"]);
 const CultivationPage = lazyRoute(routeLoaders["/cultivation"]);
+const WalletPage = lazyRoute(routeLoaders["/wallet"]);
 const DocsPage = lazyRoute(routeLoaders["/docs"]);
 const AdminCultivationPage = lazyRoute(routeLoaders["/admin/cultivation"]);
 const HomePage = lazyRoute(routeLoaders["/"]);
@@ -48,6 +49,7 @@ function routeLoadingMeta(pathname: string) {
         "/announcements": { eyebrow: "SYSTEM NOTICE", title: "系统公告", split: false },
         "/prompts": { eyebrow: "GONG FA LOU", title: "功法楼", split: false },
         "/cultivation": { eyebrow: "MING GONG", title: "命宫", split: false },
+        "/wallet": { eyebrow: "LING JUAN GE", title: "灵卷阁", split: false },
         "/config": { eyebrow: "DONG FU", title: "洞府", split: false },
         "/docs": { eyebrow: "DOCUMENTATION", title: "使用文档", split: false },
         "/admin/cultivation": { eyebrow: "ZHANG JIAO DIAN", title: "掌教殿", split: false },
@@ -222,6 +224,14 @@ export const router = createBrowserRouter([
                 element: (
                     <RoutePage>
                         <CultivationPage />
+                    </RoutePage>
+                ),
+            },
+            {
+                path: "/wallet",
+                element: (
+                    <RoutePage>
+                        <WalletPage />
                     </RoutePage>
                 ),
             },

@@ -73,11 +73,11 @@ export function cultivationAccentColor(color: string) {
     return `hsl(${Math.round(hue)} ${Math.max(42, Math.round(saturation * 100))}% 64%)`;
 }
 
-export function cultivationGenerationBlockReason(input: { remainingToday: number | null; unlimited: boolean; maxConcurrency: number; capabilities: string[]; requestedCount: number; requiredCapabilities: string[] }) {
+export function cultivationGenerationBlockReason(input: { remainingToday: number | null; paidImages?: number; unlimited: boolean; maxConcurrency: number; capabilities: string[]; requestedCount: number; requiredCapabilities: string[] }) {
     const missing = input.requiredCapabilities.filter((key) => !input.capabilities.includes(key));
     if (missing.length) return `当前境界尚未开放${missing.map(cultivationCapabilityLabel).join("、")}`;
-    if (!input.unlimited && input.remainingToday !== null && input.remainingToday < input.requestedCount) {
-        return input.remainingToday > 0 ? `今日仅剩 ${input.remainingToday} 次，请减少生成数量` : "今日斗气已经耗尽";
+    if (!input.unlimited && input.remainingToday !== null && input.remainingToday + (input.paidImages || 0) < input.requestedCount) {
+        return input.paidImages ? "今日免费次数与灵卷余额不足" : input.remainingToday > 0 ? `今日仅剩 ${input.remainingToday} 次，请减少生成数量` : "今日斗气已经耗尽";
     }
     return null;
 }

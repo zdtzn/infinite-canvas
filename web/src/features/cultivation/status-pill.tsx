@@ -41,7 +41,7 @@ export function CultivationStatusPill() {
 
     if (!isDouEmperor)
         return (
-            <Link to="/cultivation" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} title={`${label} · ${quotaText(data.remainingToday, data.unlimited)}`} aria-label={`打开我的修炼：${label}`}>
+            <Link to="/cultivation" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} title={`${label} · ${quotaText(data.remainingToday, data.unlimited)} · 灵卷 ${data.paidImages || 0} 次`} aria-label={`打开我的修炼：${label}`}>
                 {statusContent}
             </Link>
         );

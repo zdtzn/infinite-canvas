@@ -1,4 +1,4 @@
-import { FileText, ImagePlus, Images, Maximize2, MessageCircle, Palette, Settings2, TrendingUp, Video } from "lucide-react";
+import { FileText, ImagePlus, Images, Maximize2, MessageCircle, Palette, ScrollText, Settings2, TrendingUp, Video } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -42,6 +42,11 @@ export const navigationTools = [
         icon: TrendingUp,
     },
     {
+        slug: "wallet",
+        label: "生图次数与明细",
+        icon: ScrollText,
+    },
+    {
         slug: "config",
         label: "配置",
         icon: Settings2,
@@ -60,6 +65,7 @@ export const navigationSceneNames: Record<NavigationToolSlug, string> = {
     prompts: "功法楼",
     assets: "藏卷阁",
     cultivation: "命宫",
+    wallet: "灵卷阁",
     config: "洞府",
 };
 

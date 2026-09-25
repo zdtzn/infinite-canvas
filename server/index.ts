@@ -443,6 +443,8 @@ async function route(request: Request, requestId: string) {
         const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
         if (userMatch && request.method === "PUT") return updateUserAccess(request, session, decodeRouteSegment(userMatch[1], "用户 ID"));
         if (url.pathname === "/api/cultivation/me" && request.method === "GET") return cultivationProfile(session);
+        if (url.pathname === "/api/wallet" && request.method === "GET") return walletOverview(url, session);
+        if (url.pathname === "/api/admin/wallet/grants" && request.method === "POST") return adminGrantWallet(request, session);
         const profileAvatarMatch = url.pathname.match(/^\/api\/profile\/avatar\/([^/]+)$/);
         if (profileAvatarMatch && ["GET", "HEAD"].includes(request.method)) return serveProfileAvatar(request, session, decodeRouteSegment(profileAvatarMatch[1], "用户 ID"));
         if (url.pathname === "/api/profile/avatar" && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => uploadProfileAvatar(request, session));
@@ -993,6 +995,21 @@ function cultivationProfile(session: SessionPayload) {
     return json({
         profile: { ...profile, avatarUrl: avatarUrlFor(session.userId) },
     });
+}
+
+function walletOverview(url: URL, session: SessionPayload) {
+    const { page, pageSize } = readPagination(url);
+    return json(requireCultivation().getWallet(session.userId, page, pageSize), 200, { "Cache-Control": "private, no-store" });
+}
+
+async function adminGrantWallet(request: Request, session: SessionPayload) {
+    requireAdmin(session);
+    const body = await readJson<{ userId?: unknown; packageId?: unknown; reason?: unknown }>(request, 4 * 1024);
+    const userId = String(body.userId || "");
+    const packageId = String(body.packageId || "");
+    const reason = String(body.reason || "");
+    const result = requireCultivation().grantWalletPackage(session.userId, userId, packageId, requiredIdempotencyKey(request), reason);
+    return json(result, 200, { "Cache-Control": "private, no-store" });
 }
 
 function markCultivationBreakthroughSeen(session: SessionPayload, breakthroughId: string) {
@@ -3094,6 +3111,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
         channelId,
         model,
         count,
+        allowPaidImages: true,
         quality: resolution,
         referenceCount: references.length,
         hasMask: Boolean(body.mask),
@@ -3196,6 +3214,7 @@ async function retryJob(request: Request, session: SessionPayload, id: string) {
             channelId: source.input.channelId,
             model: source.input.model,
             count: source.input.count,
+            allowPaidImages: true,
             quality: source.input.quality,
             referenceCount: source.input.references.length,
             hasMask: Boolean(source.input.mask),

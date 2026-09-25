@@ -90,6 +90,7 @@ export type CultivationProfile = {
     usedToday: number;
     reservedToday: number;
     remainingToday: number | null;
+    paidImages?: number;
     maxConcurrency: number;
     capabilities: string[];
     totalImages: number;
@@ -555,6 +556,22 @@ function imageFileExtension(mimeType: string) {
 
 export async function fetchCultivationProfile() {
     return serverRequest<{ profile: CultivationProfile }>("/api/cultivation/me", { timeoutMs: 12_000 });
+}
+
+export type WalletPackage = { id: string; name: string; priceFen: number; images: number };
+export type WalletLedgerItem = { id: string; delta: number; balanceAfter: number; kind: "admin_grant" | "reserve" | "refund"; sourceId: string; packageId: string | null; createdAt: number };
+export type WalletOverview = { balance: number; packages: WalletPackage[]; paymentEnabled: boolean; items: WalletLedgerItem[]; page: number; pageSize: number; total: number };
+
+export async function fetchWallet(page = 1) {
+    return serverRequest<WalletOverview>(`/api/wallet?page=${page}&pageSize=20`);
+}
+
+export async function grantWalletPackage(input: { userId: string; packageId: string; reason: string; idempotencyKey: string }) {
+    return serverRequest<WalletOverview>("/api/admin/wallet/grants", {
+        method: "POST",
+        headers: { "Idempotency-Key": input.idempotencyKey },
+        body: { userId: input.userId, packageId: input.packageId, reason: input.reason },
+    });
 }
 
 export async function markCultivationBreakthroughSeen(id: string) {

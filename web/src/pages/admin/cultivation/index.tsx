@@ -42,6 +42,8 @@ import {
     fetchAdminMetrics,
     fetchCultivationConfiguration,
     fetchCultivationLog,
+    fetchWallet,
+    grantWalletPackage,
     updateAdminCultivationUser,
     updateCultivationCapability,
     updateCultivationRealm,
@@ -419,6 +421,15 @@ function UserDrawer({
     const [form] = Form.useForm<UserFormValues>();
     const [dirty, setDirty] = useState(false);
     const [xpMode, setXpMode] = useState<"set" | "adjust">("set");
+    const { message } = App.useApp();
+    const queryClient = useQueryClient();
+    const { data: walletCatalog } = useQuery({ queryKey: ["wallet", "admin-catalog"], queryFn: () => fetchWallet(), enabled: Boolean(user) });
+    const [grantOpen, setGrantOpen] = useState(false);
+    const [grantPackageId, setGrantPackageId] = useState("qiling");
+    const [grantReason, setGrantReason] = useState("");
+    const [grantLoading, setGrantLoading] = useState(false);
+    const [grantedBalance, setGrantedBalance] = useState<number | null>(null);
+    const grantKeyRef = useRef("");
     const initialValuesRef = useRef<UserFormValues | null>(null);
     const requestClose = () => {
         if (!dirty || loading) return onClose();
@@ -440,6 +451,25 @@ function UserDrawer({
             return;
         }
         onSubmit(patch);
+    };
+
+    const grant = async () => {
+        if (!user || !grantReason.trim() || grantLoading) return;
+        setGrantLoading(true);
+        try {
+            const result = await grantWalletPackage({ userId: user.userId, packageId: grantPackageId, reason: grantReason.trim(), idempotencyKey: grantKeyRef.current });
+            setGrantedBalance(result.balance);
+            setGrantOpen(false);
+            setGrantReason("");
+            void queryClient.invalidateQueries({ queryKey: ["admin", "cultivation", "users"] });
+            void queryClient.invalidateQueries({ queryKey: ["cultivation", "profile"] });
+            void queryClient.invalidateQueries({ queryKey: ["wallet"] });
+            message.success("灵卷测试次数已发放");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "发放失败");
+        } finally {
+            setGrantLoading(false);
+        }
     };
 
     return (
@@ -467,11 +497,13 @@ function UserDrawer({
                 form.setFieldsValue(initialValues);
                 setXpMode("set");
                 setDirty(false);
+                setGrantedBalance(null);
             }}
             footer={
                 <div className="cultivation-drawer-footer">
                     <span>{dirty ? "有未保存的更改" : "修改会写入审计日志"}</span>
                     <div className="flex gap-2">
+                        <Button onClick={() => { grantKeyRef.current = crypto.randomUUID(); setGrantOpen(true); }} disabled={loading}>发放灵卷</Button>
                         <Button onClick={requestClose} disabled={loading}>
                             取消
                         </Button>
@@ -493,6 +525,7 @@ function UserDrawer({
                         <AdminMetric label="今日用量" value={user.unlimited ? "不限" : `${user.usedToday}/${user.dailyLimit ?? 0}`} />
                         <AdminMetric label="累计作品" value={user.totalImages.toLocaleString()} />
                     </div>
+                    <p className="mt-3 text-sm text-stone-500">灵卷可用 {grantedBalance ?? user.paidImages ?? 0} 次 · 管理员发放会记入独立账本</p>
                 </div>
             ) : null}
             <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)}>
@@ -560,6 +593,11 @@ function UserDrawer({
                     </Form.Item>
                 </section>
             </Form>
+            <Modal title={`向 ${user?.displayName || "用户"} 发放灵卷`} open={grantOpen} onCancel={() => !grantLoading && setGrantOpen(false)} onOk={() => void grant()} okText="确认发放" okButtonProps={{ disabled: !grantReason.trim() || !walletCatalog?.packages.length }} confirmLoading={grantLoading} destroyOnHidden>
+                <p className="mb-4 text-sm text-stone-500">仅用于支付接入前的测试发放，不会创建支付订单。</p>
+                <Select className="w-full" value={grantPackageId} options={walletCatalog?.packages.map((item) => ({ value: item.id, label: `${item.name} · ${item.images} 次` })) || []} onChange={setGrantPackageId} />
+                <Input.TextArea className="mt-4" value={grantReason} onChange={(event) => setGrantReason(event.target.value)} maxLength={300} showCount rows={3} placeholder="填写发放原因" />
+            </Modal>
         </Drawer>
     );
 }

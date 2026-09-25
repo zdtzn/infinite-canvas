@@ -1111,6 +1111,37 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+
+  if (!database.query("SELECT 1 FROM schema_migrations WHERE version = 26").get())
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE wallet_balances (
+          user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+          image_balance INTEGER NOT NULL DEFAULT 0 CHECK (image_balance >= 0),
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE wallet_ledger (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+          delta INTEGER NOT NULL,
+          balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
+          kind TEXT NOT NULL CHECK (kind IN ('admin_grant', 'reserve', 'refund')),
+          source_id TEXT NOT NULL,
+          package_id TEXT,
+          operator_user_id TEXT,
+          reason TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          UNIQUE (user_id, kind, source_id)
+        );
+        CREATE INDEX idx_wallet_ledger_user_created ON wallet_ledger(user_id, sequence DESC);
+        CREATE UNIQUE INDEX idx_wallet_admin_grant_source ON wallet_ledger(source_id) WHERE kind = 'admin_grant';
+        ALTER TABLE generation_usage ADD COLUMN free_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE generation_usage ADD COLUMN paid_count INTEGER NOT NULL DEFAULT 0;
+        UPDATE generation_usage SET free_count = requested_count WHERE status = 'reserved';
+      `);
+      database.query("INSERT INTO schema_migrations(version, applied_at) VALUES (26, ?)").run(Date.now());
+    })();
 }
 
 function migrateLegacyState(

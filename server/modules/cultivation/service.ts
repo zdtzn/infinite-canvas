@@ -37,7 +37,13 @@ type ReservationInput = {
   hasMask: boolean;
   operation?: "standard" | "inpaint" | "outpaint";
   activeJobs: number;
+  allowPaidImages?: boolean;
 };
+export const WALLET_PACKAGES = [
+  { id: "qiling", name: "启灵卷", priceFen: 600, images: 40 },
+  { id: "juling", name: "聚灵卷", priceFen: 1500, images: 100 },
+  { id: "wanxiang", name: "万象卷", priceFen: 4500, images: 300 },
+] as const;
 export type CultivationUserUpdate = {
   stageId?: string;
   currentXp?: number;
@@ -211,6 +217,7 @@ export function createCultivationService(
       usedToday: Number(usage.used_count),
       reservedToday: Number(usage.reserved_count),
       remainingToday: remaining,
+      paidImages: walletBalance(userId),
       maxConcurrency: Number(row.max_concurrency),
       capabilities,
       totalImages,
@@ -227,6 +234,44 @@ export function createCultivationService(
           }
         : null,
     };
+  }
+
+  function walletBalance(userId: string) {
+    const row = database.query("SELECT image_balance FROM wallet_balances WHERE user_id = ?").get(userId) as { image_balance: number } | null;
+    return Number(row?.image_balance || 0);
+  }
+
+  function adjustWallet(userId: string, delta: number, kind: "admin_grant" | "reserve" | "refund", sourceId: string, packageId: string | null = null, operatorUserId: string | null = null, reason = "") {
+    database.query("INSERT OR IGNORE INTO wallet_balances(user_id, image_balance, updated_at) VALUES (?, 0, ?)").run(userId, now().getTime());
+    const changed = database.query("UPDATE wallet_balances SET image_balance = image_balance + ?, updated_at = ? WHERE user_id = ? AND image_balance + ? >= 0").run(delta, now().getTime(), userId, delta);
+    if (!changed.changes) throw new CultivationError("付费生图次数不足", 402, "WALLET_INSUFFICIENT");
+    const balance = walletBalance(userId);
+    database.query("INSERT INTO wallet_ledger(id, user_id, delta, balance_after, kind, source_id, package_id, operator_user_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(randomUUID(), userId, delta, balance, kind, sourceId, packageId, operatorUserId, reason, now().getTime());
+  }
+
+  function getWallet(userId: string, page = 1, pageSize = 20) {
+    const total = (database.query("SELECT COUNT(*) AS count FROM wallet_ledger WHERE user_id = ?").get(userId) as { count: number }).count;
+    const items = database.query("SELECT id, delta, balance_after AS balanceAfter, kind, source_id AS sourceId, package_id AS packageId, created_at AS createdAt FROM wallet_ledger WHERE user_id = ? ORDER BY sequence DESC LIMIT ? OFFSET ?")
+      .all(userId, pageSize, (page - 1) * pageSize);
+    return { balance: walletBalance(userId), packages: WALLET_PACKAGES, paymentEnabled: false, items, page, pageSize, total };
+  }
+
+  function grantWalletPackage(adminUserId: string, userId: string, packageId: string, sourceId: string, reason: string) {
+    const selected = WALLET_PACKAGES.find((item) => item.id === packageId);
+    if (!selected) throw new CultivationError("灵卷套餐不存在", 400, "WALLET_PACKAGE_INVALID");
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(sourceId)) throw new CultivationError("发放请求编号无效", 400, "WALLET_SOURCE_INVALID");
+    if (!reason.trim() || reason.length > 300) throw new CultivationError("请填写发放原因（最多 300 字）", 400, "WALLET_REASON_REQUIRED");
+    return database.transaction(() => {
+      if (!database.query("SELECT 1 FROM users WHERE user_id = ?").get(userId)) throw new CultivationError("用户不存在", 404, "USER_NOT_FOUND");
+      const existing = database.query("SELECT user_id, package_id, operator_user_id FROM wallet_ledger WHERE kind = 'admin_grant' AND source_id = ?").get(sourceId) as { user_id: string; package_id: string; operator_user_id: string } | null;
+      if (existing) {
+        if (existing.user_id !== userId || existing.package_id !== packageId || existing.operator_user_id !== adminUserId) throw new CultivationError("发放请求编号已用于其他操作", 409, "WALLET_SOURCE_CONFLICT");
+        return getWallet(userId, 1, 5);
+      }
+      adjustWallet(userId, selected.images, "admin_grant", sourceId, packageId, adminUserId, reason.trim());
+      return getWallet(userId, 1, 5);
+    })();
   }
 
   function reserveGeneration(input: ReservationInput) {
@@ -266,21 +311,21 @@ export function createCultivationService(
           403,
           "CAPABILITY_REQUIRED",
         );
-      if (
-        profile.remainingToday !== null &&
-        profile.remainingToday < input.count
-      )
+      const freeCount = profile.remainingToday === null ? input.count : Math.min(input.count, profile.remainingToday);
+      const paidCount = input.count - freeCount;
+      if (paidCount && (!input.allowPaidImages || profile.paidImages < paidCount))
         throw new CultivationError(
-          "今日斗气已经耗尽",
+          input.allowPaidImages ? "今日免费次数与灵卷余额不足" : "今日斗气已经耗尽",
           429,
           "DAILY_QUOTA_EXHAUSTED",
         );
       const date = dateKey(now(), timeZone);
-      database
+      if (freeCount) database
         .query(
           "INSERT INTO daily_usage(user_id, usage_date, reserved_count) VALUES (?, ?, ?) ON CONFLICT(user_id, usage_date) DO UPDATE SET reserved_count = reserved_count + excluded.reserved_count",
         )
-        .run(input.userId, date, input.count);
+        .run(input.userId, date, freeCount);
+      if (paidCount) adjustWallet(input.userId, -paidCount, "reserve", input.jobId);
       const rewardType =
         input.operation === "inpaint" || input.hasMask
           ? "inpaint"
@@ -291,7 +336,7 @@ export function createCultivationService(
               : "standard";
       database
         .query(
-          "INSERT INTO generation_usage(job_id, user_id, usage_date, model, channel_id, reward_type, requested_count, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', ?)",
+          "INSERT INTO generation_usage(job_id, user_id, usage_date, model, channel_id, reward_type, requested_count, free_count, paid_count, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved', ?)",
         )
         .run(
           input.jobId,
@@ -301,6 +346,8 @@ export function createCultivationService(
           input.channelId,
           rewardType,
           input.count,
+          freeCount,
+          paidCount,
           now().getTime(),
         );
       return getProfile(input.userId);
@@ -326,14 +373,20 @@ export function createCultivationService(
         Math.min(requested, Math.floor(input.successCount)),
       );
       const failed = requested - success;
+      const freeCount = Number(usage.free_count);
+      const paidCount = Number(usage.paid_count);
+      const freeSuccess = Math.min(success, freeCount);
+      const paidRefund = paidCount - (success - freeSuccess);
+      if (paidRefund) adjustWallet(String(usage.user_id), paidRefund, "refund", input.jobId);
+      database.query("INSERT OR IGNORE INTO daily_usage(user_id, usage_date) VALUES (?, ?)").run(String(usage.user_id), String(usage.usage_date));
       database
         .query(
           "UPDATE daily_usage SET reserved_count = MAX(0, reserved_count - ?), used_count = used_count + ?, refunded_count = refunded_count + ?, successful_images = successful_images + ? WHERE user_id = ? AND usage_date = ?",
         )
         .run(
-          requested,
-          success,
-          failed,
+          freeCount,
+          freeSuccess,
+          freeCount - freeSuccess,
           success,
           String(usage.user_id),
           String(usage.usage_date),
@@ -387,14 +440,17 @@ export function createCultivationService(
         .get(jobId) as Record<string, unknown> | null;
       if (!usage || usage.status !== "reserved")
         return usage ? getProfile(String(usage.user_id)) : null;
-      const requested = Number(usage.requested_count);
-      database
+      const freeCount = Number(usage.free_count);
+      const paidCount = Number(usage.paid_count);
+      if (paidCount)
+        adjustWallet(String(usage.user_id), paidCount, "refund", jobId);
+      if (freeCount) database
         .query(
           "UPDATE daily_usage SET reserved_count = MAX(0, reserved_count - ?), used_count = used_count + ? WHERE user_id = ? AND usage_date = ?",
         )
         .run(
-          requested,
-          requested,
+          freeCount,
+          freeCount,
           String(usage.user_id),
           String(usage.usage_date),
         );
@@ -443,14 +499,16 @@ export function createCultivationService(
   }
 
   function refundReservedUsage(usage: Record<string, unknown>) {
-    const requested = Number(usage.requested_count);
-    database
+    const freeCount = Number(usage.free_count);
+    const paidCount = Number(usage.paid_count);
+    if (paidCount) adjustWallet(String(usage.user_id), paidCount, "refund", String(usage.job_id));
+    if (freeCount) database
       .query(
         "UPDATE daily_usage SET reserved_count = MAX(0, reserved_count - ?), refunded_count = refunded_count + ? WHERE user_id = ? AND usage_date = ?",
       )
       .run(
-        requested,
-        requested,
+        freeCount,
+        freeCount,
         String(usage.user_id),
         String(usage.usage_date),
       );
@@ -1074,6 +1132,8 @@ export function createCultivationService(
   return {
     ensureUser,
     getProfile,
+    getWallet,
+    grantWalletPackage,
     reserveGeneration,
     settleGeneration,
     refundGeneration,

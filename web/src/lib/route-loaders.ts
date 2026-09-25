@@ -9,6 +9,7 @@ export const routeLoaders = {
     "/color-alchemy": () => import("@/pages/color-alchemy"),
     "/config": () => import("@/pages/config"),
     "/cultivation": () => import("@/pages/cultivation"),
+    "/wallet": () => import("@/pages/wallet"),
     "/docs": () => import("@/pages/docs"),
     "/admin/cultivation": () => import("@/pages/admin/cultivation"),
     "/image": () => import("@/pages/image"),
