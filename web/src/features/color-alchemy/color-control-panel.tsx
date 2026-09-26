@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Segmented, Tooltip } from "antd";
-import { BrainCircuit, Check, ChevronDown, Clipboard, Droplets, ImagePlus, Pipette, RotateCcw, Sparkles, X } from "lucide-react";
+import { ChevronDown, Clipboard, Droplets, ImagePlus, Pipette, RotateCcw, Sparkles, X } from "lucide-react";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { ColorAdjustmentRow } from "./color-adjustment-row";
@@ -14,7 +14,6 @@ const HSL_LABELS: Record<ColorHslChannel, string> = { red: "红", orange: "橙",
 const HSL_SWATCHES: Record<ColorHslChannel, string> = { red: "#e45b55", orange: "#e99545", yellow: "#dfc84d", green: "#64a66a", cyan: "#58aeb5", blue: "#5e82c8", purple: "#8b6bc1", magenta: "#c0659b" };
 
 type AdvancedModule = "hsl" | "split" | "detail";
-type AiStage = "idle" | "analyzing" | "correcting" | "done";
 
 export function ColorControlPanel({
     document,
@@ -24,6 +23,8 @@ export function ColorControlPanel({
     onApplyAi,
     onApplyPreset,
     onReferenceUpload,
+    referenceLoading,
+    onClearReference,
     onBorrowColors,
     pickedColor,
 }: {
@@ -34,30 +35,23 @@ export function ColorControlPanel({
     onApplyAi: () => void;
     onApplyPreset: (preset: ColorPreset) => void;
     onReferenceUpload: (file: File) => void;
+    referenceLoading: boolean;
+    onClearReference: () => void;
     onBorrowColors: () => void;
     pickedColor: AnalyzedColor | null;
 }) {
     const copyText = useCopyText();
     const referenceInputRef = useRef<HTMLInputElement>(null);
-    const aiRunRef = useRef(0);
-    const [panelTab, setPanelTab] = useState<"adjust" | "tools">("adjust");
+    const [panelTab, setPanelTab] = useState<"adjust" | "advanced" | "tools">("adjust");
     const [hslChannel, setHslChannel] = useState<ColorHslChannel>("red");
     const [colorValueFormat, setColorValueFormat] = useState<ColorValueFormat>("hex");
     const [advancedOpen, setAdvancedOpen] = useState<AdvancedModule | null>(null);
     const [showMoreLight, setShowMoreLight] = useState(false);
-    const [aiStage, setAiStage] = useState<AiStage>("idle");
     const defaults = useMemo(createDefaultColorSettings, []);
     const analysis = document.analysis;
     const settings = document.settings;
     const activePreset = COLOR_PRESETS.find((preset) => preset.id === settings.preset);
     const harmonies = useMemo(() => (analysis ? buildColorHarmonies(analysis.palette.primary) : []), [analysis]);
-
-    useEffect(
-        () => () => {
-            aiRunRef.current += 1;
-        },
-        [],
-    );
 
     const patch = (value: ColorSettingsPatch) => onSettingsChange(mergeColorSettings(settings, { ...value, preset: null }));
     const copyColor = (color: AnalyzedColor) => copyText(formatColorValue(color, colorValueFormat), `${colorValueFormat.toUpperCase()} 已复制`);
@@ -66,228 +60,225 @@ export function ColorControlPanel({
         onCommit();
     };
 
-    const applyAi = async () => {
-        if (!analysis || analyzing || aiStage === "analyzing" || aiStage === "correcting") return;
-        const run = aiRunRef.current + 1;
-        aiRunRef.current = run;
-        setAiStage("analyzing");
-        await wait(180);
-        if (aiRunRef.current !== run) return;
-        setAiStage("correcting");
-        await wait(320);
-        if (aiRunRef.current !== run) return;
-        onApplyAi();
-        setAiStage("done");
-        await wait(1_200);
-        if (aiRunRef.current === run) setAiStage("idle");
-    };
-
-    const aiStatus = analyzing || !analysis ? "正在分析画面…" : aiStage === "analyzing" ? "正在分析画面…" : aiStage === "correcting" ? "正在校正色彩…" : aiStage === "done" ? "灵彩优化完成" : `画面已就绪 · ${analysis.mood}`;
+    const aiStatus = analyzing || !analysis ? "正在读取画面色彩…" : "根据原图明暗与色偏自动调整，可撤销";
 
     return (
         <aside className="color-alchemy-inspector">
-            <div className="color-inspector-tabs" role="tablist" aria-label="灵彩设计面板">
-                <button type="button" role="tab" aria-selected={panelTab === "adjust"} className={panelTab === "adjust" ? "is-active" : ""} onClick={() => setPanelTab("adjust")}>
-                    调整
+            <div className="color-inspector-tabs" role="group" aria-label="灵彩设计面板">
+                <button type="button" aria-pressed={panelTab === "adjust"} className={panelTab === "adjust" ? "is-active" : ""} onClick={() => setPanelTab("adjust")}>
+                    基础
                 </button>
-                <button type="button" role="tab" aria-selected={panelTab === "tools"} className={panelTab === "tools" ? "is-active" : ""} onClick={() => setPanelTab("tools")}>
-                    工具
+                <button type="button" aria-pressed={panelTab === "advanced"} className={panelTab === "advanced" ? "is-active" : ""} onClick={() => setPanelTab("advanced")}>
+                    进阶
+                </button>
+                <button type="button" aria-pressed={panelTab === "tools"} className={panelTab === "tools" ? "is-active" : ""} onClick={() => setPanelTab("tools")}>
+                    取色与参考
                 </button>
             </div>
 
             <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
-                {panelTab === "adjust" ? (
+                {panelTab !== "tools" ? (
                     <div className="space-y-0 pb-8">
-                        <section className={`color-ai-panel ${aiStage !== "idle" ? "is-processing" : ""}`}>
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-2 text-sm font-semibold text-white/90">
-                                        <Sparkles className="size-4 text-[#d7b46a]" />
-                                        AI 灵彩
+                        {panelTab === "adjust" ? (
+                            <>
+                                <section className="color-ai-panel">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2 text-sm font-semibold text-white/90">
+                                                <Sparkles className="size-4 text-[#d7b46a]" />
+                                                自动校正
+                                            </div>
+                                            <p className="mt-1 text-xs leading-5 text-white/65" aria-live="polite">
+                                                {aiStatus}
+                                            </p>
+                                        </div>
+                                        <button type="button" className="color-ai-button" disabled={!analysis || analyzing} onClick={onApplyAi}>
+                                            <Sparkles className="size-4" />
+                                            应用
+                                        </button>
                                     </div>
-                                    <p className="mt-1 truncate text-[11px] text-white/44" aria-live="polite">
-                                        {aiStatus}
-                                    </p>
-                                </div>
-                                <button type="button" className="color-ai-button" disabled={!analysis || analyzing || aiStage === "analyzing" || aiStage === "correcting"} onClick={() => void applyAi()}>
-                                    {aiStage === "done" ? <Check className="size-4" /> : <BrainCircuit className="size-4" />}
-                                    {aiStage === "done" ? "已完成" : "AI 灵彩"}
-                                </button>
-                            </div>
-                            {analysis ? (
-                                <div className="mt-3 flex items-center gap-3 text-[11px] text-white/40">
-                                    <span>明度 {Math.round(analysis.luminance * 100)}</span>
-                                    <span>反差 {Math.round(analysis.contrast * 100)}</span>
-                                    <span>色彩 {Math.round(analysis.saturation * 100)}</span>
-                                </div>
-                            ) : null}
-                            <span className="color-ai-progress" aria-hidden="true" />
-                        </section>
+                                    {analysis ? (
+                                        <div className="mt-3 flex items-center gap-3 text-xs text-white/65">
+                                            <span>明度 {Math.round(analysis.luminance * 100)}</span>
+                                            <span>反差 {Math.round(analysis.contrast * 100)}</span>
+                                            <span>色彩 {Math.round(analysis.saturation * 100)}</span>
+                                        </div>
+                                    ) : null}
+                                </section>
 
-                        <section className="color-inspector-section">
-                            <SectionHeader title="快捷预设" />
-                            <div className="grid grid-cols-3 gap-2">
-                                {QUICK_COLOR_PRESETS.map((preset) => (
-                                    <button key={preset.id} type="button" className={`color-quick-preset ${settings.preset === preset.id ? "is-active" : ""}`} onClick={() => onApplyPreset(preset)} title={preset.description}>
-                                        <span className="size-1.5 rounded-full" style={{ background: preset.accent }} aria-hidden="true" />
-                                        {preset.name}
-                                    </button>
-                                ))}
-                            </div>
-                            {activePreset ? (
-                                <div className="mt-3 border-t border-white/7 pt-3">
-                                    <ColorAdjustmentRow
-                                        label={`${activePreset.name}强度`}
-                                        value={settings.presetIntensity}
-                                        min={0}
-                                        max={100}
-                                        defaultValue={100}
-                                        onChange={(value) => onSettingsChange(applyColorPreset(activePreset, value))}
-                                        onCommit={onCommit}
-                                    />
-                                </div>
-                            ) : null}
-                            {settings.lutId ? (
-                                <div className="mt-3 border-t border-white/7 pt-3">
-                                    <div className="mb-1 flex items-center justify-between gap-2">
-                                        <span className="text-[11px] text-white/46">胶片 LUT</span>
-                                        <Tooltip title="清除当前胶片滤镜">
-                                            <button
-                                                type="button"
-                                                className="color-subtle-icon"
-                                                aria-label="清除当前胶片滤镜"
-                                                onClick={() => {
-                                                    onSettingsChange(mergeColorSettings(settings, { lutId: null, lutIntensity: 100 }));
-                                                    onCommit();
-                                                }}
-                                            >
-                                                <X className="size-3.5" />
-                                            </button>
-                                        </Tooltip>
-                                    </div>
-                                    <ColorAdjustmentRow
-                                        label="滤镜强度"
-                                        value={settings.lutIntensity}
-                                        min={0}
-                                        max={100}
-                                        defaultValue={100}
-                                        onChange={(value) => onSettingsChange(mergeColorSettings(settings, { lutIntensity: value }))}
-                                        onCommit={onCommit}
-                                    />
-                                </div>
-                            ) : null}
-                        </section>
-
-                        <AdjustmentSection
-                            title="常用调整"
-                            onReset={() => resetValues({ exposure: defaults.exposure, brightness: defaults.brightness, contrast: defaults.contrast, highlights: defaults.highlights, shadows: defaults.shadows, blacks: defaults.blacks })}
-                        >
-                            <ColorAdjustmentRow label="曝光" value={settings.exposure} onChange={(value) => patch({ exposure: value })} onCommit={onCommit} />
-                            <ColorAdjustmentRow label="对比度" value={settings.contrast} onChange={(value) => patch({ contrast: value })} onCommit={onCommit} />
-                            <ColorAdjustmentRow label="高光" value={settings.highlights} onChange={(value) => patch({ highlights: value })} onCommit={onCommit} />
-                            <ColorAdjustmentRow label="阴影" value={settings.shadows} onChange={(value) => patch({ shadows: value })} onCommit={onCommit} />
-                            <button type="button" className="color-more-light" aria-expanded={showMoreLight} onClick={() => setShowMoreLight((value) => !value)}>
-                                <span>更多光影</span>
-                                <span className="flex items-center gap-2 text-[10px] text-white/30">
-                                    亮度 {Math.round(settings.brightness)} · 黑色 {Math.round(settings.blacks)}
-                                    <ChevronDown className={`size-3.5 transition-transform ${showMoreLight ? "rotate-180" : ""}`} />
-                                </span>
-                            </button>
-                            {showMoreLight ? (
-                                <div className="space-y-3 pt-1">
-                                    <ColorAdjustmentRow label="亮度" value={settings.brightness} onChange={(value) => patch({ brightness: value })} onCommit={onCommit} />
-                                    <ColorAdjustmentRow label="黑色" value={settings.blacks} onChange={(value) => patch({ blacks: value })} onCommit={onCommit} />
-                                </div>
-                            ) : null}
-                        </AdjustmentSection>
-
-                        <AdjustmentSection title="色彩调整" onReset={() => resetValues({ saturation: defaults.saturation, vibrance: defaults.vibrance, temperature: defaults.temperature, tint: defaults.tint })}>
-                            <ColorAdjustmentRow label="饱和度" value={settings.saturation} onChange={(value) => patch({ saturation: value })} onCommit={onCommit} />
-                            <ColorAdjustmentRow label="自然饱和" value={settings.vibrance} onChange={(value) => patch({ vibrance: value })} onCommit={onCommit} />
-                            <ColorAdjustmentRow label="色温" value={settings.temperature} spectrum="linear-gradient(90deg,#668fc5,#bfc1bd,#cf835e)" onChange={(value) => patch({ temperature: value })} onCommit={onCommit} />
-                            <ColorAdjustmentRow label="色调" value={settings.tint} spectrum="linear-gradient(90deg,#5f9b73,#bfc1bd,#ad6e9a)" onChange={(value) => patch({ tint: value })} onCommit={onCommit} />
-                        </AdjustmentSection>
-
-                        <section className="color-inspector-section">
-                            <SectionHeader title="高级调整" />
-                            <div className="color-advanced-list">
-                                <AdvancedAdjustmentModule
-                                    title="HSL"
-                                    summary={`${HSL_LABELS[hslChannel]}色 · 色相 ${Math.round(settings.hsl[hslChannel].hue)}`}
-                                    open={advancedOpen === "hsl"}
-                                    onToggle={() => setAdvancedOpen((value) => (value === "hsl" ? null : "hsl"))}
-                                >
-                                    <div className="mb-4 grid grid-cols-8 gap-1">
-                                        {COLOR_HSL_CHANNELS.map((channel) => (
-                                            <button key={channel} type="button" className={`color-hsl-channel ${hslChannel === channel ? "is-active" : ""}`} onClick={() => setHslChannel(channel)} aria-label={`${HSL_LABELS[channel]}色通道`}>
-                                                <span style={{ background: HSL_SWATCHES[channel] }} />
-                                                <small>{HSL_LABELS[channel]}</small>
+                                <section className="color-inspector-section">
+                                    <SectionHeader title="快捷预设" />
+                                    <p className="mb-3 text-xs leading-5 text-white/65">选一种风格作为起点，再微调下方参数。切换预设会替换当前调整，可撤销。</p>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {QUICK_COLOR_PRESETS.map((preset) => (
+                                            <button key={preset.id} type="button" className={`color-quick-preset ${settings.preset === preset.id ? "is-active" : ""}`} onClick={() => onApplyPreset(preset)} title={preset.description}>
+                                                <span className="size-1.5 rounded-full" style={{ background: preset.accent }} aria-hidden="true" />
+                                                {preset.name}
                                             </button>
                                         ))}
                                     </div>
-                                    <div className="space-y-3">
-                                        <ColorAdjustmentRow label="色相" value={settings.hsl[hslChannel].hue} onChange={(value) => patch({ hsl: { [hslChannel]: { hue: value } } })} onCommit={onCommit} />
-                                        <ColorAdjustmentRow label="饱和" value={settings.hsl[hslChannel].saturation} onChange={(value) => patch({ hsl: { [hslChannel]: { saturation: value } } })} onCommit={onCommit} />
-                                        <ColorAdjustmentRow label="明度" value={settings.hsl[hslChannel].lightness} onChange={(value) => patch({ hsl: { [hslChannel]: { lightness: value } } })} onCommit={onCommit} />
-                                    </div>
-                                </AdvancedAdjustmentModule>
+                                    {activePreset ? (
+                                        <div className="mt-3 border-t border-white/7 pt-3">
+                                            <ColorAdjustmentRow
+                                                label={`${activePreset.name}强度`}
+                                                value={settings.presetIntensity}
+                                                min={0}
+                                                max={100}
+                                                defaultValue={100}
+                                                onChange={(value) => onSettingsChange(applyColorPreset(activePreset, value))}
+                                                onCommit={onCommit}
+                                            />
+                                        </div>
+                                    ) : null}
+                                    {settings.lutId ? (
+                                        <div className="mt-3 border-t border-white/7 pt-3">
+                                            <div className="mb-1 flex items-center justify-between gap-2">
+                                                <span className="text-[11px] text-white/46">胶片 LUT</span>
+                                                <Tooltip title="清除当前胶片滤镜">
+                                                    <button
+                                                        type="button"
+                                                        className="color-subtle-icon"
+                                                        aria-label="清除当前胶片滤镜"
+                                                        onClick={() => {
+                                                            onSettingsChange(mergeColorSettings(settings, { lutId: null, lutIntensity: 100 }));
+                                                            onCommit();
+                                                        }}
+                                                    >
+                                                        <X className="size-3.5" />
+                                                    </button>
+                                                </Tooltip>
+                                            </div>
+                                            <ColorAdjustmentRow
+                                                label="滤镜强度"
+                                                value={settings.lutIntensity}
+                                                min={0}
+                                                max={100}
+                                                defaultValue={100}
+                                                onChange={(value) => onSettingsChange(mergeColorSettings(settings, { lutIntensity: value }))}
+                                                onCommit={onCommit}
+                                            />
+                                        </div>
+                                    ) : null}
+                                </section>
 
-                                <AdvancedAdjustmentModule
-                                    title="分离色调"
-                                    summary="阴影与高光的综合色彩"
-                                    swatches={[`hsl(${settings.splitTone.shadowHue} 70% 55%)`, `hsl(${settings.splitTone.highlightHue} 70% 55%)`]}
-                                    open={advancedOpen === "split"}
-                                    onToggle={() => setAdvancedOpen((value) => (value === "split" ? null : "split"))}
+                                <AdjustmentSection
+                                    title="光影"
+                                    onReset={() => resetValues({ exposure: defaults.exposure, brightness: defaults.brightness, contrast: defaults.contrast, highlights: defaults.highlights, shadows: defaults.shadows, blacks: defaults.blacks })}
                                 >
-                                    <div className="space-y-3">
-                                        <ColorAdjustmentRow
-                                            label="阴影色相"
-                                            value={settings.splitTone.shadowHue}
-                                            min={0}
-                                            max={360}
-                                            defaultValue={220}
-                                            spectrum="linear-gradient(90deg,#e45b55,#dfc84d,#64a66a,#58aeb5,#5e82c8,#c0659b,#e45b55)"
-                                            onChange={(value) => patch({ splitTone: { shadowHue: value } })}
-                                            onCommit={onCommit}
-                                        />
-                                        <ColorAdjustmentRow label="阴影浓度" value={settings.splitTone.shadowSaturation} min={0} max={100} onChange={(value) => patch({ splitTone: { shadowSaturation: value } })} onCommit={onCommit} />
-                                        <ColorAdjustmentRow
-                                            label="高光色相"
-                                            value={settings.splitTone.highlightHue}
-                                            min={0}
-                                            max={360}
-                                            defaultValue={40}
-                                            spectrum="linear-gradient(90deg,#e45b55,#dfc84d,#64a66a,#58aeb5,#5e82c8,#c0659b,#e45b55)"
-                                            onChange={(value) => patch({ splitTone: { highlightHue: value } })}
-                                            onCommit={onCommit}
-                                        />
-                                        <ColorAdjustmentRow label="高光浓度" value={settings.splitTone.highlightSaturation} min={0} max={100} onChange={(value) => patch({ splitTone: { highlightSaturation: value } })} onCommit={onCommit} />
-                                        <ColorAdjustmentRow label="平衡" value={settings.splitTone.balance} onChange={(value) => patch({ splitTone: { balance: value } })} onCommit={onCommit} />
-                                    </div>
-                                </AdvancedAdjustmentModule>
+                                    <ColorAdjustmentRow label="曝光" hint="整体变亮或变暗；+50 约为增加一档曝光。" value={settings.exposure} onChange={(value) => patch({ exposure: value })} onCommit={onCommit} />
+                                    <ColorAdjustmentRow label="对比度" value={settings.contrast} onChange={(value) => patch({ contrast: value })} onCommit={onCommit} />
+                                    <ColorAdjustmentRow label="高光" hint="主要调整明亮区域；向左降低亮部亮度。" value={settings.highlights} onChange={(value) => patch({ highlights: value })} onCommit={onCommit} />
+                                    <ColorAdjustmentRow label="阴影" hint="主要调整暗部；向右提亮暗部层次。" value={settings.shadows} onChange={(value) => patch({ shadows: value })} onCommit={onCommit} />
+                                    <button type="button" className="color-more-light" aria-expanded={showMoreLight} onClick={() => setShowMoreLight((value) => !value)}>
+                                        <span>更多光影</span>
+                                        <span className="flex items-center gap-2 text-[10px] text-white/30">
+                                            亮度 {Math.round(settings.brightness)} · 黑色 {Math.round(settings.blacks)}
+                                            <ChevronDown className={`size-3.5 transition-transform ${showMoreLight ? "rotate-180" : ""}`} />
+                                        </span>
+                                    </button>
+                                    {showMoreLight ? (
+                                        <div className="space-y-3 pt-1">
+                                            <ColorAdjustmentRow label="亮度" value={settings.brightness} onChange={(value) => patch({ brightness: value })} onCommit={onCommit} />
+                                            <ColorAdjustmentRow label="黑色" value={settings.blacks} onChange={(value) => patch({ blacks: value })} onCommit={onCommit} />
+                                        </div>
+                                    ) : null}
+                                </AdjustmentSection>
 
-                                <AdvancedAdjustmentModule
-                                    title="细节与质感"
-                                    summary={`锐化 ${Math.round(settings.sharpen)} · 清晰 ${Math.round(settings.clarity)}`}
-                                    open={advancedOpen === "detail"}
-                                    onToggle={() => setAdvancedOpen((value) => (value === "detail" ? null : "detail"))}
-                                >
-                                    <div className="space-y-3">
-                                        <ColorAdjustmentRow label="锐化" value={settings.sharpen} min={0} max={100} onChange={(value) => patch({ sharpen: value })} onCommit={onCommit} />
-                                        <ColorAdjustmentRow label="清晰度" value={settings.clarity} onChange={(value) => patch({ clarity: value })} onCommit={onCommit} />
-                                        <ColorAdjustmentRow label="纹理" value={settings.texture} onChange={(value) => patch({ texture: value })} onCommit={onCommit} />
-                                        <ColorAdjustmentRow label="噪点" value={settings.noise} min={0} max={100} onChange={(value) => patch({ noise: value })} onCommit={onCommit} />
-                                        <ColorAdjustmentRow label="暗角" value={settings.vignette} onChange={(value) => patch({ vignette: value })} onCommit={onCommit} />
-                                    </div>
-                                </AdvancedAdjustmentModule>
-                            </div>
-                        </section>
+                                <AdjustmentSection title="色彩调整" onReset={() => resetValues({ saturation: defaults.saturation, vibrance: defaults.vibrance, temperature: defaults.temperature, tint: defaults.tint })}>
+                                    <ColorAdjustmentRow label="饱和度" value={settings.saturation} onChange={(value) => patch({ saturation: value })} onCommit={onCommit} />
+                                    <ColorAdjustmentRow label="自然饱和" hint="优先增强较淡的颜色，已鲜艳的区域变化较小。" value={settings.vibrance} onChange={(value) => patch({ vibrance: value })} onCommit={onCommit} />
+                                    <ColorAdjustmentRow label="色温" value={settings.temperature} spectrum="linear-gradient(90deg,#668fc5,#bfc1bd,#cf835e)" onChange={(value) => patch({ temperature: value })} onCommit={onCommit} />
+                                    <ColorAdjustmentRow label="色调" value={settings.tint} spectrum="linear-gradient(90deg,#5f9b73,#bfc1bd,#ad6e9a)" onChange={(value) => patch({ tint: value })} onCommit={onCommit} />
+                                </AdjustmentSection>
+                            </>
+                        ) : null}
+                        {panelTab === "advanced" ? (
+                            <section className="color-inspector-section">
+                                <SectionHeader title="精细调色" />
+                                <p className="mb-4 text-xs leading-5 text-white/65">选择一个模块展开；可单独恢复每组参数。</p>
+                                <div className="color-advanced-list">
+                                    <AdvancedAdjustmentModule
+                                        title="HSL"
+                                        summary={`${HSL_LABELS[hslChannel]}色 · 色相 ${Math.round(settings.hsl[hslChannel].hue)}`}
+                                        open={advancedOpen === "hsl"}
+                                        onToggle={() => setAdvancedOpen((value) => (value === "hsl" ? null : "hsl"))}
+                                    >
+                                        <div className="mb-4 grid grid-cols-8 gap-1">
+                                            {COLOR_HSL_CHANNELS.map((channel) => (
+                                                <button key={channel} type="button" className={`color-hsl-channel ${hslChannel === channel ? "is-active" : ""}`} onClick={() => setHslChannel(channel)} aria-label={`${HSL_LABELS[channel]}色通道`}>
+                                                    <span style={{ background: HSL_SWATCHES[channel] }} />
+                                                    <small>{HSL_LABELS[channel]}</small>
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <div className="space-y-3">
+                                            <SectionHeader title={`${HSL_LABELS[hslChannel]}色通道`} onReset={() => resetValues({ hsl: { [hslChannel]: defaults.hsl[hslChannel] } })} />
+                                            <ColorAdjustmentRow label="色相" value={settings.hsl[hslChannel].hue} onChange={(value) => patch({ hsl: { [hslChannel]: { hue: value } } })} onCommit={onCommit} />
+                                            <ColorAdjustmentRow label="饱和" value={settings.hsl[hslChannel].saturation} onChange={(value) => patch({ hsl: { [hslChannel]: { saturation: value } } })} onCommit={onCommit} />
+                                            <ColorAdjustmentRow label="明度" value={settings.hsl[hslChannel].lightness} onChange={(value) => patch({ hsl: { [hslChannel]: { lightness: value } } })} onCommit={onCommit} />
+                                        </div>
+                                    </AdvancedAdjustmentModule>
+
+                                    <AdvancedAdjustmentModule
+                                        title="分离色调"
+                                        summary="阴影与高光的综合色彩"
+                                        swatches={[`hsl(${settings.splitTone.shadowHue} 70% 55%)`, `hsl(${settings.splitTone.highlightHue} 70% 55%)`]}
+                                        open={advancedOpen === "split"}
+                                        onToggle={() => setAdvancedOpen((value) => (value === "split" ? null : "split"))}
+                                    >
+                                        <div className="space-y-3">
+                                            <SectionHeader title="分离色调" onReset={() => resetValues({ splitTone: defaults.splitTone })} />
+                                            <ColorAdjustmentRow
+                                                label="阴影色相"
+                                                value={settings.splitTone.shadowHue}
+                                                min={0}
+                                                max={360}
+                                                defaultValue={220}
+                                                spectrum="linear-gradient(90deg,#e45b55,#dfc84d,#64a66a,#58aeb5,#5e82c8,#c0659b,#e45b55)"
+                                                onChange={(value) => patch({ splitTone: { shadowHue: value } })}
+                                                onCommit={onCommit}
+                                            />
+                                            <ColorAdjustmentRow label="阴影浓度" value={settings.splitTone.shadowSaturation} min={0} max={100} onChange={(value) => patch({ splitTone: { shadowSaturation: value } })} onCommit={onCommit} />
+                                            <ColorAdjustmentRow
+                                                label="高光色相"
+                                                value={settings.splitTone.highlightHue}
+                                                min={0}
+                                                max={360}
+                                                defaultValue={40}
+                                                spectrum="linear-gradient(90deg,#e45b55,#dfc84d,#64a66a,#58aeb5,#5e82c8,#c0659b,#e45b55)"
+                                                onChange={(value) => patch({ splitTone: { highlightHue: value } })}
+                                                onCommit={onCommit}
+                                            />
+                                            <ColorAdjustmentRow label="高光浓度" value={settings.splitTone.highlightSaturation} min={0} max={100} onChange={(value) => patch({ splitTone: { highlightSaturation: value } })} onCommit={onCommit} />
+                                            <ColorAdjustmentRow label="平衡" value={settings.splitTone.balance} onChange={(value) => patch({ splitTone: { balance: value } })} onCommit={onCommit} />
+                                        </div>
+                                    </AdvancedAdjustmentModule>
+
+                                    <AdvancedAdjustmentModule
+                                        title="细节与质感"
+                                        summary={`锐化 ${Math.round(settings.sharpen)} · 清晰 ${Math.round(settings.clarity)}`}
+                                        open={advancedOpen === "detail"}
+                                        onToggle={() => setAdvancedOpen((value) => (value === "detail" ? null : "detail"))}
+                                    >
+                                        <div className="space-y-3">
+                                            <SectionHeader title="细节与质感" onReset={() => resetValues({ sharpen: 0, clarity: 0, texture: 0, noise: 0, vignette: 0 })} />
+                                            <ColorAdjustmentRow label="锐化" value={settings.sharpen} min={0} max={100} onChange={(value) => patch({ sharpen: value })} onCommit={onCommit} />
+                                            <ColorAdjustmentRow label="清晰度" value={settings.clarity} onChange={(value) => patch({ clarity: value })} onCommit={onCommit} />
+                                            <ColorAdjustmentRow label="纹理" value={settings.texture} onChange={(value) => patch({ texture: value })} onCommit={onCommit} />
+                                            <ColorAdjustmentRow label="噪点" value={settings.noise} min={0} max={100} onChange={(value) => patch({ noise: value })} onCommit={onCommit} />
+                                            <ColorAdjustmentRow label="暗角" value={settings.vignette} onChange={(value) => patch({ vignette: value })} onCommit={onCommit} />
+                                        </div>
+                                    </AdvancedAdjustmentModule>
+                                </div>
+                            </section>
+                        ) : null}
                     </div>
                 ) : (
                     <div className="space-y-0 pb-8">
                         {analysis ? (
                             <section className="color-inspector-section border-t-0">
-                                <SectionHeader title="灵色工具" icon={<Droplets className="size-4" />} />
+                                <SectionHeader title="原图配色" icon={<Droplets className="size-4" />} />
+                                <p className="mb-3 text-xs leading-5 text-white/65">以下配色来自原图。使用预览下方的吸色器，可读取当前画面并复制色值。</p>
                                 <Segmented
                                     block
                                     size="small"
@@ -351,7 +342,7 @@ export function ColorControlPanel({
                         ) : null}
 
                         <section className="color-inspector-section">
-                            <SectionHeader title="借色术" icon={<Clipboard className="size-4" />} />
+                            <SectionHeader title="参考图配色" icon={<Clipboard className="size-4" />} />
                             <input
                                 ref={referenceInputRef}
                                 type="file"
@@ -368,22 +359,30 @@ export function ColorControlPanel({
                                     <ColorSourceImage source={document.reference} alt="借色参考" className="aspect-[16/8] w-full object-cover" />
                                     <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                                         <span className="truncate text-xs text-white/62">{document.reference.title}</span>
-                                        <button type="button" className="text-[11px] text-[#d7b46a] hover:text-[#ecd39a]" onClick={() => referenceInputRef.current?.click()}>
+                                        <button type="button" disabled={referenceLoading} className="text-xs text-[#d7b46a] hover:text-[#ecd39a]" onClick={() => referenceInputRef.current?.click()}>
                                             更换
+                                        </button>
+                                        <button type="button" disabled={referenceLoading} className="text-xs text-white/70" onClick={onClearReference}>
+                                            移除
                                         </button>
                                     </div>
                                 </div>
                             ) : (
-                                <button type="button" className="color-reference-upload" onClick={() => referenceInputRef.current?.click()}>
+                                <button type="button" disabled={referenceLoading} className="color-reference-upload" onClick={() => referenceInputRef.current?.click()}>
                                     <ImagePlus className="size-4" />
                                     添加参考图片
                                 </button>
                             )}
-                            <button type="button" disabled={!document.analysis || !document.reference?.analysis} className="color-borrow-button" onClick={onBorrowColors}>
+                            {referenceLoading ? (
+                                <p className="mt-2 text-xs text-white/70" role="status">
+                                    正在读取参考图色彩…
+                                </p>
+                            ) : null}
+                            <button type="button" disabled={referenceLoading || !document.analysis || !document.reference?.analysis} className="color-borrow-button" onClick={onBorrowColors}>
                                 <Sparkles className="size-4" />
-                                借取色彩关系
+                                应用参考配色
                             </button>
-                            <p className="mt-2 text-[10px] leading-4 text-white/28">只迁移色温、明暗与色彩关系，不改变主体和构图。</p>
+                            <p className="mt-2 text-xs leading-5 text-white/65">参考整体色温、明暗与色彩关系，不会复制人物、物体或构图。效果可继续微调或撤销。</p>
                         </section>
                     </div>
                 )}
@@ -439,8 +438,4 @@ function AdvancedAdjustmentModule({ title, summary, swatches, open, onToggle, ch
             {open ? <div className="color-advanced-content">{children}</div> : null}
         </div>
     );
-}
-
-function wait(ms: number) {
-    return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

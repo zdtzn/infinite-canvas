@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Slider } from "antd";
+import { Slider, Tooltip } from "antd";
+import { RotateCcw } from "lucide-react";
 
 type ColorAdjustmentRowProps = {
     label: string;
@@ -10,13 +11,15 @@ type ColorAdjustmentRowProps = {
     max?: number;
     defaultValue?: number;
     spectrum?: string;
+    hint?: string;
 };
 
-export function ColorAdjustmentRow({ label, value, onChange, onCommit, min = -100, max = 100, defaultValue = 0, spectrum }: ColorAdjustmentRowProps) {
+export function ColorAdjustmentRow({ label, value, onChange, onCommit, min = -100, max = 100, defaultValue = 0, spectrum, hint }: ColorAdjustmentRowProps) {
     const [draft, setDraft] = useState(String(Math.round(value)));
     const [sliderValue, setSliderValue] = useState(value);
     const frameRef = useRef<number | null>(null);
     const pendingValueRef = useRef<number | null>(null);
+    const skipBlurRef = useRef(false);
 
     useEffect(() => {
         setDraft(String(Math.round(value)));
@@ -52,8 +55,12 @@ export function ColorAdjustmentRow({ label, value, onChange, onCommit, min = -10
     };
 
     const commitDraft = () => {
+        if (skipBlurRef.current) {
+            skipBlurRef.current = false;
+            return;
+        }
         const parsed = Number(draft);
-        if (!Number.isFinite(parsed)) {
+        if (!draft.trim() || !Number.isFinite(parsed)) {
             setDraft(String(Math.round(value)));
             return;
         }
@@ -66,6 +73,9 @@ export function ColorAdjustmentRow({ label, value, onChange, onCommit, min = -10
 
     const reset = () => {
         if (sliderValue === defaultValue) return;
+        if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+        pendingValueRef.current = null;
         setSliderValue(defaultValue);
         onChange(defaultValue);
         setDraft(String(Math.round(defaultValue)));
@@ -74,9 +84,11 @@ export function ColorAdjustmentRow({ label, value, onChange, onCommit, min = -10
 
     return (
         <div className={`color-adjustment-row${spectrum ? " color-adjustment-row--spectrum" : ""}`}>
-            <button type="button" className="color-adjustment-label" title="双击恢复默认值" onDoubleClick={reset}>
-                {label}
-            </button>
+            <Tooltip title={hint || `${label}：输入数值或拖动滑杆，右侧按钮恢复默认值。`}>
+                <span className="color-adjustment-label" tabIndex={0}>
+                    {label}
+                </span>
+            </Tooltip>
             <div className="color-adjustment-slider-wrap">
                 {spectrum ? <span className="color-adjustment-spectrum" style={{ background: spectrum }} aria-hidden="true" /> : null}
                 <Slider min={min} max={max} value={sliderValue} tooltip={{ open: false }} onChange={scheduleChange} onChangeComplete={commitSlider} aria-label={label} />
@@ -95,6 +107,8 @@ export function ColorAdjustmentRow({ label, value, onChange, onCommit, min = -10
                 onKeyDown={(event) => {
                     if (event.key === "Enter") event.currentTarget.blur();
                     if (event.key === "Escape") {
+                        event.preventDefault();
+                        skipBlurRef.current = true;
                         setDraft(String(Math.round(value)));
                         event.currentTarget.blur();
                     }
@@ -106,6 +120,9 @@ export function ColorAdjustmentRow({ label, value, onChange, onCommit, min = -10
                     }
                 }}
             />
+            <button type="button" className="color-adjustment-reset" aria-label={`重置${label}`} title={`重置${label}`} disabled={sliderValue === defaultValue} onClick={reset}>
+                <RotateCcw className="size-3.5" />
+            </button>
         </div>
     );
 }

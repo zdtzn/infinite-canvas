@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Maximize, Minus, MoveHorizontal, Pipette, Plus, ScanSearch, Trash2 } from "lucide-react";
-import { Tooltip } from "antd";
+import { Segmented, Tooltip } from "antd";
 import { useCopyText } from "@/hooks/use-copy-text";
 
 import { analyzedColorFromRgb } from "./color-engine";
@@ -19,6 +19,8 @@ export function ColorPreviewStage({
     source,
     settings,
     forceOriginal,
+    viewMode,
+    onViewModeChange,
     onAnalysis,
     onPickColor,
     onRemove,
@@ -26,6 +28,8 @@ export function ColorPreviewStage({
     source: ColorAlchemySource;
     settings: ColorSettings;
     forceOriginal: boolean;
+    viewMode: "adjusted" | "original" | "split";
+    onViewModeChange: (mode: "adjusted" | "original" | "split") => void;
     onAnalysis: (analysis: ColorAnalysis) => void;
     onPickColor: (color: AnalyzedColor) => void;
     onRemove?: () => void;
@@ -37,7 +41,8 @@ export function ColorPreviewStage({
     const loadedRef = useRef<LoadedColorImage | null>(null);
     const [containerSize, setContainerSize] = useState({ width: 1, height: 1 });
     const [dimensions, setDimensions] = useState<PreviewDimensions | null>(null);
-    const [compare, setCompare] = useState(58);
+    const [compare, setCompare] = useState(50);
+    const splitVisible = viewMode === "split" && !forceOriginal;
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [loading, setLoading] = useState(true);
@@ -240,7 +245,7 @@ export function ColorPreviewStage({
     const fit = useMemo(() => {
         if (!dimensions) return { width: 1, height: 1 };
         const horizontalPadding = containerSize.width < 640 ? 32 : 88;
-        const verticalPadding = containerSize.height < 720 ? 64 : 92;
+        const verticalPadding = 136;
         const availableWidth = Math.max(120, containerSize.width - horizontalPadding);
         const availableHeight = Math.max(120, containerSize.height - verticalPadding);
         const scale = Math.min(availableWidth / dimensions.width, availableHeight / dimensions.height);
@@ -271,7 +276,7 @@ export function ColorPreviewStage({
         const localX = clientX - rect.left;
         const localY = clientY - rect.top;
         if (localX < 0 || localY < 0 || localX > rect.width || localY > rect.height) return;
-        const inAdjustedPreview = !forceOriginal && localX <= rect.width * (compare / 100);
+        const inAdjustedPreview = !forceOriginal && (viewMode === "adjusted" || (viewMode === "split" && localX <= rect.width * (compare / 100)));
         const canvas = inAdjustedPreview ? adjustedCanvasRef.current : originalCanvasRef.current;
         const loaded = loadedRef.current;
         if (!canvas || !loaded || loading || (inAdjustedPreview && rendering)) return;
@@ -335,15 +340,25 @@ export function ColorPreviewStage({
                 setZoomAroundCenter(zoom * (event.deltaY > 0 ? 0.9 : 1.1));
             }}
         >
-            <div
-                className="pointer-events-none absolute inset-0 opacity-35"
-                style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px)", backgroundSize: "32px 32px" }}
-            />
+            <div className="color-preview-mode" onWheel={(event) => event.stopPropagation()}>
+                <Segmented
+                    aria-label="预览模式"
+                    value={forceOriginal ? "original" : viewMode}
+                    options={[
+                        { label: "调色效果", value: "adjusted" },
+                        { label: "原图", value: "original" },
+                        { label: "划线对比", value: "split" },
+                    ]}
+                    onChange={onViewModeChange}
+                />
+            </div>
 
             <div className="absolute inset-0 flex items-center justify-center px-4 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-10">
                 <div
                     data-color-preview-frame
-                    onPointerMove={(event) => { if (eyedropperActive) sampleColor(event.clientX, event.clientY); }}
+                    onPointerMove={(event) => {
+                        if (eyedropperActive) sampleColor(event.clientX, event.clientY);
+                    }}
                     className="relative shrink-0 overflow-hidden bg-black shadow-[0_26px_90px_rgba(0,0,0,.48)]"
                     style={{ width: fit.width, height: fit.height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "center", cursor: eyedropperActive ? "crosshair" : zoom > 1 ? "grab" : "default" }}
                     onPointerDown={(event) => {
@@ -359,17 +374,32 @@ export function ColorPreviewStage({
                     }}
                 >
                     <canvas ref={originalCanvasRef} className="absolute inset-0 h-full w-full" aria-label="原图" />
-                    <div className="absolute inset-y-0 left-0 overflow-hidden" style={{ width: forceOriginal ? 0 : `${compare}%` }}>
+                    <div className="absolute inset-y-0 left-0 overflow-hidden" style={{ width: forceOriginal || viewMode === "original" ? 0 : splitVisible ? `${compare}%` : "100%" }}>
                         <canvas ref={adjustedCanvasRef} className="absolute inset-0 h-full max-w-none" style={{ width: fit.width, height: fit.height }} aria-label="调色结果" />
                     </div>
-                    {colorSample ? <span aria-hidden="true" className="pointer-events-none absolute z-20 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white shadow-[0_0_0_1px_black]" style={{ left: `${colorSample.u * 100}%`, top: `${colorSample.v * 100}%` }} /> : null}
-                    {!forceOriginal ? (
+                    {colorSample ? (
+                        <span
+                            aria-hidden="true"
+                            className="pointer-events-none absolute z-20 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white shadow-[0_0_0_1px_black]"
+                            style={{ left: `${colorSample.u * 100}%`, top: `${colorSample.v * 100}%` }}
+                        />
+                    ) : null}
+                    {splitVisible ? (
                         <button
                             type="button"
                             data-compare-handle
                             className="absolute inset-y-0 z-10 w-8 -translate-x-1/2 cursor-ew-resize touch-none"
                             style={{ left: `${compare}%` }}
                             aria-label="拖动查看调色前后对比"
+                            role="slider"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={Math.round(compare)}
+                            onKeyDown={(event) => {
+                                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                                event.preventDefault();
+                                setCompare((value) => (event.key === "Home" ? 0 : event.key === "End" ? 100 : Math.min(100, Math.max(0, value + (event.key === "ArrowLeft" ? -2 : 2)))));
+                            }}
                             onPointerDown={(event) => {
                                 if (eyedropperActive) return;
                                 event.stopPropagation();
@@ -384,12 +414,12 @@ export function ColorPreviewStage({
                             </span>
                         </button>
                     ) : null}
-                    {forceOriginal ? (
+                    {forceOriginal || viewMode === "original" ? (
                         <span className="absolute left-3 top-3 rounded bg-black/55 px-2 py-1 text-[10px] font-medium text-white/78 backdrop-blur-md">原图</span>
                     ) : (
                         <>
                             <span className="absolute left-3 top-3 rounded bg-black/55 px-2 py-1 text-[10px] font-medium text-white/78 backdrop-blur-md">调整后</span>
-                            <span className="absolute right-3 top-3 rounded bg-black/55 px-2 py-1 text-[10px] font-medium text-white/78 backdrop-blur-md">原图</span>
+                            {splitVisible ? <span className="absolute right-3 top-3 rounded bg-black/55 px-2 py-1 text-[10px] font-medium text-white/78 backdrop-blur-md">原图</span> : null}
                         </>
                     )}
                 </div>
@@ -403,14 +433,29 @@ export function ColorPreviewStage({
                     </div>
                     <div role="status" aria-live={eyedropperActive ? "off" : "polite"}>
                         <p>{eyedropperActive ? "点击图片取色 · Esc 退出" : "已取色"}</p>
-                        {colorSample ? <>
-                            <p className="mt-2 flex items-center gap-2 font-mono"><span className="size-5 rounded border border-white/30" style={{ background: colorSample.color.hex }} />{colorSample.color.hex}</p>
-                            <p className="mt-1 text-white/65">{colorSample.origin} · {colorSample.x + 1}, {colorSample.y + 1}</p>
-                            {!eyedropperActive ? <button type="button" className="pointer-events-auto mt-2 text-[#e5c783]" onClick={() => void copyText(colorSample.color.hex)}>复制色值</button> : null}
-                        </> : null}
+                        {colorSample ? (
+                            <>
+                                <p className="mt-2 flex items-center gap-2 font-mono">
+                                    <span className="size-5 rounded border border-white/30" style={{ background: colorSample.color.hex }} />
+                                    {colorSample.color.hex}
+                                </p>
+                                <p className="mt-1 text-white/65">
+                                    {colorSample.origin} · {colorSample.x + 1}, {colorSample.y + 1}
+                                </p>
+                                {!eyedropperActive ? (
+                                    <button type="button" className="pointer-events-auto mt-2 text-[#e5c783]" onClick={() => void copyText(colorSample.color.hex)}>
+                                        复制色值
+                                    </button>
+                                ) : null}
+                            </>
+                        ) : null}
                         {eyedropperActive && rendering ? <p className="mt-1 text-amber-200">预览更新中，请稍后取调整后的颜色</p> : null}
                     </div>
-                    {!eyedropperActive ? <button type="button" aria-label="关闭取色结果" className="pointer-events-auto self-start p-2" onClick={() => setColorSample(null)}>×</button> : null}
+                    {!eyedropperActive ? (
+                        <button type="button" aria-label="关闭取色结果" className="pointer-events-auto self-start p-2" onClick={() => setColorSample(null)}>
+                            ×
+                        </button>
+                    ) : null}
                 </div>
             </div>
 
@@ -418,7 +463,9 @@ export function ColorPreviewStage({
                 <PreviewButton title={eyedropperActive ? "取消吸色" : "吸取画面颜色"} icon={<Pipette className="size-4" />} active={eyedropperActive} onClick={() => setEyedropperActive((value) => !value)} />
                 <span className="mx-1 h-4 w-px bg-white/10" />
                 <PreviewButton title="缩小" icon={<Minus className="size-4" />} onClick={() => setZoomAroundCenter(zoom / 1.2)} />
-                <span className="min-w-14 text-center text-xs tabular-nums">{Math.round(zoom * 100)}%</span>
+                <span className="min-w-14 text-center text-xs tabular-nums" title="相对于原始图片尺寸的缩放比例">
+                    {dimensions ? Math.round(((fit.width * zoom) / dimensions.naturalWidth) * 100) : 100}%
+                </span>
                 <PreviewButton title="放大" icon={<Plus className="size-4" />} onClick={() => setZoomAroundCenter(zoom * 1.2)} />
                 <span className="mx-1 h-4 w-px bg-white/10" />
                 <PreviewButton title="适应窗口" icon={<Maximize className="size-4" />} onClick={() => setZoomAroundCenter(1)} />
@@ -426,9 +473,14 @@ export function ColorPreviewStage({
             </div>
 
             {onRemove ? (
-                <button type="button" onClick={onRemove} className="absolute right-4 top-4 z-20 inline-flex min-h-10 items-center gap-2 rounded-md border border-white/15 bg-black/75 px-3 text-xs text-white/80 shadow-lg transition hover:border-red-300/40 hover:text-red-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white" aria-label="移除当前图片">
+                <button
+                    type="button"
+                    onClick={onRemove}
+                    className="absolute right-2 top-2 z-20 inline-flex size-10 items-center justify-center rounded-md text-white/60 transition hover:bg-white/10 hover:text-red-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                    aria-label="移除当前图片"
+                    title="移除当前图片"
+                >
                     <Trash2 className="size-4" aria-hidden="true" />
-                    移除图片
                 </button>
             ) : null}
             {loading ? (
@@ -436,7 +488,11 @@ export function ColorPreviewStage({
                     <div className="color-processing-status">正在载入画面…</div>
                 </div>
             ) : null}
-            {rendering && !loading ? <div className="color-processing-status absolute left-4 top-4 rounded bg-black/48 px-2.5 py-1.5 backdrop-blur-md">正在更新预览…</div> : null}
+            {rendering && !loading ? (
+                <div role="status" className="color-processing-status absolute bottom-16 left-4 rounded bg-black/70 px-2.5 py-1.5">
+                    正在更新预览…
+                </div>
+            ) : null}
             {error ? <div className="absolute left-1/2 top-4 -translate-x-1/2 rounded-md border border-red-300/20 bg-red-950/70 px-3 py-2 text-xs text-red-100 backdrop-blur-md">{error}</div> : null}
         </div>
     );

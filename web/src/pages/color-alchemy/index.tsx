@@ -53,9 +53,12 @@ export default function ColorAlchemyPage() {
     const [sourceDialog, setSourceDialog] = useState<"assets" | "canvas" | null>(null);
     const [mobilePanel, setMobilePanel] = useState<"sources" | "controls" | null>(null);
     const [sourcePanelTab, setSourcePanelTab] = useState<ColorSourcePanelTab>("sources");
-    const [originalPinned, setOriginalPinned] = useState(false);
+    const [previewMode, setPreviewMode] = useState<"adjusted" | "original" | "split">("adjusted");
+    const originalPinned = previewMode === "original";
+    const [sourcesVisible, setSourcesVisible] = useState(true);
     const [originalHeld, setOriginalHeld] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [referenceLoading, setReferenceLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [returning, setReturning] = useState(false);
     const [exportOpen, setExportOpen] = useState(false);
@@ -199,7 +202,7 @@ export default function ColorAlchemyPage() {
     useEffect(() => {
         settingsDraftRef.current = null;
         setSettingsDraft(null);
-        setOriginalPinned(false);
+        setPreviewMode("adjusted");
         setOriginalHeld(false);
         setPickedColor(null);
     }, [document?.id, document?.source.key]);
@@ -212,21 +215,33 @@ export default function ColorAlchemyPage() {
         if (!document) return;
         const handleKeyDown = (event: KeyboardEvent) => {
             const target = event.target;
-            const editing = target instanceof HTMLElement && (target.matches("input, textarea, [contenteditable='true']") || Boolean(target.closest(".ant-modal, .ant-drawer")));
-            if (editing || event.code !== "Space") return;
+            const editing = target instanceof HTMLElement && Boolean(target.closest("input, textarea, button, select, [role='slider'], [contenteditable='true'], .ant-modal, .ant-drawer"));
+            if (editing) return;
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+                event.preventDefault();
+                discardSettingsDraft();
+                if (event.shiftKey) redo(document.id);
+                else undo(document.id);
+                if (originalPinned) setPreviewMode("adjusted");
+                return;
+            }
+            if (event.code !== "Space") return;
             event.preventDefault();
             setOriginalHeld(true);
         };
         const handleKeyUp = (event: KeyboardEvent) => {
             if (event.code === "Space") setOriginalHeld(false);
         };
+        const releaseOriginal = () => setOriginalHeld(false);
         window.addEventListener("keydown", handleKeyDown);
         window.addEventListener("keyup", handleKeyUp);
+        window.addEventListener("blur", releaseOriginal);
         return () => {
             window.removeEventListener("keydown", handleKeyDown);
             window.removeEventListener("keyup", handleKeyUp);
+            window.removeEventListener("blur", releaseOriginal);
         };
-    }, [document]);
+    }, [document, originalPinned, redo, undo]);
 
     const importFile = async (file: File) => {
         if (!file.type.startsWith("image/")) return message.warning("请选择图片文件");
@@ -245,6 +260,7 @@ export default function ColorAlchemyPage() {
 
     const applySettings = (settings: ColorSettings) => {
         if (!document) return;
+        if (originalPinned) setPreviewMode("adjusted");
         const draft = updateColorSettingsDraft(settingsDraftRef.current, document.id, settings);
         settingsDraftRef.current = draft;
         setSettingsDraft(draft);
@@ -265,6 +281,7 @@ export default function ColorAlchemyPage() {
 
     const applyCommittedSettings = (settings: ColorSettings) => {
         if (!document) return;
+        if (originalPinned) setPreviewMode("adjusted");
         discardSettingsDraft();
         replaceSettings(document.id, settings, true);
     };
@@ -285,21 +302,27 @@ export default function ColorAlchemyPage() {
         if (!document?.analysis) return;
         const result = recommendColorSettings(document.analysis, workingSettings || document.settings);
         applyCommittedSettings(result.settings);
-        message.success("灵彩优化完成");
+        message.success(`已自动校正：${result.notes.join("、")}`);
     };
 
     const addReference = async (file: File) => {
         if (!document || !file.type.startsWith("image/")) return message.warning("请选择参考图片");
+        if (referenceLoading) return;
+        setReferenceLoading(true);
+        const ownerId = userId;
         const previewUrl = URL.createObjectURL(file);
         try {
             const image = await uploadImage(file, { previewUrl, createThumbnail: false });
             const source: ColorAlchemySource = { key: image.storageKey, title: stripExtension(file.name) || "借色参考", url: image.url, storageKey: image.storageKey, width: image.width, height: image.height, mimeType: image.mimeType };
             const analysis = await analyzeColorSource(source);
+            if ((useUserStore.getState().user?.id || "") !== ownerId) return;
             setReference(document.id, { ...source, analysis });
             message.success("参考图片色彩已解析");
         } catch (error) {
             URL.revokeObjectURL(previewUrl);
             message.error(error instanceof Error ? error.message : "参考图片分析失败");
+        } finally {
+            setReferenceLoading(false);
         }
     };
 
@@ -465,20 +488,23 @@ export default function ColorAlchemyPage() {
                                 discardSettingsDraft();
                                 redo(document.id);
                             }}
-                            onToggleOriginal={() => setOriginalPinned((value) => !value)}
+                            onToggleOriginal={() => setPreviewMode((value) => (value === "original" ? "adjusted" : "original"))}
                             onReset={() => {
                                 discardSettingsDraft();
                                 reset(document.id);
+                                setPreviewMode("adjusted");
                             }}
                             onCopy={() => void copySettings()}
                             onPaste={() => void pasteSettings()}
                             onSave={() => void saveToAssets()}
                             onExport={() => setExportOpen(true)}
-                            onOpenSources={() => setMobilePanel("sources")}
+                            onOpenSources={() => (desktopLayout ? setSourcesVisible((value) => !value) : setMobilePanel("sources"))}
                         />
 
-                        <div className="grid min-h-0 flex-1 grid-cols-1 pb-[58px] lg:grid-cols-[216px_minmax(0,1fr)_336px] lg:pb-0 xl:grid-cols-[232px_minmax(0,1fr)_360px] 2xl:grid-cols-[240px_minmax(0,1fr)_368px]">
-                            {desktopLayout ? (
+                        <div
+                            className={`color-workspace grid min-h-0 flex-1 grid-cols-1 pb-[58px] lg:pb-0 ${sourcesVisible ? "lg:grid-cols-[200px_minmax(0,1fr)_340px] xl:grid-cols-[220px_minmax(0,1fr)_360px]" : "lg:grid-cols-[minmax(0,1fr)_360px]"} ${!desktopLayout && mobilePanel === "controls" ? "grid-rows-[minmax(0,1fr)_minmax(0,1fr)]" : ""}`}
+                        >
+                            {desktopLayout && sourcesVisible ? (
                                 <div className="min-h-0">
                                     <ColorSourcePanel
                                         document={workingDocument || document}
@@ -496,20 +522,38 @@ export default function ColorAlchemyPage() {
                                     />
                                 </div>
                             ) : null}
-                            <ColorPreviewStage source={document.source} settings={workingSettings || document.settings} forceOriginal={forceOriginal} onAnalysis={(analysis) => setAnalysis(document.id, analysis)} onPickColor={setPickedColor} onRemove={() => {
-                                const id = document.id;
-                                modal.confirm({
-                                    title: "移除当前图片？",
-                                    content: "将删除这张图片的灵彩调色草稿和调整记录，原始素材及已保存的作品不受影响。",
-                                    okText: "移除图片",
-                                    cancelText: "取消",
-                                    okButtonProps: { danger: true },
-                                    onOk: () => discardDocument(id),
-                                });
-                            }} />
-                            {desktopLayout ? (
-                                <div className="min-h-0">
+                            <ColorPreviewStage
+                                source={document.source}
+                                settings={workingSettings || document.settings}
+                                forceOriginal={forceOriginal}
+                                viewMode={previewMode}
+                                onViewModeChange={setPreviewMode}
+                                onAnalysis={(analysis) => setAnalysis(document.id, analysis)}
+                                onPickColor={setPickedColor}
+                                onRemove={() => {
+                                    const id = document.id;
+                                    modal.confirm({
+                                        title: "移除当前图片？",
+                                        content: "将删除这张图片的灵彩调色草稿和调整记录，原始素材及已保存的作品不受影响。",
+                                        okText: "移除图片",
+                                        cancelText: "取消",
+                                        okButtonProps: { danger: true },
+                                        onOk: () => discardDocument(id),
+                                    });
+                                }}
+                            />
+                            {desktopLayout || mobilePanel === "controls" ? (
+                                <div className="flex min-h-0 flex-col">
+                                    {!desktopLayout ? (
+                                        <div className="color-mobile-adjustment-heading">
+                                            <span>调整参数 · 上方实时预览</span>
+                                            <button type="button" aria-label="收起调整面板" onClick={() => setMobilePanel(null)}>
+                                                <X className="size-4" />
+                                            </button>
+                                        </div>
+                                    ) : null}
                                     <ColorControlPanel
+                                        key={document.id}
                                         document={workingDocument || document}
                                         analyzing={!document.analysis}
                                         onSettingsChange={(settings) => applySettings(settings)}
@@ -517,6 +561,8 @@ export default function ColorAlchemyPage() {
                                         onApplyAi={applyAiRecommendation}
                                         onApplyPreset={applyPreset}
                                         onReferenceUpload={(file) => void addReference(file)}
+                                        referenceLoading={referenceLoading}
+                                        onClearReference={() => setReference(document.id, undefined)}
                                         onBorrowColors={borrowColors}
                                         pickedColor={pickedColor}
                                     />
@@ -528,8 +574,8 @@ export default function ColorAlchemyPage() {
                                 saving={saving}
                                 originalActive={forceOriginal}
                                 onSources={() => setMobilePanel("sources")}
-                                onToggleOriginal={() => setOriginalPinned((value) => !value)}
-                                onControls={() => setMobilePanel("controls")}
+                                onToggleOriginal={() => setPreviewMode((value) => (value === "original" ? "adjusted" : "original"))}
+                                onControls={() => setMobilePanel((value) => (value === "controls" ? null : "controls"))}
                                 onSave={() => void saveToAssets()}
                                 onExport={() => setExportOpen(true)}
                             />
@@ -577,32 +623,17 @@ export default function ColorAlchemyPage() {
                                     openSource(source);
                                     setMobilePanel(null);
                                 }}
-                                onApplyPreset={applyPreset}
-                                onApplyLut={applyLut}
+                                onApplyPreset={(preset) => {
+                                    applyPreset(preset);
+                                    setMobilePanel(null);
+                                }}
+                                onApplyLut={(lut) => {
+                                    applyLut(lut);
+                                    setMobilePanel(null);
+                                }}
                                 onRemoveDocument={(id) => void discardDocument(id)}
                                 activeTab={sourcePanelTab}
                                 onTabChange={setSourcePanelTab}
-                            />
-                        </Drawer>
-                        <Drawer
-                            title="灵彩设计"
-                            placement="bottom"
-                            size="min(92dvh, 820px)"
-                            rootClassName="color-alchemy-mobile-drawer"
-                            open={mobilePanel === "controls"}
-                            onClose={() => setMobilePanel(null)}
-                            styles={{ body: { padding: 0, overflow: "hidden" } }}
-                        >
-                            <ColorControlPanel
-                                document={workingDocument || document}
-                                analyzing={!document.analysis}
-                                onSettingsChange={(settings) => applySettings(settings)}
-                                onCommit={commitSettingsChanges}
-                                onApplyAi={applyAiRecommendation}
-                                onApplyPreset={applyPreset}
-                                onReferenceUpload={(file) => void addReference(file)}
-                                onBorrowColors={borrowColors}
-                                pickedColor={pickedColor}
                             />
                         </Drawer>
                     </>
@@ -756,14 +787,7 @@ function MobileColorDock({
                 <Images className="size-4" />
                 素材
             </button>
-            <button
-                type="button"
-                className={originalActive ? "is-primary" : ""}
-                title={originalActive ? "点击返回调色效果" : "点击查看原图"}
-                aria-label="查看原图"
-                aria-pressed={originalActive}
-                onClick={onToggleOriginal}
-            >
+            <button type="button" className={originalActive ? "is-primary" : ""} title={originalActive ? "点击返回调色效果" : "点击查看原图"} aria-label="查看原图" aria-pressed={originalActive} onClick={onToggleOriginal}>
                 <Columns2 className="size-4" />
                 {originalActive ? "返回效果" : "查看原图"}
             </button>
