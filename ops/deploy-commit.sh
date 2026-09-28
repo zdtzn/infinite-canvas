@@ -7,6 +7,7 @@ EXPECTED_COMMIT="${EXPECTED_COMMIT:-}"
 IMAGE_WAIT_SECONDS="${IMAGE_WAIT_SECONDS:-600}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-5}"
 SCRIPT_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/deploy-runtime.sh"
 
 if ! printf '%s' "$EXPECTED_COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then
   echo "EXPECTED_COMMIT must be a full lowercase Git commit SHA" >&2
@@ -24,24 +25,12 @@ if [ "$IMAGE_WAIT_SECONDS" -lt 1 ] || [ "$POLL_INTERVAL_SECONDS" -lt 1 ]; then
 fi
 
 IMAGE_CANDIDATE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
-attempts=$((IMAGE_WAIT_SECONDS / POLL_INTERVAL_SECONDS + 1))
-attempt=1
-image_revision=""
-while [ "$attempt" -le "$attempts" ]; do
-  if docker pull "$IMAGE_CANDIDATE" >/dev/null 2>&1; then
-    image_revision="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE_CANDIDATE" 2>/dev/null || true)"
-    if [ "$image_revision" = "$EXPECTED_COMMIT" ]; then
-      break
-    fi
-  fi
-  if [ "$attempt" -eq "$attempts" ]; then
-    echo "Timed out waiting for ${IMAGE_CANDIDATE} to publish commit ${EXPECTED_COMMIT}; current revision is '${image_revision}'" >&2
-    exit 1
-  fi
-  echo "Waiting for image ${IMAGE_CANDIDATE} (${attempt}/${attempts})"
-  sleep "$POLL_INTERVAL_SECONDS"
-  attempt=$((attempt + 1))
-done
+pull_image_with_deadline "$IMAGE_CANDIDATE"
+image_revision="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE_CANDIDATE")"
+if [ "$image_revision" != "$EXPECTED_COMMIT" ]; then
+  echo "Downloaded image revision '$image_revision' does not match '$EXPECTED_COMMIT'; container unchanged" >&2
+  exit 1
+fi
 
 IMAGE_REF="$(
   docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE_CANDIDATE" |

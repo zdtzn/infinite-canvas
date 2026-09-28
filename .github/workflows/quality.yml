@@ -50,5 +50,12 @@ jobs:
       - name: Test
         run: bun run test
 
+      - name: Deployment safeguards
+        working-directory: .
+        run: |
+          bun test ops/deploy-scripts.test.ts ops/deploy-runtime.test.ts
+          pwsh -NoProfile -File ops/deploy-mode.test.ps1
+          pwsh -NoProfile -File ops/deploy-health.test.ps1
+
       - name: Production build
         run: bun run build

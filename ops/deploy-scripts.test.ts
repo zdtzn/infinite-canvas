@@ -22,7 +22,7 @@ test("commit deployment waits for a commit-specific image tag before resolving a
   expect(script).toContain(
     'IMAGE_CANDIDATE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"',
   );
-  expect(script).toContain('docker pull "$IMAGE_CANDIDATE"');
+  expect(script).toContain('pull_image_with_deadline "$IMAGE_CANDIDATE"');
   expect(script).toContain('image_revision="$(docker image inspect');
 });
 
@@ -59,5 +59,5 @@ test("pinned deployment reuses an image already pulled by commit resolution", ()
   const script = read("./deploy-pinned.sh");
 
   expect(script).toContain('docker image inspect "$IMAGE_REF"');
-  expect(script).toContain('pull_image "$IMAGE_REF"');
+  expect(script).toContain('pull_image_with_deadline "$IMAGE_REF"');
 });

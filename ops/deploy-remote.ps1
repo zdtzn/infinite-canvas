@@ -38,15 +38,16 @@ if (-not (Test-Path -LiteralPath $IdentityFile)) {
 
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . "$PSScriptRoot/deploy-mode.ps1"
+. "$PSScriptRoot/deploy-health.ps1"
 $headCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $headCommit -ne $Commit) {
     throw "The checked-out commit must match the deployment commit: $Commit"
 }
-& git -C $repoRoot diff --quiet -- ops/deploy-commit.sh ops/deploy-pinned.sh ops/deploy-remote.ps1 ops/deploy-mode.ps1
+& git -C $repoRoot diff --quiet -- ops/deploy-commit.sh ops/deploy-pinned.sh ops/deploy-remote.ps1 ops/deploy-mode.ps1 ops/deploy-runtime.sh ops/deploy-health.ps1
 if ($LASTEXITCODE -ne 0 -and -not $PlanOnly) {
     throw 'Deployment scripts contain uncommitted changes.'
 }
-& git -C $repoRoot diff --cached --quiet -- ops/deploy-commit.sh ops/deploy-pinned.sh ops/deploy-remote.ps1 ops/deploy-mode.ps1
+& git -C $repoRoot diff --cached --quiet -- ops/deploy-commit.sh ops/deploy-pinned.sh ops/deploy-remote.ps1 ops/deploy-mode.ps1 ops/deploy-runtime.sh ops/deploy-health.ps1
 if ($LASTEXITCODE -ne 0 -and -not $PlanOnly) {
     throw 'Deployment scripts contain staged changes that are not in the deployment commit.'
 }
@@ -71,13 +72,14 @@ if (-not ([Uri]::TryCreate($HealthUrl, [UriKind]::Absolute, [ref]$healthUri)) -o
 }
 $requireHttps = if ($healthUri.Scheme -eq 'https') { '1' } else { '0' }
 
-$remoteDirectory = '/root/infinite-canvas-ops'
+# Isolate uploads so another release cannot overwrite a script being executed.
+$remoteDirectory = '/root/infinite-canvas-ops/' + $Commit + '-' + [Guid]::NewGuid().ToString('N')
 $remoteTarget = "$UserName@$HostName"
-$onlineCommit = ''
+$revision = & $sshPath -i $IdentityFile -p $Port -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 $remoteTarget 'docker inspect -f ''{{index .Config.Labels "org.opencontainers.image.revision"}}'' infinite-canvas'
+if ($LASTEXITCODE -ne 0) { throw 'Cannot read the live deployment revision; no deployment was attempted.' }
+$onlineCommit = ($revision -join '').Trim()
+if ($onlineCommit -notmatch '^[0-9a-f]{40}$') { throw 'The live revision is unknown; no deployment was attempted.' }
 if ($Mode -eq 'auto') {
-    $revision = & $sshPath -i $IdentityFile -p $Port -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=8 $remoteTarget 'docker inspect -f ''{{index .Config.Labels "org.opencontainers.image.revision"}}'' infinite-canvas'
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot read the live deployment revision; no deployment was attempted.' }
-    $onlineCommit = ($revision -join '').Trim()
     $Mode = 'safe'
     if ($onlineCommit -match '^[0-9a-f]{40}$') {
         & git -C $repoRoot merge-base --is-ancestor $onlineCommit $Commit 2>$null
@@ -100,7 +102,7 @@ $normalizedScripts = @()
 try {
     New-Item -ItemType Directory -Path $tempDirectory -ErrorAction Stop | Out-Null
     $utf8NoBom = [Text.UTF8Encoding]::new($false)
-    foreach ($scriptName in @('deploy-commit.sh', 'deploy-pinned.sh')) {
+    foreach ($scriptName in @('deploy-commit.sh', 'deploy-pinned.sh', 'deploy-runtime.sh')) {
         $sourcePath = Join-Path $PSScriptRoot $scriptName
         if (-not (Test-Path -LiteralPath $sourcePath)) {
             throw "Deployment script not found: $sourcePath"
@@ -117,6 +119,8 @@ try {
         '-o', 'BatchMode=yes',
         '-o', 'IdentitiesOnly=yes',
         '-o', 'ConnectTimeout=8',
+        '-o', 'ServerAliveInterval=15',
+        '-o', 'ServerAliveCountMax=3',
         $remoteTarget,
         "set -eu; mkdir -p $remoteDirectory; chmod 700 $remoteDirectory"
     )
@@ -130,7 +134,9 @@ try {
         '-P', [string]$Port,
         '-o', 'BatchMode=yes',
         '-o', 'IdentitiesOnly=yes',
-        '-o', 'ConnectTimeout=8'
+        '-o', 'ConnectTimeout=8',
+        '-o', 'ServerAliveInterval=15',
+        '-o', 'ServerAliveCountMax=3'
     )
     $scpArguments += $normalizedScripts
     $scpArguments += "${remoteTarget}:$remoteDirectory/"
@@ -139,24 +145,22 @@ try {
         throw "Deployment script upload failed with SCP exit code $LASTEXITCODE."
     }
 
-    $remoteCommand = "set -eu; chmod 700 $remoteDirectory/deploy-commit.sh $remoteDirectory/deploy-pinned.sh; EXPECTED_COMMIT=$Commit IMAGE_TAG=$Commit DEPLOY_MODE=$Mode REQUIRE_HTTPS=$requireHttps sh $remoteDirectory/deploy-commit.sh"
-    if ($Mode -eq 'fast' -and $onlineCommit) {
-        # Do not use a stale fast-mode decision if another deployment has intervened.
-        $guard = 'test "$(docker inspect -f ''{{index .Config.Labels "org.opencontainers.image.revision"}}'' infinite-canvas)" = "' + $onlineCommit + '" || { echo "Live revision changed; rerun deployment" >&2; exit 1; }; '
-        $remoteCommand = $guard + $remoteCommand
-    }
+    $cleanup = "rm -f $remoteDirectory/deploy-commit.sh $remoteDirectory/deploy-pinned.sh $remoteDirectory/deploy-runtime.sh; rmdir $remoteDirectory"
+    $remoteCommand = "set -eu; trap '$cleanup' EXIT; chmod 700 $remoteDirectory/deploy-commit.sh $remoteDirectory/deploy-pinned.sh; EXPECTED_LIVE_COMMIT=$onlineCommit EXPECTED_COMMIT=$Commit IMAGE_TAG=$Commit DEPLOY_MODE=$Mode REQUIRE_HTTPS=$requireHttps sh $remoteDirectory/deploy-commit.sh"
     $deployArguments = @(
         '-i', $IdentityFile,
         '-p', [string]$Port,
         '-o', 'BatchMode=yes',
         '-o', 'IdentitiesOnly=yes',
         '-o', 'ConnectTimeout=8',
+        '-o', 'ServerAliveInterval=15',
+        '-o', 'ServerAliveCountMax=3',
         $remoteTarget,
         $remoteCommand
     )
     & $sshPath @deployArguments
     if ($LASTEXITCODE -ne 0) {
-        throw "Remote deployment failed with SSH exit code $LASTEXITCODE."
+        throw "Remote deployment command did not complete successfully (SSH exit $LASTEXITCODE). Inspect the remote result and current health before retrying; the command will not be repeated automatically."
     }
 } finally {
     if ((Test-Path -LiteralPath $tempDirectory) -and $tempDirectory.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -164,9 +168,4 @@ try {
     }
 }
 
-$health = Invoke-RestMethod -Uri $HealthUrl -TimeoutSec 15
-if ($health.status -ne 'ok' -or $health.commit -ne $Commit -or $health.checks.database -ne 'ok') {
-    throw "Deployment health verification failed for commit $Commit."
-}
-
-Write-Output "Deployment verified: $Commit"
+Confirm-DeploymentHealth -HealthUrl $HealthUrl -Commit $Commit

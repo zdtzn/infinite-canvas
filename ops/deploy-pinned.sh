@@ -21,21 +21,19 @@ ALLOW_ACTIVE_JOBS="${ALLOW_ACTIVE_JOBS:-0}"
 DEPLOY_MODE="${DEPLOY_MODE:-safe}"
 IMAGE_REF="${IMAGE_REF:-}"
 EXPECTED_COMMIT="${EXPECTED_COMMIT:-}"
+EXPECTED_LIVE_COMMIT="${EXPECTED_LIVE_COMMIT:-}"
+DEPLOY_LOCK_FILE="${DEPLOY_LOCK_FILE:-/var/lock/infinite-canvas-deploy.lock}"
+SCRIPT_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/deploy-runtime.sh"
 
-pull_image() {
-  pull_attempt=1
-  while [ "$pull_attempt" -le 3 ]; do
-    if docker pull "$1" >/dev/null; then
-      return 0
+assert_live_revision() {
+  if [ -n "$EXPECTED_LIVE_COMMIT" ]; then
+    live_revision="$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CONTAINER_NAME")"
+    if [ "$live_revision" != "$EXPECTED_LIVE_COMMIT" ]; then
+      echo "Live revision changed; rerun deployment from the latest state" >&2
+      exit 1
     fi
-    if [ "$pull_attempt" -eq 3 ]; then
-      echo "Unable to pull image after 3 attempts: $1" >&2
-      return 1
-    fi
-    echo "Image pull failed; retrying in $((pull_attempt * 5))s" >&2
-    sleep $((pull_attempt * 5))
-    pull_attempt=$((pull_attempt + 1))
-  done
+  fi
 }
 
 case "$IMAGE_REF" in
@@ -79,6 +77,32 @@ if [ -n "$EXPECTED_COMMIT" ] && ! printf '%s' "$EXPECTED_COMMIT" | grep -Eq '^[0
   echo "EXPECTED_COMMIT must be a full lowercase Git commit SHA" >&2
   exit 1
 fi
+if [ -n "$EXPECTED_LIVE_COMMIT" ] && ! printf '%s' "$EXPECTED_LIVE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then
+  echo "EXPECTED_LIVE_COMMIT must be a full lowercase Git commit SHA" >&2
+  exit 1
+fi
+case "$DEPLOY_LOCK_FILE" in
+  /*) ;;
+  *) echo "DEPLOY_LOCK_FILE must be an absolute host path" >&2; exit 1 ;;
+esac
+command -v flock >/dev/null
+command -v timeout >/dev/null
+exec 9>"$DEPLOY_LOCK_FILE"
+if ! flock -n 9; then
+  echo "Another deployment is running; container unchanged. Retry after it completes." >&2
+  exit 75
+fi
+
+# The lock covers preflight, container switching, and rollback; never delete its file.
+current_ref="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME")"
+current_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER_NAME")"
+current_revision="$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CONTAINER_NAME")"
+if [ "$FORCE_RECREATE" != "1" ] && [ "$current_ref" = "$IMAGE_REF" ] && [ "$current_health" = "healthy" ] &&
+   { [ -z "$EXPECTED_COMMIT" ] || [ "$current_revision" = "$EXPECTED_COMMIT" ]; }; then
+  echo "Already running healthy image: $IMAGE_REF"
+  exit 0
+fi
+assert_live_revision
 
 docker volume inspect "$VOLUME_NAME" >/dev/null
 docker inspect "$CONTAINER_NAME" >/dev/null
@@ -126,7 +150,7 @@ assert_no_active_jobs() {
 
 assert_no_active_jobs
 if ! docker image inspect "$IMAGE_REF" >/dev/null 2>&1; then
-  pull_image "$IMAGE_REF"
+  pull_image_with_deadline "$IMAGE_REF"
 fi
 
 if [ -f "$ENV_FILE" ]; then
@@ -171,13 +195,6 @@ if [ -n "$EXPECTED_COMMIT" ] && [ "$image_revision" != "$EXPECTED_COMMIT" ]; the
   exit 1
 fi
 
-current_ref="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME")"
-current_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER_NAME")"
-if [ "$FORCE_RECREATE" != "1" ] && [ "$current_ref" = "$IMAGE_REF" ] && [ "$current_health" = "healthy" ]; then
-  echo "Already running healthy image: $IMAGE_REF"
-  exit 0
-fi
-
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 archive=""
 backup_record="not-created-fast-deploy"
@@ -192,25 +209,36 @@ fi
 
 wait_for_healthy() {
   expected_revision="$1"
-  wait_attempt=0
-  wait_max_attempts=$((HEALTH_TIMEOUT_SECONDS / 2 + 1))
+  health_deadline=$(($(date +%s) + HEALTH_TIMEOUT_SECONDS))
 
-  while [ "$wait_attempt" -lt "$wait_max_attempts" ]; do
-    wait_attempt=$((wait_attempt + 1))
-    container_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER_NAME" 2>/dev/null || true)"
-    container_running="$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+  while [ "$(date +%s)" -lt "$health_deadline" ]; do
+    health_remaining=$((health_deadline - $(date +%s)))
+    if [ "$health_remaining" -le 0 ]; then break; fi
+    container_health="$(timeout --kill-after=1s "${health_remaining}s" docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+    health_remaining=$((health_deadline - $(date +%s)))
+    if [ "$health_remaining" -le 0 ]; then break; fi
+    container_running="$(timeout --kill-after=1s "${health_remaining}s" docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || true)"
     health_gate=0
     if [ "$DEPLOY_MODE" = "fast" ] && [ "$container_running" = "true" ]; then
       health_gate=1
     elif [ "$DEPLOY_MODE" = "safe" ] && [ "$container_health" = "healthy" ]; then
       health_gate=1
     fi
-    if [ "$health_gate" = "1" ] && curl -fsS "http://127.0.0.1:${HOST_PORT}/health" >"$health_file" 2>/dev/null; then
+    health_remaining=$((health_deadline - $(date +%s)))
+    if [ "$health_remaining" -le 0 ]; then break; fi
+    health_request_timeout=5
+    if [ "$health_remaining" -lt 5 ]; then health_request_timeout="$health_remaining"; fi
+    if [ "$health_gate" = "1" ] && curl -fsS --connect-timeout 2 --max-time "$health_request_timeout" "http://127.0.0.1:${HOST_PORT}/health" >"$health_file" 2>/dev/null; then
       if [ -z "$expected_revision" ] || grep -q "$expected_revision" "$health_file"; then
         return 0
       fi
     fi
-    sleep 2
+    health_remaining=$((health_deadline - $(date +%s)))
+    if [ "$health_remaining" -gt 0 ]; then
+      health_pause=2
+      if [ "$health_remaining" -lt 2 ]; then health_pause="$health_remaining"; fi
+      sleep "$health_pause"
+    fi
   done
 
   return 1
@@ -252,12 +280,13 @@ recover_on_failure() {
   fi
   exit "$status"
 }
+mkdir -p "$BACKUP_ROOT"
+assert_no_active_jobs
+assert_live_revision
 trap recover_on_failure EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-mkdir -p "$BACKUP_ROOT"
-assert_no_active_jobs
 docker stop -t 30 "$CONTAINER_NAME" >/dev/null
 if [ "$DEPLOY_MODE" = "safe" ]; then
   archive="infinite-canvas-${timestamp}.tar.gz"
@@ -307,6 +336,7 @@ if ! wait_for_healthy "$EXPECTED_COMMIT"; then
   exit 1
 fi
 
+deployment_health="$(cat "$health_file")"
 deployment_complete=1
 trap - EXIT INT TERM
 docker rm "$rollback_name" >/dev/null
@@ -336,5 +366,7 @@ echo "Mode: $DEPLOY_MODE"
 echo "Image: $IMAGE_REF"
 echo "Revision: $image_revision"
 echo "Backup: ${backup_record}"
-curl -fsS "http://127.0.0.1:${HOST_PORT}/health"
+# Reuse the successful readiness response; a second transient request must not
+# turn a completed deployment into an apparent container-switch failure.
+printf '%s\n' "$deployment_health"
 printf '\n'

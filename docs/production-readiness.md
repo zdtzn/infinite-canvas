@@ -36,6 +36,16 @@ The image workflow runs type checking, all tests, and the production build befor
 
 ## Repeat Deployments Before Launch
 
+### Deployment deadlines and concurrency
+
+The shell helpers require GNU `timeout` and Linux `flock`. Keep `deploy-runtime.sh` beside `deploy-commit.sh`, `deploy-latest.sh` and `deploy-pinned.sh` when copying scripts manually; the Windows remote helper uploads its dependencies automatically into a unique release directory.
+
+Image pulls share an elapsed-time budget (`IMAGE_WAIT_SECONDS`, default 600 seconds), including retries and pauses, with up to five additional seconds for forced process termination. Pull progress remains visible and failure before switching leaves the old container running. Readiness requests use bounded curl calls within `HEALTH_TIMEOUT_SECONDS`; rollback has its own readiness budget. These are stage limits, not a deadline for the entire release or full-volume backup.
+
+`deploy-pinned.sh` holds `/var/lock/infinite-canvas-deploy.lock` through preflight, switching and rollback. A competing deployment exits with code 75; do not delete the lock file to bypass it. The remote helper passes `EXPECTED_LIVE_COMMIT` for both safe and fast modes, checked under the lock and again before stopping the old container. A changed revision requires a fresh deployment decision. An already healthy exact target image exits without a backup or restart unless `FORCE_RECREATE=1`.
+
+After the remote command succeeds, public health is checked up to three times (10 seconds per request, two-second pauses), verifying status, database and exact commit. Failure is reported as a completed remote command with public verification still unconfirmed; it does not restart or redeploy. Inspect current health before retrying a release after an SSH interruption. Deployment safeguard tests run in both quality and image verification workflows; the real lock-contention test runs on Linux.
+
 For routine Windows releases from a clean, committed `main`, use the PowerShell 7 entry point:
 
 ```powershell
