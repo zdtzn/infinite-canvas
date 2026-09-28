@@ -36,6 +36,14 @@ The image workflow runs type checking, all tests, and the production build befor
 
 ## Repeat Deployments Before Launch
 
+For routine Windows releases from a clean, committed `main`, use the PowerShell 7 entry point:
+
+```powershell
+pwsh -NoProfile -File ops/publish-and-deploy.ps1 -HostName 118.190.159.129 -HealthUrl https://mingche.click/health
+```
+
+This pushes the exact local SHA with HTTP/2, waits for that commit's successful `Docker image` push workflow, checks that neither local nor remote main has advanced, then calls the existing auto-mode deployment and health verification. Push and API failures have two attempts; CI waiting defaults to 15 minutes with timestamped progress every 20 seconds. Rerunning reuses the existing successful CI run for that SHA. `-PlanOnly` prints the intended steps without pushing or deploying. The entry point expects this repository's public GitHub API and does not read credentials or create commits. Complete development verification before starting this command; do not repeat successful checks on unchanged code during release.
+
 For the current single-server workflow, deploy only after the GitHub Actions checks and image workflow have succeeded. The helper resolves the verified `latest` tag to its immutable digest before changing the running container:
 
 ```bash
