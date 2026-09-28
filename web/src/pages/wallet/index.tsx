@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Pagination, Skeleton } from "antd";
 import { ArrowDownLeft, ArrowRight, ArrowUpRight, Info, ScrollText } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { Link } from "react-router-dom";
 
 import { isDouEmperorRealm } from "@/features/cultivation/imperial-mode";
@@ -9,33 +9,53 @@ import { ImperialSeal } from "@/features/cultivation/imperial-seal";
 import { useCultivationProfile } from "@/features/cultivation/queries";
 import { RealmIcon } from "@/features/cultivation/realm-icon";
 import { cultivationStageLabel } from "@/features/cultivation/utils";
-import { fetchWallet, type WalletLedgerItem, type WalletPackage } from "@/services/server-api";
+import { fetchWallet, type WalletOverview } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { WalletRecordSource } from "./wallet-record-source";
+import { walletBalance, walletLedgerLabels, walletQueryOptions, walletResourceStatus, walletUnitPrice } from "./wallet-ui";
 import "./wallet.css";
 
-const ledgerLabels: Record<WalletLedgerItem["kind"], string> = {
-    admin_grant: "管理员发放",
-    reserve: "生图占用",
-    refund: "失败返还",
-};
 const packageDescriptions: Record<string, string> = {
     qiling: "偶尔执笔，轻量补充",
     juling: "为持续创作备好灵卷",
     wanxiang: "为高频创作留足余量",
 };
-function recordSource(item: WalletLedgerItem, packages: WalletPackage[]) {
-    if (item.packageId) return packages.find((pack) => pack.id === item.packageId)?.name || item.packageId;
-    return item.kind === "admin_grant" ? "管理员发放" : "任务 " + item.sourceId;
-}
 
 export default function WalletPage() {
+    const queryClient = useQueryClient();
     const userId = useUserStore((state) => state.user?.id || "");
     const [page, setPage] = useState(1);
-    const wallet = useQuery({ queryKey: ["wallet", userId, page], queryFn: () => fetchWallet(page), enabled: Boolean(userId), staleTime: 10_000 });
-    const { data: profile } = useCultivationProfile();
+    const wallet = useQuery({ ...walletQueryOptions(userId), queryFn: () => fetchWallet() });
+    const ledger = useQuery({ ...walletQueryOptions(userId, page), queryFn: () => fetchWallet(page) });
+    const profileQuery = useCultivationProfile();
+    const profile = profileQuery.data;
+    const subscribeWalletBalance = useCallback(
+        (onStoreChange: () => void) =>
+            queryClient.getQueryCache().subscribe((event) => {
+                if (event.query.queryKey[0] === "wallet" && event.query.queryKey[1] === userId && (event.type === "added" || event.type === "removed" || event.type === "updated")) {
+                    onStoreChange();
+                }
+            }),
+        [queryClient, userId],
+    );
+    const getWalletBalance = useCallback(
+        () =>
+            walletBalance(
+                queryClient
+                    .getQueryCache()
+                    .findAll({ queryKey: ["wallet", userId] })
+                    .map(({ state }) => ({ data: state.data as WalletOverview | undefined, dataUpdatedAt: state.dataUpdatedAt })),
+                profileQuery,
+            ),
+        [profileQuery, queryClient, userId],
+    );
+    const balance = useSyncExternalStore(subscribeWalletBalance, getWalletBalance, getWalletBalance);
     const imperial = Boolean(profile && isDouEmperorRealm(profile.realmId));
     const data = wallet.data;
     const loading = wallet.isPending;
+    const records = ledger.data;
+    const recordTotal = records?.total ?? data?.total ?? 0;
+    const recordPackages = records?.packages ?? data?.packages ?? [];
 
     return (
         <main className="wallet-space h-full overflow-y-auto">
@@ -71,9 +91,10 @@ export default function WalletPage() {
                         )}
                         <p className="wallet-balance-label">当前灵卷</p>
                         <p className="wallet-balance">
-                            <strong>{data?.balance.toLocaleString() ?? "—"}</strong>
+                            <strong>{balance?.toLocaleString() ?? "—"}</strong>
                             <span>灵卷</span>
                         </p>
+                        <p className="wallet-resource-status">{walletResourceStatus(profile, balance)}</p>
                         <dl className="wallet-resource-details">
                             <div>
                                 <dt>今日免费剩余</dt>
@@ -103,12 +124,15 @@ export default function WalletPage() {
                 {wallet.isError ? (
                     <section className="wallet-load-error" role="alert">
                         <div>
-                            <h2>灵卷数据暂时无法加载</h2>
-                            <p>请重新加载，查看最新余额与记录。</p>
+                            <h2>{data ? "资源更新未完成" : "灵卷数据暂时无法加载"}</h2>
+                            <p>{data ? "已保留上次加载的内容，请重试以查看最新数据。" : "请重新加载，查看最新余额与套餐。"}</p>
                         </div>
-                        <Button onClick={() => void wallet.refetch()}>重新加载</Button>
+                        <Button loading={wallet.isFetching} onClick={() => void wallet.refetch()}>
+                            重新加载
+                        </Button>
                     </section>
-                ) : (
+                ) : null}
+                {data || loading ? (
                     <>
                         <section className="wallet-packages" aria-labelledby="wallet-packages-heading" aria-busy={loading}>
                             <div className="wallet-section-heading">
@@ -141,13 +165,15 @@ export default function WalletPage() {
                                             </div>
                                             <h3>{item.name}</h3>
                                             <p className="wallet-package-description">{packageDescriptions[item.id] || "为下一幅作品补充灵卷"}</p>
-                                            <p className="wallet-package-amount">
-                                                <strong>{item.images.toLocaleString()}</strong>
-                                                <span>灵卷</span>
-                                            </p>
-                                            <div className="wallet-package-price">
-                                                <span>¥{(item.priceFen / 100).toFixed(2)}</span>
-                                                <small>套餐价格</small>
+                                            <div className="wallet-package-resources">
+                                                <p className="wallet-package-amount">
+                                                    <strong>{item.images.toLocaleString()}</strong>
+                                                    <span>灵卷</span>
+                                                </p>
+                                                <div className="wallet-package-price">
+                                                    <span>¥{(item.priceFen / 100).toFixed(2)}</span>
+                                                    <small>{walletUnitPrice(item)}</small>
+                                                </div>
                                             </div>
                                         </article>
                                     ))}
@@ -158,23 +184,37 @@ export default function WalletPage() {
                             <div className="wallet-rules">
                                 <Info size={17} aria-hidden="true" />
                                 <p>
-                                    <strong>1 灵卷对应 1 张图片生成额度。</strong>生成时优先使用今日免费额度，不足部分使用灵卷，失败部分返还。
+                                    <strong>1 灵卷对应 1 张图片生成额度。</strong>优先使用今日免费额度，不足部分使用灵卷；未生成结果的灵卷按实际结算返还。
                                 </p>
                             </div>
                         </section>
-                        <section className="wallet-ledger" aria-labelledby="wallet-ledger-heading" aria-busy={loading}>
+                        <section className="wallet-ledger" aria-labelledby="wallet-ledger-heading" aria-busy={ledger.isFetching}>
                             <div className="wallet-section-heading">
                                 <div>
                                     <h2 id="wallet-ledger-heading">灵卷记录</h2>
-                                    <p>每一份补给，每一次创作，都有迹可循。</p>
+                                    <p>仅记录灵卷收支，免费额度使用不在此列。</p>
                                 </div>
-                                {data?.total ? <span className="wallet-record-count">共 {data.total.toLocaleString()} 条</span> : null}
+                                {recordTotal ? <span className="wallet-record-count">共 {recordTotal.toLocaleString()} 条</span> : null}
                             </div>
-                            {loading ? (
+                            <p className="wallet-ledger-status" role="status" aria-live="polite" aria-atomic="true">
+                                {ledger.isPlaceholderData ? `正在加载第 ${page} 页，当前显示第 ${records?.page} 页记录…` : ledger.isFetching && records ? "正在更新记录…" : records ? `第 ${records.page} 页 · ${records.items.length} 条记录` : ""}
+                            </p>
+                            {ledger.isError && !(page === 1 && wallet.isError) ? (
+                                <div className="wallet-load-error wallet-record-error" role="alert">
+                                    <div>
+                                        <h3>{records ? "记录更新未完成" : `第 ${page} 页记录加载失败`}</h3>
+                                        <p>{records ? "已保留已加载的记录，请重试更新。" : "余额与套餐仍可查看，请重试加载记录。"}</p>
+                                    </div>
+                                    <Button loading={ledger.isFetching} onClick={() => void ledger.refetch()}>
+                                        重试记录
+                                    </Button>
+                                </div>
+                            ) : null}
+                            {ledger.isPending ? (
                                 <div className="wallet-ledger-loading">
                                     <Skeleton active paragraph={{ rows: 3 }} />
                                 </div>
-                            ) : data?.items.length ? (
+                            ) : records?.items.length ? (
                                 <>
                                     <div className="wallet-ledger-desktop">
                                         <table>
@@ -189,17 +229,19 @@ export default function WalletPage() {
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {data.items.map((item) => (
+                                                {records.items.map((item) => (
                                                     <tr key={item.id}>
                                                         <td>
                                                             <time dateTime={new Date(item.createdAt).toISOString()}>{new Date(item.createdAt).toLocaleString("zh-CN")}</time>
                                                         </td>
-                                                        <td>{ledgerLabels[item.kind]}</td>
+                                                        <td>{walletLedgerLabels[item.kind]}</td>
                                                         <td className={item.delta > 0 ? "wallet-credit" : "wallet-debit"}>
                                                             {item.delta > 0 ? "+" : ""}
                                                             {item.delta.toLocaleString()}
                                                         </td>
-                                                        <td className="wallet-record-source">{recordSource(item, data.packages)}</td>
+                                                        <td className="wallet-record-source">
+                                                            <WalletRecordSource item={item} packages={recordPackages} />
+                                                        </td>
                                                         <td>
                                                             {item.balanceAfter.toLocaleString()} <small>灵卷</small>
                                                         </td>
@@ -209,19 +251,21 @@ export default function WalletPage() {
                                         </table>
                                     </div>
                                     <ul className="wallet-ledger-mobile">
-                                        {data.items.map((item) => (
+                                        {records.items.map((item) => (
                                             <li key={item.id}>
                                                 <div className="wallet-record-top">
                                                     <span>
                                                         {item.delta > 0 ? <ArrowDownLeft size={17} aria-hidden="true" /> : <ArrowUpRight size={17} aria-hidden="true" />}
-                                                        {ledgerLabels[item.kind]}
+                                                        {walletLedgerLabels[item.kind]}
                                                     </span>
                                                     <strong className={item.delta > 0 ? "wallet-credit" : "wallet-debit"}>
                                                         {item.delta > 0 ? "+" : ""}
                                                         {item.delta.toLocaleString()}
                                                     </strong>
                                                 </div>
-                                                <p className="wallet-record-source">{recordSource(item, data.packages)}</p>
+                                                <div className="wallet-record-source">
+                                                    <WalletRecordSource item={item} packages={recordPackages} />
+                                                </div>
                                                 <div className="wallet-record-meta">
                                                     <time dateTime={new Date(item.createdAt).toISOString()}>{new Date(item.createdAt).toLocaleString("zh-CN")}</time>
                                                     <span>余额 {item.balanceAfter.toLocaleString()} 灵卷</span>
@@ -230,7 +274,7 @@ export default function WalletPage() {
                                         ))}
                                     </ul>
                                 </>
-                            ) : (
+                            ) : records ? (
                                 <div className="wallet-empty">
                                     <span className="wallet-empty-symbol">
                                         <ScrollText size={32} strokeWidth={1} aria-hidden="true" />
@@ -240,11 +284,11 @@ export default function WalletPage() {
                                         <p>灵卷的获取与消耗会记录在这里。</p>
                                     </div>
                                 </div>
-                            )}
-                            {(data?.total || 0) > 20 ? <Pagination className="wallet-pagination" current={page} pageSize={20} total={data?.total} onChange={setPage} showSizeChanger={false} responsive /> : null}
+                            ) : null}
+                            {recordTotal > 20 ? <Pagination className="wallet-pagination" current={page} pageSize={20} total={recordTotal} onChange={setPage} disabled={ledger.isPlaceholderData} showSizeChanger={false} responsive /> : null}
                         </section>
                     </>
-                )}
+                ) : null}
             </div>
         </main>
     );
