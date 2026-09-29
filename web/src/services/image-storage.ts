@@ -123,18 +123,45 @@ async function promoteJobImage(sourceUrl: string, expectedUserId: string, option
     };
 }
 
-export async function readImageBlob(input: string | Blob, expectedUserId = useUserStore.getState().user?.id || "") {
+export type ReadImageBlobOptions = { signal?: AbortSignal; timeoutMs?: number };
+
+export async function readImageBlob(input: string | Blob, expectedUserId = useUserStore.getState().user?.id || "", options: ReadImageBlobOptions = {}) {
+    const controller = new AbortController();
+    const abort = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) abort();
+    const timeoutMs = options.timeoutMs ?? 30_000;
+    const timer = setTimeout(() => controller.abort(new DOMException("读取图片超时，请重试", "TimeoutError")), Number.isFinite(timeoutMs) && timeoutMs >= 0 ? timeoutMs : 30_000);
+    let rejectAbort: (() => void) | undefined;
+    try {
+        controller.signal.throwIfAborted();
+        const cancelled = new Promise<never>((_, reject) => {
+            rejectAbort = () => reject(controller.signal.reason);
+            controller.signal.addEventListener("abort", rejectAbort, { once: true });
+        });
+        return await Promise.race([readImageBlobContent(input, expectedUserId, controller.signal), cancelled]);
+    } finally {
+        clearTimeout(timer);
+        options.signal?.removeEventListener("abort", abort);
+        if (rejectAbort) controller.signal.removeEventListener("abort", rejectAbort);
+    }
+}
+
+async function readImageBlobContent(input: string | Blob, expectedUserId: string, signal: AbortSignal) {
     const blob =
         typeof input === "string"
             ? /^data:/i.test(input)
                 ? decodeDataUrl(input)
-                : await fetchServerResource(input, {}, expectedUserId).then(async (response) => {
+                : await fetchServerResource(input, { signal }, expectedUserId).then(async (response) => {
+                      signal.throwIfAborted();
                       if (!response.ok) throw new Error(`读取图片失败（${response.status}）`);
                       return response.blob();
                   })
             : input;
+    signal.throwIfAborted();
     if (!blob.size) throw new Error("读取图片失败：文件为空");
     const mimeType = await detectImageMimeType(blob);
+    signal.throwIfAborted();
     if (mimeType) return blob.type === mimeType ? blob : new Blob([blob], { type: mimeType });
     if (blob.type.startsWith("image/")) return blob;
     throw new Error("读取图片失败：返回内容不是图片");

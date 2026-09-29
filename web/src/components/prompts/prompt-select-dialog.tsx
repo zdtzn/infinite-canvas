@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
 import { PromptCard } from "./prompt-card";
+import { PromptWindowGrid } from "./prompt-window-grid";
 import { usePromptList } from "./use-prompt-list";
 
 export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boolean; onOpenChange: (open: boolean) => void; onSelect: (prompt: string) => void }) {
@@ -53,38 +54,64 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
                     <aside className="thin-scrollbar min-h-0 overflow-y-auto border-r border-stone-200 pr-4 dark:border-stone-800">
                         <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500">来源</div>
                         <div className="flex flex-wrap gap-1.5">
-                            {promptCategories.map((category) => <Tag.CheckableTag key={category} checked={selectedCategory === category} className={cn("prompt-filter-tag", selectedCategory === category && "is-active")} onChange={() => setSelectedCategory(category)}>{category}</Tag.CheckableTag>)}
+                            {promptCategories.map((category) => (
+                                <Tag.CheckableTag key={category} checked={selectedCategory === category} className={cn("prompt-filter-tag", selectedCategory === category && "is-active")} onChange={() => setSelectedCategory(category)}>
+                                    {category}
+                                </Tag.CheckableTag>
+                            ))}
                         </div>
                         <div className="mb-2 mt-5 text-xs font-semibold uppercase tracking-widest text-stone-400 dark:text-stone-500">主题</div>
                         <div className="flex flex-wrap gap-1.5">
                             {promptTags.map((tag) => {
                                 const active = tag === ALL_PROMPTS_OPTION ? selectedTags.length === 0 : selectedTags.includes(tag);
-                                return <Tag.CheckableTag key={tag} checked={active} className={cn("prompt-filter-tag", active && "is-active")} onChange={() => toggleTag(tag)}>{tag}</Tag.CheckableTag>;
+                                return (
+                                    <Tag.CheckableTag key={tag} checked={active} className={cn("prompt-filter-tag", active && "is-active")} onChange={() => toggleTag(tag)}>
+                                        {tag}
+                                    </Tag.CheckableTag>
+                                );
                             })}
                         </div>
                     </aside>
                     <section className="flex min-h-0 min-w-0 flex-col">
                         <div className="flex flex-wrap gap-3">
                             <Input size="large" aria-label="搜索提示词" className="min-w-40 flex-1" prefix={<Search className="size-4 text-stone-400" />} value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="按标题查询" />
-                            <Select size="large" aria-label="提示词排序" value={order} onChange={setOrder} className="w-44" options={[{ value: "asc", label: "来源顺序 · 升序" }, { value: "desc", label: "来源顺序 · 降序" }]} />
+                            <Select
+                                size="large"
+                                aria-label="提示词排序"
+                                value={order}
+                                onChange={setOrder}
+                                className="w-44"
+                                options={[
+                                    { value: "asc", label: "来源顺序 · 升序" },
+                                    { value: "desc", label: "来源顺序 · 降序" },
+                                ]}
+                            />
                         </div>
                         <div ref={listRef} className="thin-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-2" data-canvas-no-zoom onScroll={handleListScroll} onWheelCapture={(event) => event.stopPropagation()}>
-                            {query.isLoading ? <div className="flex h-40 items-center justify-center"><Spin /></div> : null}
-                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                                {items.map((item) => <PromptCard key={item.id} item={item} onOpen={() => setPreviewPrompt(item)} onCopy={() => setPreviewPrompt(item)} compact />)}
-                            </div>
+                            {query.isLoading ? (
+                                <div className="flex h-40 items-center justify-center">
+                                    <Spin />
+                                </div>
+                            ) : null}
+                            <PromptWindowGrid
+                                items={items}
+                                scrollRef={listRef}
+                                active={open}
+                                compact
+                                className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+                                renderItem={(item) => <PromptCard item={item} onOpen={() => setPreviewPrompt(item)} onCopy={() => setPreviewPrompt(item)} compact />}
+                            />
                             {!query.isLoading && items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有找到匹配的提示词" className="py-8" /> : null}
-                            {query.isFetchingNextPage ? <div className="py-4 text-center"><Spin size="small" /></div> : null}
+                            {query.isFetchingNextPage ? (
+                                <div className="py-4 text-center">
+                                    <Spin size="small" />
+                                </div>
+                            ) : null}
                         </div>
                     </section>
                 </div>
             </Modal>
-            <PromptDetailDialog
-                prompt={previewPrompt}
-                onClose={() => setPreviewPrompt(null)}
-                onCopy={(prompt) => copyText(prompt, "提示词已复制")}
-                onUse={selectPrompt}
-            />
+            <PromptDetailDialog prompt={previewPrompt} onClose={() => setPreviewPrompt(null)} onCopy={(prompt) => copyText(prompt, "提示词已复制")} onUse={selectPrompt} />
         </>
     );
 }

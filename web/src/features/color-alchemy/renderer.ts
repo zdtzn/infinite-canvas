@@ -20,22 +20,72 @@ export type ColorRenderOptions = {
     onProgress?: (progress: ColorRenderProgress) => void;
 };
 
-export async function loadColorImage(source: ColorAlchemySource): Promise<LoadedColorImage> {
-    const url = await resolveImageUrl(source.storageKey, source.url);
-    const blob = await readImageBlob(url || source.url);
+export async function loadColorImage(source: ColorAlchemySource, signal?: AbortSignal): Promise<LoadedColorImage> {
+    throwIfAborted(signal);
+    const url = await abortableLoad(resolveImageUrl(source.storageKey, source.url), signal);
+    throwIfAborted(signal);
+    const blob = await readImageBlob(url || source.url, undefined, { signal });
+    throwIfAborted(signal);
     if (typeof createImageBitmap === "function") {
-        const bitmap = await createImageBitmap(blob);
+        const bitmap = await abortableLoad(createImageBitmap(blob), signal, (lateBitmap) => lateBitmap.close());
+        if (signal?.aborted) {
+            bitmap.close();
+            throwIfAborted(signal);
+        }
         return { image: bitmap, width: bitmap.width, height: bitmap.height, dispose: () => bitmap.close() };
     }
 
     const objectUrl = URL.createObjectURL(blob);
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const element = new Image();
-        element.onload = () => resolve(element);
-        element.onerror = () => reject(new Error("图片无法解码，请尝试重新上传"));
-        element.src = objectUrl;
+    try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const element = new Image();
+            const cleanup = () => {
+                element.onload = element.onerror = null;
+                signal?.removeEventListener("abort", abort);
+            };
+            const abort = () => {
+                cleanup();
+                element.src = "";
+                reject(signal?.reason ?? new DOMException("图片载入已取消", "AbortError"));
+            };
+            element.onload = () => {
+                cleanup();
+                resolve(element);
+            };
+            element.onerror = () => {
+                cleanup();
+                reject(new Error("图片无法解码，请尝试重新上传"));
+            };
+            signal?.addEventListener("abort", abort, { once: true });
+            if (signal?.aborted) return abort();
+            element.src = objectUrl;
+        });
+        throwIfAborted(signal);
+        return { image, width: image.naturalWidth, height: image.naturalHeight, dispose: () => URL.revokeObjectURL(objectUrl) };
+    } catch (error) {
+        URL.revokeObjectURL(objectUrl);
+        throw error;
+    }
+}
+
+function abortableLoad<T>(pending: Promise<T>, signal?: AbortSignal, disposeLate?: (value: T) => void): Promise<T> {
+    if (!signal) return pending;
+    return new Promise<T>((resolve, reject) => {
+        const abort = () => reject(signal.reason ?? new DOMException("图片载入已取消", "AbortError"));
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+        pending.then(
+            (value) => {
+                signal.removeEventListener("abort", abort);
+                if (signal.aborted) disposeLate?.(value);
+                else resolve(value);
+            },
+            (error) => {
+                signal.removeEventListener("abort", abort);
+                reject(error);
+            },
+        );
     });
-    return { image, width: image.naturalWidth, height: image.naturalHeight, dispose: () => URL.revokeObjectURL(objectUrl) };
 }
 
 export function drawOriginalColorPreview(source: LoadedColorImage, canvas: HTMLCanvasElement, maxEdge = 1_400) {
@@ -80,7 +130,7 @@ export async function analyzeColorSource(source: ColorAlchemySource) {
 export async function renderColorBlob(source: ColorAlchemySource, settings: ColorSettings, format: ColorExportFormat, quality = 0.92, maxEdge?: number, options?: ColorRenderOptions) {
     throwIfAborted(options?.signal);
     options?.onProgress?.({ phase: "loading", progress: 0.04 });
-    const loaded = await loadColorImage(source);
+    const loaded = await loadColorImage(source, options?.signal);
     try {
         throwIfAborted(options?.signal);
         options?.onProgress?.({ phase: "loading", progress: 0.12 });
@@ -97,11 +147,13 @@ export async function renderColorBlob(source: ColorAlchemySource, settings: Colo
         }
         context.drawImage(loaded.image, 0, 0, canvas.width, canvas.height);
         const workerBlob = await renderWithWorkerIfAvailable(context, canvas.width, canvas.height, settings, format, quality, options);
+        throwIfAborted(options?.signal);
         if (workerBlob) return workerBlob;
         await processCanvas(context, canvas.width, canvas.height, settings, options);
         throwIfAborted(options?.signal);
         options?.onProgress?.({ phase: "encoding", progress: 0.94 });
-        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, format === "png" ? undefined : Math.min(1, Math.max(0.4, quality))));
+        const blob = await abortableLoad(new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, format === "png" ? undefined : Math.min(1, Math.max(0.4, quality)))), options?.signal);
+        throwIfAborted(options?.signal);
         if (!blob) throw new Error("导出失败：浏览器未能编码图片");
         return blob;
     } finally {

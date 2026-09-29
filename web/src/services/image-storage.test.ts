@@ -6,6 +6,83 @@ const originalFetch = globalThis.fetch;
 const originalCreateImageBitmap = globalThis.createImageBitmap;
 const originalDocument = globalThis.document;
 
+test("bounds a request that never returns headers", async () => {
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = ((_input, init) => {
+        signal = init?.signal as AbortSignal;
+        return new Promise(() => {});
+    }) as typeof fetch;
+    await expect(readImageBlob("/image.png", undefined, { timeoutMs: 10 })).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(signal?.aborted).toBe(true);
+});
+
+test("keeps the deadline active while the response body is pending", async () => {
+    let bodyStarted = false;
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = (async (_input, init) => {
+        signal = init?.signal as AbortSignal;
+        return {
+            ok: true,
+            blob: () => {
+                bodyStarted = true;
+                return new Promise(() => {});
+            },
+        } as Response;
+    }) as typeof fetch;
+    await expect(readImageBlob("/image.png", undefined, { timeoutMs: 10 })).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(bodyStarted).toBe(true);
+    expect(signal?.aborted).toBe(true);
+});
+
+test("cancels a pending body and preserves the caller's reason", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("cancelled by user", "AbortError");
+    let signal: AbortSignal | undefined;
+    let bodyStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+        bodyStarted = resolve;
+    });
+    globalThis.fetch = (async (_input, init) => {
+        signal = init?.signal as AbortSignal;
+        return {
+            ok: true,
+            blob: () => {
+                bodyStarted();
+                return new Promise(() => {});
+            },
+        } as Response;
+    }) as typeof fetch;
+    const pending = readImageBlob("/image.png", undefined, { signal: controller.signal, timeoutMs: 1_000 });
+    await started;
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+    expect(signal?.reason).toBe(reason);
+});
+
+test("pre-aborted reads never fetch, including local blobs", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    globalThis.fetch = (() => {
+        throw new Error("must not fetch");
+    }) as typeof fetch;
+    for (const input of ["/image.png", "data:image/png;base64,iVBORw0KGgo=", new Blob(["png"], { type: "image/png" })]) {
+        await expect(readImageBlob(input, undefined, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    }
+});
+
+test("clears the deadline and detaches caller cancellation after success", async () => {
+    const controller = new AbortController();
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = (async (_input, init) => {
+        signal = init?.signal as AbortSignal;
+        return new Response("png", { headers: { "Content-Type": "image/png" } });
+    }) as typeof fetch;
+    await readImageBlob("/image.png", undefined, { signal: controller.signal, timeoutMs: 10 });
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(signal?.aborted).toBe(false);
+});
+
 test("releases the fallback object URL when image decoding fails", async () => {
     const OriginalImage = globalThis.Image;
     const create = URL.createObjectURL;
@@ -15,11 +92,15 @@ test("releases the fallback object URL when image decoding fails", async () => {
         globalThis.createImageBitmap = undefined as unknown as typeof createImageBitmap;
         globalThis.document = {} as Document;
         URL.createObjectURL = () => "blob:failed-decode";
-        URL.revokeObjectURL = (url) => { revoked.push(url); };
+        URL.revokeObjectURL = (url) => {
+            revoked.push(url);
+        };
         globalThis.Image = class {
             onload: (() => void) | null = null;
             onerror: (() => void) | null = null;
-            set src(_value: string) { queueMicrotask(() => this.onerror?.()); }
+            set src(_value: string) {
+                queueMicrotask(() => this.onerror?.());
+            }
         } as unknown as typeof Image;
         await expect(convertImageOutput(new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }), "jpeg")).rejects.toThrow("无法解码图片");
         expect(revoked).toEqual(["blob:failed-decode"]);

@@ -2578,6 +2578,26 @@ function deleteLibraryAsset(session: SessionPayload, id: string) {
 }
 
 function listGenerationHistory(url: URL, session: SessionPayload, kind: GenerationHistoryKind) {
+    if (url.searchParams.has("recoveryJobId")) {
+        const ids = [...new Set(url.searchParams.getAll("recoveryJobId"))];
+        if (kind !== "image" || ids.length > 50 || ids.some((id) => !/^[A-Za-z0-9:_-]{1,180}$/.test(id))) throw new HttpError(400, "图片历史恢复查询无效");
+        const jobs = ids.map((id) => {
+            const job = ownedJob(session.userId, id);
+            if (job.input.source?.route !== "/image" || !["succeeded", "failed", "canceled"].includes(job.status)) throw new HttpError(400, "任务不可用于图片历史恢复");
+            return {
+                id,
+                prompt: job.input.prompt,
+                model: job.input.channelId ? `${job.input.channelId}::${job.input.model}` : job.input.model,
+                createdAt: job.createdAt,
+                imageIds: (job.result?.images || []).map((image) => image.id),
+            };
+        });
+        return json({
+            items: appDatabase.queryImageHistoryRecovery(session.userId, jobs),
+            recoveryJobIds: ids,
+            hasMore: false,
+        });
+    }
     const pageSize = Math.max(1, Math.min(200, Math.floor(Number(url.searchParams.get("pageSize") || 100)) || 100));
     const page = Math.max(1, Math.floor(Number(url.searchParams.get("page") || 1)) || 1);
     const search = (url.searchParams.get("search") || "").trim();

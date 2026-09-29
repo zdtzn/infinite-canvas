@@ -6,6 +6,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { formatCanvasGenerationElapsed } from "@/lib/canvas/canvas-generation-time";
 import { canvasImageDisplaySource, canvasImageLoadingAttributes } from "@/lib/canvas/canvas-image-loading";
+import { imageSaveState } from "@/lib/canvas/canvas-generated-image";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { generationFailureFeedback } from "@/features/cultivation/generation-messages";
@@ -474,6 +475,22 @@ export const CanvasNode = React.memo(function CanvasNode({
                 </div>
 
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
+                {imageSaveState(data.metadata) ? (
+                    <button
+                        type="button"
+                        className="absolute inset-x-0 bottom-0 px-2 py-1 text-xs"
+                        style={{ background: theme.canvas.background, color: theme.node.activeStroke }}
+                        disabled={imageSaveState(data.metadata)?.state === "pending"}
+                        title={imageSaveState(data.metadata)?.error || "图片已生成，正在保存到素材库"}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onRetry?.(data);
+                        }}
+                    >
+                        {imageSaveState(data.metadata)?.state === "failed" ? "图片已生成 · 保存失败，点击重试保存" : "图片已生成 · 保存中"}
+                    </button>
+                ) : null}
 
                 {!isGroup && !hasImageContent && !hasVideoContent && !hasAudioContent ? (
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} />
@@ -802,21 +819,18 @@ function ImageContent({
     const [previewSize, setPreviewSize] = useState<{ url: string; edge: number } | null>(null);
     const [failedPreview, setFailedPreview] = useState<string | null>(null);
     const previewUrl = node.metadata?.thumbnailUrl;
-    const imageSource = canvasImageDisplaySource(
-        failedPreview === previewUrl ? { ...node.metadata, thumbnailUrl: undefined } : node.metadata,
-        {
-            width: node.width,
-            height: node.height,
-            scale,
-            pixelRatio: typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
-            thumbnailMaxEdge: previewSize?.url === previewUrl ? previewSize?.edge : undefined,
-        },
-    );
+    const imageSource = canvasImageDisplaySource(failedPreview === previewUrl ? { ...node.metadata, thumbnailUrl: undefined } : node.metadata, {
+        width: node.width,
+        height: node.height,
+        scale,
+        pixelRatio: typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
+        thumbnailMaxEdge: previewSize?.url === previewUrl ? previewSize?.edge : undefined,
+    });
     const handleLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
         const image = event.currentTarget;
         if (imageSource === previewUrl && previewUrl) {
             const edge = Math.max(image.naturalWidth, image.naturalHeight);
-            if (edge > 0) setPreviewSize((current) => current?.url === previewUrl && current.edge === edge ? current : { url: previewUrl, edge });
+            if (edge > 0) setPreviewSize((current) => (current?.url === previewUrl && current.edge === edge ? current : { url: previewUrl, edge }));
         }
         onImageLoad?.(node, image);
     };

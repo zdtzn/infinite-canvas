@@ -3,8 +3,7 @@ import { BookOpen, CircleUserRound, Crown, Download, Keyboard, LogOut, Moon, Mor
 import { App, Dropdown, Input, Modal, type MenuProps } from "antd";
 import { Suspense, useState } from "react";
 
-import { VersionReleaseModal } from "@/components/layout/version-release-modal";
-import { DOCS_URL, REPOSITORY_URL } from "@/constant/env";
+import { APP_VERSION, DOCS_URL, REPOSITORY_URL } from "@/constant/env";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -16,6 +15,7 @@ import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 import { lazyRoute } from "@/lib/lazy-route";
 
 const TaskCenter = lazyRoute(() => import("@/components/layout/task-center").then(({ TaskCenter: Component }) => ({ default: Component })));
+const VersionReleaseModal = lazyRoute(() => import("@/components/layout/version-release-modal").then(({ VersionReleaseModal: Component }) => ({ default: Component })));
 
 type UserStatusActionsProps = {
     showTaskCenter?: boolean;
@@ -155,82 +155,90 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
 
     return (
         <>
-        <div className="inline-flex shrink-0 items-center gap-1">
-            {showTaskCenter ? (
-                <Suspense fallback={<span className="inline-flex size-7 shrink-0" aria-hidden="true" />}>
-                    <TaskCenter />
+            <div className="inline-flex shrink-0 items-center gap-1">
+                {showTaskCenter ? (
+                    <Suspense fallback={<span className="inline-flex size-7 shrink-0" aria-hidden="true" />}>
+                        <TaskCenter />
+                    </Suspense>
+                ) : null}
+                {showWorkspaceMenu ? <WorkspaceMenuAction variant={variant} onOpenShortcuts={onOpenShortcuts} onOpenPlugins={onOpenPlugins} /> : null}
+                {PUBLIC_MODE ? (
+                    <Dropdown menu={{ items: accountMenuItems }} trigger={["click"]}>
+                        <button
+                            type="button"
+                            className={cn(naturalIconClass, isDouEmperor && "imperial-avatar-menu-trigger", isImperialMode && "is-active")}
+                            style={versionStyle}
+                            aria-label="打开账户菜单"
+                            title={user?.displayName || user?.username || "当前账号"}
+                        >
+                            {user?.avatarUrl ? (
+                                <ProfileAvatarImage
+                                    src={user.avatarUrl}
+                                    alt=""
+                                    fallback={isDouEmperor ? <Crown className="size-4" /> : <CircleUserRound className="size-4" />}
+                                    width={24}
+                                    height={24}
+                                    loading="eager"
+                                    fetchPriority="high"
+                                    className="size-6 rounded-full"
+                                />
+                            ) : isDouEmperor ? (
+                                <Crown className="size-4" />
+                            ) : (
+                                <CircleUserRound className="size-4" />
+                            )}
+                        </button>
+                    </Dropdown>
+                ) : null}
+                <Suspense
+                    fallback={
+                        <span className="shrink-0 text-xs font-medium text-stone-500 dark:text-stone-400" style={versionStyle}>
+                            {APP_VERSION}
+                        </span>
+                    }
+                >
+                    <VersionReleaseModal style={versionStyle} />
                 </Suspense>
-            ) : null}
-            {showWorkspaceMenu ? <WorkspaceMenuAction variant={variant} onOpenShortcuts={onOpenShortcuts} onOpenPlugins={onOpenPlugins} /> : null}
-            {PUBLIC_MODE ? (
-                <Dropdown menu={{ items: accountMenuItems }} trigger={["click"]}>
-                    <button
-                        type="button"
-                        className={cn(naturalIconClass, isDouEmperor && "imperial-avatar-menu-trigger", isImperialMode && "is-active")}
-                        style={versionStyle}
-                        aria-label="打开账户菜单"
-                        title={user?.displayName || user?.username || "当前账号"}
-                    >
-                        {user?.avatarUrl ? (
-                            <ProfileAvatarImage
-                                src={user.avatarUrl}
-                                alt=""
-                                fallback={isDouEmperor ? <Crown className="size-4" /> : <CircleUserRound className="size-4" />}
-                                width={24}
-                                height={24}
-                                loading="eager"
-                                fetchPriority="high"
-                                className="size-6 rounded-full"
-                            />
-                        ) : isDouEmperor ? (
-                            <Crown className="size-4" />
-                        ) : (
-                            <CircleUserRound className="size-4" />
-                        )}
-                    </button>
-                </Dropdown>
-            ) : null}
-            <VersionReleaseModal style={versionStyle} />
-        </div>
-        <Modal
-            title="修改个人密码"
-            open={passwordOpen}
-            okText="保存密码"
-            cancelText="取消"
-            confirmLoading={passwordSaving}
-            onCancel={() => {
-                if (!passwordSaving) setPasswordOpen(false);
-            }}
-            onOk={async () => {
-                if (newPassword.length < 8) {
-                    message.error("新密码至少 8 位");
-                    return;
-                }
-                if (newPassword !== confirmPassword) {
-                    message.error("两次输入的新密码不一致");
-                    return;
-                }
-                setPasswordSaving(true);
-                try {
-                    await changePersonalPassword(currentPassword, newPassword);
-                    setCurrentPassword("");
-                    setNewPassword("");
-                    setConfirmPassword("");
-                    setPasswordOpen(false);
-                    message.success("个人密码已更新，其他设备已退出");
-                } catch (error) {
-                    message.error(error instanceof Error ? error.message : "密码更新失败");
-                } finally {
-                    setPasswordSaving(false);
-                }
-            }}
-        >
-            <div className="space-y-3">
-                <Input.Password value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} placeholder="当前密码" autoComplete="current-password" />
-                <Input.Password value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="新密码（至少 8 位）" autoComplete="new-password" />
-                <Input.Password value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="再次输入新密码" autoComplete="new-password" />
             </div>
-        </Modal>
+            <Modal
+                title="修改个人密码"
+                open={passwordOpen}
+                okText="保存密码"
+                cancelText="取消"
+                confirmLoading={passwordSaving}
+                onCancel={() => {
+                    if (!passwordSaving) setPasswordOpen(false);
+                }}
+                onOk={async () => {
+                    if (newPassword.length < 8) {
+                        message.error("新密码至少 8 位");
+                        return;
+                    }
+                    if (newPassword !== confirmPassword) {
+                        message.error("两次输入的新密码不一致");
+                        return;
+                    }
+                    setPasswordSaving(true);
+                    try {
+                        await changePersonalPassword(currentPassword, newPassword);
+                        setCurrentPassword("");
+                        setNewPassword("");
+                        setConfirmPassword("");
+                        setPasswordOpen(false);
+                        message.success("个人密码已更新，其他设备已退出");
+                    } catch (error) {
+                        message.error(error instanceof Error ? error.message : "密码更新失败");
+                    } finally {
+                        setPasswordSaving(false);
+                    }
+                }}
+            >
+                <div className="space-y-3">
+                    <Input.Password value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} placeholder="当前密码" autoComplete="current-password" />
+                    <Input.Password value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="新密码（至少 8 位）" autoComplete="new-password" />
+                    <Input.Password value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="再次输入新密码" autoComplete="new-password" />
+                </div>
+            </Modal>
         </>
     );
 }

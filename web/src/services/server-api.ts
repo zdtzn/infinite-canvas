@@ -372,6 +372,7 @@ export async function deleteServerAssetLibraryItem(id: string, expectedUserId?: 
 }
 
 export type ServerGenerationHistoryQuery = {
+    recoveryJobIds?: string[];
     page?: number;
     pageSize?: number;
     search?: string;
@@ -381,6 +382,7 @@ export type ServerGenerationHistoryQuery = {
 };
 
 export type ServerGenerationHistoryPage = {
+    recoveryJobIds?: string[];
     items: Record<string, unknown>[];
     page?: number;
     pageSize?: number;
@@ -391,6 +393,7 @@ export type ServerGenerationHistoryPage = {
 
 export async function fetchServerGenerationHistory(kind: "image" | "video", expectedUserId?: string, options: ServerGenerationHistoryQuery = {}) {
     const params = new URLSearchParams();
+    options.recoveryJobIds?.forEach((id) => params.append("recoveryJobId", id));
     if (options.page) params.set("page", String(options.page));
     if (options.pageSize) params.set("pageSize", String(options.pageSize));
     if (options.search) params.set("search", options.search);
@@ -456,8 +459,8 @@ export async function fetchServerJobs(expectedUserId?: string) {
     return serverRequest<{ items: ServerJob[] }>("/api/jobs", { timeoutMs: 12_000, expectedUserId });
 }
 
-export async function fetchServerJob(id: string, expectedUserId?: string) {
-    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}`, { timeoutMs: 12_000, expectedUserId });
+export async function fetchServerJob(id: string, expectedUserId?: string, signal?: AbortSignal) {
+    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}`, { timeoutMs: 12_000, expectedUserId, signal });
 }
 
 export async function cancelServerJob(id: string, expectedUserId?: string) {
@@ -646,9 +649,21 @@ export async function updateAdminAnnouncement(id: string, input: Partial<Announc
 }
 
 export async function waitForServerJob(id: string, options?: { signal?: AbortSignal; onUpdate?: (job: ServerJob) => void; expectedUserId?: string }) {
+    let connectionFailures = 0;
     for (;;) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const { job } = await fetchServerJob(id, options?.expectedUserId);
+        let job: ServerJob;
+        try {
+            ({ job } = await fetchServerJob(id, options?.expectedUserId, options?.signal));
+            connectionFailures = 0;
+        } catch (error) {
+            if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+            const temporary = error instanceof ServerTransportError || (error instanceof ServerRequestError && (error.status === 408 || error.status === 429 || error.status >= 500));
+            if (!temporary) throw error;
+            // Retry only this read. A disconnected client must never resubmit paid work.
+            await abortableSleep(Math.min(800 * 2 ** Math.min(connectionFailures++, 4), 10_000), options?.signal);
+            continue;
+        }
         options?.onUpdate?.(job);
         if (job.status === "succeeded") {
             void archiveDeferredServerJob(job, options?.expectedUserId).catch(() => undefined);
@@ -692,6 +707,8 @@ export async function updateServerMember(userId: string, disabled: boolean) {
 
 type ServerRequestOptions = Omit<RequestInit, "body"> & { body?: unknown; timeoutMs?: number; expectedUserId?: string };
 
+export class ServerTransportError extends Error {}
+
 export async function serverRequest<T = unknown>(url: string, options: ServerRequestOptions = {}): Promise<T> {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(new DOMException("Timeout", "TimeoutError")), options.timeoutMs || 30_000);
@@ -710,12 +727,13 @@ export async function serverRequest<T = unknown>(url: string, options: ServerReq
     try {
         const response = await fetch(url, { ...requestOptions, headers, body, signal, credentials: "same-origin" });
         if (response.status === 204) return undefined as T;
-        return readJsonResponse<T>(response);
+        return await readJsonResponse<T>(response);
     } catch (error) {
         if (error instanceof ServerRequestError) throw error;
-        if (error instanceof DOMException && error.name === "TimeoutError") throw new Error("请求超时，请检查网络或上游接口状态");
-        if (error instanceof DOMException && error.name === "AbortError" && options.signal?.aborted) throw error;
-        throw new Error(friendlyErrorMessage(error));
+        if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        if (controller.signal.aborted) throw new ServerTransportError("请求超时，请检查网络或上游接口状态");
+        if (error instanceof TypeError) throw new ServerTransportError(friendlyErrorMessage(error));
+        throw error;
     } finally {
         window.clearTimeout(timeout);
     }
@@ -790,14 +808,17 @@ function readServerRequestId(value: unknown) {
 
 function abortableSleep(ms: number, signal?: AbortSignal) {
     return new Promise<void>((resolve, reject) => {
-        const timer = window.setTimeout(resolve, ms);
-        signal?.addEventListener(
-            "abort",
-            () => {
-                window.clearTimeout(timer);
-                reject(new DOMException("Aborted", "AbortError"));
-            },
-            { once: true },
-        );
+        const finish = () => {
+            signal?.removeEventListener("abort", abort);
+            resolve();
+        };
+        const timer = window.setTimeout(finish, ms);
+        const abort = () => {
+            window.clearTimeout(timer);
+            signal?.removeEventListener("abort", abort);
+            reject(new DOMException("Aborted", "AbortError"));
+        };
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
     });
 }

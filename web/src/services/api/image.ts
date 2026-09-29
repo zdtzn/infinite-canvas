@@ -29,6 +29,9 @@ export type RequestedImage = {
     mimeType?: string;
     persisted?: boolean;
     expiresAt?: string;
+    jobId?: string;
+    expectedUserId?: string;
+    archiveResult?: Promise<{ job: ServerJob } | { error: unknown }>;
 };
 
 export function serverImageReferenceInput(reference: { storageKey?: string; thumbnailKey?: string }, preferOptimized = false): ServerImageReferenceInput | null {
@@ -121,6 +124,7 @@ export type RequestOptions = {
     cancelOnAbort?: boolean;
     onJobCreated?: (jobId: string) => void;
     onJobArchived?: (job: ServerJob) => void | Promise<void>;
+    onJobArchiveFailed?: (error: unknown, job: ServerJob) => void | Promise<void>;
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
     expectedUserId?: string;
     idempotencyKey?: string;
@@ -1018,30 +1022,39 @@ async function requestServerImageJob(
     options?.signal?.addEventListener("abort", abort, { once: true });
     if (options?.signal?.aborted) abort();
     try {
-        let completed = await waitForServerJob(job.id, { signal: options?.signal, expectedUserId });
-        if (completed.result?.recoveryPending) {
-            if (options?.source?.route === "/image") {
-                void archiveDeferredServerJob(completed, expectedUserId)
-                    .then((archived) => options?.onJobArchived?.(archived))
-                    .catch(() => undefined);
-            } else {
-                completed = await archiveDeferredServerJob(completed, expectedUserId, options?.signal);
-            }
-        }
-        return (completed.result?.images || []).map((image) => ({
-            id: image.id,
-            dataUrl: image.persisted === false ? image.recoveryUrl || image.dataUrl : image.dataUrl,
-            width: image.width,
-            height: image.height,
-            bytes: image.bytes,
-            durationMs: image.durationMs,
-            mimeType: image.mimeType,
-            persisted: image.persisted,
-            expiresAt: image.expiresAt,
-        }));
+        const completed = await waitForServerJob(job.id, { signal: options?.signal, expectedUserId });
+        return completedServerImages(completed, expectedUserId, options);
     } finally {
         options?.signal?.removeEventListener("abort", abort);
     }
+}
+
+// A successful paid generation stays successful even if archival fails. Consumers
+// can await archiveResult independently of first display, or use the callbacks.
+export function completedServerImages(completed: ServerJob, expectedUserId: string, options?: RequestOptions, archive = archiveDeferredServerJob): RequestedImage[] {
+    const archiveResult = completed.result?.images.some((image) => image.persisted === false)
+        ? Promise.resolve()
+              .then(() => archive(completed, expectedUserId))
+              .then(
+                  (job) => ({ job }),
+                  (error: unknown) => ({ error }),
+              )
+        : undefined;
+    if (archiveResult) void archiveResult.then((result) => ("job" in result ? options?.onJobArchived?.(result.job) : options?.onJobArchiveFailed?.(result.error, completed))).catch(() => undefined);
+    return (completed.result?.images || []).map((image) => ({
+        id: image.id,
+        jobId: completed.id,
+        expectedUserId,
+        archiveResult: archiveResult || Promise.resolve({ job: completed }),
+        dataUrl: image.persisted === false ? image.recoveryUrl || image.dataUrl : image.dataUrl,
+        width: image.width,
+        height: image.height,
+        bytes: image.bytes,
+        durationMs: image.durationMs,
+        mimeType: image.mimeType,
+        persisted: image.persisted,
+        expiresAt: image.expiresAt,
+    }));
 }
 
 const defaultGeminiConfig: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat" | "model" | "systemPrompt"> = {

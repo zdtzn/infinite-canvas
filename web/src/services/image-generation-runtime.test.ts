@@ -31,6 +31,35 @@ function deferred<T>() {
 const testImage: GeneratedImage = { id: "test", dataUrl: "data:image/png;base64,AA==", durationMs: 10, width: 1, height: 1, bytes: 1 };
 const testSnapshot: ImageGenerationSnapshot = { text: "test", config: {} as ImageGenerationSnapshot["config"], references: [] };
 
+test("waiting clock does not recreate task snapshots or notify all subscribers", async () => {
+    const started = deferred<void>();
+    const completion = deferred<ImageGenerationCompletion>();
+    const result = deferred<GeneratedImage>();
+    const id = startImageGeneration(testSnapshot, 1, completion.resolve, async () => {
+        started.resolve();
+        return result.promise;
+    })!;
+    await started.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const before = getImageGenerationJobsSnapshot();
+    let notifications = 0;
+    const unsubscribe = subscribeImageGeneration(() => notifications++);
+    try {
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+        assert.equal(getImageGenerationJobsSnapshot(), before);
+        assert.equal(notifications, 0);
+        result.resolve(testImage);
+        await completion.promise;
+        assert.ok(notifications > 0);
+        assert.ok(getImageGenerationJobsSnapshot().find((job) => job.id === id)!.elapsedMs >= 1000);
+    } finally {
+        unsubscribe();
+        await cancelImageGeneration(id);
+        selectImageGenerationJob(id);
+        clearImageGenerationJob();
+    }
+});
+
 test("removes completed task entries without touching running work or completed images", async () => {
     const completed = deferred<ImageGenerationCompletion>();
     const finishedId = startImageGeneration(testSnapshot, 1, completed.resolve, async () => testImage)!;

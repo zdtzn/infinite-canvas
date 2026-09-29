@@ -5,7 +5,7 @@ import { requestEdit, requestGeneration } from "@/services/api/image";
 import { settleWithConcurrency } from "@/lib/async-pool";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { archiveDeferredServerJob, cancelServerJob, fetchServerJob, retryServerJob, waitForServerJob, type ServerJob, type ServerJobImage } from "@/services/server-api";
+import { archiveDeferredServerJob, cancelServerJob, retryServerJob, waitForServerJob, type ServerJob, type ServerJobImage } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -89,7 +89,6 @@ const controllers = new Map<string, AbortController>();
 const cancellations = new Map<string, Promise<void>>();
 const activeSlots = new Set<string>();
 const slotWaiters = new Set<() => void>();
-let elapsedTimer: ReturnType<typeof setInterval> | undefined;
 const listeners = new Set<() => void>();
 const runtimeStore = localforage.createInstance({ name: "infinite-canvas", storeName: "generation_runtime" });
 const RUNTIME_JOB_KEY = "active-image-job:v1";
@@ -108,7 +107,6 @@ export function prepareImageGenerationRuntimeForUser(userId: string) {
     runtimeOwnerUserId = nextOwnerUserId;
     hydrationVersion += 1;
     hydrationStarted = false;
-    stopElapsedTimer();
     jobs = [];
     selectedJobId = null;
     selectionVersion += 1;
@@ -168,7 +166,6 @@ export function startImageGeneration(snapshot: ImageGenerationSnapshot, count: n
     jobs = [...jobs, job];
     selectedJobId = job.id;
     selectionVersion += 1;
-    startElapsedTimer();
     emit();
     persistCurrentJob();
 
@@ -197,7 +194,6 @@ export async function retryImageGeneration(index: number, snapshot: ImageGenerat
         retryOfServerJobId: job.results[index].serverJobId || job.results[index].retryOfServerJobId,
         serverJobId: undefined,
     });
-    startElapsedTimer();
     try {
         const image = await runGenerationSlot(job.id, index, snapshot, requestImageSlot, ownerUserId);
         return runtimeOwnerUserId === ownerUserId && hydrationVersion === ownerVersion ? image : null;
@@ -323,7 +319,6 @@ function finishJob(jobId: string): ImageGenerationCompletion | undefined {
     const error = job.results.find((result) => result.status === "failed")?.error;
     const durationMs = Date.now() - job.startedAt;
     updateJob(jobId, { status: successCount ? "succeeded" : failCount ? "failed" : "canceled", successCount, failCount, elapsedMs: durationMs, error });
-    if (!jobs.some((item) => item.status === "running")) stopElapsedTimer();
     wakeSlotWaiters();
     return { successImages, successCount, failCount, canceledCount, error, durationMs };
 }
@@ -433,14 +428,6 @@ function trimCompletedJobs() {
     jobs = jobs.filter((job) => job.status === "running" || job.id === selectedJobId || recent.has(job.id));
 }
 
-function startElapsedTimer() {
-    if (elapsedTimer) return;
-    elapsedTimer = setInterval(() => {
-        jobs = jobs.map((job) => (job.status === "running" ? { ...job, elapsedMs: Date.now() - job.startedAt } : job));
-        emit();
-    }, 1000);
-}
-
 function wakeSlotWaiters() {
     [...slotWaiters].forEach((wake) => wake());
 }
@@ -478,19 +465,12 @@ function abortableResult<T>(request: Promise<T>, signal: AbortSignal) {
     });
 }
 
-function stopElapsedTimer() {
-    if (!elapsedTimer) return;
-    clearInterval(elapsedTimer);
-    elapsedTimer = undefined;
-}
-
 function emit() {
     listeners.forEach((listener) => listener());
 }
 
 async function restoreServerImage(serverJobId: string, expectedUserId: string, onServerJobArchived?: (job: ServerJob) => void, signal?: AbortSignal) {
-    const current = await fetchServerJob(serverJobId, expectedUserId);
-    const job = current.job.status === "succeeded" ? current.job : await waitForServerJob(serverJobId, { expectedUserId, signal });
+    const job = await waitForServerJob(serverJobId, { expectedUserId, signal });
     if (job.result?.recoveryPending) {
         void archiveDeferredServerJob(job, expectedUserId)
             .then((archived) => onServerJobArchived?.(archived))
@@ -547,7 +527,6 @@ function hydrateRuntime() {
             emit();
             for (const job of restored) {
                 if (job.status !== "running" || !job.snapshot) continue;
-                startElapsedTimer();
                 void runGeneration(job.id, job.snapshot, undefined, requestImageSlot, ownerUserId, version, job.slotConcurrency || job.results.length);
             }
         })

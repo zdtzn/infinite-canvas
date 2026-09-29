@@ -34,7 +34,9 @@ describe("SQLite application database", () => {
     directories.push(dataDir);
     const db = openAppDatabase({ dataDir });
     try {
-      db.raw!.query("INSERT INTO users(user_id, display_name, created_at) VALUES ('legacy', 'Legacy', 1)").run();
+      db.raw!.query(
+        "INSERT INTO users(user_id, display_name, created_at) VALUES ('legacy', 'Legacy', 1)",
+      ).run();
       db.raw!.exec(`
         DELETE FROM schema_migrations WHERE version = 26;
         DROP TABLE wallet_ledger;
@@ -50,9 +52,18 @@ describe("SQLite application database", () => {
     }
     const upgraded = openAppDatabase({ dataDir });
     try {
-      expect(upgraded.raw!.query("SELECT free_count, paid_count FROM generation_usage WHERE job_id = 'legacy-job'").get())
-        .toEqual({ free_count: 2, paid_count: 0 });
-      expect(upgraded.raw!.query("SELECT COUNT(*) AS count FROM wallet_ledger").get()).toEqual({ count: 0 });
+      expect(
+        upgraded
+          .raw!.query(
+            "SELECT free_count, paid_count FROM generation_usage WHERE job_id = 'legacy-job'",
+          )
+          .get(),
+      ).toEqual({ free_count: 2, paid_count: 0 });
+      expect(
+        upgraded
+          .raw!.query("SELECT COUNT(*) AS count FROM wallet_ledger")
+          .get(),
+      ).toEqual({ count: 0 });
     } finally {
       upgraded.close();
     }
@@ -195,6 +206,17 @@ describe("SQLite application database", () => {
       const storedReference = state.jobs.job1.input.references[0];
 
       expect(store.mode).toBe("sqlite");
+      expect(
+        store.queryImageHistoryRecovery("admin", [
+          {
+            id: "job1",
+            prompt: "test",
+            model: "channel::gpt-image-1",
+            createdAt: 2,
+            imageIds: [],
+          },
+        ]),
+      ).toEqual([]);
       expect(state.users.admin.displayName).toBe("Admin");
       expect(Object.keys(state.projects.admin)).toEqual(["project1"]);
       expect(storedReference).toMatchObject({ mimeType: "image/png" });

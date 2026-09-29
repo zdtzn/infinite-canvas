@@ -11,6 +11,10 @@ import { randomUUID } from "node:crypto";
 import { extname, join } from "node:path";
 
 import { decodeImageDataUrl } from "../lib/image-mime";
+import {
+  queryImageHistoryRecovery,
+  type ImageHistoryRecoveryJob,
+} from "../lib/image-history-recovery";
 import { LEGACY_PRODUCT_CAPABILITIES } from "../modules/cultivation/defaults";
 import type {
   GenerationHistoryKind,
@@ -27,6 +31,10 @@ import type {
 } from "../types";
 
 export type AppDatabase = {
+  queryImageHistoryRecovery(
+    userId: string,
+    jobs: ImageHistoryRecoveryJob[],
+  ): Record<string, unknown>[];
   mode: "sqlite" | "legacy";
   loadState(): ServerState;
   saveState(state: ServerState): void;
@@ -1140,7 +1148,11 @@ function runMigrations(database: Database) {
         ALTER TABLE generation_usage ADD COLUMN paid_count INTEGER NOT NULL DEFAULT 0;
         UPDATE generation_usage SET free_count = requested_count WHERE status = 'reserved';
       `);
-      database.query("INSERT INTO schema_migrations(version, applied_at) VALUES (26, ?)").run(Date.now());
+      database
+        .query(
+          "INSERT INTO schema_migrations(version, applied_at) VALUES (26, ?)",
+        )
+        .run(Date.now());
     })();
 }
 
@@ -1478,6 +1490,8 @@ function sqliteStore(database: Database): AppDatabase {
           )
           .run(userId, assetId);
       })(),
+    queryImageHistoryRecovery: (userId, jobs) =>
+      queryImageHistoryRecovery(database, userId, jobs),
     loadGenerationHistory: (userId, kind) =>
       (
         database

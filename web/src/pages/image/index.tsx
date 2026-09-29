@@ -15,6 +15,7 @@ import { modelOptionLabel, normalizeImageSizeSelection, useConfigStore, useEffec
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatDuration } from "@/lib/image-utils";
+import { GenerationElapsed } from "@/components/image/generation-elapsed";
 import { settleWithConcurrency } from "@/lib/async-pool";
 import { getClipboardImageFiles } from "@/lib/image-clipboard";
 import { convertImageOutput, resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -191,7 +192,6 @@ export default function ImagePage() {
     const activeTaskSummary = summarizeImageTasks(generationJobs.flatMap((job) => job.results)).activeText;
     const concurrencyLimit = resolveImageSlotConcurrency(resolvedImageSettings.channel.baseUrl, model, cultivationProfile?.maxConcurrency || 10);
     const generateButtonLabel = activeJobCount ? (isDouEmperor ? "再起一卷 · 继续生成" : "继续生成下一组") : isDouEmperor ? "执笔天地" : "开始生成";
-    const elapsedMs = generationJob?.elapsedMs || 0;
     const results: GenerationResult[] = previewLog
         ? previewLog.images.length
             ? previewLog.images.map((image) => ({ id: image.id, status: "success", image }))
@@ -705,26 +705,31 @@ export default function ImagePage() {
                     try {
                         const jobs = (await fetchServerJobs(historyUserId)).items;
                         if (historyRequestRef.current !== requestId) return;
-                        const merged = mergeServerJobsIntoImageHistory(pageResult.items, jobs, buildLogFromServerJob);
-                        if (imageHistoryChanged(pageResult.items, merged)) {
-                            const previousById = new Map(pageResult.items.map((log) => [log.id, log]));
-                            const changedLogs = merged.filter((log) => {
-                                const current = previousById.get(log.id);
-                                return !current || imageHistoryChanged([current], [log]);
-                            });
-                            await settleWithConcurrency(changedLogs, 2, (log) => persistGenerationHistoryRecord(options, { ...serializeLog(log), updatedAt: Date.now() }));
-                            if (historyRequestRef.current !== requestId) return;
+                        const isCurrent = () => historyRequestRef.current === requestId && useUserStore.getState().user?.id === historyUserId;
+                        const { loadImageHistoryRecoveryIndex } = await import("@/services/image-generation-history");
+                        const history = await loadImageHistoryRecoveryIndex<GenerationLog>(historyUserId, jobs, isCurrent);
+                        if (!isCurrent()) return;
+                        const merged = mergeServerJobsIntoImageHistory(history, jobs, buildLogFromServerJob);
+                        const previousById = new Map(history.filter((log): log is GenerationLog => !("deletedAt" in log && log.deletedAt)).map((log) => [log.id, log]));
+                        const changedLogs = merged.filter((log) => {
+                            const current = previousById.get(log.id);
+                            return !current || imageHistoryChanged([current], [log]);
+                        });
+                        if (changedLogs.length) {
+                            await settleWithConcurrency(changedLogs, 2, (log) => (isCurrent() ? persistGenerationHistoryRecord(options, { ...serializeLog(log), updatedAt: Date.now() }) : Promise.resolve(undefined)));
+                            if (!isCurrent()) return;
                             const refreshedPage = await loadGenerationHistoryPage(options, {
                                 page: 1,
                                 pageSize: HISTORY_PAGE_SIZE,
                             });
-                            if (historyRequestRef.current !== requestId) return;
+                            if (!isCurrent()) return;
                             setLogs(refreshedPage.items);
                             setHistoryPage(refreshedPage.page);
                             setHistoryTotal(refreshedPage.total);
                             setHistoryModels(refreshedPage.models);
                             setSelectedLogIds([]);
                         }
+                        if (!isCurrent()) return;
                         const pendingJobs = jobs.filter((job) => job.status === "succeeded" && job.result?.recoveryPending && !historyArchiveRunsRef.current.has(job.id));
                         if (pendingJobs.length) {
                             pendingJobs.forEach((job) => historyArchiveRunsRef.current.add(job.id));
@@ -1122,7 +1127,7 @@ export default function ImagePage() {
                                     <h2 className="text-xl font-semibold">{resultView === "results" ? "生成结果" : "太古遗迹"}</h2>
                                     {resultView === "results" && previewLog ? <Tag className="m-0">遗迹预览</Tag> : null}
                                     {resultView === "history" ? <Tag className="m-0">{historyTotal}</Tag> : null}
-                                    {running && !previewLog && resultView === "results" ? <Tag className="m-0 px-2 py-1">已等待 {formatDuration(elapsedMs)}</Tag> : null}
+                                    {running && generationJob && !previewLog && resultView === "results" ? <GenerationElapsed startedAt={generationJob.startedAt} /> : null}
                                 </div>
                                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 sm:justify-end">
                                     {resultView === "results" && generationJobs.length > 0 && (generationJobs.length > 1 || !generationJob || previewLog) ? (
@@ -1188,7 +1193,11 @@ export default function ImagePage() {
                                         >
                                             <Button size="small" type="text" aria-label="查看生成任务" aria-expanded={taskPanelOpen}>
                                                 任务 · {generationJobs.length}
-                                                {activeJobCount ? <Tooltip title={activeTaskSummary || "正在准备任务"}><span className="text-xs text-muted-foreground">进行中 {activeJobCount} 组</span></Tooltip> : null}
+                                                {activeJobCount ? (
+                                                    <Tooltip title={activeTaskSummary || "正在准备任务"}>
+                                                        <span className="text-xs text-muted-foreground">进行中 {activeJobCount} 组</span>
+                                                    </Tooltip>
+                                                ) : null}
                                                 <ChevronDown className="size-3.5" />
                                             </Button>
                                         </Popover>

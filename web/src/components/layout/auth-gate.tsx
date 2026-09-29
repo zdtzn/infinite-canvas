@@ -10,6 +10,7 @@ import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 
 import { lazyRoute } from "@/lib/lazy-route";
+import { preloadRoute } from "@/lib/route-loaders";
 
 const loadLoginForm = () => import("./login-form");
 const LoginFormView = lazyRoute(loadLoginForm);
@@ -44,6 +45,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const [transitionMessage, setTransitionMessage] = useState("");
 
     useEffect(() => {
+        // Load code alongside authentication. Intent preloads may fetch account
+        // data (notably chat); warmup mode only imports the route module.
+        void preloadRoute(window.location.pathname, { fromWarmup: true });
         if (!PUBLIC_MODE) {
             setLoading(false);
             return;
@@ -83,7 +87,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setSubmitting(true);
         setError("");
         try {
-            const result = configured ? values.register ? await registerAccess(values) : await loginAccess(values) : await setupAccess(values);
+            const result = configured ? (values.register ? await registerAccess(values) : await loginAccess(values)) : await setupAccess(values);
             void preloadAccountSessionRuntime();
             preloadHomeBackground(result.user);
             setTransitionMessage(selectLoginTransitionMessage(result.user.userId));

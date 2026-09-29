@@ -83,6 +83,7 @@ export default function ColorAlchemyPage() {
     const settingsDraftRef = useRef<ColorSettingsDraft>(null);
 
     useEffect(() => prepareColorAlchemyForUser(userId), [userId]);
+    useEffect(() => () => exportAbortRef.current?.abort(), []);
 
     useEffect(() => {
         const transfer = readCreativeImageTransfer(location.state);
@@ -371,6 +372,7 @@ export default function ColorAlchemyPage() {
         try {
             const { blob } = await createRenderedImage(exportFormat, exportQuality / 100, false, { signal: controller.signal, onProgress: ({ progress }) => setExportProgress(progress) });
             const { saveAs } = await import("file-saver");
+            controller.signal.throwIfAborted();
             saveAs(blob, `${safeFileName(document.source.title)}-灵彩.${colorExportExtension(exportFormat)}`);
             setExportOpen(false);
             message.success("调色结果已导出");

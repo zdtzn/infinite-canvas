@@ -146,6 +146,7 @@ export function ColorPreviewStage({
 
     useEffect(() => {
         let cancelled = false;
+        const controller = new AbortController();
         const generation = sourceGenerationRef.current + 1;
         sourceGenerationRef.current = generation;
         settingsRef.current = settings;
@@ -169,7 +170,7 @@ export function ColorPreviewStage({
         setColorSample(null);
         loadedRef.current?.dispose();
         loadedRef.current = null;
-        void loadColorImage(source)
+        void loadColorImage(source, controller.signal)
             .then(async (loaded) => {
                 if (cancelled) return loaded.dispose();
                 loadedRef.current = loaded;
@@ -205,6 +206,7 @@ export function ColorPreviewStage({
             });
         return () => {
             cancelled = true;
+            controller.abort();
             previewWorkerRef.current?.dispose();
             previewWorkerRef.current = null;
             loadedRef.current?.dispose();
