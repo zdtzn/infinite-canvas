@@ -110,5 +110,5 @@ test("version release UI is a separate lazy module with an immediate version lab
     const actions = readFileSync(new URL("./user-status-actions.tsx", import.meta.url), "utf8");
     expect(actions).not.toMatch(/import\s+\{\s*VersionReleaseModal\s*\}\s+from/);
     expect(actions).toContain('lazyRoute(() => import("@/components/layout/version-release-modal")');
-    expect(actions).toMatch(/<Suspense fallback=\{<span[^>]*>\{APP_VERSION\}<\/span>\}>\s*<VersionReleaseModal style=\{versionStyle\} \/>/);
+    expect(actions.replace(/\s+/g, "")).toMatch(/<Suspensefallback=\{<span[^>]*>\{APP_VERSION\}<\/span>\}><VersionReleaseModalstyle=\{versionStyle\}\/>/);
 });
