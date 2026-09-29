@@ -1,5 +1,6 @@
 import type { ColorSettings } from "@/features/color-alchemy/types";
 import type { VideoGenerationTask } from "@/services/api/video";
+import type { ServerJobProgress } from "@/services/server-api";
 
 export type Position = {
     x: number;
@@ -43,6 +44,7 @@ export type CanvasNodeMetadata = {
     prompt?: string;
     status?: CanvasNodeStatus;
     generationStartedAt?: number;
+    generationProgress?: ServerJobProgress;
     uploading?: boolean;
     errorDetails?: string;
     jobId?: string;

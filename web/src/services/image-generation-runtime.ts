@@ -5,7 +5,7 @@ import { requestEdit, requestGeneration } from "@/services/api/image";
 import { settleWithConcurrency } from "@/lib/async-pool";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { archiveDeferredServerJob, cancelServerJob, retryServerJob, waitForServerJob, type ServerJob, type ServerJobImage } from "@/services/server-api";
+import { archiveDeferredServerJob, cancelServerJob, retryServerJob, waitForServerJob, type ServerJob, type ServerJobImage, type ServerJobProgress } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -28,6 +28,7 @@ export type GeneratedImage = {
 };
 
 export type GenerationResult = {
+    progress?: ServerJobProgress;
     id: string;
     status: "pending" | "success" | "failed" | "canceled";
     startedAt?: number;
@@ -80,6 +81,7 @@ type SlotRunner = (
     idempotencyKey?: string,
     onServerJobArchived?: (job: ServerJob) => void,
     signal?: AbortSignal,
+    onProgress?: (progress: ServerJobProgress) => void,
 ) => Promise<GeneratedImage>;
 
 let jobs: ImageGenerationJob[] = [];
@@ -188,6 +190,7 @@ export async function retryImageGeneration(index: number, snapshot: ImageGenerat
         error: undefined,
         image: undefined,
         startedAt: undefined,
+        progress: undefined,
         cancelRequested: false,
         cancelError: undefined,
         idempotencyKey,
@@ -338,7 +341,7 @@ async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGe
         const existingServerJobId = currentResult?.serverJobId;
         const idempotencyKey = currentResult?.idempotencyKey || nanoid();
         if (!currentResult?.idempotencyKey) updateResult(jobId, index, { idempotencyKey });
-        updateResult(jobId, index, { startedAt: currentResult.startedAt || Date.now() });
+        updateResult(jobId, index, { startedAt: currentResult.startedAt || Date.now(), progress: PUBLIC_MODE && !existingServerJobId ? { jobId: "", phase: "submitting", reconnecting: false } : undefined });
         await persistCurrentJob();
         signal.throwIfAborted();
         if (!isCurrent()) throw new DOMException("Aborted", "AbortError");
@@ -361,11 +364,18 @@ async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGe
             if (jobs.find((job) => job.id === jobId)?.results[index]?.cancelRequested) void cancelSlot(jobId, index).catch(() => undefined);
         };
         if (existingServerJobId) onCreated(existingServerJobId);
+        const onProgress = (progress: ServerJobProgress) => {
+            if (!isCurrent() || signal.aborted) return;
+            const current = jobs.find((job) => job.id === jobId)?.results[index];
+            if (current?.status !== "pending" || current.id !== currentResult.id || current.serverJobId !== progress.jobId) return;
+            if (current.progress?.phase === progress.phase && current.progress?.reconnecting === progress.reconnecting && current.progress?.jobId === progress.jobId) return;
+            updateResult(jobId, index, { progress });
+        };
         const request = existingServerJobId
-            ? restoreServerImage(existingServerJobId, expectedUserId, onServerJobArchived, signal)
+            ? restoreServerImage(existingServerJobId, expectedUserId, onServerJobArchived, signal, onProgress)
             : currentResult.retryOfServerJobId && PUBLIC_MODE
-              ? retryServerImage(currentResult.retryOfServerJobId, idempotencyKey, expectedUserId, onCreated, onServerJobArchived, signal)
-              : slotRunner(snapshot, index, onCreated, expectedUserId, idempotencyKey, onServerJobArchived, signal);
+              ? retryServerImage(currentResult.retryOfServerJobId, idempotencyKey, expectedUserId, onCreated, onServerJobArchived, signal, onProgress)
+              : slotRunner(snapshot, index, onCreated, expectedUserId, idempotencyKey, onServerJobArchived, signal, onProgress);
         const nextImage = await abortableResult(Promise.resolve(request), signal);
         signal.throwIfAborted();
         if (!isCurrent()) throw new DOMException("Aborted", "AbortError");
@@ -385,9 +395,9 @@ async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGe
     }
 }
 
-async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string, idempotencyKey?: string, onServerJobArchived?: (job: ServerJob) => void, signal?: AbortSignal) {
+async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string, idempotencyKey?: string, onServerJobArchived?: (job: ServerJob) => void, signal?: AbortSignal, onProgress?: (progress: ServerJobProgress) => void) {
     const itemStartedAt = Date.now();
-    const options = { signal, cancelOnAbort: false, onJobCreated: onServerJobCreated, onJobArchived: onServerJobArchived, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey };
+    const options = { signal, onProgress, cancelOnAbort: false, onJobCreated: onServerJobCreated, onJobArchived: onServerJobArchived, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey };
     const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, options) : await requestGeneration(snapshot.config, snapshot.text, options);
     const image = result[0];
     if (!image) throw new Error("接口没有返回图片");
@@ -406,6 +416,7 @@ async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: numb
 }
 
 function updateResult(jobId: string, index: number, next: Partial<GenerationResult>) {
+    if (next.status && next.status !== "pending") next = { ...next, progress: undefined };
     const job = jobs.find((item) => item.id === jobId);
     if (!job) return;
     updateJob(jobId, { results: job.results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item)) });
@@ -469,8 +480,8 @@ function emit() {
     listeners.forEach((listener) => listener());
 }
 
-async function restoreServerImage(serverJobId: string, expectedUserId: string, onServerJobArchived?: (job: ServerJob) => void, signal?: AbortSignal) {
-    const job = await waitForServerJob(serverJobId, { expectedUserId, signal });
+async function restoreServerImage(serverJobId: string, expectedUserId: string, onServerJobArchived?: (job: ServerJob) => void, signal?: AbortSignal, onProgress?: (progress: ServerJobProgress) => void) {
+    const job = await waitForServerJob(serverJobId, { expectedUserId, signal, onProgress });
     if (job.result?.recoveryPending) {
         void archiveDeferredServerJob(job, expectedUserId)
             .then((archived) => onServerJobArchived?.(archived))
@@ -498,10 +509,10 @@ export async function generatedImageFromServerImage(image: ServerJobImage, serve
     };
 }
 
-async function retryServerImage(serverJobId: string, idempotencyKey: string, expectedUserId: string, onServerJobCreated: (jobId: string) => void, onServerJobArchived?: (job: ServerJob) => void, signal?: AbortSignal) {
+async function retryServerImage(serverJobId: string, idempotencyKey: string, expectedUserId: string, onServerJobCreated: (jobId: string) => void, onServerJobArchived?: (job: ServerJob) => void, signal?: AbortSignal, onProgress?: (progress: ServerJobProgress) => void) {
     const { job } = await retryServerJob(serverJobId, expectedUserId, idempotencyKey);
     onServerJobCreated(job.id);
-    return restoreServerImage(job.id, expectedUserId, onServerJobArchived, signal);
+    return restoreServerImage(job.id, expectedUserId, onServerJobArchived, signal, onProgress);
 }
 
 async function resolveGeneratedImageMeta(image: { dataUrl: string; width?: number; height?: number; mimeType?: string }) {

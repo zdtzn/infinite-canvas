@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import localforage from "localforage";
 import type { GeneratedImage, ImageGenerationCompletion, ImageGenerationSnapshot } from "../image-generation-runtime";
+import type { ServerJobProgress } from "../server-api";
 
 Object.defineProperty(globalThis, "window", { value: { __RUNTIME_CONFIG__: { PUBLIC_MODE: true }, setTimeout, clearTimeout }, configurable: true });
 const stored = new Map<string, unknown>();
@@ -67,7 +68,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         return Response.json({ job: { id: "api-created", status: "running" } });
     }
     if (url === "/api/jobs/api-created" && submissionMode === "complete") return Response.json({ job: { id: "api-created", status: "succeeded", result: { images: [image], successCount: 1, failCount: 0, durationMs: 1 } } });
-    if (url.startsWith("/api/jobs/")) return Response.json({ job: { id: url.split("/").pop(), status: "running" } });
+    if (url.startsWith("/api/jobs/")) return Response.json({ job: { id: url.split("/").pop(), status: "running", phase: "waiting_upstream" } });
     throw new Error(`Unexpected request: ${url}`);
 }) as typeof fetch;
 
@@ -77,14 +78,16 @@ function start(id: string, announce = true) {
     const completed = deferred<ImageGenerationCompletion>();
     let onCreated: ((id: string) => void) | undefined;
     let signal: AbortSignal | undefined;
-    const jobId = runtime.startImageGeneration(snapshot, 1, completed.resolve, async (_snapshot, _index, created, _owner, _key, _archived, requestSignal) => {
+    let onProgress: ((progress: ServerJobProgress) => void) | undefined;
+    const jobId = runtime.startImageGeneration(snapshot, 1, completed.resolve, async (_snapshot, _index, created, _owner, _key, _archived, requestSignal, progress) => {
+        onProgress = progress;
         onCreated = created;
         signal = requestSignal;
         if (announce) created?.(id);
         started.resolve();
         return result.promise;
     })!;
-    return { jobId, started, result, completed, announce: () => onCreated?.(id), signal: () => signal };
+    return { jobId, started, result, completed, announce: () => onCreated?.(id), progress: (value: ServerJobProgress) => onProgress?.(value), signal: () => signal };
 }
 
 try {
@@ -110,6 +113,9 @@ try {
     runtime.prepareImageGenerationRuntimeForUser("");
     runtime.prepareImageGenerationRuntimeForUser("public-a");
     await until(() => runtime.getImageGenerationJobsSnapshot().some((job) => job.id === resumeB.jobId));
+    await until(() => runtime.getImageGenerationJobsSnapshot().filter((job) => job.id === resumeA.jobId || job.id === resumeB.jobId).every((job) => job.results[0].progress?.phase === "waiting_upstream"));
+    resumeA.progress({ jobId: "resume-a", phase: "queued", reconnecting: true });
+    assert.equal(runtime.getImageGenerationJobsSnapshot().find((job) => job.id === resumeA.jobId)?.results[0].progress?.phase, "waiting_upstream", "callbacks from the previous account session must be ignored");
     resumeA.result.resolve(image);
     resumeB.result.resolve(image);
     await runtime.cancelImageGeneration(resumeA.jobId);
@@ -187,7 +193,16 @@ try {
     assert.equal((await lostComplete.promise).failCount, 1);
     const lostKey = submissionKeys.at(-1);
     submissionMode = "complete";
+    const apiPhases: Array<ServerJobProgress["phase"]> = [];
+    const unsubscribeProgress = runtime.subscribeImageGeneration(() => {
+        const progress = runtime.getImageGenerationSnapshot()?.results[0].progress;
+        if (progress) apiPhases.push(progress.phase);
+    });
     const recovered = await runtime.retryImageGeneration(0, managedSnapshot);
+    unsubscribeProgress();
+    assert.ok(apiPhases.includes("submitting"));
+    assert.ok(apiPhases.includes("completed"), "actual image API must forward polling progress");
+    assert.equal(runtime.getImageGenerationSnapshot()?.results[0].progress, undefined);
     assert.equal(recovered?.serverJobId, "api-created");
     assert.equal(submissionKeys.at(-1), lostKey, "unknown submission outcome must replay its key, not create another paid job");
 
@@ -196,6 +211,7 @@ try {
     useUserStore.getState().setSession(user("public-b"));
     runtime.prepareImageGenerationRuntimeForUser("public-b");
     old.announce();
+    old.progress({ jobId: "old-owner", phase: "queued", reconnecting: true });
     old.result.resolve(image);
     await Bun.sleep(5);
     assert.equal(runtime.getImageGenerationJobsSnapshot().length, 0);

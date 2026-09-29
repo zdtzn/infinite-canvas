@@ -97,6 +97,7 @@ export function ResultImageCard({
                 />
             </div>
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
+                {recoveryPending ? <p role="status" className="text-xs text-stone-500 dark:text-stone-400">保存中 · 图片已生成，正在保存到素材库</p> : null}
                 <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                     <span>
                         {image.width}x{image.height}
@@ -105,7 +106,7 @@ export function ResultImageCard({
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
                 <div className="grid min-w-0 grid-cols-3 gap-2">
-                    <Tooltip title={recoveryPending ? "图片处理中，请稍候" : "选择后续创作方式"}>
+                    <Tooltip title={recoveryPending ? "图片保存中，请稍候" : "选择后续创作方式"}>
                         <span className="min-w-0" aria-disabled={recoveryPending || continuationPending}>
                             <Dropdown trigger={["click"]} disabled={recoveryPending || continuationPending} menu={{ items: CONTINUE_ACTIONS, onClick: ({ key }) => void continueCreation(key as ResultContinueAction) }}>
                                 <Button className={`${RESULT_ACTION_BUTTON_CLASS} w-full`} size="small" loading={continuationPending} disabled={recoveryPending || continuationPending}>
@@ -115,7 +116,7 @@ export function ResultImageCard({
                             </Dropdown>
                         </span>
                     </Tooltip>
-                    <Tooltip title={recoveryPending ? "图片处理中，请稍候" : "入藏卷阁"}>
+                    <Tooltip title={recoveryPending ? "图片保存中，请稍候" : "入藏卷阁"}>
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} loading={savingAsset} disabled={savingAsset || recoveryPending} onClick={() => void onSaveAsset(image, index)}>
                             入藏卷阁
                         </Button>

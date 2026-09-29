@@ -8,7 +8,7 @@ import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { imageToDataUrl } from "@/services/image-storage";
-import { archiveDeferredServerJob, cancelServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput, type ServerJob } from "@/services/server-api";
+import { archiveDeferredServerJob, cancelServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput, type ServerJob, type ServerJobProgress } from "@/services/server-api";
 import { deriveImageModelCapabilities, isUuAsyncGptImageModel, isUuImage25Model, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useUserStore } from "@/stores/use-user-store";
@@ -119,6 +119,7 @@ type GeminiPayload = {
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
 export type RequestOptions = {
+    onProgress?: (progress: ServerJobProgress) => void;
     signal?: AbortSignal;
     /** The workbench confirms cancellation itself so a failed DELETE does not discard a running task. */
     cancelOnAbort?: boolean;
@@ -1022,7 +1023,7 @@ async function requestServerImageJob(
     options?.signal?.addEventListener("abort", abort, { once: true });
     if (options?.signal?.aborted) abort();
     try {
-        const completed = await waitForServerJob(job.id, { signal: options?.signal, expectedUserId });
+        const completed = await waitForServerJob(job.id, { signal: options?.signal, expectedUserId, onProgress: options?.onProgress });
         return completedServerImages(completed, expectedUserId, options);
     } finally {
         options?.signal?.removeEventListener("abort", abort);

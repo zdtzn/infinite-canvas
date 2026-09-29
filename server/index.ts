@@ -8,6 +8,7 @@ import { createIdentityToken, createSessionToken, expiredIdentityCookie, expired
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./lib/asset-library";
 import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
 import { AsyncSemaphore } from "./lib/async-semaphore";
+import { PerformanceMetrics, PerformanceRateLimiter, PerformanceInputError, PERFORMANCE_BODY_BYTES, parsePerformanceSamples, type ImagePerformanceOutcome } from "./lib/performance-metrics";
 import { createSharedTasks } from "./lib/shared-task";
 import { createPromptCacheMaintenance } from "./lib/prompt-cache-maintenance";
 import { canAccessUserAvatar } from "./lib/avatar-access";
@@ -304,10 +305,15 @@ const promptSourceRuntimeCache = new Map<string, {
 const PROMPT_SOURCE_CACHE_TTL_MS = 5 * 60_000;
 const PROMPT_SOURCE_STALE_MS = 30 * 60_000;
 
+const performanceMetrics = new PerformanceMetrics();
+const performanceRateLimiter = new PerformanceRateLimiter();
+const imageJobPhases = new Map<string, "persisting">();
 const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
     concurrency: JOB_CONCURRENCY,
     worker: runImageJob,
     onChange: async (job) => {
+        if (["succeeded", "failed", "canceled"].includes(job.status) && state.jobs[job.id]?.status !== job.status)
+            performanceMetrics.recordImage("image_job_outcome", job.status as ImagePerformanceOutcome, 0);
         state.jobs[job.id] = job;
         appDatabase.saveJob(job);
         if (["succeeded", "failed", "canceled"].includes(job.status)) pruneTerminalJobs();
@@ -417,6 +423,17 @@ async function route(request: Request, requestId: string) {
         enforceSameOrigin(request);
         const session = requireSession(request);
         enforceRateLimit(`${session.userId}:${clientIp(request)}`, request.method === "GET" ? 240 : 90);
+        if (url.pathname === "/api/performance" && request.method === "POST") {
+            if (!performanceRateLimiter.accept(session.userId)) throw new HttpError(429, "请求过于频繁，请稍后再试");
+            const samples = parsePerformanceSamples(await readRequestBytes(request, PERFORMANCE_BODY_BYTES, "请求内容过大"));
+            for (const sample of samples) performanceMetrics.recordFrontend(sample);
+            console.info(JSON.stringify({ event: "frontend_performance", requestId, samples }));
+            return new Response(null, { status: 204 });
+        }
+        if (url.pathname === "/api/admin/performance" && request.method === "GET") {
+            requireAdmin(session);
+            return json(performanceMetrics.snapshot(), 200, { "Cache-Control": "private, no-store" });
+        }
         if (url.pathname === "/api/admin/metrics" && request.method === "GET") return adminMetrics(session);
         if (url.pathname === "/api/admin/channels/metrics" && request.method === "GET") return adminChannelMetrics(url, session);
         if (url.pathname === "/api/admin/announcements" && request.method === "GET") return adminListAnnouncements(url, session);
@@ -3417,7 +3434,7 @@ function publicJob(job: StoredImageJob) {
         (hasUuAsyncTask(job.input) ||
             (uuAsyncCapabilityRegistry.canSubmit(uuAsyncCapabilityKey(job.input.channelId, job.input.model)) &&
                 Boolean(channel && supportsUuAsyncRequest(channel.baseUrl, job.input))));
-    const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : usesUuAsync && !hasUuAsyncTask(job.input) ? "submitting" : "waiting_upstream";
+    const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : imageJobPhases.get(job.id) || (usesUuAsync && !hasUuAsyncTask(job.input) ? "submitting" : "waiting_upstream");
     const result = job.result
         ? {
               ...job.result,
@@ -3453,6 +3470,8 @@ function publicJob(job: StoredImageJob) {
 
 async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: QueueJob<ImageJobInput, ImageJobOutput>) {
     const startedAt = Date.now();
+    let upstreamFinishedAt: number | undefined;
+    let outcome: ImagePerformanceOutcome = "failed";
     const upstreamRequestId = input.retryOf || job.id;
     try {
         const channel = platformChannel(input.channelId);
@@ -3470,7 +3489,8 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                       ? await generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId)
                       : await uuImageChannelScheduler.run(input.channelId, signal, () => generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId))
                   : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
-        const upstreamFinishedAt = Date.now();
+        upstreamFinishedAt = Date.now();
+        imageJobPhases.set(job.id, "persisting");
         const images: ImageJobImage[] = [];
         const uuDimensions = useUuAsync && isUuAsyncGptImage2Channel(channel.baseUrl, input.model) ? resolveUuAsyncImageSize(input.size, input.quality) : undefined;
         for (const raw of rawImages) {
@@ -3523,9 +3543,6 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
             durationMs: Date.now() - startedAt,
             ...(recoveryPending ? { recoveryPending: true } : {}),
         };
-        console.info(JSON.stringify({ event: "image_job_timing", jobId: job.id, channelId: input.channelId, model: input.model,
-            mode: hasUuAsyncTask(input) ? "async" : "sync", queueMs: Math.max(0, (job.startedAt || startedAt) - job.createdAt),
-            upstreamMs: upstreamFinishedAt - startedAt, persistenceMs: Date.now() - upstreamFinishedAt, totalMs: result.durationMs }));
         if (!input.recoveryOnly)
             cultivation?.settleGeneration({
                 jobId: job.id,
@@ -3533,11 +3550,26 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                 failCount: result.failCount,
                 durationMs: result.durationMs,
             });
+        outcome = "succeeded";
         return result;
     } catch (error) {
         cleanupJobOutputFilesFor(input.userId, job.id);
         if (job.status !== "canceled" && !input.recoveryOnly) cultivation?.refundGeneration(job.id, error instanceof Error ? error.message : "generation failed");
         throw error;
+    } finally {
+        imageJobPhases.delete(job.id);
+        if (signal.aborted || job.status === "canceled") outcome = "canceled";
+        const finishedAt = Date.now();
+        const timing = { queueMs: Math.max(0, (job.startedAt || startedAt) - job.createdAt),
+            upstreamMs: Math.max(0, (upstreamFinishedAt ?? finishedAt) - startedAt),
+            persistenceMs: upstreamFinishedAt === undefined ? 0 : Math.max(0, finishedAt - upstreamFinishedAt),
+            totalMs: Math.max(0, finishedAt - startedAt) };
+        performanceMetrics.recordImage("image_job_queue", outcome, timing.queueMs);
+        performanceMetrics.recordImage("image_job_upstream", outcome, timing.upstreamMs);
+        if (upstreamFinishedAt !== undefined) performanceMetrics.recordImage("image_job_persistence", outcome, timing.persistenceMs);
+        performanceMetrics.recordImage("image_job_total", outcome, timing.totalMs);
+        console.info(JSON.stringify({ event: "image_job_timing", jobId: job.id, channelId: input.channelId, model: input.model,
+            mode: hasUuAsyncTask(input) ? "async" : "sync", outcome, ...timing }));
     }
 }
 
@@ -4478,7 +4510,7 @@ function withSecurityHeaders(response: Response, requestId: string, request: Req
 
 function errorResponse(error: unknown, requestId: string) {
     const status =
-        error instanceof HttpError || error instanceof CultivationError || error instanceof AnnouncementError || error instanceof ChatError || error instanceof ColorAlchemyError || error instanceof DouQiLifeError
+        error instanceof HttpError || error instanceof PerformanceInputError || error instanceof CultivationError || error instanceof AnnouncementError || error instanceof ChatError || error instanceof ColorAlchemyError || error instanceof DouQiLifeError
             ? error.status
             : error instanceof AssetLibraryInputError || error instanceof GenerationHistoryInputError
               ? 400
@@ -4487,6 +4519,7 @@ function errorResponse(error: unknown, requestId: string) {
                 : 500;
     const publicError =
         error instanceof HttpError ||
+        error instanceof PerformanceInputError ||
         error instanceof CultivationError ||
         error instanceof AnnouncementError ||
         error instanceof ChatError ||

@@ -1,8 +1,9 @@
-import { Suspense, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import { createBrowserRouter, Outlet, useLocation } from "react-router-dom";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
+import { MeasuredRoute } from "@/components/route-performance";
 import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 import { lazyRoute } from "@/lib/lazy-route";
 import { routeLoaders } from "@/lib/route-loaders";
@@ -26,7 +27,8 @@ const PromptsPage = lazyRoute(routeLoaders["/prompts"]);
 const VideoPage = lazyRoute(routeLoaders["/video"]);
 
 function RoutePage({ children }: { children: ReactNode }) {
-    return <Suspense fallback={<RouteLoading />}>{children}</Suspense>;
+    const location = useLocation();
+    return <MeasuredRoute key={location.pathname} pathname={location.pathname} fallback={<RouteLoading />}>{children}</MeasuredRoute>;
 }
 
 function RouteLoading() {

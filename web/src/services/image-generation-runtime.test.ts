@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { ServerJobProgress } from "./server-api";
 
 import {
     cancelImageGeneration,
@@ -30,6 +31,55 @@ function deferred<T>() {
 
 const testImage: GeneratedImage = { id: "test", dataUrl: "data:image/png;base64,AA==", durationMs: 10, width: 1, height: 1, bytes: 1 };
 const testSnapshot: ImageGenerationSnapshot = { text: "test", config: {} as ImageGenerationSnapshot["config"], references: [] };
+
+test("slot progress stays independent, emits only changes and ignores canceled or completed callbacks", async () => {
+    const callbacks: Array<((progress: ServerJobProgress) => void) | undefined> = [];
+    const ready = [deferred<void>(), deferred<void>()];
+    const images = [deferred<GeneratedImage>(), deferred<GeneratedImage>()];
+    const done = [deferred<ImageGenerationCompletion>(), deferred<ImageGenerationCompletion>()];
+    const ids = [0, 1].map((slot) => startImageGeneration(testSnapshot, 1, done[slot].resolve, async (_snapshot, _index, created, _owner, _key, _archived, _signal, progress) => {
+        created?.(`server-${slot}`);
+        callbacks[slot] = progress;
+        ready[slot].resolve();
+        return images[slot].promise;
+    })!);
+    await Promise.all(ready.map((item) => item.promise));
+    const result = (slot: number) => getImageGenerationJobsSnapshot().find((job) => job.id === ids[slot])!.results[0];
+    const disconnected: ServerJobProgress = { jobId: "server-0", phase: "waiting_upstream", reconnecting: true };
+    let notifications = 0;
+    const unsubscribe = subscribeImageGeneration(() => notifications++);
+    try {
+        callbacks[0]?.(disconnected);
+        assert.equal(result(0).progress?.reconnecting, true);
+        assert.equal(result(1).progress, undefined);
+        const before = getImageGenerationJobsSnapshot();
+        callbacks[0]?.({ ...disconnected });
+        callbacks[0]?.({ ...disconnected, jobId: "other-job" });
+        assert.equal(getImageGenerationJobsSnapshot(), before);
+        assert.equal(notifications, 1);
+        callbacks[0]?.({ ...disconnected, reconnecting: false });
+        assert.equal(result(0).progress?.reconnecting, false);
+        await cancelImageGeneration(ids[0]);
+        await done[0].promise;
+        callbacks[0]?.(disconnected);
+        assert.equal(result(0).progress, undefined);
+        assert.equal(result(0).status, "canceled");
+        callbacks[1]?.({ jobId: "server-1", phase: "persisting", reconnecting: false });
+        images[1].resolve(testImage);
+        await done[1].promise;
+        callbacks[1]?.({ jobId: "server-1", phase: "queued", reconnecting: true });
+        assert.equal(result(1).progress, undefined);
+        assert.equal(result(1).status, "success");
+    } finally {
+        unsubscribe();
+        images.forEach((item) => item.resolve(testImage));
+        for (const id of ids) {
+            await cancelImageGeneration(id);
+            selectImageGenerationJob(id);
+            clearImageGenerationJob();
+        }
+    }
+});
 
 test("waiting clock does not recreate task snapshots or notify all subscribers", async () => {
     const started = deferred<void>();

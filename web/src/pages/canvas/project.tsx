@@ -123,7 +123,7 @@ import {
 
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
-import { branchServerProject, cancelServerJob, waitForServerJob } from "@/services/server-api";
+import { branchServerProject, cancelServerJob, waitForServerJob, type ServerJobProgress } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useCanvasProjectLock } from "@/pages/canvas/hooks/use-canvas-project-lock";
 import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
@@ -562,11 +562,18 @@ function InfiniteCanvasPage() {
     }, [resourceNodes, imageSaver, projectId, toolUserId, projectLoaded]);
 
     const imageRequestOptions = useCallback(
-        (targetNodeId: string, controller: AbortController) => ({
-            signal: controller.signal,
-            source: { route: `/canvas/${projectId}`, projectId, nodeId: targetNodeId, label: "画布生图" },
-            onJobCreated: (jobId: string) => setNodes((current) => current.map((node) => (node.id === targetNodeId ? { ...node, metadata: { ...node.metadata, jobId, imageSave: undefined } } : node))),
-        }),
+        (targetNodeId: string, controller: AbortController) => {
+            const expectedUserId = useUserStore.getState().user?.id || "";
+            const isCurrent = () => !controller.signal.aborted && expectedUserId === (useUserStore.getState().user?.id || "");
+            setNodes((current) => isCurrent() ? current.map((node) => node.id === targetNodeId ? { ...node, metadata: { ...node.metadata, generationProgress: PUBLIC_MODE ? { jobId: "", phase: "submitting", reconnecting: false } : undefined } } : node) : current);
+            return {
+                signal: controller.signal,
+                expectedUserId,
+                source: { route: `/canvas/${projectId}`, projectId, nodeId: targetNodeId, label: "画布生图" },
+                onJobCreated: (jobId: string) => setNodes((current) => isCurrent() ? current.map((node) => (node.id === targetNodeId ? { ...node, metadata: { ...node.metadata, jobId, imageSave: undefined } } : node)) : current),
+                onProgress: (progress: ServerJobProgress) => setNodes((current) => isCurrent() ? current.map((node) => node.id === targetNodeId && node.metadata?.jobId === progress.jobId && node.metadata.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, generationProgress: progress } } : node) : current),
+            };
+        },
         [projectId],
     );
 
@@ -576,7 +583,11 @@ function InfiniteCanvasPage() {
             if (!jobId) return;
             try {
                 const expectedUserId = useUserStore.getState().user?.id || "";
-                const job = await waitForServerJob(jobId, { signal, expectedUserId });
+                const job = await waitForServerJob(jobId, {
+                    signal,
+                    expectedUserId,
+                    onProgress: (progress) => setNodes((current) => signal.aborted || expectedUserId !== (useUserStore.getState().user?.id || "") ? current : current.map((item) => item.id === node.id && item.metadata?.jobId === progress.jobId && item.metadata.status === NODE_STATUS_LOADING ? { ...item, metadata: { ...item.metadata, generationProgress: progress } } : item)),
+                });
                 if (signal.aborted || expectedUserId !== (useUserStore.getState().user?.id || "")) return;
                 const image = completedServerImages(job, expectedUserId)[0];
                 if (!image) throw new Error(job.error || "任务没有返回图片");
@@ -3084,6 +3095,7 @@ function InfiniteCanvasPage() {
                             prompt: effectivePrompt,
                             status: NODE_STATUS_LOADING,
                             generationStartedAt,
+                            generationProgress: count > 1 ? undefined : { jobId: "", phase: "queued", reconnecting: false },
                             isBatchRoot: count > 1,
                             batchChildIds: count > 1 ? childIds : undefined,
                             batchUsesReferenceImages: referenceImages.length > 0,
@@ -3103,7 +3115,7 @@ function InfiniteCanvasPage() {
                         },
                         width: imageConfig.width,
                         height: imageConfig.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, generationStartedAt, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata, versionLabel: `v${index + 1}`, isPrimaryVersion: index === 0 },
+                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, generationStartedAt, generationProgress: { jobId: "", phase: "queued", reconnecting: false }, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata, versionLabel: `v${index + 1}`, isPrimaryVersion: index === 0 },
                     }));
                     const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
 

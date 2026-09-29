@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { serverRequest, ServerRequestError, ServerTransportError, waitForServerJob } from "./server-api";
+import { serverRequest, ServerRequestError, ServerTransportError, waitForServerJob, type ServerJobProgress } from "./server-api";
 
 async function withTransport(run: () => Promise<void>) {
     const previousWindow = globalThis.window;
     const previousFetch = globalThis.fetch;
     globalThis.window = {
-        setTimeout: (fn: TimerHandler, ms?: number) => setTimeout(fn as () => void, ms === 800 || ms === 1600 ? 1 : ms),
+        setTimeout: (fn: TimerHandler, ms?: number) => setTimeout(fn as () => void, [800, 1200, 1600, 1800].includes(ms || 0) ? 1 : ms),
         clearTimeout,
         dispatchEvent: () => true,
     } as unknown as Window & typeof globalThis;
@@ -41,7 +41,12 @@ test("job polling survives network and temporary server errors without resubmitt
             if (requests.length === 2) return Response.json({ error: "temporarily unavailable" }, { status: 503 });
             return Response.json({ job: { id: "original-job", status: "succeeded" } });
         }) as typeof fetch;
-        const result = await waitForServerJob("original-job", { expectedUserId: "owner" });
+        const progress: ServerJobProgress[] = [];
+        const result = await waitForServerJob("original-job", { expectedUserId: "owner", onProgress: (value) => progress.push(value) });
+        assert.deepEqual(progress, [
+            { jobId: "original-job", phase: undefined, reconnecting: true },
+            { jobId: "original-job", phase: "completed", reconnecting: false },
+        ]);
         assert.equal(result.id, "original-job");
         assert.deepEqual(
             requests,
@@ -60,6 +65,42 @@ test("job polling does not retry authentication, permission, or missing-job erro
             await assert.rejects(waitForServerJob("missing", { expectedUserId: "owner" }), (error: unknown) => error instanceof ServerRequestError && error.status === status);
             assert.equal(calls, 1);
         }
+    }));
+
+test("progress reports only phase and connection changes, preserving the original job", () =>
+    withTransport(async () => {
+        const phases = ["queued", "queued", "submitting", "waiting_upstream", "offline", "offline", "waiting_upstream", "waiting_upstream", "persisting", "completed"];
+        const progress: ServerJobProgress[] = [];
+        let calls = 0;
+        globalThis.fetch = (async (url, init) => {
+            assert.equal(String(url), "/api/jobs/same-job");
+            assert.equal(init?.method || "GET", "GET");
+            const phase = phases[calls++];
+            if (phase === "offline") throw new TypeError("offline");
+            return Response.json({ job: { id: "same-job", phase, status: phase === "completed" ? "succeeded" : phase === "queued" ? "queued" : "running" } });
+        }) as typeof fetch;
+        await waitForServerJob("same-job", { onProgress: (value) => progress.push(value) });
+        assert.equal(calls, phases.length);
+        assert.deepEqual(progress.map(({ phase, reconnecting }) => [phase, reconnecting]), [
+            ["queued", false], ["submitting", false], ["waiting_upstream", false],
+            ["waiting_upstream", true], ["waiting_upstream", false], ["persisting", false], ["completed", false],
+        ]);
+        const next: ServerJobProgress[] = [];
+        globalThis.fetch = (async () => Response.json({ job: { id: "next-job", status: "succeeded" } })) as typeof fetch;
+        await waitForServerJob("next-job", { onProgress: (value) => next.push(value) });
+        assert.deepEqual(next, [{ jobId: "next-job", phase: "completed", reconnecting: false }]);
+    }));
+
+test("an aborted response cannot emit a late progress update", () =>
+    withTransport(async () => {
+        const controller = new AbortController();
+        const progress: ServerJobProgress[] = [];
+        globalThis.fetch = (async () => {
+            controller.abort();
+            return Response.json({ job: { id: "late", status: "succeeded", phase: "completed" } });
+        }) as typeof fetch;
+        await assert.rejects(waitForServerJob("late", { signal: controller.signal, onProgress: (value) => progress.push(value) }), { name: "AbortError" });
+        assert.deepEqual(progress, []);
     }));
 
 test("cancel interrupts an in-flight polling read immediately", () =>

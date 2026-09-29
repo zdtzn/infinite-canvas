@@ -5,6 +5,7 @@ import { ChevronRight, Copy, Download, Group, Image as ImageIcon, LoaderCircle, 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { formatCanvasGenerationElapsed } from "@/lib/canvas/canvas-generation-time";
+import { IMAGE_RECONNECT_NOTICE, imageGenerationProgressLabel } from "@/lib/image-generation-progress";
 import { canvasImageDisplaySource, canvasImageLoadingAttributes } from "@/lib/canvas/canvas-image-loading";
 import { imageSaveState } from "@/lib/canvas/canvas-generated-image";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
@@ -572,12 +573,15 @@ function LoadingContent({ node, theme }: Pick<NodeContentRendererProps, "node" |
     }, [showElapsed, startedAt]);
 
     const elapsedLabel = formatCanvasGenerationElapsed(startedAt, now);
+    const progress = node.metadata?.generationProgress;
+    const label = imageGenerationProgressLabel(progress);
 
     return (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }} role="status" aria-label={showElapsed ? `图片生成中，${elapsedLabel}` : "生成中"}>
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }} role="status" aria-label={showElapsed ? `${label}，${elapsedLabel}` : label}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
             <div className="flex flex-col items-center gap-1">
-                <span className="text-[10px] tracking-[0.2em]">生成中</span>
+                <span className="text-[10px] tracking-[0.2em]">{label}</span>
+                {progress?.reconnecting ? <span className="max-w-56 px-3 text-center text-[11px]">{IMAGE_RECONNECT_NOTICE}</span> : null}
                 {showElapsed ? <span className="text-[11px] tabular-nums opacity-60">{elapsedLabel}</span> : null}
             </div>
         </div>

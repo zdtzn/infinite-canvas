@@ -35,7 +35,7 @@ export type ServerJobImage = { id: string; dataUrl: string; bytes: number; durat
 export type ServerJob = {
     id: string;
     status: ServerJobStatus;
-    phase?: "queued" | "submitting" | "waiting_upstream" | "completed";
+    phase?: "queued" | "submitting" | "waiting_upstream" | "persisting" | "completed";
     createdAt: number;
     startedAt?: number;
     finishedAt?: number;
@@ -648,8 +648,16 @@ export async function updateAdminAnnouncement(id: string, input: Partial<Announc
     return serverRequest<{ item: SystemAnnouncement }>(`/api/admin/announcements/${encodeURIComponent(id)}`, { method: "PATCH", body: input });
 }
 
-export async function waitForServerJob(id: string, options?: { signal?: AbortSignal; onUpdate?: (job: ServerJob) => void; expectedUserId?: string }) {
+export type ServerJobProgress = { jobId: string; phase?: ServerJob["phase"]; reconnecting: boolean };
+
+export async function waitForServerJob(id: string, options?: { signal?: AbortSignal; onUpdate?: (job: ServerJob) => void; onProgress?: (progress: ServerJobProgress) => void; expectedUserId?: string }) {
     let connectionFailures = 0;
+    let progress: ServerJobProgress | undefined;
+    const report = (phase: ServerJob["phase"], reconnecting: boolean) => {
+        if (options?.signal?.aborted || (progress && progress.phase === phase && progress.reconnecting === reconnecting)) return;
+        progress = { jobId: id, phase, reconnecting };
+        options?.onProgress?.(progress);
+    };
     for (;;) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         let job: ServerJob;
@@ -660,10 +668,13 @@ export async function waitForServerJob(id: string, options?: { signal?: AbortSig
             if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             const temporary = error instanceof ServerTransportError || (error instanceof ServerRequestError && (error.status === 408 || error.status === 429 || error.status >= 500));
             if (!temporary) throw error;
+            report(progress?.phase, true);
             // Retry only this read. A disconnected client must never resubmit paid work.
             await abortableSleep(Math.min(800 * 2 ** Math.min(connectionFailures++, 4), 10_000), options?.signal);
             continue;
         }
+        options?.signal?.throwIfAborted();
+        report(job.phase ?? (job.status === "queued" ? "queued" : job.status === "succeeded" ? "completed" : undefined), false);
         options?.onUpdate?.(job);
         if (job.status === "succeeded") {
             void archiveDeferredServerJob(job, options?.expectedUserId).catch(() => undefined);

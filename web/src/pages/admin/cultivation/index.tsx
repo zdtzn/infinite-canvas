@@ -58,6 +58,7 @@ import {
 } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { AnnouncementAdminPanel } from "./announcement-admin-panel";
+import { PerformancePanel } from "./components/performance-panel";
 import { resolveAdminRecordKind, resolveAdminSection, type AdminRecordKind, type AdminSectionKey } from "./navigation";
 import { buildCultivationUserPatch, type CultivationUserFormValues, type CultivationUserPatch } from "./user-update";
 import "./admin.css";
@@ -1473,6 +1474,7 @@ function MonitoringPanel() {
                     />
                 </div>
             </section>
+            <PerformancePanel />
         </div>
     );
 }

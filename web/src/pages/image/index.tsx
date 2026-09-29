@@ -53,6 +53,7 @@ import { creativeImageTransferState, type CreativeImageTransfer } from "@/lib/cr
 import { preloadRoute } from "@/lib/route-loaders";
 import type { ResultContinueAction } from "./result-image-card";
 import { summarizeImageTasks } from "./task-summary";
+import { IMAGE_RECONNECT_NOTICE, imageGenerationProgressLabel } from "@/lib/image-generation-progress";
 
 const loadPromptSelectDialog = () => import("@/components/prompts/prompt-select-dialog").then((module) => ({ default: module.PromptSelectDialog }));
 const loadAssetPickerModal = () => import("@/components/canvas/asset-picker-modal").then((module) => ({ default: module.AssetPickerModal }));
@@ -1497,7 +1498,8 @@ function PendingImageCard({ result, onCancel }: { result: GenerationResult; onCa
             />
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
-                <span role="status">{result.cancelRequested ? "正在取消…" : result.startedAt ? "生成中" : "排队中"}</span>
+                <span role="status">{result.cancelRequested ? "正在取消…" : imageGenerationProgressLabel(result.progress, result.startedAt ? "生成中" : "排队中")}</span>
+                {result.progress?.reconnecting ? <p role="status" className="text-xs">{IMAGE_RECONNECT_NOTICE}</p> : null}
                 {result.cancelError ? (
                     <p role="alert" className="text-xs text-red-500">
                         {result.cancelError}
