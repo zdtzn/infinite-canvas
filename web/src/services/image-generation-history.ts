@@ -17,6 +17,8 @@ type ImageHistoryRecord = {
     prompt: string;
     model: string;
     images: ImageHistoryItem[];
+    imageCount?: number;
+    successCount?: number;
     thumbnails?: string[];
     serverJobIds?: string[];
 };
@@ -56,12 +58,25 @@ export function mergeServerJobsIntoImageHistory<T extends ImageHistoryRecord>(hi
         if (deletedIds.has(`server-job:${job.id}`)) continue;
         const matchedByJob = records.findIndex((record) => record.id === `server-job:${job.id}` || record.serverJobIds.includes(job.id));
         const matchedByImage = (job.result?.images || []).map((image) => imageOwners.get(image.id)).find((index) => index !== undefined);
-        const matchedIndex = matchedByJob >= 0 ? matchedByJob : (matchedByImage ?? records.findIndex((record) => record.prompt === job.prompt && record.model === serverJobModelValue(job) && Math.abs(record.createdAt - job.createdAt) <= 120_000));
+        const matchedIndex = matchedByJob >= 0 ? matchedByJob : (matchedByImage ?? -1);
         if (matchedIndex >= 0) {
             let record = records[matchedIndex];
             if (!record.serverJobIds.includes(job.id)) record.serverJobIds.push(job.id);
             record = mergePersistedImagesIntoHistoryRecord(record, job.result?.images || [], job.id, job.finishedAt || record.updatedAt || record.createdAt);
+            // A known group may predate complete image persistence. Association alone is not recovery.
+            const existingIds = new Set(record.images.map((image) => image.id));
+            if (job.result?.images.some((image) => !existingIds.has(image.id))) {
+                const missing = createFallback(job).images.filter((image) => !existingIds.has(image.id)).map((image) => ({ ...image, serverJobId: job.id }));
+                const images = [...record.images, ...missing];
+                record = { ...record, images,
+                    ...(record.imageCount !== undefined ? { imageCount: Math.max(record.imageCount, images.length) } : {}),
+                    ...(record.successCount !== undefined ? { successCount: Math.max(record.successCount, images.length) } : {}),
+                    ...(record.thumbnails ? { thumbnails: images.map((image) => image.dataUrl || "") } : {}),
+                    updatedAt: Math.max(record.updatedAt || record.createdAt, job.finishedAt || job.createdAt),
+                };
+            }
             records[matchedIndex] = record;
+            record.images.forEach((image) => imageOwners.set(image.id, matchedIndex));
             continue;
         }
 

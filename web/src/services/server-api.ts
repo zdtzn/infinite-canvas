@@ -319,20 +319,23 @@ export async function updatePromptOptimizerAdminConfiguration(target: PromptOpti
     });
 }
 
-export async function uploadServerAsset(blob: Blob, prefix: string, storageKey?: string, expectedUserId?: string) {
+export async function uploadServerAsset(blob: Blob, prefix: string, storageKey?: string, expectedUserId?: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const form = new FormData();
     form.set("file", blob, `asset.${mimeExtension(blob.type)}`);
     form.set("prefix", prefix);
     if (storageKey) form.set("storageKey", storageKey);
-    const response = await fetch("/api/assets", { method: "POST", body: form, headers: expectedUserHeaders(undefined, expectedUserId), credentials: "same-origin" });
+    const response = await fetch("/api/assets", { method: "POST", body: form, headers: expectedUserHeaders(undefined, expectedUserId), credentials: "same-origin", signal });
+    signal?.throwIfAborted();
     return readJsonResponse<{ asset: ServerAsset }>(response);
 }
 
-export async function promoteServerJobAsset(sourceUrl: string, expectedUserId?: string) {
+export async function promoteServerJobAsset(sourceUrl: string, expectedUserId?: string, signal?: AbortSignal) {
     return serverRequest<{ asset: ServerAsset; sourceUrl: string; width?: number; height?: number }>("/api/assets/from-job", {
         method: "POST",
         body: { sourceUrl },
         expectedUserId,
+        signal,
     });
 }
 

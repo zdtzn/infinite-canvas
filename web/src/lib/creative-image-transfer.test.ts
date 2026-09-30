@@ -23,4 +23,12 @@ describe("creative image transfer", () => {
         expect(readCreativeImageTransfer({ creativeImageTransfer: { source: "other", id: "1", title: "", prompt: "", dataUrl: "/image" } })).toBeNull();
         expect(readCreativeImageTransfer({ creativeImageTransfer: { source: "image-workbench", id: "1", title: "", prompt: "", dataUrl: "" } })).toBeNull();
     });
+
+    test("account-bound consumers reject stale or legacy route payloads", () => {
+        const transfer: CreativeImageTransfer = { id: "r", source: "image-workbench", ownerUserId: "a", title: "result", prompt: "p", dataUrl: "data:image/png;base64,AAAA" };
+        expect(readCreativeImageTransfer(creativeImageTransferState(transfer), "a")).toEqual(transfer);
+        expect(readCreativeImageTransfer(creativeImageTransferState(transfer), "b")).toBeNull();
+        expect(readCreativeImageTransfer(creativeImageTransferState({ ...transfer, ownerUserId: undefined }), "a")).toBeNull();
+        expect(readCreativeImageTransfer(creativeImageTransferState({ ...transfer, ownerUserId: undefined }))).not.toBeNull();
+    });
 });

@@ -26,6 +26,7 @@ export function ResultImageCard({
     onContinue,
     onDownload,
     onSaveAsset,
+    onRetryArchive,
 }: {
     image: GeneratedImage;
     index: number;
@@ -33,10 +34,12 @@ export function ResultImageCard({
     onContinue: (action: ResultContinueAction, image: GeneratedImage, index: number) => void | Promise<void>;
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
+    onRetryArchive?: (image: GeneratedImage) => Promise<void>;
 }) {
     const [previewStatus, setPreviewStatus] = useState<"loading" | "loaded" | "error">("loading");
     const [previewAttempt, setPreviewAttempt] = useState(0);
     const [continuationPending, setContinuationPending] = useState(false);
+    const [archivePending, setArchivePending] = useState(false);
     const recoveryPending = image.persisted === false;
     const previewImageUrl = image.thumbnailUrl || image.dataUrl;
 
@@ -97,7 +100,17 @@ export function ResultImageCard({
                 />
             </div>
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
-                {recoveryPending ? <p role="status" className="text-xs text-stone-500 dark:text-stone-400">保存中 · 图片已生成，正在保存到素材库</p> : null}
+                {recoveryPending ? (
+                    <div className="flex items-center justify-between gap-2">
+                        <p role="status" className="text-xs text-stone-500 dark:text-stone-400">
+                            {image.archiveError ? `保存失败 · ${image.archiveError}` : "保存中 · 图片已生成，正在保存到素材库"}
+                        </p>
+                        {onRetryArchive ? <Button size="small" type="text" loading={archivePending} onClick={async () => {
+                            setArchivePending(true);
+                            try { await onRetryArchive(image); } finally { setArchivePending(false); }
+                        }}>重试保存</Button> : null}
+                    </div>
+                ) : null}
                 <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                     <span>
                         {image.width}x{image.height}

@@ -5,7 +5,7 @@ import { requestEdit, requestGeneration } from "@/services/api/image";
 import { settleWithConcurrency } from "@/lib/async-pool";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { archiveDeferredServerJob, cancelServerJob, retryServerJob, waitForServerJob, type ServerJob, type ServerJobImage, type ServerJobProgress } from "@/services/server-api";
+import { archiveDeferredServerJob, cancelServerJob, fetchServerJob, retryServerJob, waitForServerJob, type ServerJob, type ServerJobImage, type ServerJobProgress } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -24,6 +24,7 @@ export type GeneratedImage = {
     bytes: number;
     mimeType?: string;
     persisted?: boolean;
+    archiveError?: string;
     expiresAt?: string;
 };
 
@@ -65,6 +66,7 @@ export type ImageGenerationJob = {
 
 export type ImageGenerationCompletion = {
     successImages: GeneratedImage[];
+    serverJobIds?: string[];
     successCount: number;
     failCount: number;
     canceledCount?: number;
@@ -89,6 +91,10 @@ let selectedJobId: string | null = null;
 let selectionVersion = 0;
 const controllers = new Map<string, AbortController>();
 const cancellations = new Map<string, Promise<void>>();
+const archiveRuns = new Map<string, Promise<GeneratedImage | null>>();
+const archiveQueues: Promise<unknown>[] = [Promise.resolve(), Promise.resolve()];
+let nextArchiveQueue = 0;
+let archiveSession = new AbortController();
 const activeSlots = new Set<string>();
 const slotWaiters = new Set<() => void>();
 const listeners = new Set<() => void>();
@@ -115,6 +121,10 @@ export function prepareImageGenerationRuntimeForUser(userId: string) {
     // Disconnect local polling only; server jobs remain recoverable for their original account.
     controllers.forEach((controller) => controller.abort());
     controllers.clear();
+    cancellations.clear();
+    archiveSession.abort();
+    archiveSession = new AbortController();
+    archiveRuns.clear();
     activeSlots.clear();
     wakeSlotWaiters();
     emit();
@@ -238,7 +248,10 @@ export async function cancelImageGeneration(jobId: string, index?: number) {
 function cancelSlot(jobId: string, index: number): Promise<void> {
     const result = jobs.find((job) => job.id === jobId)?.results[index];
     if (!result || result.status !== "pending") return Promise.resolve();
-    const existing = cancellations.get(result.id);
+    const owner = runtimeOwnerUserId;
+    const version = hydrationVersion;
+    const key = JSON.stringify([owner, version, result.id]);
+    const existing = cancellations.get(key);
     if (existing) return existing;
     updateResult(jobId, index, { cancelRequested: true, cancelError: undefined });
     const controller = controllers.get(result.id);
@@ -250,8 +263,6 @@ function cancelSlot(jobId: string, index: number): Promise<void> {
     }
     // Submission may still be returning its ID. onJobCreated will perform the cancellation.
     if (!result.serverJobId) return Promise.resolve();
-    const owner = runtimeOwnerUserId;
-    const version = hydrationVersion;
     const operation = cancelServerJob(result.serverJobId, owner)
         .then(({ job }) => {
             if (owner !== runtimeOwnerUserId || version !== hydrationVersion) return;
@@ -270,8 +281,10 @@ function cancelSlot(jobId: string, index: number): Promise<void> {
             if (owner === runtimeOwnerUserId && version === hydrationVersion) updateResult(jobId, index, { cancelRequested: false, cancelError: `取消失败：${friendlyErrorMessage(error)}，任务仍在继续` });
             throw error;
         })
-        .finally(() => cancellations.delete(result.id));
-    cancellations.set(result.id, operation);
+        .finally(() => {
+            if (cancellations.get(key) === operation) cancellations.delete(key);
+        });
+    cancellations.set(key, operation);
     return operation;
 }
 
@@ -282,6 +295,7 @@ export function replaceImageGenerationResult(image: GeneratedImage) {
         ...job,
         results: job.results.map((result) => {
             if (result.image?.id !== image.id) return result;
+            if (result.image.persisted !== false && image.persisted === false) return result;
             replaced = true;
             return { ...result, image };
         }),
@@ -290,6 +304,52 @@ export function replaceImageGenerationResult(image: GeneratedImage) {
     emit();
     persistCurrentJob();
     return true;
+}
+
+/** Reconcile/save an existing result only; never submit another generation. */
+export function retryImageGenerationArchive(image: GeneratedImage, expectedUserId = runtimeOwnerUserId): Promise<GeneratedImage | null> {
+    if (expectedUserId !== runtimeOwnerUserId) return Promise.resolve(null);
+    if (!PUBLIC_MODE || image.persisted !== false) return Promise.resolve(image);
+    const version = hydrationVersion;
+    const signal = archiveSession.signal;
+    const isCurrent = () => expectedUserId === runtimeOwnerUserId && version === hydrationVersion && !signal.aborted;
+    const key = JSON.stringify([expectedUserId, version, image.serverJobId, image.id]);
+    const existing = archiveRuns.get(key);
+    if (existing) return existing;
+    const queue = nextArchiveQueue++ % archiveQueues.length;
+    const currentSavedImage = () => jobs.flatMap((job) => job.results).find((result) => result.image?.id === image.id && result.image.persisted !== false)?.image;
+    const operation = archiveQueues[queue].then(async () => {
+        if (!isCurrent()) return null;
+        const saved = currentSavedImage();
+        if (saved) return saved;
+        replaceImageGenerationResult({ ...image, archiveError: undefined });
+        try {
+            if (!image.serverJobId) throw new Error("缺少原任务编号，无法保存图片");
+            const { job } = await abortableResult(fetchServerJob(image.serverJobId, expectedUserId, signal), signal);
+            if (job.status !== "succeeded") throw new Error("原任务尚未生成成功，请稍后重试保存");
+            const archived = job.result?.images.some((item) => item.persisted === false)
+                ? await abortableResult(archiveDeferredServerJob(job, expectedUserId, signal), signal)
+                : job;
+            const serverImage = archived.result?.images.find((item) => item.id === image.id);
+            if (!serverImage || serverImage.persisted === false) throw new Error("图片尚未保存，请重试保存");
+            const next = await generatedImageFromServerImage(serverImage, archived.id, archived.result?.durationMs);
+            if (!isCurrent()) return null;
+            // Another completion callback may already have promoted the result to a library asset.
+            const result = currentSavedImage() || next;
+            replaceImageGenerationResult(result);
+            return result;
+        } catch (error) {
+            if (!isCurrent()) return null;
+            const result = currentSavedImage() || { ...image, archiveError: friendlyErrorMessage(error) };
+            replaceImageGenerationResult(result);
+            return result;
+        }
+    }).finally(() => {
+        if (archiveRuns.get(key) === operation) archiveRuns.delete(key);
+    });
+    archiveQueues[queue] = operation;
+    archiveRuns.set(key, operation);
+    return operation;
 }
 
 async function runGeneration(jobId: string, snapshot: ImageGenerationSnapshot, onComplete: CompletionHandler | undefined, slotRunner: SlotRunner, ownerUserId: string, ownerVersion: number, slotConcurrency: number) {
@@ -321,9 +381,10 @@ function finishJob(jobId: string): ImageGenerationCompletion | undefined {
     const canceledCount = job.results.filter((result) => result.status === "canceled").length;
     const error = job.results.find((result) => result.status === "failed")?.error;
     const durationMs = Date.now() - job.startedAt;
+    const serverJobIds = [...new Set(job.results.flatMap((result) => result.serverJobId ? [result.serverJobId] : []))];
     updateJob(jobId, { status: successCount ? "succeeded" : failCount ? "failed" : "canceled", successCount, failCount, elapsedMs: durationMs, error });
     wakeSlotWaiters();
-    return { successImages, successCount, failCount, canceledCount, error, durationMs };
+    return { successImages, serverJobIds, successCount, failCount, canceledCount, error, durationMs };
 }
 
 async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGenerationSnapshot, slotRunner: SlotRunner = requestImageSlot, expectedUserId = runtimeOwnerUserId) {
@@ -381,6 +442,7 @@ async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGe
         if (!isCurrent()) throw new DOMException("Aborted", "AbortError");
         const persistedImage = archivedImage || (serverJobId ? { ...nextImage, serverJobId } : nextImage);
         updateResult(jobId, index, { status: "success", image: persistedImage, cancelRequested: false, cancelError: undefined });
+        if (persistedImage.persisted === false) void retryImageGenerationArchive(persistedImage, expectedUserId);
         return persistedImage;
     } catch (error) {
         if (isCurrent())
@@ -537,6 +599,11 @@ function hydrateRuntime() {
             trimCompletedJobs();
             emit();
             for (const job of restored) {
+                for (const result of job.results) {
+                    if (result.status === "success" && result.image?.persisted === false) {
+                        void retryImageGenerationArchive({ ...result.image, serverJobId: result.image.serverJobId || result.serverJobId }, ownerUserId);
+                    }
+                }
                 if (job.status !== "running" || !job.snapshot) continue;
                 void runGeneration(job.id, job.snapshot, undefined, requestImageSlot, ownerUserId, version, job.slotConcurrency || job.results.length);
             }

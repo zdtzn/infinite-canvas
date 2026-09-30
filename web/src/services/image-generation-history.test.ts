@@ -15,6 +15,29 @@ type History = {
 };
 
 describe("server job history recovery", () => {
+    test("keeps distinct jobs with identical prompts separate during recovery", () => {
+        const jobs = [createJob("a", "image-a"), createJob("b", "image-b")];
+        const recovered = mergeServerJobsIntoImageHistory<History>([], jobs, recoveryRecord);
+        expect(recovered).toHaveLength(2);
+        expect(recovered.flatMap((record) => record.images.map((image) => image.id)).sort()).toEqual(["image-a", "image-b"]);
+        expect(mergeServerJobsIntoImageHistory(recovered, jobs, recoveryRecord)).toEqual(recovered);
+    });
+
+    test("repairs missing images in an already associated group without duplicating or replacing saved assets", () => {
+        const jobs = [createJob("a", "image-a"), createJob("b", "image-b")];
+        const group = { ...recoveryRecord(jobs[0]), id: "group", serverJobIds: ["a", "b"], imageCount: 1, successCount: 1,
+            images: [{ id: "image-a", dataUrl: "/api/assets/saved-a", persisted: true }], thumbnails: ["/api/assets/saved-a"] };
+        const recovered = mergeServerJobsIntoImageHistory([group], jobs, (job) => ({ ...recoveryRecord(job), imageCount: 1, successCount: 1, thumbnails: [] }));
+        expect(recovered).toHaveLength(1);
+        expect(recovered[0].images.map((image) => image.id)).toEqual(["image-a", "image-b"]);
+        expect(recovered[0].images[0].dataUrl).toBe("/api/assets/saved-a");
+        expect(recovered[0].imageCount).toBe(2);
+        expect(recovered[0].successCount).toBe(2);
+        expect(recovered[0].thumbnails).toHaveLength(2);
+        expect(mergeServerJobsIntoImageHistory(recovered, jobs, recoveryRecord)).toEqual(recovered);
+        expect(group.images).toHaveLength(1);
+    });
+
     test("attaches matching jobs to an existing browser record without duplicating it", () => {
         const logs: History[] = [{ id: "local", createdAt: 10, prompt: "A", model: "m", images: [{ id: "image-a" }] }];
         const job = createJob("job-a", "image-a");
@@ -29,6 +52,17 @@ describe("server job history recovery", () => {
 
         expect(merged).toHaveLength(1);
         expect(merged[0].serverJobIds).toEqual(["job-a"]);
+    });
+
+    test("repair preserves the requested image count including failed slots", () => {
+        const jobs = [createJob("a", "image-a"), createJob("b", "image-b")];
+        const group = { ...recoveryRecord(jobs[0]), serverJobIds: ["a", "b"], imageCount: 4, successCount: 1, failCount: 2 };
+        const recovered = mergeServerJobsIntoImageHistory([group], jobs, (job) => ({ ...recoveryRecord(job), imageCount: 1, successCount: 1, failCount: 0 }));
+        expect(recovered[0].images).toHaveLength(2);
+        expect(recovered[0].imageCount).toBe(4);
+        expect(recovered[0].successCount).toBe(2);
+        expect(recovered[0].failCount).toBe(2);
+        expect(mergeServerJobsIntoImageHistory(recovered, jobs, recoveryRecord)).toEqual(recovered);
     });
 
     test("recovers a server-only workbench job as a history record", () => {
@@ -83,7 +117,7 @@ describe("server job history recovery", () => {
         const job = { ...createJob("job-channel", "image-channel"), channelId: "sadai", model: "gpt-image-2" };
         expect(serverJobModelValue(job)).toBe("sadai::gpt-image-2");
 
-        const logs: History[] = [{ id: "local", createdAt: 10, prompt: "A", model: "sadai::gpt-image-2", images: [] }];
+        const logs: History[] = [{ id: "local", createdAt: 10, prompt: "A", model: "sadai::gpt-image-2", images: [], serverJobIds: [job.id] }];
         const merged = mergeServerJobsIntoImageHistory(logs, [{ ...job, status: "failed", result: undefined }], (item) => ({
             id: `server:${item.id}`,
             createdAt: item.createdAt,
@@ -219,7 +253,9 @@ describe("targeted image recovery index", () => {
     test("job identity reuses a record even when normalized prompts and timestamps differ", () => {
         const job = createJob("job-a", "image-a");
         const record = { ...recoveryRecord(job), id: "local-record", prompt: "normalized", createdAt: 900_000, images: [], serverJobIds: [job.id] };
-        expect(mergeServerJobsIntoImageHistory([record], [job], recoveryRecord)).toEqual([record]);
+        const recovered = mergeServerJobsIntoImageHistory([record], [job], recoveryRecord);
+        expect(recovered[0].id).toBe(record.id);
+        expect(recovered[0].images.map((image) => image.id)).toEqual(["image-a"]);
     });
 
     test("newly archived images on old records remain recoverable", () => {

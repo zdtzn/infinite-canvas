@@ -558,3 +558,25 @@ test("assigns a stable idempotency key before a generation slot starts", async (
     assert.equal(getImageGenerationSnapshot()?.results[0]?.idempotencyKey, receivedKey);
     assert.equal(clearImageGenerationJob(), true);
 });
+
+test("completion preserves failed and canceled server job identities for exact history association", async () => {
+    const complete = deferred<ImageGenerationCompletion>();
+    startImageGeneration(testSnapshot, 3, complete.resolve, async (_snapshot, index, created) => {
+        created?.(`history-job-${index}`);
+        if (index === 0) throw new Error("failed");
+        if (index === 1) throw new DOMException("Aborted", "AbortError");
+        return { ...testImage, id: "history-success" };
+    });
+    const completion = await complete.promise;
+    assert.deepEqual(completion.serverJobIds, ["history-job-0", "history-job-1", "history-job-2"]);
+    clearImageGenerationJob();
+});
+
+test("late temporary completion cannot overwrite a permanently saved result", async () => {
+    const complete = deferred<ImageGenerationCompletion>();
+    startImageGeneration(testSnapshot, 1, complete.resolve, async () => ({ ...testImage, id: "saved", persisted: true, dataUrl: "/api/assets/saved" }));
+    await complete.promise;
+    assert.equal(replaceImageGenerationResult({ ...testImage, id: "saved", persisted: false }), false);
+    assert.equal(getImageGenerationSnapshot()?.results[0].image?.dataUrl, "/api/assets/saved");
+    clearImageGenerationJob();
+});

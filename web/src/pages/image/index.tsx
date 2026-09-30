@@ -27,6 +27,7 @@ import {
     replaceImageGenerationResult,
     removeCompletedImageGenerationJobs,
     retryImageGeneration,
+    retryImageGenerationArchive,
     startImageGeneration,
     subscribeImageGeneration,
     type GeneratedImage,
@@ -114,6 +115,21 @@ export default function ImagePage() {
     const imperialGenerationCue = useImperialGenerationCue();
     const authenticatedUserId = useUserStore((state) => state.user?.id || "");
     const historyUserId = PUBLIC_MODE ? authenticatedUserId : "local";
+    const resultTransferLifetimeRef = useRef({ mounted: false, version: 0 });
+    useEffect(() => {
+        const lifetime = resultTransferLifetimeRef.current;
+        lifetime.mounted = true;
+        lifetime.version += 1;
+        // Subscribe synchronously so an A -> B -> A switch cannot disappear in a batched render.
+        const unsubscribe = useUserStore.subscribe((state, previous) => {
+            if (PUBLIC_MODE && state.user?.id !== previous.user?.id) lifetime.version += 1;
+        });
+        return () => {
+            lifetime.mounted = false;
+            lifetime.version += 1;
+            unsubscribe();
+        };
+    }, []);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const replaceFileInputRef = useRef<HTMLInputElement>(null);
     const replacementIndexRef = useRef<number | null>(null);
@@ -325,7 +341,7 @@ export default function ImagePage() {
         const jobId = startImageGeneration(
             snapshot,
             generationCount,
-            async ({ successImages, successCount, failCount, canceledCount = 0, error, durationMs }) => {
+            async ({ successImages, serverJobIds, successCount, failCount, canceledCount = 0, error, durationMs }) => {
                 void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
                 void queryClient.invalidateQueries({ queryKey: ["wallet"] });
                 const failureFeedback = successCount || !failCount ? undefined : generationFailureFeedback(error, { isDouEmperor });
@@ -366,6 +382,7 @@ export default function ImagePage() {
                         failCount,
                         status: successCount ? "成功" : "失败",
                         images: logImages,
+                        serverJobIds,
                     }),
                 );
                 if (successCount) {
@@ -450,11 +467,23 @@ export default function ImagePage() {
         }
     };
 
-    const ensureStoredResult = async (image: GeneratedImage) => {
+    const beginResultTransfer = () => {
+        const lifetime = resultTransferLifetimeRef.current;
+        const version = lifetime.version;
+        const ownerUserId = historyUserId;
+        return {
+            ownerUserId,
+            isCurrent: () => lifetime.mounted && lifetime.version === version && (!PUBLIC_MODE || Boolean(ownerUserId) && useUserStore.getState().user?.id === ownerUserId),
+        };
+    };
+
+    const ensureStoredResult = async (image: GeneratedImage, operation?: ReturnType<typeof beginResultTransfer>) => {
+        if (operation && !operation.isCurrent()) throw new DOMException("Aborted", "AbortError");
         if (image.persisted === false) throw new Error("图片仍在处理中，请稍候");
         if (image.storageKey) return image;
         const outputFormat = previewLog?.config.imageOutputFormat || generationJob?.snapshot?.config.imageOutputFormat || effectiveConfig.imageOutputFormat;
-        const stored = await uploadImage(image.dataUrl, { outputFormat, thumbnailMaxEdge: 1280 });
+        const stored = await uploadImage(image.dataUrl, { outputFormat, thumbnailMaxEdge: 1280, expectedUserId: operation?.ownerUserId ?? historyUserId });
+        if (operation && !operation.isCurrent()) throw new DOMException("Aborted", "AbortError");
         const nextImage = {
             ...image,
             dataUrl: stored.url,
@@ -510,33 +539,44 @@ export default function ImagePage() {
         message.success("已清空旧内容并将当前图片设为唯一参考图");
     };
 
-    const buildResultTransfer = async (image: GeneratedImage, index: number): Promise<CreativeImageTransfer> => {
-        const stored = await ensureStoredResult(image);
-        const sourcePrompt = previewLog ? generationUserPrompt(previewLog.prompt) : generationJob?.snapshot?.text || prompt;
-        return {
-            id: `${stored.id}:${Date.now()}`,
-            source: "image-workbench",
-            title: `丹青台生成结果 ${index + 1}`,
-            prompt: sourcePrompt,
-            dataUrl: stored.dataUrl,
-            storageKey: stored.storageKey,
-            thumbnailKey: stored.thumbnailKey,
-            thumbnailUrl: stored.thumbnailUrl,
-            width: stored.width,
-            height: stored.height,
-            bytes: stored.bytes,
-            mimeType: stored.mimeType,
-        };
+    const buildResultTransfer = async (image: GeneratedImage, index: number, operation: ReturnType<typeof beginResultTransfer>): Promise<CreativeImageTransfer | null> => {
+        try {
+            const stored = await ensureStoredResult(image, operation);
+            if (!operation.isCurrent()) return null;
+            const sourcePrompt = previewLog ? generationUserPrompt(previewLog.prompt) : generationJob?.snapshot?.text || prompt;
+            return {
+                id: `${stored.id}:${Date.now()}`,
+                source: "image-workbench",
+                ownerUserId: operation.ownerUserId,
+                title: `丹青台生成结果 ${index + 1}`,
+                prompt: sourcePrompt,
+                dataUrl: stored.dataUrl,
+                storageKey: stored.storageKey,
+                thumbnailKey: stored.thumbnailKey,
+                thumbnailUrl: stored.thumbnailUrl,
+                width: stored.width,
+                height: stored.height,
+                bytes: stored.bytes,
+                mimeType: stored.mimeType,
+            };
+        } catch (error) {
+            if (!operation.isCurrent()) return null;
+            throw error;
+        }
     };
 
     const sendResultToCanvas = async (image: GeneratedImage, index: number) => {
-        const transfer = await buildResultTransfer(image, index);
+        const operation = beginResultTransfer();
+        const transfer = await buildResultTransfer(image, index, operation);
+        if (!transfer || !operation.isCurrent()) return;
         void preloadRoute("/canvas");
         navigate("/canvas?mode=transfer", { state: creativeImageTransferState(transfer) });
     };
 
     const sendResultToColorAlchemy = async (image: GeneratedImage, index: number) => {
-        const transfer = await buildResultTransfer(image, index);
+        const operation = beginResultTransfer();
+        const transfer = await buildResultTransfer(image, index, operation);
+        if (!transfer || !operation.isCurrent()) return;
         void preloadRoute("/color-alchemy");
         navigate("/color-alchemy", { state: creativeImageTransferState(transfer) });
     };
@@ -848,6 +888,21 @@ export default function ImagePage() {
             return null;
         }
         return { text, config: { ...requestImageConfig, model: requestImageConfig.imageModel, count: "1" }, references: [...references] };
+    };
+
+    const retryResultArchive = async (image: GeneratedImage) => {
+        const operation = beginResultTransfer();
+        if (!operation.isCurrent()) return;
+        const next = await retryImageGenerationArchive(image, operation.ownerUserId);
+        if (!next || !operation.isCurrent()) return;
+        setPreviewLog((log) => log ? { ...log, images: log.images.map((current) => current.id === next.id && (current.persisted === false || next.persisted !== false) ? next : current) } : log);
+        if (next.persisted === false) return;
+        const records = new Map([...logs, ...(previewLog ? [previewLog] : [])].map((log) => [log.id, log]));
+        records.forEach((log) => {
+            const merged = mergePersistedImagesIntoHistoryRecord(log, [next]);
+            if (merged !== log) saveLog(merged);
+        });
+        setLogs((current) => current.map((log) => mergePersistedImagesIntoHistoryRecord(log, [next])));
     };
 
     const retryResult = async (index: number) => {
@@ -1309,7 +1364,7 @@ export default function ImagePage() {
                                     {results.map((result, index) =>
                                         result.status === "success" && result.image ? (
                                             <Suspense key={result.id} fallback={<ResultImageCardLoading />}>
-                                                <ResultImageCard image={result.image} index={index} savingAsset={savingAssetIds.includes(result.image.id)} onContinue={continueFromResult} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
+                                                <ResultImageCard image={result.image} index={index} savingAsset={savingAssetIds.includes(result.image.id)} onContinue={continueFromResult} onDownload={downloadImage} onSaveAsset={saveResultToAssets} onRetryArchive={retryResultArchive} />
                                             </Suspense>
                                         ) : result.status === "failed" ? (
                                             <Suspense key={result.id} fallback={<ResultImageCardLoading />}>
@@ -1975,6 +2030,7 @@ function buildLog({
     failCount,
     status,
     images,
+    serverJobIds = [],
 }: {
     prompt: string;
     model: string;
@@ -1985,6 +2041,7 @@ function buildLog({
     failCount: number;
     status: GenerationLog["status"];
     images: GeneratedImage[];
+    serverJobIds?: string[];
 }): GenerationLog {
     const logConfig = {
         model: config.model,
@@ -2000,7 +2057,7 @@ function buildLog({
         id: nanoid(),
         createdAt: Date.now(),
         updatedAt: Date.now(),
-        serverJobIds: Array.from(new Set(images.map((image) => image.serverJobId).filter((id): id is string => Boolean(id)))),
+        serverJobIds: Array.from(new Set([...serverJobIds, ...images.map((image) => image.serverJobId).filter((id): id is string => Boolean(id))])),
         title: prompt.slice(0, 12) || "未命名",
         prompt,
         time: new Date().toLocaleString("zh-CN", { hour12: false }),

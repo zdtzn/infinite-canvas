@@ -12,6 +12,8 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
+import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { useUserStore } from "@/stores/use-user-store";
 
 export default function CanvasPage() {
     const [keyword, setKeyword] = useState("");
@@ -31,7 +33,8 @@ export default function CanvasPage() {
     const loadingLabel = useImperialLoadingText("正在加载画布...", "canvas-list");
 
     const mode = searchParams.get("mode");
-    const imageTransfer = readCreativeImageTransfer(location.state);
+    const userId = useUserStore((state) => state.user?.id || "");
+    const imageTransfer = readCreativeImageTransfer(location.state, PUBLIC_MODE ? userId : undefined);
     const transferMode = mode === "transfer" && Boolean(imageTransfer);
     const agentMode = mode === "new" || mode === "recent" || mode === "choose";
     const agentQuery = agentMode ? `?${searchParams.toString()}` : "";

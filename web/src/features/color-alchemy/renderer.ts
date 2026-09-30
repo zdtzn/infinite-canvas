@@ -17,14 +17,15 @@ export type ColorRenderProgress = {
 
 export type ColorRenderOptions = {
     signal?: AbortSignal;
+    expectedUserId?: string;
     onProgress?: (progress: ColorRenderProgress) => void;
 };
 
-export async function loadColorImage(source: ColorAlchemySource, signal?: AbortSignal): Promise<LoadedColorImage> {
+export async function loadColorImage(source: ColorAlchemySource, signal?: AbortSignal, expectedUserId?: string): Promise<LoadedColorImage> {
     throwIfAborted(signal);
     const url = await abortableLoad(resolveImageUrl(source.storageKey, source.url), signal);
     throwIfAborted(signal);
-    const blob = await readImageBlob(url || source.url, undefined, { signal });
+    const blob = await readImageBlob(url || source.url, expectedUserId, { signal });
     throwIfAborted(signal);
     if (typeof createImageBitmap === "function") {
         const bitmap = await abortableLoad(createImageBitmap(blob), signal, (lateBitmap) => lateBitmap.close());
@@ -118,8 +119,8 @@ export function analyzeLoadedColorImage(source: LoadedColorImage): ColorAnalysis
     return extractColorAnalysis(context.getImageData(0, 0, canvas.width, canvas.height));
 }
 
-export async function analyzeColorSource(source: ColorAlchemySource) {
-    const loaded = await loadColorImage(source);
+export async function analyzeColorSource(source: ColorAlchemySource, options?: ColorRenderOptions) {
+    const loaded = await loadColorImage(source, options?.signal, options?.expectedUserId);
     try {
         return analyzeLoadedColorImage(loaded);
     } finally {
@@ -130,7 +131,7 @@ export async function analyzeColorSource(source: ColorAlchemySource) {
 export async function renderColorBlob(source: ColorAlchemySource, settings: ColorSettings, format: ColorExportFormat, quality = 0.92, maxEdge?: number, options?: ColorRenderOptions) {
     throwIfAborted(options?.signal);
     options?.onProgress?.({ phase: "loading", progress: 0.04 });
-    const loaded = await loadColorImage(source, options?.signal);
+    const loaded = await loadColorImage(source, options?.signal, options?.expectedUserId);
     try {
         throwIfAborted(options?.signal);
         options?.onProgress?.({ phase: "loading", progress: 0.12 });

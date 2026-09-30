@@ -34,6 +34,7 @@ type UploadImageOptions = {
     thumbnailMaxEdge?: number;
     previewUrl?: string;
     expectedUserId?: string;
+    signal?: AbortSignal;
 };
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
@@ -43,8 +44,12 @@ const objectUrls = new Map<string, string>();
 const promotedJobImages = new Map<string, Promise<UploadedImage>>();
 
 export async function uploadImage(input: string | Blob, options?: UploadImageOptions): Promise<UploadedImage> {
+    const signal = options?.signal;
+    signal?.throwIfAborted();
     const expectedUserId = options?.expectedUserId ?? useUserStore.getState().user?.id ?? "";
     if (PUBLIC_MODE && typeof input === "string" && canPromoteServerJobImage(input, options?.outputFormat)) {
+        // A cancelable caller must not cancel another caller's shared promotion.
+        if (signal) return promoteJobImage(input, expectedUserId, options);
         const thumbnailMode = options?.createThumbnail === false ? "none" : String(options?.thumbnailMaxEdge || 512);
         const promotionKey = `${expectedUserId}:${input}:${thumbnailMode}`;
         const existing = promotedJobImages.get(promotionKey);
@@ -58,25 +63,33 @@ export async function uploadImage(input: string | Blob, options?: UploadImageOpt
         }
     }
 
-    const blob = await convertImageOutput(input, options?.outputFormat, expectedUserId);
+    const blob = await convertImageOutput(input, options?.outputFormat, expectedUserId, signal);
+    signal?.throwIfAborted();
     const suppliedMeta = options?.imageMeta || options?.dimensions;
     const meta: ImageUploadMeta = validDimensions(suppliedMeta) ? { ...suppliedMeta, mimeType: options?.imageMeta?.mimeType || blob.type } : await readBlobMeta(blob);
+    signal?.throwIfAborted();
     const mimeType = blob.type || meta.mimeType || "image/png";
     assertImageUploadAllowed({ bytes: blob.size, mimeType, width: meta.width, height: meta.height });
     const thumbnail = options?.createThumbnail === false ? null : await createThumbnail(blob, meta.width, meta.height, options?.thumbnailMaxEdge);
+    signal?.throwIfAborted();
     if (PUBLIC_MODE) {
-        const { asset } = await uploadServerAsset(blob, "image", undefined, expectedUserId);
-        const thumbnailAsset = thumbnail ? (await uploadServerAsset(thumbnail, "image", undefined, expectedUserId)).asset : undefined;
+        const { asset } = await uploadServerAsset(blob, "image", undefined, expectedUserId, signal);
+        signal?.throwIfAborted();
+        const thumbnailAsset = thumbnail ? (await uploadServerAsset(thumbnail, "image", undefined, expectedUserId, signal)).asset : undefined;
+        signal?.throwIfAborted();
         const url = options?.previewUrl ? rememberObjectUrl(asset.key, options.previewUrl) : asset.url;
         return { url, storageKey: asset.key, width: meta.width, height: meta.height, bytes: asset.bytes, mimeType: asset.mimeType, thumbnailKey: thumbnailAsset?.key, thumbnailUrl: thumbnailAsset?.url };
     }
     await assertStorageQuotaAvailable(blob.size);
+    signal?.throwIfAborted();
     const storageKey = `image:${nanoid()}`;
     await store.setItem(storageKey, blob);
+    signal?.throwIfAborted();
     const url = rememberObjectUrl(storageKey, options?.previewUrl || URL.createObjectURL(blob));
     const thumbnailKey = thumbnail ? `image:thumb:${nanoid()}` : undefined;
     if (thumbnail && thumbnailKey) {
         await store.setItem(thumbnailKey, thumbnail);
+        signal?.throwIfAborted();
         rememberObjectUrl(thumbnailKey, URL.createObjectURL(thumbnail));
     }
     return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType, thumbnailKey, thumbnailUrl: thumbnailKey ? objectUrls.get(thumbnailKey) : undefined };
@@ -92,9 +105,13 @@ export function canPromoteServerJobImage(input: string, outputFormat?: string) {
 }
 
 async function promoteJobImage(sourceUrl: string, expectedUserId: string, options?: UploadImageOptions): Promise<UploadedImage> {
-    const { asset, width, height } = await promoteServerJobAsset(sourceUrl, expectedUserId);
+    const signal = options?.signal;
+    signal?.throwIfAborted();
+    const { asset, width, height } = await promoteServerJobAsset(sourceUrl, expectedUserId, signal);
+    signal?.throwIfAborted();
     let sourceBlob: Blob | undefined;
-    const meta = Number.isSafeInteger(width) && Number.isSafeInteger(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : await readBlobMeta((sourceBlob = await readImageBlob(sourceUrl, expectedUserId)));
+    const meta = Number.isSafeInteger(width) && Number.isSafeInteger(height) && (width || 0) > 0 && (height || 0) > 0 ? { width: width!, height: height! } : await readBlobMeta((sourceBlob = await readImageBlob(sourceUrl, expectedUserId, { signal })));
+    signal?.throwIfAborted();
     try {
         assertImageUploadAllowed({ bytes: asset.bytes, mimeType: asset.mimeType, width: meta.width, height: meta.height });
     } catch (error) {
@@ -104,13 +121,15 @@ async function promoteJobImage(sourceUrl: string, expectedUserId: string, option
     let thumbnailAsset: Awaited<ReturnType<typeof uploadServerAsset>>["asset"] | undefined;
     if (options?.createThumbnail !== false) {
         try {
-            sourceBlob ||= await readImageBlob(sourceUrl, expectedUserId);
+            sourceBlob ||= await readImageBlob(sourceUrl, expectedUserId, { signal });
             const thumbnail = await createThumbnail(sourceBlob, meta.width, meta.height, options?.thumbnailMaxEdge);
-            if (thumbnail) thumbnailAsset = (await uploadServerAsset(thumbnail, "image", undefined, expectedUserId)).asset;
+            signal?.throwIfAborted();
+            if (thumbnail) thumbnailAsset = (await uploadServerAsset(thumbnail, "image", undefined, expectedUserId, signal)).asset;
         } catch {
             // Thumbnail creation is an optimization and must not invalidate the original image.
         }
     }
+    signal?.throwIfAborted();
     return {
         url: sourceUrl,
         storageKey: asset.key,
@@ -186,8 +205,8 @@ function decodeDataUrl(value: string) {
 }
 
 /** Encode a generated result locally when its gateway ignores output_format. */
-export async function convertImageOutput(input: string | Blob, outputFormat?: string, expectedUserId = useUserStore.getState().user?.id || "") {
-    const blob = await readImageBlob(input, expectedUserId);
+export async function convertImageOutput(input: string | Blob, outputFormat?: string, expectedUserId = useUserStore.getState().user?.id || "", signal?: AbortSignal) {
+    const blob = await readImageBlob(input, expectedUserId, { signal });
     const targetMimeType = imageOutputFormatMimeType(outputFormat);
     if (!targetMimeType || blob.type.toLowerCase() === targetMimeType) return blob;
     if (typeof document === "undefined") throw new Error("当前环境无法转换图片格式");

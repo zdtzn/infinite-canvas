@@ -25,6 +25,7 @@ import type { AnalyzedColor, ColorAlchemySource, ColorExportFormat, ColorPreset,
 import { deleteColorAlchemyDocument, fetchColorAlchemyDocuments, saveColorAlchemyDocument, type ColorAlchemyDocumentTombstone } from "@/services/color-alchemy-api";
 import { lazyRoute } from "@/lib/lazy-route";
 import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
+import { createColorOperationLifetime } from "./operation-lifetime";
 import "@/features/color-alchemy/color-alchemy.css";
 
 const SETTINGS_CLIPBOARD_KEY = "infinite-canvas:color-alchemy:clipboard";
@@ -81,6 +82,37 @@ export default function ColorAlchemyPage() {
     const exportAbortRef = useRef<AbortController | null>(null);
     const consumedImageTransferRef = useRef<string | null>(null);
     const settingsDraftRef = useRef<ColorSettingsDraft>(null);
+    const operationLifetimeRef = useRef<ReturnType<typeof createColorOperationLifetime> | null>(null);
+
+    const captureOperation = () => operationLifetimeRef.current?.capture(userId, () => !PUBLIC_MODE || useColorAlchemyStore.getState().ownerUserId === userId);
+
+    useEffect(() => {
+        const lifetime = createColorOperationLifetime({
+            getOwner: () => useUserStore.getState().user?.id || "",
+            subscribe: (onChange) => useUserStore.subscribe(onChange),
+        }, () => {
+            // This also runs for A -> B -> A transitions batched by React.
+            setUploading(false);
+            setReferenceLoading(false);
+            setSaving(false);
+            setReturning(false);
+            setExporting(false);
+            setExportProgress(0);
+            setCloudReadyUserId("");
+            syncedVersionsRef.current.clear();
+            syncTasksRef.current.clear();
+            deletedDocumentIdsRef.current.clear();
+            syncRetryAfterRef.current.clear();
+            for (const timer of syncRetryTimersRef.current.values()) window.clearTimeout(timer);
+            syncRetryTimersRef.current.clear();
+            setSyncTick((value) => value + 1);
+        });
+        operationLifetimeRef.current = lifetime;
+        return () => {
+            lifetime.dispose();
+            if (operationLifetimeRef.current === lifetime) operationLifetimeRef.current = null;
+        };
+    }, []);
 
     useEffect(() => prepareColorAlchemyForUser(userId), [userId]);
     useEffect(() => () => exportAbortRef.current?.abort(), []);
@@ -88,6 +120,11 @@ export default function ColorAlchemyPage() {
     useEffect(() => {
         const transfer = readCreativeImageTransfer(location.state);
         if (!hydrated || !transfer || consumedImageTransferRef.current === transfer.id) return;
+        if (!captureOperation()?.isCurrent()) return;
+        if (PUBLIC_MODE && transfer.ownerUserId !== userId) {
+            navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+            return;
+        }
         consumedImageTransferRef.current = transfer.id;
         openSource({
             key: transfer.storageKey || `image-workbench:${transfer.id}`,
@@ -100,17 +137,7 @@ export default function ColorAlchemyPage() {
         });
         message.success("已将丹青台图片载入灵彩");
         navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
-    }, [hydrated, location.pathname, location.search, location.state, message, navigate, openSource]);
-
-    useEffect(() => {
-        if (!userId) setCloudReadyUserId("");
-        syncedVersionsRef.current.clear();
-        syncTasksRef.current.clear();
-        deletedDocumentIdsRef.current.clear();
-        syncRetryAfterRef.current.clear();
-        for (const timer of syncRetryTimersRef.current.values()) window.clearTimeout(timer);
-        syncRetryTimersRef.current.clear();
-    }, [userId]);
+    }, [hydrated, location.pathname, location.search, location.state, message, navigate, openSource, userId]);
 
     useEffect(
         () => () => {
@@ -122,27 +149,31 @@ export default function ColorAlchemyPage() {
 
     useEffect(() => {
         if (!PUBLIC_MODE || !userId || !hydrated || cloudReadyUserId === userId) return;
+        const operation = captureOperation();
+        if (!operation) return;
         let cancelled = false;
         void fetchColorAlchemyDocuments(userId)
             .then(({ items, deleted }) => {
-                if (cancelled) return;
+                if (cancelled || !operation.isCurrent()) return;
                 mergeDocuments(items);
                 for (const item of items) syncedVersionsRef.current.set(item.id, item.updatedAt);
                 applyDeletedDocuments(deleted, removeDocuments, syncedVersionsRef, deletedDocumentIdsRef);
             })
             .catch((error) => {
-                if (!cancelled) message.warning(`灵彩草稿暂未同步：${error instanceof Error ? error.message : "请稍后重试"}`);
+                if (!cancelled && operation.isCurrent()) message.warning(`灵彩草稿暂未同步：${error instanceof Error ? error.message : "请稍后重试"}`);
             })
             .finally(() => {
-                if (!cancelled) setCloudReadyUserId(userId);
+                if (!cancelled && operation.isCurrent()) setCloudReadyUserId(userId);
             });
         return () => {
             cancelled = true;
         };
-    }, [cloudReadyUserId, hydrated, mergeDocuments, message, userId]);
+    }, [cloudReadyUserId, hydrated, mergeDocuments, message, syncTick, userId]);
 
     useEffect(() => {
         if (!PUBLIC_MODE || !userId || !hydrated || cloudReadyUserId !== userId) return;
+        const operation = captureOperation();
+        if (!operation) return;
         const persistable = documents.filter(
             (item) =>
                 Boolean(item.source.storageKey) &&
@@ -153,11 +184,13 @@ export default function ColorAlchemyPage() {
         );
         if (!persistable.length) return;
         const timer = window.setTimeout(() => {
+            if (!operation.isCurrent()) return;
             for (const item of persistable) {
                 const syncedVersion = item.updatedAt;
                 let task: Promise<void>;
                 task = saveColorAlchemyDocument(item, userId)
                     .then(({ document: saved, deleted }) => {
+                        if (!operation.isCurrent()) return;
                         if (deleted) {
                             applyDeletedDocuments([deleted], removeDocuments, syncedVersionsRef, deletedDocumentIdsRef);
                             return;
@@ -166,6 +199,7 @@ export default function ColorAlchemyPage() {
                         syncRetryAfterRef.current.delete(item.id);
                     })
                     .catch((error) => {
+                        if (!operation.isCurrent()) return;
                         console.warn("color-alchemy document sync failed", error);
                         const retryAfter = Date.now() + 10_000;
                         syncRetryAfterRef.current.set(item.id, retryAfter);
@@ -174,12 +208,14 @@ export default function ColorAlchemyPage() {
                         syncRetryTimersRef.current.set(
                             item.id,
                             window.setTimeout(() => {
+                                if (!operation.isCurrent()) return;
                                 syncRetryTimersRef.current.delete(item.id);
                                 setSyncTick((value) => value + 1);
                             }, retryAfter - Date.now()),
                         );
                     })
                     .finally(() => {
+                        if (!operation.isCurrent()) return;
                         if (syncTasksRef.current.get(item.id) !== task) return;
                         syncTasksRef.current.delete(item.id);
                         setSyncTick((value) => value + 1);
@@ -246,16 +282,22 @@ export default function ColorAlchemyPage() {
 
     const importFile = async (file: File) => {
         if (!file.type.startsWith("image/")) return message.warning("请选择图片文件");
+        const operation = captureOperation();
+        if (!operation) return;
         setUploading(true);
         const previewUrl = URL.createObjectURL(file);
         try {
-            const image = await uploadImage(file, { previewUrl, createThumbnail: true });
+            const image = await uploadImage(file, { previewUrl, createThumbnail: true, expectedUserId: operation.ownerId, signal: operation.signal });
+            if (!operation.isCurrent()) {
+                URL.revokeObjectURL(previewUrl);
+                return;
+            }
             openSource({ key: image.storageKey, title: stripExtension(file.name) || "灵彩图片", url: image.url, storageKey: image.storageKey, width: image.width, height: image.height, mimeType: image.mimeType });
         } catch (error) {
             URL.revokeObjectURL(previewUrl);
-            message.error(error instanceof Error ? error.message : "图片添加失败");
+            if (operation.isCurrent()) message.error(error instanceof Error ? error.message : "图片添加失败");
         } finally {
-            setUploading(false);
+            if (operation.isCurrent()) setUploading(false);
         }
     };
 
@@ -309,21 +351,29 @@ export default function ColorAlchemyPage() {
     const addReference = async (file: File) => {
         if (!document || !file.type.startsWith("image/")) return message.warning("请选择参考图片");
         if (referenceLoading) return;
+        const operation = captureOperation();
+        if (!operation) return;
         setReferenceLoading(true);
-        const ownerId = userId;
         const previewUrl = URL.createObjectURL(file);
         try {
-            const image = await uploadImage(file, { previewUrl, createThumbnail: false });
+            const image = await uploadImage(file, { previewUrl, createThumbnail: false, expectedUserId: operation.ownerId, signal: operation.signal });
+            if (!operation.isCurrent()) {
+                URL.revokeObjectURL(previewUrl);
+                return;
+            }
             const source: ColorAlchemySource = { key: image.storageKey, title: stripExtension(file.name) || "借色参考", url: image.url, storageKey: image.storageKey, width: image.width, height: image.height, mimeType: image.mimeType };
-            const analysis = await analyzeColorSource(source);
-            if ((useUserStore.getState().user?.id || "") !== ownerId) return;
+            const analysis = await analyzeColorSource(source, { signal: operation.signal, expectedUserId: operation.ownerId });
+            if (!operation.isCurrent()) {
+                URL.revokeObjectURL(previewUrl);
+                return;
+            }
             setReference(document.id, { ...source, analysis });
             message.success("参考图片色彩已解析");
         } catch (error) {
             URL.revokeObjectURL(previewUrl);
-            message.error(error instanceof Error ? error.message : "参考图片分析失败");
+            if (operation.isCurrent()) message.error(error instanceof Error ? error.message : "参考图片分析失败");
         } finally {
-            setReferenceLoading(false);
+            if (operation.isCurrent()) setReferenceLoading(false);
         }
     };
 
@@ -337,15 +387,19 @@ export default function ColorAlchemyPage() {
         if (!document) throw new Error("请先添加图片");
         const settings = workingSettings || document.settings;
         const rendered = await renderColorBlob(document.source, settings, format, quality, undefined, renderOptions);
-        return fitUploadLimit ? fitColorUploadBlob(document.source, settings, rendered) : { blob: rendered, compressed: false };
+        return fitUploadLimit ? fitColorUploadBlob(document.source, settings, rendered, renderOptions) : { blob: rendered, compressed: false };
     };
 
     const saveToAssets = async () => {
         if (!document || saving) return;
+        const operation = captureOperation();
+        if (!operation || (PUBLIC_MODE && useAssetStore.getState().ownerUserId !== operation.ownerId)) return;
         setSaving(true);
         try {
-            const { blob, compressed } = await createRenderedImage("webp", 0.92, true);
-            const image = await uploadImage(blob, { createThumbnail: true });
+            const { blob, compressed } = await createRenderedImage("webp", 0.92, true, { signal: operation.signal, expectedUserId: operation.ownerId });
+            if (!operation.isCurrent()) return;
+            const image = await uploadImage(blob, { createThumbnail: true, expectedUserId: operation.ownerId, signal: operation.signal });
+            if (!operation.isCurrent() || (PUBLIC_MODE && useAssetStore.getState().ownerUserId !== operation.ownerId)) return;
             addAsset({
                 kind: "image",
                 title: `${document.source.title} · 灵彩`,
@@ -357,43 +411,56 @@ export default function ColorAlchemyPage() {
             });
             message.success(compressed ? "调色作品已压缩并入藏卷阁" : "调色作品已入藏卷阁");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "保存失败，请重试");
+            if (operation.isCurrent()) message.error(error instanceof Error ? error.message : "保存失败，请重试");
         } finally {
-            setSaving(false);
+            if (operation.isCurrent()) setSaving(false);
         }
     };
 
     const exportImage = async () => {
         if (!document || exporting) return;
+        const operation = captureOperation();
+        if (!operation) return;
         const controller = new AbortController();
+        const abort = () => controller.abort();
+        operation.signal.addEventListener("abort", abort, { once: true });
         exportAbortRef.current = controller;
         setExporting(true);
         setExportProgress(0);
         try {
-            const { blob } = await createRenderedImage(exportFormat, exportQuality / 100, false, { signal: controller.signal, onProgress: ({ progress }) => setExportProgress(progress) });
+            const { blob } = await createRenderedImage(exportFormat, exportQuality / 100, false, { signal: controller.signal, expectedUserId: operation.ownerId, onProgress: ({ progress }) => { if (operation.isCurrent()) setExportProgress(progress); } });
             const { saveAs } = await import("file-saver");
+            if (!operation.isCurrent()) return;
             controller.signal.throwIfAborted();
             saveAs(blob, `${safeFileName(document.source.title)}-灵彩.${colorExportExtension(exportFormat)}`);
             setExportOpen(false);
             message.success("调色结果已导出");
         } catch (error) {
+            if (!operation.isCurrent()) return;
             if (error instanceof DOMException && error.name === "AbortError") message.info("已取消导出");
             else message.error(error instanceof Error ? error.message : "导出失败，请重试");
         } finally {
-            exportAbortRef.current = null;
-            setExporting(false);
-            setExportProgress(0);
+            operation.signal.removeEventListener("abort", abort);
+            if (exportAbortRef.current === controller) exportAbortRef.current = null;
+            if (operation.isCurrent()) {
+                setExporting(false);
+                setExportProgress(0);
+            }
         }
     };
 
     const returnToCanvas = async () => {
         if (!document?.source.origin?.projectId || returning) return;
+        const operation = captureOperation();
+        if (!operation || (PUBLIC_MODE && useCanvasStore.getState().ownerUserId !== operation.ownerId)) return;
         const project = useCanvasStore.getState().openProject(document.source.origin.projectId);
         if (!project) return message.error("原画布已不存在");
         setReturning(true);
         try {
-            const { blob, compressed } = await createRenderedImage("webp", 0.92, true);
-            const image = await uploadImage(blob, { createThumbnail: true });
+            const { blob, compressed } = await createRenderedImage("webp", 0.92, true, { signal: operation.signal, expectedUserId: operation.ownerId });
+            if (!operation.isCurrent()) return;
+            const image = await uploadImage(blob, { createThumbnail: true, expectedUserId: operation.ownerId, signal: operation.signal });
+            if (!operation.isCurrent() || (PUBLIC_MODE && useCanvasStore.getState().ownerUserId !== operation.ownerId)) return;
             const latestProject = useCanvasStore.getState().openProject(document.source.origin.projectId);
             if (!latestProject) throw new Error("原画布已不存在");
             const sourceNode = latestProject.nodes.find((node) => node.id === document.source.origin?.nodeId);
@@ -411,13 +478,15 @@ export default function ColorAlchemyPage() {
             message.success(compressed ? "已压缩并生成新的灵彩节点，原图保持不变" : "已生成新的灵彩节点，原图保持不变");
             navigate(document.source.origin.route || `/canvas/${project.id}`);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "返回画布失败");
+            if (operation.isCurrent()) message.error(error instanceof Error ? error.message : "返回画布失败");
         } finally {
-            setReturning(false);
+            if (operation.isCurrent()) setReturning(false);
         }
     };
 
     const discardDocument = async (id: string) => {
+        const operation = captureOperation();
+        if (!operation) return;
         const discarded = documents.find((item) => item.id === id);
         if (!discarded) return;
         deletedDocumentIdsRef.current.set(id, new Date().toISOString());
@@ -426,9 +495,12 @@ export default function ColorAlchemyPage() {
         if (!PUBLIC_MODE || !userId) return;
         try {
             await syncTasksRef.current.get(id);
+            if (!operation.isCurrent()) return;
             const { deleted } = await deleteColorAlchemyDocument(id, userId);
+            if (!operation.isCurrent()) return;
             deletedDocumentIdsRef.current.set(id, deleted.deletedAt);
         } catch (error) {
+            if (!operation.isCurrent()) return;
             deletedDocumentIdsRef.current.delete(id);
             mergeDocuments([discarded]);
             message.warning(`草稿尚未删除，已恢复到列表：${error instanceof Error ? error.message : "请稍后重试"}`);
@@ -445,13 +517,16 @@ export default function ColorAlchemyPage() {
 
     const pasteSettings = async () => {
         if (!document) return;
+        const operation = captureOperation();
+        if (!operation) return;
         try {
             const clipboard = await navigator.clipboard?.readText().catch(() => "");
+            if (!operation.isCurrent()) return;
             const value = clipboard || window.localStorage.getItem(SETTINGS_CLIPBOARD_KEY) || "";
             applyCommittedSettings(normalizeColorSettings(JSON.parse(value)));
             message.success("调色参数已粘贴");
         } catch {
-            message.warning("剪贴板里没有可用的调色参数");
+            if (operation.isCurrent()) message.warning("剪贴板里没有可用的调色参数");
         }
     };
 
@@ -841,11 +916,12 @@ function applyDeletedDocuments(deleted: ColorAlchemyDocumentTombstone[], removeD
     removeDocuments(ids);
 }
 
-async function fitColorUploadBlob(source: ColorAlchemySource, settings: ColorSettings, initial: Blob) {
+async function fitColorUploadBlob(source: ColorAlchemySource, settings: ColorSettings, initial: Blob, options?: ColorRenderOptions) {
+    options?.signal?.throwIfAborted();
     const maxBytes = 15 * 1024 * 1024;
     if (initial.size <= maxBytes) return { blob: initial, compressed: false };
     for (const maxEdge of [9_600, 7_200, 5_400, 4_000]) {
-        const candidate = await renderColorBlob(source, settings, "webp", 0.86, maxEdge);
+        const candidate = await renderColorBlob(source, settings, "webp", 0.86, maxEdge, options);
         if (candidate.size <= maxBytes) return { blob: candidate, compressed: true };
     }
     throw new Error("调色结果过大，已尝试压缩仍超过 16 MB，请先导出原尺寸或使用更小的图片");

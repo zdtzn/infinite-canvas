@@ -56,3 +56,14 @@ test("keeps the normal result card unchanged after the server file is persisted"
     assert.doesNotMatch(html, /恢复归档/);
     assert.match(html, /继续创作/);
 });
+
+test("failed archival offers a save retry without offering regeneration", () => {
+    const html = renderToStaticMarkup(createElement(ResultImageCard, {
+        image: { ...temporaryImage, archiveError: "网络暂时不可用" }, index: 0, savingAsset: false,
+        onContinue: () => undefined, onDownload: () => undefined, onSaveAsset: () => undefined,
+        onRetryArchive: async () => undefined,
+    }));
+    assert.match(html, /保存失败/);
+    assert.match(html, /重试保存/);
+    assert.doesNotMatch(html, /保存中 · 图片已生成/);
+});
