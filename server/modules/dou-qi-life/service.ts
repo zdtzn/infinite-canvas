@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Database } from "bun:sqlite";
 
-import { DOU_QI_MOODS, DOU_QI_PERIODS, DOU_QI_REALMS, DOU_QI_SEASONS, type DouQiBattleState, type DouQiLifeCharacterInput, type DouQiLifeMessage, type DouQiLifeSave, type DouQiLifeSession, type DouQiLifeState, type DouQiLifeTurnResult, type DouQiNpcState, type DouQiTechnique, type DouQiWorldEvent, type DouQiWorldEventStatus, type DouQiWorldEventType, type DouQiWorldState } from "./types";
+import { DOU_QI_MOODS, DOU_QI_PERIODS, DOU_QI_REALMS, DOU_QI_SEASONS, type DouQiBattleState, type DouQiLifeCharacterInput, type DouQiLifeMessage, type DouQiLifeSave, type DouQiLifeSavePreview, type DouQiLifeSession, type DouQiLifeState, type DouQiLifeTurnResult, type DouQiNpcState, type DouQiTechnique, type DouQiWorldEvent, type DouQiWorldEventStatus, type DouQiWorldEventType, type DouQiWorldState } from "./types";
 
 const MAX_SESSIONS_PER_USER = 20;
 const MAX_SAVES_PER_USER = 50;
@@ -50,13 +50,14 @@ export function createDouQiLifeService(database: Database, options: { now?: () =
     const character = normalizeCharacter(input);
     const timestamp = now();
     const state = createInitialState(character, timestamp);
+    if (isTerminalState(state)) state.player.condition = "寿元已尽";
     ensureMemoryState(state);
     const opening = openingNarrative(state);
     const openingSuggestions = openingActionSuggestions();
     const session: DouQiLifeSession = {
       id: randomUUID(),
       title: `${character.name} 的斗气人生`,
-      status: "active",
+      status: isTerminalState(state) ? "ended" : "active",
       state,
       lastNarrative: opening,
       createdAt: timestamp,
@@ -76,7 +77,7 @@ export function createDouQiLifeService(database: Database, options: { now?: () =
   function getSessionWithHistory(userId: string, sessionId: string) {
     const session = getSession(userId, sessionId);
     if (!session) return null;
-    const messages = (database.query("SELECT * FROM douqi_life_messages WHERE user_id = ? AND session_id = ? ORDER BY rowid ASC LIMIT ?").all(userId, session.id, MAX_MESSAGES_PER_SESSION) as DouQiMessageRow[]).map(messageFromRow);
+    const messages = (database.query("SELECT * FROM douqi_life_messages WHERE user_id = ? AND session_id = ? ORDER BY rowid DESC LIMIT ?").all(userId, session.id, MAX_MESSAGES_PER_SESSION) as DouQiMessageRow[]).reverse().map(messageFromRow);
     return { session, messages };
   }
 
@@ -88,7 +89,7 @@ export function createDouQiLifeService(database: Database, options: { now?: () =
       .get(userId, session.id);
     if (pending) throw new DouQiLifeError("上一段世界回应尚未完成，请稍候", 409, "TURN_IN_PROGRESS");
     const content = requiredText(action, MAX_ACTION_CHARACTERS, "行动");
-    if (session.state.player.life <= 0 && !isRecoveryAction(content)) throw new DouQiLifeError("你已重伤昏迷，只能尝试休养、疗伤或读取其他存档", 409, "PLAYER_INCAPACITATED");
+    validateTurnAction(session.state, content);
     const timestamp = now();
     const playerMessage: DouQiLifeMessage = {
       id: randomUUID(), sessionId: session.id, role: "player", kind: "action", content, metadata: {}, status: "completed", error: "", createdAt: timestamp, updatedAt: timestamp,
@@ -101,6 +102,7 @@ export function createDouQiLifeService(database: Database, options: { now?: () =
       database.query("INSERT INTO douqi_life_messages(user_id, message_id, session_id, role, kind, content, metadata_json, status, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(userId, playerMessage.id, session.id, playerMessage.role, playerMessage.kind, playerMessage.content, "{}", playerMessage.status, "", playerMessage.createdAt, playerMessage.updatedAt);
       database.query("INSERT INTO douqi_life_messages(user_id, message_id, session_id, role, kind, content, metadata_json, status, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(userId, worldMessage.id, session.id, worldMessage.role, worldMessage.kind, "", "{}", worldMessage.status, "", worldMessage.createdAt, worldMessage.updatedAt);
       database.query("UPDATE douqi_life_sessions SET updated_at = ? WHERE user_id = ? AND session_id = ?").run(timestamp, userId, session.id);
+      trimMessages(userId, session.id);
     })();
     return { session: { ...session, updatedAt: timestamp }, playerMessage, worldMessage, recentMessages: thisContextMessages(userId, session.id), resolution };
   }
@@ -110,9 +112,12 @@ export function createDouQiLifeService(database: Database, options: { now?: () =
     const message = getMessage(userId, worldMessageId, session.id);
     if (!message || message.role !== "world" || message.status !== "streaming") throw new DouQiLifeError("世界回应不存在或已经处理", 404, "MESSAGE_NOT_FOUND");
     const timestamp = now();
-    const applied = resolution
-      ? finalizeDeterministicTurn(resolution, timestamp)
-      : applyTurnState(session.state, action, result.statePatch, result.narrative, timestamp);
+    // The world placeholder is created one millisecond after the player action.
+    const startedAt = message.createdAt - 1;
+    const authoritative = resolution || resolveDeterministicTurn(session.state, action, startedAt);
+    const applied = authoritative
+      ? finalizeDeterministicTurn(authoritative, session.state, result, action, timestamp, startedAt)
+      : applyTurnState(session.state, action, result.statePatch, result.narrative, timestamp, startedAt);
     const state = applied.state;
     const notice = [applied.notice, result.notice].filter(Boolean).join(" ");
     const changes = describeStateChanges(session.state, state);
@@ -128,11 +133,16 @@ export function createDouQiLifeService(database: Database, options: { now?: () =
   }
 
   function failTurn(userId: string, sessionId: string, worldMessageId: string, error: string) {
-    const session = requireSession(userId, sessionId);
-    const message = getMessage(userId, worldMessageId, session.id);
-    if (!message) return null;
+    const message = getMessage(userId, worldMessageId, validId(sessionId, "人生 ID"));
+    if (!message || message.role !== "world" || message.status !== "streaming") return null;
     const timestamp = now();
-    database.query("UPDATE douqi_life_messages SET status = 'failed', error = ?, updated_at = ? WHERE user_id = ? AND message_id = ? AND session_id = ?").run(error.slice(0, 500), timestamp, userId, message.id, session.id);
+    const changed = database.transaction(() => {
+      const update = database.query("UPDATE douqi_life_messages SET status = 'failed', error = ?, updated_at = ? WHERE user_id = ? AND message_id = ? AND session_id = ? AND role = 'world' AND status = 'streaming'").run(error.slice(0, 500), timestamp, userId, message.id, sessionId);
+      if (Number(update.changes) !== 1) return false;
+      trimMessages(userId, sessionId);
+      return true;
+    })();
+    if (!changed) return null;
     return { ...message, status: "failed" as const, error: error.slice(0, 500), updatedAt: timestamp };
   }
 
@@ -157,19 +167,41 @@ export function createDouQiLifeService(database: Database, options: { now?: () =
     return (rows as DouQiSaveRow[]).map(saveFromRow);
   }
 
-  function restoreSave(userId: string, saveId: string) {
+  function requireSave(userId: string, saveId: string) {
     const row = database.query("SELECT * FROM douqi_life_saves WHERE user_id = ? AND save_id = ?").get(userId, validId(saveId, "存档 ID")) as DouQiSaveRow | null;
     if (!row) throw new DouQiLifeError("存档不存在", 404, "SAVE_NOT_FOUND");
+    return row;
+  }
+
+  function getSavePreview(userId: string, saveId: string): DouQiLifeSavePreview {
+    const row = requireSave(userId, saveId);
+    const snapshot = parseSnapshot(row.snapshot_json);
+    return { save: saveFromRow(row), title: snapshot.title, state: snapshot.state, lastNarrative: snapshot.lastNarrative };
+  }
+
+  function renameSave(userId: string, saveId: string, title: unknown): DouQiLifeSave {
+    const row = requireSave(userId, saveId);
+    const save = saveFromRow(row);
+    if (save.kind !== "manual") throw new DouQiLifeError("只能重命名手动存档", 409, "AUTO_SAVE_READ_ONLY");
+    const name = requiredText(title, 80, "存档名称");
+    const timestamp = now();
+    database.query("UPDATE douqi_life_saves SET title = ?, updated_at = ? WHERE user_id = ? AND save_id = ? AND save_kind = 'manual'").run(name, timestamp, userId, save.id);
+    return { ...save, title: name, updatedAt: timestamp };
+  }
+
+  function restoreSave(userId: string, saveId: string) {
+    const row = requireSave(userId, saveId);
     const count = Number((database.query("SELECT COUNT(*) AS count FROM douqi_life_sessions WHERE user_id = ?").get(userId) as { count: number }).count);
     if (count >= MAX_SESSIONS_PER_USER) throw new DouQiLifeError("斗气人生存档已达上限，请先删除不再继续的人生", 409, "SESSION_LIMIT");
     const timestamp = now();
     const snapshot = parseSnapshot(row.snapshot_json);
     snapshot.state.world.lastRealTimeAt = timestamp;
-    const session: DouQiLifeSession = { id: randomUUID(), title: `${snapshot.title} · 支线`, status: isTerminalState(snapshot.state) ? "ended" : "active", state: snapshot.state, lastNarrative: snapshot.lastNarrative, createdAt: timestamp, updatedAt: timestamp };
+    snapshot.state.memory.branchOrigin = { sessionId: row.session_id, saveId: row.save_id, title: row.title, createdAt: Number(row.created_at) };
+    const session: DouQiLifeSession = { id: randomUUID(), title: `${row.title} · 支线`, status: isTerminalState(snapshot.state) ? "ended" : "active", state: snapshot.state, lastNarrative: snapshot.lastNarrative, createdAt: timestamp, updatedAt: timestamp };
     database.transaction(() => {
       database.query("INSERT INTO douqi_life_sessions(user_id, session_id, title, status, state_json, last_narrative, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(userId, session.id, session.title, session.status, JSON.stringify(session.state), session.lastNarrative, timestamp, timestamp);
       const insert = database.query("INSERT INTO douqi_life_messages(user_id, message_id, session_id, role, kind, content, metadata_json, status, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-      for (const source of snapshot.messages) insert.run(userId, randomUUID(), session.id, source.role, source.kind, source.content, JSON.stringify(source.metadata || {}), "completed", "", source.createdAt, source.updatedAt);
+      for (const source of snapshot.messages) insert.run(userId, randomUUID(), session.id, source.role, source.kind, source.content, JSON.stringify(source.metadata || {}), source.status, source.error, source.createdAt, source.updatedAt);
     })();
     upsertAutoSave(userId, session.id, session.title, session.state, session.lastNarrative, timestamp);
     return session;
@@ -240,8 +272,8 @@ export function createDouQiLifeService(database: Database, options: { now?: () =
     appendTimeDrivenEvents(next, beforeWorldDay, worldDay(next.world));
     const ended = next.player.age >= next.player.lifespan;
     if (ended) next.player.condition = "寿元已尽";
-    next.world.lastRealTimeAt = timestamp;
-    const newEvents = next.memory.worldEvents.length > session.state.memory.worldEvents.length;
+    next.world.lastRealTimeAt = timestamp - ((timestamp - lastRealTimeAt) % 3_600_000);
+    const newEvents = next.memory.worldEvents.some((event) => !session.state.memory.worldEvents.some((previous) => previous.id === event.id));
     const narrative = `【时间】\n离开期间 · ${hours} 小时\n\n天地并未因你的离去而停滞。${newEvents ? "新的世事已在暗中发芽。" : "你归来时，风貌已有细微变化。"}`;
     next.memory.recentEvents = [narrative.slice(0, 300), ...next.memory.recentEvents].slice(0, 12);
     refreshMemorySummary(next, session.state);
@@ -264,7 +296,7 @@ export function createDouQiLifeService(database: Database, options: { now?: () =
     return { ...session, state: next, status: ended ? "ended" : session.status, lastNarrative: narrative, updatedAt: timestamp };
   }
 
-  return { listSessions, createSession, getSession, getSessionWithHistory, beginTurn, completeTurn, failTurn, saveSession, listSaves, restoreSave, deleteSave, deleteSession, context };
+  return { listSessions, createSession, getSession, getSessionWithHistory, beginTurn, completeTurn, failTurn, saveSession, listSaves, getSavePreview, renameSave, restoreSave, deleteSave, deleteSession, context };
 }
 
 type DouQiSessionRow = { session_id: string; title: string; status: string; state_json: string; last_narrative: string; created_at: number; updated_at: number };
@@ -299,20 +331,84 @@ function createInitialState(character: ReturnType<typeof normalizeCharacter>, ti
 }
 
 function resolveDeterministicTurn(state: DouQiLifeState, action: string, timestamp: number): DouQiTurnResolution | undefined {
-  const deterministic = state.battle.active || isCultivationAction(action) || /突破|晋阶|进阶/.test(action) || (state.player.life <= 0 && isRecoveryAction(action));
+  const deterministic = state.battle.active || isCultivationAction(action) || isBreakthroughAction(action) || isItemAction(action) || (state.player.life <= 0 && isRecoveryAction(action));
   if (!deterministic) return undefined;
   const applied = applyTurnState(state, action, undefined, "", timestamp);
   return { state: applied.state, notice: applied.notice || "" };
 }
 
-function finalizeDeterministicTurn(resolution: DouQiTurnResolution, timestamp: number) {
+function finalizeDeterministicTurn(resolution: DouQiTurnResolution, previousState: DouQiLifeState, result: DouQiLifeTurnResult, action: string, timestamp: number, startedAt: number) {
   const state = cloneState(resolution.state);
-  state.world.lastRealTimeAt = timestamp;
+  updateRealTimeCheckpoint(state.world, timestamp, startedAt);
+  const event = applyNarrativeUpdates(state, record(result.statePatch) || {}, result.narrative);
+  rememberLongTermFacts(state, action, event, resolution.notice, isTerminalState(state));
+  refreshMemorySummary(state, previousState);
   return { state, notice: resolution.notice };
 }
 
 function isRecoveryAction(action: string) {
   return /休养|疗伤|救治|恢复|服用丹药/.test(action);
+}
+
+function isNamedResourceAction(action: string) {
+  return /^(?:施展斗技|使用道具)\s*[:：]/.test(action);
+}
+
+function isTechniqueAction(action: string) {
+  if (isNamedResourceAction(action)) return /^施展斗技/.test(action);
+  return /施展|使用斗技/.test(action);
+}
+
+function isItemAction(action: string) {
+  if (isNamedResourceAction(action)) return /^使用道具/.test(action);
+  return /服下|服用|使用.*(?:丹|药|道具|恢复|疗伤)/.test(action);
+}
+
+function actionTechnique(state: DouQiLifeState, action: string) {
+  const name = action.match(/^施展斗技\s*[:：]\s*(.*)$/)?.[1].trim();
+  const techniques = state.techniques.filter((item) => item.kind === "斗技");
+  return name !== undefined
+    ? techniques.find((item) => item.name === name)
+    : techniques.find((item) => action.includes(item.name)) || techniques[0];
+}
+
+function isHealingItem(item: DouQiLifeState["inventory"]["items"][number]) {
+  return /丹药|疗伤|恢复/.test(item.category + item.name);
+}
+
+function actionItem(state: DouQiLifeState, action: string) {
+  const name = action.match(/^使用道具\s*[:：]\s*(.*)$/)?.[1].trim();
+  return name !== undefined
+    ? state.inventory.items.find((item) => item.name === name)
+    : state.inventory.items.find((item) => action.includes(item.name)) || state.inventory.items.find((item) => item.quantity > 0 && isHealingItem(item));
+}
+
+function validateTurnAction(state: DouQiLifeState, action: string) {
+  if (state.battle.active && (isCultivationAction(action) || isBreakthroughAction(action))) {
+    throw new DouQiLifeError("战斗中不能闭关、修炼或突破，请先结束战斗", 409, "BATTLE_ACTION_INVALID");
+  }
+  if (state.player.life <= 0 && !isRecoveryAction(action) && !isItemAction(action)) {
+    throw new DouQiLifeError("你已重伤昏迷，只能尝试休养、疗伤或读取其他存档", 409, "PLAYER_INCAPACITATED");
+  }
+  if (isTechniqueAction(action)) {
+    if (!state.battle.active) throw new DouQiLifeError("当前未处于战斗，无法施展斗技", 409, "BATTLE_REQUIRED");
+    if (!actionTechnique(state, action)) throw new DouQiLifeError("未掌握所选斗技", 409, "TECHNIQUE_UNAVAILABLE");
+    if (state.player.qi < 12) throw new DouQiLifeError("斗气不足，施展斗技需要 12 点斗气", 409, "QI_INSUFFICIENT");
+  }
+  if (isItemAction(action)) {
+    const item = actionItem(state, action);
+    if (!item || item.quantity <= 0) throw new DouQiLifeError("没有可用的所选道具", 409, "ITEM_UNAVAILABLE");
+    if (!isHealingItem(item)) throw new DouQiLifeError("所选道具不能用于疗伤", 409, "ITEM_NOT_USABLE");
+  }
+}
+
+function consumeHealingItem(state: DouQiLifeState, action: string) {
+  const item = actionItem(state, action)!;
+  item.quantity -= 1;
+  state.inventory.items = state.inventory.items.filter((candidate) => candidate.quantity > 0);
+  state.player.life = clamp(state.player.life + 25, 0, state.player.lifeMax);
+  state.player.condition = "恢复中";
+  return `你使用${item.name}，恢复了部分伤势。`;
 }
 
 function defaultLifespan(race: string) {
@@ -330,7 +426,7 @@ function applyItemRemovals(state: DouQiLifeState, value: unknown) {
     const source = record(entry);
     const name = boundedString(source?.name, "", 80);
     const id = boundedString(source?.id, "", 128);
-    const quantity = clampInt(source?.quantity, 1, 999);
+    const quantity = clampInt(source?.quantity ?? 1, 1, 999);
     const item = state.inventory.items.find((candidate) => (id && candidate.id === id) || (name && candidate.name === name));
     if (!item) continue;
     item.quantity = Math.max(0, item.quantity - quantity);
@@ -403,7 +499,7 @@ function buildStorySummary(state: DouQiLifeState) {
 }
 
 function isTerminalState(state: DouQiLifeState) {
-  return state.player.condition === "寿元已尽";
+  return state.player.condition === "寿元已尽" || state.player.age >= state.player.lifespan;
 }
 
 function describeStateChanges(before: DouQiLifeState, after: DouQiLifeState) {
@@ -422,25 +518,37 @@ function describeStateChanges(before: DouQiLifeState, after: DouQiLifeState) {
   return changes.slice(0, 8);
 }
 
-function applyTurnState(state: DouQiLifeState, action: string, patch: unknown, narrative: string, timestamp = Date.now()): { state: DouQiLifeState; notice?: string; ended?: boolean } {
+function updateRealTimeCheckpoint(world: DouQiWorldState, timestamp: number, startedAt: number) {
+  const savedAt = Number(world.lastRealTimeAt);
+  const remainder = Number.isFinite(savedAt) && savedAt > 0 ? Math.max(0, startedAt - savedAt) % 3_600_000 : 0;
+  world.lastRealTimeAt = timestamp - remainder;
+}
+
+function applyTurnState(state: DouQiLifeState, action: string, patch: unknown, narrative: string, timestamp = Date.now(), startedAt = timestamp): { state: DouQiLifeState; notice?: string; ended?: boolean } {
+  validateTurnAction(state, action);
   const source = patch && typeof patch === "object" ? (patch as Record<string, unknown>) : {};
   const next = cloneState(state);
-  next.world.lastRealTimeAt = timestamp;
-  if (next.player.life <= 0 && isRecoveryAction(action)) {
+  updateRealTimeCheckpoint(next.world, timestamp, startedAt);
+  if (next.player.life <= 0 && isRecoveryAction(action) && !isItemAction(action)) {
+    const beforeWorldDay = worldDay(next.world);
     advanceWorldTime(next.world, 24);
     advancePlayerAge(next.player, 1);
+    appendTimeDrivenEvents(next, beforeWorldDay, worldDay(next.world));
     next.player.life = Math.min(next.player.lifeMax, 25);
     next.player.condition = "恢复中";
     next.player.mood = "平静";
     next.memory.choices = [action.slice(0, 500), ...next.memory.choices].slice(0, 20);
     next.memory.recentEvents = [action.slice(0, 300), ...next.memory.recentEvents].slice(0, 12);
+    const ended = isTerminalState(next);
+    if (ended) next.player.condition = "寿元已尽";
+    rememberLongTermFacts(next, action, "", undefined, ended);
     recordMemoryTurn(next, state);
-    return { state: next, notice: "你暂时脱离险境，仍需继续休养。" };
+    return { state: next, ended, notice: ended ? "寿元走到尽头，这段人生至此落幕。" : "你暂时脱离险境，仍需继续休养。" };
   }
   const priorBattle = next.battle.active;
   const cultivation = isCultivationAction(action);
-  const cultivationDuration = cultivationHours(action);
-  const hours = cultivation
+  const cultivationDuration = cultivation ? cultivationHours(action) : null;
+  const hours = priorBattle ? 0 : cultivation
     ? cultivationDuration || 0
     : clampInt(source.advanceTimeHours, 0, MAX_TURN_HOURS) || impliedHours(action);
   const beforeWorldDay = worldDay(next.world);
@@ -467,10 +575,12 @@ function applyTurnState(state: DouQiLifeState, action: string, patch: unknown, n
   const addItems = Array.isArray(source.addItems) ? source.addItems : [];
   for (const value of addItems.slice(0, 5)) {
     const item = record(value);
-    const name = boundedString(item?.name, "未知物品", 80);
+    const name = boundedString(item?.name, "", 80);
+    const quantity = clampInt(item?.quantity ?? 1, 1, 10);
+    if (!name || !quantity) continue;
     const existing = next.inventory.items.find((candidate) => candidate.name === name);
-    if (existing) existing.quantity = clamp(existing.quantity + clampInt(item?.quantity, 1, 10), 1, 999);
-    else if (next.inventory.items.length < MAX_INVENTORY_ITEMS) next.inventory.items.push({ id: randomUUID(), name, category: boundedString(item?.category, "材料", 40), quantity: clampInt(item?.quantity, 1, 10), description: boundedString(item?.description, "尚待确认用途", 180) });
+    if (existing) existing.quantity = clamp(existing.quantity + quantity, 1, 999);
+    else if (next.inventory.items.length < MAX_INVENTORY_ITEMS) next.inventory.items.push({ id: randomUUID(), name, category: boundedString(item?.category, "材料", 40), quantity, description: boundedString(item?.description, "尚待确认用途", 180) });
   }
   applyItemRemovals(next, source.removeItems);
   for (const value of (Array.isArray(source.addTechniques) ? source.addTechniques : []).slice(0, 3)) {
@@ -479,17 +589,14 @@ function applyTurnState(state: DouQiLifeState, action: string, patch: unknown, n
     if (next.techniques.some((item) => item.name === name)) continue;
     if (next.techniques.length < MAX_TECHNIQUES) next.techniques.push({ id: randomUUID(), name, kind: technique?.kind === "斗技" ? "斗技" : "功法", grade: boundedString(technique?.grade, "黄阶", 20), attribute: boundedString(technique?.attribute, "未明", 40), effect: boundedString(technique?.effect, "尚未完全掌握", 200), proficiency: clampInt(technique?.proficiency, 0, 100), source: boundedString(technique?.source, "未知", 120) });
   }
-  applyNpcUpdates(next, source.npcUpdates);
-  const event = boundedString(source.event, "", 300);
-  if (event) next.memory.recentEvents = [event, ...next.memory.recentEvents].slice(0, 12);
   next.memory.choices = [action.slice(0, 500), ...next.memory.choices].slice(0, 20);
-  applyWorldEvent(next, source.worldEvent);
-  if (narrative.trim()) next.memory.recentEvents = [narrative.trim().slice(0, 300), ...next.memory.recentEvents].slice(0, 12);
+  const event = applyNarrativeUpdates(next, source, narrative);
   applyBattlePatch(next, source.battle, priorBattle);
   let notice: string | undefined = breakthroughNotice;
   if (cultivationDuration) notice = applyCultivation(next, cultivationDuration);
   else if (cultivation) notice = "闭关需要先定下时长：一个月、三个月或半年。";
   if (priorBattle) notice = resolveBattleAction(next, action) || notice;
+  else if (isItemAction(action)) notice = consumeHealingItem(next, action);
   if (next.player.life <= 0) {
     next.battle = emptyBattle();
     next.player.condition = "重伤昏迷";
@@ -503,6 +610,15 @@ function applyTurnState(state: DouQiLifeState, action: string, patch: unknown, n
   rememberLongTermFacts(next, action, event, breakthroughNotice, ended);
   recordMemoryTurn(next, state);
   return { state: next, notice, ended };
+}
+
+function applyNarrativeUpdates(state: DouQiLifeState, source: Record<string, unknown>, narrative: string) {
+  applyNpcUpdates(state, source.npcUpdates);
+  const event = boundedString(source.event, "", 300);
+  if (event) state.memory.recentEvents = [event, ...state.memory.recentEvents].slice(0, 12);
+  applyWorldEvent(state, source.worldEvent);
+  if (narrative.trim()) state.memory.recentEvents = [narrative.trim().slice(0, 300), ...state.memory.recentEvents].slice(0, 12);
+  return event;
 }
 
 function applyNpcUpdates(state: DouQiLifeState, value: unknown) {
@@ -525,7 +641,10 @@ function applyNpcUpdates(state: DouQiLifeState, value: unknown) {
       if (history) existing.history = [history, ...existing.history].slice(0, 12);
       if (typeof source?.secret === "string" && source.secret.trim()) existing.secret = boundedString(source.secret, existing.secret, 300);
       existing.lastSeenAt = `${state.world.year}年${state.world.month}月${state.world.day}日`;
-    } else state.npcs.push({ id, name, identity: boundedString(source?.identity, "过客", 80), realm: boundedString(source?.realm, "斗之气", 40), faction: boundedString(source?.faction, "无", 80), personality: boundedString(source?.personality, "尚未看清", 160), goal: boundedString(source?.goal, "未知", 160), relationship: clamp(clampInt(source?.relationship, 0, 10), -100, 100), impression: boundedString(source?.impression, "初见", 300), history: [], secret: boundedString(source?.secret, "", 300), lastSeenAt: `${state.world.year}年${state.world.month}月${state.world.day}日` });
+    } else {
+      const history = boundedString(source?.history, "", 300);
+      state.npcs.push({ id, name, identity: boundedString(source?.identity, "过客", 80), realm: boundedString(source?.realm, "斗之气", 40), faction: boundedString(source?.faction, "无", 80), personality: boundedString(source?.personality, "尚未看清", 160), goal: boundedString(source?.goal, "未知", 160), relationship: clampInt(source?.relationship ?? source?.relationshipDelta, -10, 10), impression: boundedString(source?.impression, "初见", 300), history: history ? [history] : [], secret: boundedString(source?.secret, "", 300), lastSeenAt: `${state.world.year}年${state.world.month}月${state.world.day}日` });
+    }
   }
   state.npcs = state.npcs.slice(0, 24);
 }
@@ -563,7 +682,7 @@ function applyWorldEvent(state: DouQiLifeState, value: unknown) {
     location: boundedString(source.location, state.world.location, 120),
     occurredAt: `${state.world.year}年${state.world.month}月${state.world.day}日`,
     known: source.known !== false,
-    status: "open",
+    status: isWorldEventStatus(source.status) ? source.status : "open",
     description: boundedString(source.description, "天地间有新的动静浮现。", 300),
   };
   if (existing) {
@@ -602,24 +721,27 @@ function worldDay(world: DouQiWorldState) {
 }
 
 function appendTimeDrivenEvents(state: DouQiLifeState, beforeDay: number, afterDay: number) {
-  const elapsedMonths = Math.floor(Math.max(0, afterDay - beforeDay) / 30);
-  if (!elapsedMonths) return;
+  const beforeMonth = Math.floor((beforeDay - 1) / 30);
+  const afterMonth = Math.floor((afterDay - 1) / 30);
+  if (afterMonth <= beforeMonth) return;
   const titles = [
     ["sect_recruitment", "附近宗门开始招收弟子", "宗门的招募队伍出现在附近区域，去留皆由你定。"],
     ["resource", "山中出现稀有药材的传闻", "修士们开始谈论一处新出现的药材踪迹，真假尚未可知。"],
     ["auction", "城中将举行一场拍卖会", "商旅与佣兵陆续向城中聚集，拍卖会的消息正在扩散。"],
     ["beast_attack", "魔兽活动范围正在扩大", "远处的山林传来异动，魔兽似乎正在改变原本的活动范围。"],
   ] as const;
-  for (let index = 0; index < Math.min(elapsedMonths, 4); index += 1) {
-    const [type, title, description] = titles[(state.memory.worldEvents.length + index) % titles.length];
-    const id = `world-${state.world.year}-${state.world.month}-${state.memory.worldEvents.length + index}`;
+  for (let index = beforeMonth + 1; index <= afterMonth; index += 1) {
+    const year = Math.floor(index / 12);
+    const month = index % 12 + 1;
+    const [type, title, description] = titles[(index - 1) % titles.length];
+    const id = `world-${year}-${month}`;
     if (state.memory.worldEvents.some((event) => event.id === id)) continue;
     state.memory.worldEvents.unshift({
       id,
       type,
       title,
       location: state.world.location,
-      occurredAt: `${state.world.year}年${state.world.month}月${state.world.day}日`,
+      occurredAt: `${year}年${month}月1日`,
       known: true,
       status: "open",
       description,
@@ -629,12 +751,17 @@ function appendTimeDrivenEvents(state: DouQiLifeState, beforeDay: number, afterD
 }
 
 function isCultivationAction(action: string) {
+  if (isNamedResourceAction(action)) return false;
   if (/暂停|暂不|不闭关|停止修炼/.test(action)) return false;
   return /闭关|修炼|打坐|运转功法|炼化|吐纳/.test(action);
 }
 
+function isBreakthroughAction(action: string) {
+  return !isNamedResourceAction(action) && !/暂停|暂不|不突破|停止突破/.test(action) && /突破|晋阶|进阶/.test(action);
+}
+
 function tryBreakthrough(state: DouQiLifeState, action: string) {
-  if (!/突破|晋阶|进阶/.test(action)) return undefined;
+  if (!isBreakthroughAction(action)) return undefined;
   if (state.player.qi < state.player.qiMax) return `突破尚未到时，当前斗气为 ${state.player.qi} / ${state.player.qiMax}。`;
   if (["焦虑", "恐惧", "心魔", "悲伤"].includes(state.player.mood)) {
     return `心境未稳，突破之门暂未打开。`;
@@ -671,7 +798,7 @@ function applyCultivation(state: DouQiLifeState, hours: number) {
   const talentBonus = /火|雷|风|灵|天|体|脉|感知|悟/.test(state.player.talent) ? 2 : 0;
   const moodBonus = state.player.mood === "平静" || state.player.mood === "顿悟" ? 2 : state.player.mood === "心魔" || state.player.mood === "焦虑" ? -2 : 0;
   const environmentBonus = /灵气|洞府|山谷|遗迹|药田|学院/.test(state.world.scene + state.world.location) ? 2 : 0;
-  const resourceBonus = state.inventory.items.some((item) => /丹|药|魔核/.test(item.category + item.name)) ? 1 : 0;
+  const resourceBonus = state.inventory.items.some((item) => item.quantity > 0 && /丹|药|魔核/.test(item.category + item.name)) ? 1 : 0;
   const gain = Math.max(1, Math.floor(days * (2 + Math.min(4, realmIndex) + techniqueBonus + talentBonus + moodBonus + environmentBonus + resourceBonus) / 2));
   const before = state.player.qi;
   state.player.qi = clamp(state.player.qi + gain, 0, state.player.qiMax);
@@ -684,7 +811,7 @@ function applyCultivation(state: DouQiLifeState, hours: number) {
 
 function resolveBattleAction(state: DouQiLifeState, action: string) {
   if (!state.battle.active) return "战斗已经结束。";
-  if (/逃离|逃走|离开/.test(action)) {
+  if (!isNamedResourceAction(action) && /逃离|逃走|离开/.test(action)) {
     const enemyPower = battleRealmPower(state.battle.enemyRealm);
     const playerPower = battleRealmPower(state.player.realm) + state.player.qiStage;
     if (playerPower + (state.player.mood === "平静" ? 4 : 0) < enemyPower) {
@@ -701,16 +828,18 @@ function resolveBattleAction(state: DouQiLifeState, action: string) {
   const playerPower = battleRealmPower(state.player.realm) + state.player.qiStage;
   let damage = 0;
   let incoming = Math.max(1, enemyPower - Math.floor(playerPower / 2));
-  if (/防御|格挡|护住/.test(action)) {
-    incoming = Math.max(1, Math.floor(incoming / 3));
-    state.battle.status = "防守中";
-  } else if (/斗技|功法|施展/.test(action) && state.techniques.some((item) => item.kind === "斗技")) {
-    const technique = state.techniques.find((item) => item.kind === "斗技")!;
-    const cost = Math.min(state.player.qi, 12);
-    state.player.qi -= cost;
+  if (isTechniqueAction(action)) {
+    const technique = actionTechnique(state, action)!;
+    state.player.qi -= 12;
     damage = 18 + Math.floor(technique.proficiency / 8) + playerPower;
     technique.proficiency = clamp(technique.proficiency + 2, 0, 100);
     state.battle.status = `${technique.name}命中`;
+  } else if (isItemAction(action)) {
+    consumeHealingItem(state, action);
+    state.battle.status = "借丹稳住伤势";
+  } else if (/防御|格挡|护住/.test(action)) {
+    incoming = Math.max(1, Math.floor(incoming / 3));
+    state.battle.status = "防守中";
   } else if (/攻击|出手|斩|拳|掌|刺|射/.test(action)) {
     const cost = Math.min(state.player.qi, 5);
     state.player.qi -= cost;
@@ -722,15 +851,6 @@ function resolveBattleAction(state: DouQiLifeState, action: string) {
   } else if (/观察|感知|寻找破绽/.test(action)) {
     incoming = Math.max(1, Math.floor(incoming / 2));
     state.battle.status = "你看清了对手的破绽";
-  } else if (/道具|丹药|服下|使用/.test(action)) {
-    const item = state.inventory.items.find((candidate) => /丹药|疗伤|恢复/.test(candidate.category + candidate.name) && candidate.quantity > 0);
-    if (item) {
-      item.quantity -= 1;
-      state.player.life = clamp(state.player.life + 25, 0, state.player.lifeMax);
-      state.battle.status = "借丹稳住伤势";
-    } else {
-      state.battle.status = "手边没有可用道具";
-    }
   } else {
     state.battle.status = "你在战场上寻找破绽";
     incoming = Math.max(1, Math.floor(incoming * 0.8));
@@ -835,7 +955,8 @@ function parseState(value: string): DouQiLifeState {
     state.player = state.player || ({} as DouQiLifeState["player"]);
     state.player.age = normalizeAge(state.player.age, 18);
     state.player.livedDays = Number.isFinite(state.player.livedDays) ? Math.max(state.player.age * 360, Math.trunc(state.player.livedDays)) : state.player.age * 360;
-    state.player.lifespan = Number.isFinite(state.player.lifespan) ? Math.max(state.player.age + 1, Math.trunc(state.player.lifespan)) : defaultLifespan(state.player.race || "人族");
+    state.player.lifespan = Number.isFinite(state.player.lifespan) ? Math.max(1, Math.trunc(state.player.lifespan)) : defaultLifespan(state.player.race || "人族");
+    if (state.player.age >= state.player.lifespan) state.player.condition = "寿元已尽";
     state.world = state.world || ({} as DouQiLifeState["world"]);
     state.world.hour = Number.isFinite(state.world.hour) ? Math.max(0, Math.min(23, Math.trunc(state.world.hour))) : periodToHour(state.world.period || "清晨");
     state.world.period = periodForHour(state.world.hour);
@@ -855,10 +976,14 @@ function parseState(value: string): DouQiLifeState {
   } catch { throw new DouQiLifeError("斗气人生状态损坏", 500, "STATE_INVALID"); }
 }
 
-function parseSnapshot(value: string): { title: string; state: DouQiLifeState; lastNarrative: string; messages: Array<Pick<DouQiLifeMessage, "role" | "kind" | "content" | "metadata" | "createdAt" | "updatedAt">> } {
+function parseSnapshot(value: string): { title: string; state: DouQiLifeState; lastNarrative: string; messages: Array<Pick<DouQiLifeMessage, "role" | "kind" | "content" | "metadata" | "status" | "error" | "createdAt" | "updatedAt">> } {
   try {
     const source = JSON.parse(value) as Record<string, unknown>;
-    const messages = Array.isArray(source.messages) ? source.messages.map((item) => { const row = record(item); return { role: row?.role === "world" ? "world" as const : "player" as const, kind: row?.kind === "narrative" ? "narrative" as const : row?.kind === "system" ? "system" as const : "action" as const, content: boundedString(row?.content, "", 20_000), metadata: record(row?.metadata) || {}, createdAt: Number(row?.createdAt) || Date.now(), updatedAt: Number(row?.updatedAt) || Date.now() }; }) : [];
+    const messages = Array.isArray(source.messages) ? source.messages.map((item) => {
+      const row = record(item);
+      const interrupted = row?.status === "streaming";
+      return { role: row?.role === "world" ? "world" as const : "player" as const, kind: row?.kind === "narrative" ? "narrative" as const : row?.kind === "system" ? "system" as const : "action" as const, content: boundedString(row?.content, "", 20_000), metadata: record(row?.metadata) || {}, status: interrupted || row?.status === "failed" ? "failed" as const : "completed" as const, error: interrupted ? "存档中的世界回应尚未完成" : boundedString(row?.error, "", 500), createdAt: Number(row?.createdAt) || Date.now(), updatedAt: Number(row?.updatedAt) || Date.now() };
+    }) : [];
     return { title: boundedString(source.title, "续行人生", 80), state: parseState(JSON.stringify(source.state)), lastNarrative: boundedString(source.lastNarrative, "", 20_000), messages };
   } catch { throw new DouQiLifeError("存档内容无效", 500, "SAVE_INVALID"); }
 }

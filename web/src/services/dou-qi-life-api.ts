@@ -44,7 +44,7 @@ export type DouQiLifeState = {
     inventory: { gold: number; items: Array<{ id: string; name: string; category: string; quantity: number; description: string }> };
     techniques: Array<{ id: string; name: string; kind: string; grade: string; attribute: string; effect: string; proficiency: number; source: string }>;
     battle: { active: boolean; enemyName: string; enemyRealm: string; enemyLife: number; enemyLifeMax: number; status: string };
-    memory: { storySummary?: string; unresolvedGoals?: string[]; turnCount?: number; recentEvents: string[]; longTermFacts: string[]; choices: string[]; worldEvents: Array<{ id: string; type: string; title: string; location: string; occurredAt: string; known: boolean; status: string; description: string }> };
+    memory: { branchOrigin?: { sessionId: string; saveId: string; title: string; createdAt: number }; storySummary?: string; unresolvedGoals?: string[]; turnCount?: number; recentEvents: string[]; longTermFacts: string[]; choices: string[]; worldEvents: Array<{ id: string; type: string; title: string; location: string; occurredAt: string; known: boolean; status: string; description: string }> };
 };
 
 export type DouQiLifeSession = { id: string; title: string; status: "active" | "ended"; state: DouQiLifeState; lastNarrative: string; createdAt: number; updatedAt: number };
@@ -52,6 +52,15 @@ export type DouQiLifeMessage = { id: string; sessionId: string; role: "player" |
 export type DouQiLifeSuggestion = { id: string; label: string; action: string };
 export type DouQiLifeSave = { id: string; sessionId: string; title: string; kind: "auto" | "manual"; createdAt: number; updatedAt: number };
 export type DouQiLifeDetail = { session: DouQiLifeSession; messages: DouQiLifeMessage[] };
+export type DouQiLifeSavePreview = { save: DouQiLifeSave; title: string; state: DouQiLifeState; lastNarrative: string };
+
+export function fetchDouQiLifeSavePreview(id: string, expectedUserId?: string) {
+    return serverRequest<DouQiLifeSavePreview>(`/api/dou-qi-life/saves/${encodeURIComponent(id)}`, { timeoutMs: 12_000, expectedUserId });
+}
+
+export function renameDouQiLifeSave(id: string, title: string, expectedUserId?: string) {
+    return serverRequest<{ save: DouQiLifeSave }>(`/api/dou-qi-life/saves/${encodeURIComponent(id)}`, { method: "PATCH", body: { title }, expectedUserId });
+}
 
 type DouQiTurnHandlers = {
     expectedUserId?: string;

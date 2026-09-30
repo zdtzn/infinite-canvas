@@ -1,14 +1,16 @@
-import { App, Button, Card, Collapse, Divider, Input, InputNumber, List, Segmented, Select, Skeleton, Space, Tag, Tooltip } from "antd";
+import { App, Button, Card, Collapse, Divider, Drawer, Grid, Input, InputNumber, List, Modal, Select, Skeleton, Space, Tag } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
-import { Archive, Backpack, BookOpen, ChevronRight, CirclePlus, Clock3, Compass, Dice5, Eye, Flame, Heart, MessageCircle, Move, RefreshCw, Save, ScrollText, Send, Shield, Sparkles, Swords, Trash2, UserRound, WandSparkles } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Archive, Backpack, BookOpen, ChevronRight, CirclePlus, Clock3, Compass, Dice5, Eye, Flame, Heart, MessageCircle, RefreshCw, Save, ScrollText, Send, Shield, Sparkles, Swords, Square, Trash2, UserRound } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import { createDouQiLifeSession, deleteDouQiLifeSave, deleteDouQiLifeSession, fetchDouQiLifeSaves, fetchDouQiLifeSession, fetchDouQiLifeSessions, restoreDouQiLifeSave, saveDouQiLifeSession, sendDouQiLifeTurn, type DouQiLifeCharacterInput, type DouQiLifeDetail, type DouQiLifeMessage, type DouQiLifeSave, type DouQiLifeSession, type DouQiLifeState, type DouQiLifeSuggestion } from "@/services/dou-qi-life-api";
+import { type DouQiLifeCharacterInput, type DouQiLifeMessage, type DouQiLifeSave, type DouQiLifeSession, type DouQiLifeState, type DouQiLifeSuggestion } from "@/services/dou-qi-life-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { useDouQiLife } from "./use-dou-qi-life";
+import { LifeGoals, LifeRecap, SavePreviewDialog, formatSaveTime } from "./dou-qi-life-panels";
+import { shouldSubmitLifeAction, usableLifeItems } from "./dou-qi-life-preferences";
 
 type Props = { onExit: () => void };
-type Phase = "loading" | "welcome" | "create" | "world";
 
 const emptyCharacter: DouQiLifeCharacterInput = {
     name: "",
@@ -32,378 +34,133 @@ const randomCharacters: DouQiLifeCharacterInput[] = [
 export default function DouQiLifeView({ onExit }: Props) {
     const { message, modal } = App.useApp();
     const userId = useUserStore((state) => state.user?.id || "");
-    const [phase, setPhase] = useState<Phase>("loading");
-    const [sessions, setSessions] = useState<DouQiLifeSession[]>([]);
-    const [activeSession, setActiveSession] = useState<DouQiLifeSession | null>(null);
-    const [messages, setMessages] = useState<DouQiLifeMessage[]>([]);
-    const [saves, setSaves] = useState<DouQiLifeSave[]>([]);
+    const life = useDouQiLife(userId, message);
+    const { phase, activeSession, messages, saves, sessions, sending, loading } = life;
     const [character, setCharacter] = useState<DouQiLifeCharacterInput>(emptyCharacter);
-    const [draft, setDraft] = useState("");
-    const [suggestions, setSuggestions] = useState<DouQiLifeSuggestion[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [sending, setSending] = useState(false);
-    const mountedRef = useRef(false);
-    const loadTokenRef = useRef(0);
-    const turnTokenRef = useRef(0);
-    const turnAbortRef = useRef<AbortController | null>(null);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const [archivesOpen, setArchivesOpen] = useState(true);
+    const [statusOpen, setStatusOpen] = useState(true);
+    const [mobilePanel, setMobilePanel] = useState<"archives" | "status" | null>(null);
+    const [recapOpen, setRecapOpen] = useState(false);
+    const [saveOpen, setSaveOpen] = useState(false);
+    const [saveTitle, setSaveTitle] = useState("");
+    const [visibleCount, setVisibleCount] = useState(60);
+    const screens = Grid.useBreakpoint();
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const followRef = useRef(true);
 
     useEffect(() => {
-        mountedRef.current = true;
-        const token = ++loadTokenRef.current;
-        setPhase("loading");
-        void Promise.all([fetchDouQiLifeSessions(userId), fetchDouQiLifeSaves(undefined, userId)])
-            .then(async ([result, saveResult]) => {
-                if (!isCurrentLoad(token)) return;
-                setSessions(result.items);
-                if (!result.items.length) {
-                    setActiveSession(null);
-                    setMessages([]);
-                    setSaves(saveResult.items);
-                    setPhase("welcome");
-                    return;
-                }
-                await loadSession(result.items[0].id, saveResult.items.filter((save) => save.sessionId === result.items[0].id));
-            })
-            .catch((error) => isCurrentLoad(token) && message.error(error instanceof Error ? error.message : "斗气人生加载失败"));
-        return () => {
-            mountedRef.current = false;
-            loadTokenRef.current += 1;
-            abortTurn();
-        };
-    }, [message, userId]);
+        setVisibleCount(60); followRef.current = true;
+        setMobilePanel(null); setRecapOpen(false); setSaveOpen(false);
+    }, [activeSession?.id, userId]);
 
     useEffect(() => {
-        if (!messages.length) return;
-        messagesEndRef.current?.scrollIntoView({ behavior: sending ? "auto" : "smooth", block: "end" });
-    }, [messages.length, sending]);
+        if (!followRef.current) return;
+        const frame = requestAnimationFrame(() => {
+            const element = scrollRef.current;
+            if (element) element.scrollTop = element.scrollHeight;
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [messages.at(-1)?.content, messages.length, sending, activeSession?.id]);
 
-    function isCurrentLoad(token: number) {
-        return mountedRef.current && loadTokenRef.current === token;
-    }
-
-    function isCurrentTurn(token: number) {
-        return mountedRef.current && turnTokenRef.current === token;
-    }
-
-    function abortTurn() {
-        turnTokenRef.current += 1;
-        turnAbortRef.current?.abort();
-        turnAbortRef.current = null;
-        if (mountedRef.current) setSending(false);
-    }
-
-    async function loadSession(id: string, prefetchedSaves?: DouQiLifeSave[]) {
-        const token = ++loadTokenRef.current;
-        setLoading(true);
-        setPhase("loading");
-        try {
-            const [detail, saveResult] = await Promise.all([
-                fetchDouQiLifeSession(id, userId),
-                prefetchedSaves ? Promise.resolve({ items: prefetchedSaves }) : fetchDouQiLifeSaves(id, userId),
-            ]);
-            if (!isCurrentLoad(token)) return;
-            applyDetail(detail);
-            setSaves(saveResult.items);
-            setPhase("world");
-        } catch (error) {
-            if (isCurrentLoad(token)) message.error(error instanceof Error ? error.message : "人生读取失败");
-        } finally {
-            if (isCurrentLoad(token)) setLoading(false);
-        }
-    }
-
-    function applyDetail(detail: DouQiLifeDetail) {
-        setActiveSession(detail.session);
-        setSessions((current) => current.map((session) => session.id === detail.session.id ? detail.session : session));
-        setMessages(detail.messages);
-        const latest = [...detail.messages].reverse().find((item) => item.role === "world" && item.status === "completed");
-        setSuggestions(latest?.metadata?.suggestions || []);
-    }
-
-    function randomizeCharacter() {
-        const next = randomCharacters[Math.floor(Math.random() * randomCharacters.length)];
-        setCharacter({ ...next });
-    }
-
-    async function handleCreate() {
-        if (loading) return;
-        setLoading(true);
-        try {
-            const result = await createDouQiLifeSession(character, userId);
-            setSessions((current) => [result.session, ...current]);
-            const [detail, saveResult] = await Promise.all([
-                fetchDouQiLifeSession(result.session.id, userId),
-                fetchDouQiLifeSaves(result.session.id, userId),
-            ]);
-            applyDetail(detail);
-            setSaves(saveResult.items);
-            setCharacter(emptyCharacter);
-            setPhase("world");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "角色创建失败");
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    function startNewLife() {
-        setCharacter(emptyCharacter);
-        setPhase("create");
-    }
-
-    function handleNewLife() {
-        if (sending) {
-            modal.confirm({
-                title: "世界回应仍在推演",
-                content: "开始新人生会停止当前回应，本次行动会保留为未完成记录。是否继续？",
-                okText: "停止并新建",
-                cancelText: "继续等待",
-                onOk: () => {
-                    abortTurn();
-                    startNewLife();
-                },
-            });
-            return;
-        }
-        startNewLife();
-    }
-
-    function handleRandomLife() {
-        randomizeCharacter();
-        setPhase("create");
-    }
-
-    async function handleSend(action = draft.trim()) {
-        if (!activeSession || !action || sending) return;
-        setSending(true);
-        setDraft("");
-        const controller = new AbortController();
-        const token = ++turnTokenRef.current;
-        turnAbortRef.current = controller;
-        let worldMessageId = "";
-        try {
-            await sendDouQiLifeTurn(activeSession.id, action, {
-                expectedUserId: userId,
-                signal: controller.signal,
-                onStarted: (event) => {
-                    if (!isCurrentTurn(token)) return;
-                    worldMessageId = event.worldMessage.id;
-                    setActiveSession(event.session);
-                    setMessages((current) => [...current, event.playerMessage, event.worldMessage]);
-                },
-                onDelta: ({ messageId, delta }) => {
-                    if (!isCurrentTurn(token)) return;
-                    setMessages((current) => current.map((item) => (item.id === messageId ? { ...item, content: item.content + delta, status: "streaming" } : item)));
-                },
-                onDone: (event) => {
-                    if (!isCurrentTurn(token)) return;
-                    setActiveSession(event.session);
-                    setSuggestions(event.suggestions || []);
-                    setMessages((current) => current.map((item) => (item.id === event.worldMessage.id ? event.worldMessage : item)));
-                    setSessions((current) => [event.session, ...current.filter((item) => item.id !== event.session.id)]);
-                    void fetchDouQiLifeSaves(event.session.id, userId).then((result) => setSaves(result.items)).catch(() => undefined);
-                    if (event.notice) message.info(event.notice);
-                },
-                onError: ({ message: errorMessage }) => {
-                    if (!isCurrentTurn(token)) return;
-                    setMessages((current) => current.map((item) => (item.id === worldMessageId ? { ...item, status: "failed", error: errorMessage } : item)));
-                    message.error(errorMessage);
-                },
-            });
-        } catch (error) {
-            if (isCurrentTurn(token) && !isAbortError(error)) {
-                message.error(error instanceof Error ? error.message : "世界回应暂未完成");
-                if (!worldMessageId) void loadSession(activeSession.id);
-            }
-        } finally {
-            if (isCurrentTurn(token)) {
-                turnAbortRef.current = null;
-                setSending(false);
-            }
-        }
-    }
-
-    async function handleSave() {
-        if (!activeSession || sending) return;
-        try {
-            const title = `${activeSession.state.player.name} · ${activeSession.state.world.location}`;
-            const result = await saveDouQiLifeSession({ sessionId: activeSession.id, title }, userId);
-            setSaves((current) => [result.save, ...current]);
-            message.success("这一刻已留存");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "存档失败");
-        }
-    }
-
-    async function restoreSavedLife(save: DouQiLifeSave) {
-        try {
-            const result = await restoreDouQiLifeSave(save.id, userId);
-            setSessions((current) => [result.session, ...current]);
-            await loadSession(result.session.id);
-            message.success("已从此刻开辟新的命途");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "存档读取失败");
-        }
-    }
-
-    function handleRestore(save: DouQiLifeSave) {
-        if (sending) {
-            modal.confirm({
-                title: "世界回应仍在推演",
-                content: "读取存档会从这个节点开辟一条新的命途，当前回应会停止。是否继续？",
-                okText: "停止并开辟支线",
-                cancelText: "继续等待",
-                onOk: () => {
-                    abortTurn();
-                    void restoreSavedLife(save);
-                },
-            });
-            return;
-        }
+    function confirmNavigation(action: () => void) {
+        if (!sending) { action(); return; }
         modal.confirm({
-            title: "开辟存档支线",
-            content: "读取存档不会覆盖当前人生，而是从这个节点创建一条新的命途。",
-            okText: "开辟支线",
-            cancelText: "取消",
-            onOk: () => void restoreSavedLife(save),
+            title: "当前回应尚未完成",
+            content: "继续操作会停止推演，已提交的行动会保留为未完成记录。停止不保证上游免计费。",
+            okText: "停止并继续", cancelText: "继续等待",
+            onOk: () => { life.stopTurn(); action(); },
         });
     }
 
-    async function deleteLifeSession(id: string) {
-        try {
-            await deleteDouQiLifeSession(id, userId);
-            const next = sessions.filter((item) => item.id !== id);
-            setSessions(next);
-            if (activeSession?.id === id) {
-                setActiveSession(null);
-                setMessages([]);
-                setPhase(next.length ? "loading" : "welcome");
-                if (next[0]) await loadSession(next[0].id);
-                else setSaves((await fetchDouQiLifeSaves(undefined, userId)).items);
-            }
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "人生删除失败");
-        }
-    }
-
-    function handleDeleteSession(id: string) {
-        if (sending && activeSession?.id === id) {
-            modal.confirm({
-                title: "世界回应仍在推演",
-                content: "删除这段人生会停止当前回应，并删除这段人生的未完成记录。是否继续？",
-                okText: "停止并删除",
-                cancelText: "继续等待",
-                onOk: () => {
-                    abortTurn();
-                    void deleteLifeSession(id);
-                },
-            });
-            return;
-        }
-        modal.confirm({
-            title: "删除这段人生？",
-            content: "人生记录、对话和关联自动留痕都会被删除，无法恢复。",
-            okText: "确认删除",
-            cancelText: "保留",
-            okButtonProps: { danger: true },
-            onOk: () => void deleteLifeSession(id),
+    function newLife(random = false) {
+        confirmNavigation(() => {
+            setCharacter(random ? { ...randomCharacters[Math.floor(Math.random() * randomCharacters.length)] } : emptyCharacter);
+            life.startNewLife(); setMobilePanel(null);
         });
     }
 
-    async function handleDeleteSave(id: string) {
+    function selectSession(id: string) {
+        if (activeSession?.id === id && phase === "world") { setMobilePanel(null); return; }
+        confirmNavigation(() => { void life.loadSession(id); setMobilePanel(null); });
+    }
+
+    function restoreSave(save: DouQiLifeSave) {
         modal.confirm({
-            title: "删除这个存档？",
-            content: "删除后不能恢复，但不会影响当前正在进行的人生。",
-            okText: "确认删除",
-            cancelText: "保留",
-            okButtonProps: { danger: true },
-            onOk: async () => {
-                try {
-                    await deleteDouQiLifeSave(id, userId);
-                    setSaves((current) => current.filter((item) => item.id !== id));
-                } catch (error) {
-                    message.error(error instanceof Error ? error.message : "存档删除失败");
-                }
-            },
+            title: "从这个节点开辟支线？",
+            content: sending ? "会停止当前推演并创建独立支线，不覆盖原人生。停止不保证上游免计费。" : "新支线保留这个节点的状态与记忆，原人生不会被覆盖。",
+            okText: "开辟支线", cancelText: "取消",
+            onOk: () => { life.stopTurn(); void life.restore(save); setMobilePanel(null); },
         });
     }
 
-    function handleSelectSession(id: string) {
-        if (sending && activeSession?.id !== id) {
-            modal.confirm({
-                title: "世界回应仍在推演",
-                content: "切换人生会停止当前回应，本次行动会保留为未完成记录。是否继续？",
-                okText: "停止并切换",
-                cancelText: "继续等待",
-                onOk: () => {
-                    abortTurn();
-                    void loadSession(id);
-                },
-            });
-            return;
-        }
-        void loadSession(id);
+    function removeSession(id: string) {
+        modal.confirm({
+            title: "删除这段人生？", content: "人生、对话和关联自动留痕会被删除，无法恢复。",
+            okText: "删除人生", cancelText: "保留", okButtonProps: { danger: true },
+            onOk: () => { if (activeSession?.id === id) life.stopTurn(); return life.removeSession(id); },
+        });
     }
 
-    function handleExit() {
-        if (sending) {
-            modal.confirm({
-                title: "世界回应仍在推演",
-                content: "离开斗气人生会停止当前回应，本次行动会保留为未完成记录。是否离开？",
-                okText: "停止并离开",
-                cancelText: "继续等待",
-                onOk: () => {
-                    abortTurn();
-                    onExit();
-                },
-            });
-            return;
-        }
-        onExit();
+    function removeSave(id: string) {
+        modal.confirm({
+            title: "删除这个存档？", content: "此操作无法恢复，不影响当前人生。",
+            okText: "删除存档", cancelText: "保留", okButtonProps: { danger: true },
+            onOk: () => life.removeSave(id),
+        });
     }
 
-    const latestNarrative = useMemo(() => [...messages].reverse().find((item) => item.role === "world" && item.content)?.content || activeSession?.lastNarrative || "天地初开，尚未有新的因果落下。", [activeSession?.lastNarrative, messages]);
-    const currentObjective = useMemo(() => {
-        const event = activeSession?.state.memory.worldEvents.find((item) => item.known && ["open", "investigating", "participating"].includes(item.status));
-        return event?.title || activeSession?.state.player.lifeGoal || "先看清眼前的天地";
-    }, [activeSession]);
+    const archive = <LifeArchives sessions={sessions} activeId={activeSession?.id || ""} saves={saves} onSelect={selectSession} onNew={() => newLife()} onPreview={(save) => void life.openPreview(save.id)} onDelete={removeSession} onDeleteSave={removeSave} />;
+    const status = activeSession ? <LifeStatus session={activeSession} /> : null;
+    const player = activeSession?.state.player;
+    const world = activeSession?.state.world;
 
-    return (
-        <div className="h-full overflow-hidden bg-[#f7f5ef] text-stone-900 dark:bg-[#11100e] dark:text-[#f5efe3]">
-            <div className="mx-auto flex h-full max-w-[1480px] flex-col px-4 py-4 max-lg:px-3">
-                <div className="mb-3 flex shrink-0 items-center justify-between gap-3 rounded-xl border border-stone-200/80 bg-white/75 px-4 py-3 shadow-sm dark:border-white/10 dark:bg-white/[0.04]">
-                    <div className="flex min-w-0 items-center gap-3">
-                        <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-amber-300/60 bg-amber-50 text-amber-700 dark:border-amber-200/20 dark:bg-amber-300/10 dark:text-amber-200"><Flame className="size-4" /></div>
-                        <div className="min-w-0"><div className="text-base font-semibold tracking-[0.12em]">问道台</div><div className="truncate text-xs text-stone-500 dark:text-stone-400">斗气人生 · 你的选择只属于你</div></div>
-                    </div>
-                    <Segmented options={[{ label: "普通问道", value: "chat" }, { label: "斗气人生", value: "douqi" }]} value="douqi" onChange={(value) => value === "chat" && handleExit()} />
+    return <div className="h-full overflow-hidden bg-[#f7f5ef] text-stone-900 dark:bg-[#11100e] dark:text-[#f5efe3]">
+        <div className="mx-auto flex h-full max-w-[1520px] flex-col px-3 py-3 sm:px-5 sm:py-4">
+            <header className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-3 dark:border-white/10">
+                <div className="flex items-center gap-2"><Flame aria-hidden className="size-5 text-amber-700 dark:text-amber-200" /><div><h1 className="text-base font-semibold tracking-wider">斗气人生</h1><p className="text-xs text-stone-600 dark:text-stone-400">一段命途，由你执笔</p></div></div>
+                <Button type="text" onClick={() => confirmNavigation(onExit)}>返回普通问道</Button>
+            </header>
+            {phase === "loading" ? <div className="grid min-h-0 flex-1 place-items-center"><div role="status" className="w-full max-w-2xl"><p className="mb-4 text-sm text-stone-500">正在读取命途…</p><Skeleton active paragraph={{ rows: 6 }} /></div></div> : null}
+            {phase === "error" ? <div className="grid min-h-0 flex-1 place-items-center"><div className="max-w-md text-center"><h2 className="text-xl">命途暂未读入</h2><p role="alert" className="my-4 text-sm text-stone-600 dark:text-stone-300">{life.error}</p><Space wrap><Button type="primary" onClick={() => void life.retryLoad()} icon={<RefreshCw className="size-4" />}>重新读取</Button><Button onClick={() => newLife()}>新建人生</Button><Button onClick={onExit}>返回问道台</Button></Space></div></div> : null}
+            {phase === "welcome" ? <Welcome onStart={() => newLife()} onLater={onExit} onNew={() => newLife(true)} onRestore={(save) => void life.openPreview(save.id)} saves={saves} /> : null}
+            {phase === "create" ? <CharacterCreation value={character} loading={loading} onChange={setCharacter} onRandom={() => setCharacter({ ...randomCharacters[Math.floor(Math.random() * randomCharacters.length)] })} onCancel={() => void life.cancelCreate()} onSubmit={() => void life.createLife(character)} /> : null}
+            {phase === "world" && activeSession && player && world ? <>
+                <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span className="font-medium">{player.name}</span><span className="text-amber-700 dark:text-amber-200">{player.realm} · {player.qiStage} 段</span><span className="text-xs text-stone-600 dark:text-stone-400">生命 {player.life}/{player.lifeMax} · 斗气 {player.qi}/{player.qiMax}</span>{activeSession.status === "ended" ? <Tag color="default">人生已落幕</Tag> : null}</div>
+                    <Space size={4}><Button type="text" aria-expanded={screens.xl ? archivesOpen : mobilePanel === "archives"} icon={<Archive className="size-4" />} onClick={() => screens.xl ? setArchivesOpen(!archivesOpen) : setMobilePanel("archives")}>档案</Button><Button type="text" aria-expanded={screens.xl ? statusOpen : mobilePanel === "status"} icon={<Shield className="size-4" />} onClick={() => screens.xl ? setStatusOpen(!statusOpen) : setMobilePanel("status")}>状态</Button></Space>
                 </div>
-
-                {phase === "loading" ? <div className="grid min-h-0 flex-1 place-items-center"><Skeleton active paragraph={{ rows: 6 }} className="w-full max-w-2xl" /></div> : null}
-                {phase === "welcome" ? <Welcome onStart={() => setPhase("create")} onLater={onExit} onNew={handleRandomLife} onRestore={handleRestore} saves={saves} /> : null}
-                {phase === "create" ? <CharacterCreation value={character} loading={loading} onChange={setCharacter} onRandom={randomizeCharacter} onCancel={() => setPhase(sessions.length ? "world" : "welcome")} onSubmit={handleCreate} /> : null}
-                {phase === "world" && activeSession ? (
-                    <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)_280px] gap-3 max-xl:grid-cols-[220px_minmax(0,1fr)] max-lg:grid-cols-1">
-                        <LifeArchives sessions={sessions} activeId={activeSession.id} saves={saves} onSelect={handleSelectSession} onNew={handleNewLife} onRestore={handleRestore} onDelete={handleDeleteSession} onDeleteSave={(id) => void handleDeleteSave(id)} />
-                        <main className="flex min-h-0 min-w-0 flex-col rounded-xl border border-stone-200/80 bg-white/55 p-4 dark:border-white/10 dark:bg-black/10">
-                            <div className="mb-3 flex shrink-0 items-start justify-between gap-3 border-b border-stone-200/70 pb-3 dark:border-white/10">
-                                <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Compass className="size-4 text-amber-600" /><span className="truncate font-medium">{activeSession.state.world.location}</span><Tag color="gold">{activeSession.state.player.realm}</Tag>{activeSession.status === "ended" ? <Tag color="red">人生已落幕</Tag> : null}</div><div className="mt-1 text-xs text-stone-500 dark:text-stone-400">第 {activeSession.state.world.year} 年 · {activeSession.state.world.season} · {activeSession.state.world.month} 月 {activeSession.state.world.day} 日 · {activeSession.state.world.period} · {activeSession.state.world.hour}时</div><div className="mt-1 truncate text-xs text-amber-700 dark:text-amber-200">当前命途 · {currentObjective}</div></div>
-                                <Space><Tooltip title="保存当前人生"><Button type="text" icon={<Save className="size-4" />} onClick={() => void handleSave()} /></Tooltip><Button type="text" icon={<CirclePlus className="size-4" />} onClick={() => void handleNewLife()}>新人生</Button></Space>
+                <div className={cn("grid min-h-0 flex-1 gap-4", archivesOpen && statusOpen ? "xl:grid-cols-[220px_minmax(0,1fr)_280px]" : archivesOpen ? "xl:grid-cols-[220px_minmax(0,1fr)]" : statusOpen ? "xl:grid-cols-[minmax(0,1fr)_280px]" : "grid-cols-1")}>
+                    {archivesOpen ? <div className="hidden min-h-0 xl:flex xl:flex-col">{archive}</div> : null}
+                    <main className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-stone-200 bg-white/60 dark:border-white/10 dark:bg-white/[0.02]">
+                        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-stone-200 px-4 py-3 dark:border-white/10">
+                            <div className="min-w-0"><div className="flex items-center gap-2 text-sm font-medium"><Compass aria-hidden className="size-4 text-amber-700 dark:text-amber-200" />{world.location}</div><p className="mt-1 text-xs text-stone-600 dark:text-stone-400">第 {world.year} 年 · {world.month} 月 {world.day} 日 · {world.period} {world.hour} 时</p></div>
+                            <Space size={4} wrap><Button type="text" icon={<BookOpen className="size-4" />} onClick={() => setRecapOpen(true)}>回顾</Button><Button type="text" disabled={sending} icon={<Save className="size-4" />} onClick={() => { setSaveTitle(`${player.name} · ${world.location}`); setSaveOpen(true); }}>存档</Button><Button type="text" icon={<CirclePlus className="size-4" />} onClick={() => newLife()}>新人生</Button></Space>
+                        </div>
+                        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-5 sm:px-6" onScroll={(event) => { const el = event.currentTarget; followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96; }}>
+                            <div className="mx-auto max-w-3xl space-y-5">
+                                {messages.length > visibleCount ? <Button block type="text" onClick={() => { followRef.current = false; setVisibleCount((count) => count + 60); }}>查看更早的记录（还有 {messages.length - visibleCount} 条）</Button> : null}
+                                {messages.slice(-visibleCount).map((item, offset) => { const index = Math.max(0, messages.length - visibleCount) + offset; return <LifeMessage key={item.id} item={item} retryDisabled={sending} onRetry={item.status === "failed" && messages[index - 1]?.role === "player" ? () => void life.send(messages[index - 1].content) : undefined} />; })}
                             </div>
-                            <div className="min-h-0 flex-1 overflow-y-auto pr-1">{messages.length ? <div className="space-y-3">{messages.map((item, index) => <LifeMessage key={item.id} item={item} onRetry={item.status === "failed" && messages[index - 1]?.role === "player" ? () => void handleSend(messages[index - 1].content) : undefined} />)}<div ref={messagesEndRef} /></div> : <div className="rounded-lg border border-amber-200/70 bg-amber-50/45 p-4 text-sm leading-7 dark:border-amber-200/10 dark:bg-amber-300/[0.06]">{latestNarrative}</div>}</div>
-                            <ActionDock state={activeSession.state} ended={activeSession.status === "ended"} suggestions={suggestions} sending={sending} draft={draft} onDraftChange={setDraft} onSend={(action) => void handleSend(action)} />
-                        </main>
-                        <LifeStatus session={activeSession} />
-                    </div>
-                ) : null}
-            </div>
+                        </div>
+                        <div className="max-h-[45%] shrink-0 overflow-y-auto px-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-5">
+                            {life.error ? <div role="alert" className="pt-3 text-sm text-red-700 dark:text-red-300">{life.error}</div> : null}
+                            <ActionDock key={activeSession.id} state={activeSession.state} ended={activeSession.status === "ended"} suggestions={life.suggestions} sending={sending} elapsed={life.elapsed} draft={life.draft} onDraftChange={life.setDraft} onSend={(action) => { followRef.current = true; void life.send(action); }} onStop={life.stopTurn} />
+                        </div>
+                    </main>
+                    {statusOpen ? <div className="hidden min-h-0 xl:flex xl:flex-col">{status}</div> : null}
+                </div>
+            </> : null}
         </div>
-    );
+        <Drawer title={mobilePanel === "archives" ? "人生档案" : "角色与命途"} open={!!mobilePanel && !screens.xl} onClose={() => setMobilePanel(null)} size="min(360px, calc(100vw - 24px))" destroyOnHidden>{mobilePanel === "archives" ? archive : status}</Drawer>
+        <Modal title="留存命途节点" open={saveOpen} onCancel={() => setSaveOpen(false)} okText="保存节点" cancelText="取消" confirmLoading={life.saving} onOk={async () => { if (await life.save(saveTitle.trim())) setSaveOpen(false); }}>
+            <label htmlFor="life-save-title" className="mb-2 block text-sm">存档名称</label><Input id="life-save-title" value={saveTitle} maxLength={80} onChange={(event) => setSaveTitle(event.target.value)} /><p className="mt-3 text-sm text-stone-500">保存当前状态与记忆，之后可以从这里开辟独立支线。</p>
+        </Modal>
+        <SavePreviewDialog life={life} onRestore={restoreSave} />
+        <Drawer title="人生回顾" open={recapOpen} onClose={() => setRecapOpen(false)} size="min(560px, calc(100vw - 24px))" destroyOnHidden>{activeSession ? <LifeRecap session={activeSession} /> : null}</Drawer>
+    </div>;
 }
-
 function Welcome({ onStart, onLater, onNew, onRestore, saves }: { onStart: () => void; onLater: () => void; onNew: () => void; onRestore: (save: DouQiLifeSave) => void; saves: DouQiLifeSave[] }) {
-    return <div className="grid min-h-0 flex-1 place-items-center"><div className="w-full max-w-xl rounded-2xl border border-amber-200/70 bg-white/70 p-8 text-center shadow-sm dark:border-amber-200/10 dark:bg-white/[0.04]"><div className="mx-auto grid size-14 place-items-center rounded-full border border-amber-300/60 bg-amber-50 text-amber-700 dark:border-amber-200/20 dark:bg-amber-300/10 dark:text-amber-200"><Sparkles className="size-6" /></div><h1 className="mt-5 text-2xl font-semibold tracking-[0.12em]">欢迎来到斗气大陆</h1><div className="mt-3 space-y-1 text-sm leading-7 text-stone-500 dark:text-stone-400"><p>这里没有既定的主角。</p><p>你的一念一行，都会成为自己的因果。</p><p>你将以一道化身入局，站内境界不替代此世修为。</p></div><Space className="mt-6"><Button type="primary" onClick={onStart}>开始我的人生</Button><Button onClick={onLater}>以后再说</Button><Button type="text" onClick={onNew}>随机入世</Button></Space>{saves.length ? <div className="mt-8 text-left"><div className="mb-2 text-xs text-stone-500">已有存档</div><List size="small" dataSource={saves.filter((save) => save.kind === "manual")} renderItem={(save) => <List.Item actions={[<Button key="restore" type="link" onClick={() => onRestore(save)}>开辟支线</Button>]}>{save.title}</List.Item>} /></div> : null}</div></div>;
+    return <div className="grid min-h-0 flex-1 place-items-center"><div className="w-full max-w-xl rounded-2xl border border-amber-200/70 bg-white/70 p-8 text-center shadow-sm dark:border-amber-200/10 dark:bg-white/[0.04]"><div className="mx-auto grid size-14 place-items-center rounded-full border border-amber-300/60 bg-amber-50 text-amber-700 dark:border-amber-200/20 dark:bg-amber-300/10 dark:text-amber-200"><Sparkles className="size-6" /></div><h1 className="mt-5 text-2xl font-semibold tracking-[0.12em]">欢迎来到斗气大陆</h1><div className="mt-3 space-y-1 text-sm leading-7 text-stone-500 dark:text-stone-400"><p>这里没有既定的主角。</p><p>你的一念一行，都会成为自己的因果。</p><p>你将以一道化身入局，站内境界不替代此世修为。</p></div><Space className="mt-6"><Button type="primary" onClick={onStart}>开始我的人生</Button><Button onClick={onLater}>以后再说</Button><Button type="text" onClick={onNew}>随机入世</Button></Space>{saves.length ? <div className="mt-8 text-left"><div className="mb-2 text-xs text-stone-500">已有存档</div><List size="small" dataSource={saves.filter((save) => save.kind === "manual")} renderItem={(save) => <List.Item actions={[<Button key="restore" type="link" onClick={() => onRestore(save)}>预览节点</Button>]}>{save.title}</List.Item>} /></div> : null}</div></div>;
 }
 
 function CharacterCreation({ value, loading, onChange, onRandom, onCancel, onSubmit }: { value: DouQiLifeCharacterInput; loading: boolean; onChange: (value: DouQiLifeCharacterInput) => void; onRandom: () => void; onCancel: () => void; onSubmit: () => void }) {
@@ -417,13 +174,24 @@ function CharacterCreation({ value, loading, onChange, onRandom, onCancel, onSub
     const current = groups[step];
     const set = (key: keyof DouQiLifeCharacterInput, next: string | number) => onChange({ ...value, [key]: next });
     const next = () => step === groups.length - 1 ? onSubmit() : setStep((currentStep) => currentStep + 1);
-    return <div className="min-h-0 flex-1 overflow-y-auto"><div className="mx-auto max-w-3xl"><div className="mb-4 flex items-center justify-between gap-3"><div><div className="text-xl font-semibold tracking-[0.12em]">{current.title}</div><div className="mt-1 text-sm text-stone-500">第 {step + 1} / {groups.length} 步 · {current.hint}</div></div><Button icon={<Dice5 className="size-4" />} onClick={onRandom}>随机生成</Button></div><div className="mb-4 flex gap-1">{groups.map((item, index) => <span key={item.title} className={cn("h-1 flex-1 rounded-full", index <= step ? "bg-amber-500" : "bg-stone-200 dark:bg-white/10")} />)}</div><Card className="border-stone-200/80 dark:border-white/10"><div className="grid min-h-[260px] gap-5 py-8 sm:grid-cols-2">{current.fields.map((field) => <div key={field.key} className={field.kind === "age" ? "sm:max-w-xs" : ""}><label className="text-sm text-stone-500" htmlFor={`douqi-${field.key}`}>{field.label}</label>{field.kind === "gender" ? <Select id={`douqi-${field.key}`} className="mt-3 w-full" size="large" value={value.gender} options={["男", "女", "不愿说明"].map((item) => ({ value: item, label: item }))} onChange={(nextValue) => set("gender", nextValue)} /> : field.kind === "age" ? <InputNumber id={`douqi-${field.key}`} className="mt-3 w-full" size="large" min={1} max={999} value={value.age} onChange={(nextValue) => onChange({ ...value, age: Number(nextValue || 18) })} /> : <Input id={`douqi-${field.key}`} value={String(value[field.key] || "")} size="large" className="mt-3" placeholder={field.placeholder} onChange={(event) => set(field.key, event.target.value)} onPressEnter={(event) => { event.preventDefault(); next(); }} />}<div className="mt-2 text-xs text-stone-400">可以留空，天地会为你保留一条合理的来路。</div></div>)}</div><Divider /><div className="flex justify-between gap-2"><Button onClick={step ? () => setStep((currentStep) => currentStep - 1) : onCancel}>上一步</Button><Space><Button onClick={onRandom}>随机生成</Button><Button type="primary" loading={loading} onClick={next}>{step === groups.length - 1 ? "进入斗气大陆" : "下一步"}</Button></Space></div></Card></div></div>;
+    return <div className="min-h-0 flex-1 overflow-y-auto"><div className="mx-auto max-w-3xl"><div className="mb-4 flex items-center justify-between gap-3"><div><div className="text-xl font-semibold tracking-[0.12em]">{current.title}</div><div className="mt-1 text-sm text-stone-500">第 {step + 1} / {groups.length} 步 · {current.hint}</div></div><Button icon={<Dice5 className="size-4" />} onClick={onRandom}>随机生成</Button></div><div className="mb-4 flex gap-1">{groups.map((item, index) => <span key={item.title} className={cn("h-1 flex-1 rounded-full", index <= step ? "bg-amber-500" : "bg-stone-200 dark:bg-white/10")} />)}</div><Card className="border-stone-200/80 dark:border-white/10"><div className="grid min-h-[260px] gap-5 py-8 sm:grid-cols-2">{current.fields.map((field) => <div key={field.key} className={field.kind === "age" ? "sm:max-w-xs" : ""}><label className="text-sm text-stone-500" htmlFor={`douqi-${field.key}`}>{field.label}</label>{field.kind === "gender" ? <Select id={`douqi-${field.key}`} className="mt-3 w-full" size="large" value={value.gender} options={["男", "女", "不愿说明"].map((item) => ({ value: item, label: item }))} onChange={(nextValue) => set("gender", nextValue)} /> : field.kind === "age" ? <InputNumber id={`douqi-${field.key}`} className="mt-3 w-full" size="large" min={1} max={999} value={value.age} onChange={(nextValue) => onChange({ ...value, age: Number(nextValue || 18) })} /> : <Input id={`douqi-${field.key}`} value={String(value[field.key] || "")} size="large" className="mt-3" placeholder={field.placeholder} onChange={(event) => set(field.key, event.target.value)} onPressEnter={(event) => { if (shouldSubmitLifeAction(event) && !loading) { event.preventDefault(); next(); } }} />}<div className="mt-2 text-xs text-stone-400">可以留空，天地会为你保留一条合理的来路。</div></div>)}</div><Divider /><div className="flex justify-between gap-2"><Button onClick={step ? () => setStep((currentStep) => currentStep - 1) : onCancel}>上一步</Button><Space><Button onClick={onRandom}>随机生成</Button><Button type="primary" loading={loading} onClick={next}>{step === groups.length - 1 ? "进入斗气大陆" : "下一步"}</Button></Space></div></Card></div></div>;
 }
 
-function LifeArchives({ sessions, activeId, saves, onSelect, onNew, onRestore, onDelete, onDeleteSave }: { sessions: DouQiLifeSession[]; activeId: string; saves: DouQiLifeSave[]; onSelect: (id: string) => void; onNew: () => void; onRestore: (save: DouQiLifeSave) => void; onDelete: (id: string) => void; onDeleteSave: (id: string) => void }) {
-    const manualSaves = saves.filter((save) => save.kind === "manual");
-    const autoSave = saves.find((save) => save.kind === "auto");
-    return <aside className="min-h-0 overflow-y-auto rounded-xl border border-stone-200/80 bg-white/45 p-3 dark:border-white/10 dark:bg-white/[0.03]"><div className="mb-3 flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-medium"><Archive className="size-4 text-amber-600" />人生档案</div><Tooltip title="新建人生"><Button aria-label="新建人生" type="text" size="small" icon={<CirclePlus className="size-4" />} onClick={onNew} /></Tooltip></div><div className="space-y-1">{sessions.map((session) => <div key={session.id} className={cn("group flex items-center gap-2 rounded-lg px-2 py-2 text-sm", activeId === session.id ? "bg-amber-100/70 dark:bg-amber-300/10" : "hover:bg-black/[0.04] dark:hover:bg-white/[0.05]")}><button className="min-w-0 flex-1 truncate text-left" onClick={() => onSelect(session.id)}><div className="truncate">{session.title}</div><div className="mt-0.5 truncate text-xs text-stone-500">{session.state.world.location}</div></button><Button aria-label={`删除${session.title}`} type="text" size="small" className="!px-1 opacity-0 group-hover:opacity-100" icon={<Trash2 className="size-3.5" />} onClick={() => onDelete(session.id)} /></div>)}</div><Divider className="my-3" /><div className="mb-2 flex items-center gap-2 text-xs text-stone-500"><ScrollText className="size-3.5" />命途节点</div>{autoSave ? <div className="mb-2 flex items-center gap-1 text-xs text-stone-500"><button className="min-w-0 flex-1 truncate text-left hover:text-amber-700" onClick={() => onRestore(autoSave)}>自动留痕 · {autoSave.title.replace(/^自动留痕 · /, "")}</button><Tag bordered={false} color="default">自动</Tag></div> : null}{manualSaves.length ? <div className="space-y-1">{manualSaves.map((save) => <div key={save.id} className="flex items-center gap-1 text-xs"><button className="min-w-0 flex-1 truncate text-left hover:text-amber-700" onClick={() => onRestore(save)}>开辟支线 · {save.title}</button><Button aria-label={`删除存档${save.title}`} type="text" size="small" className="!px-1" icon={<Trash2 className="size-3" />} onClick={() => onDeleteSave(save.id)} /></div>)}</div> : <div className="text-xs text-stone-400">尚无手动存档</div>}</aside>;
+function LifeArchives({ sessions, activeId, saves, onSelect, onNew, onPreview, onDelete, onDeleteSave }: { sessions: DouQiLifeSession[]; activeId: string; saves: DouQiLifeSave[]; onSelect: (id: string) => void; onNew: () => void; onPreview: (save: DouQiLifeSave) => void; onDelete: (id: string) => void; onDeleteSave: (id: string) => void }) {
+    return <aside className="min-h-0 flex-1 overflow-y-auto p-1">
+        <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-medium">人生档案</h2><Button aria-label="新建人生" type="text" icon={<CirclePlus className="size-4" />} onClick={onNew} /></div>
+        <div className="space-y-2">{sessions.map((session) => <div key={session.id} className={cn("flex items-center gap-1 rounded-lg px-2 py-2 text-sm", activeId === session.id ? "bg-black/5 dark:bg-white/[0.07]" : "hover:bg-black/[0.03] dark:hover:bg-white/[0.03]")}>
+            <button className="min-w-0 flex-1 cursor-pointer text-left focus-visible:outline focus-visible:outline-2" aria-current={activeId === session.id ? "true" : undefined} onClick={() => onSelect(session.id)}>
+                <div className="break-words font-medium">{session.title}</div><p className="mt-1 text-xs text-stone-600 dark:text-stone-400">{session.state.world.location} · {session.state.player.realm}</p>
+                <p className="mt-1 text-xs text-stone-600 dark:text-stone-400">{session.status === "ended" ? "已落幕" : session.state.memory.branchOrigin ? "支线人生" : "进行中"}</p>
+            </button><Button aria-label={`删除${session.title}`} type="text" icon={<Trash2 className="size-4" />} onClick={() => onDelete(session.id)} />
+        </div>)}</div>
+        <Divider className="my-4" /><h2 className="mb-3 flex items-center gap-2 text-sm font-medium"><ScrollText aria-hidden className="size-4" />命途节点</h2>
+        {saves.length ? <div className="space-y-3">{saves.map((save) => <div key={save.id} className="flex items-center gap-1">
+            <button className="min-w-0 flex-1 cursor-pointer text-left focus-visible:outline focus-visible:outline-2" onClick={() => onPreview(save)}><span className="block break-words text-sm">{save.title}</span><span className="mt-1 block text-xs text-stone-600 dark:text-stone-400">{save.kind === "auto" ? "自动留痕" : "手动存档"} · {formatSaveTime(save.updatedAt)}</span><span className="mt-1 block text-xs text-amber-700 dark:text-amber-200">预览节点 →</span></button>
+            {save.kind === "manual" ? <Button aria-label={`删除存档${save.title}`} type="text" icon={<Trash2 className="size-4" />} onClick={() => onDeleteSave(save.id)} /> : null}
+        </div>)}</div> : <p className="text-sm leading-6 text-stone-600 dark:text-stone-400">尚无命途节点。用正文上方的“存档”留存这一刻。</p>}
+    </aside>;
 }
 
 function LifeStatus({ session }: { session: DouQiLifeSession }) {
@@ -433,10 +201,10 @@ function LifeStatus({ session }: { session: DouQiLifeSession }) {
         { key: "character", label: "角色详情", icon: <UserRound className="size-4" />, children: <div className="space-y-2 text-xs leading-5"><div><span className="text-stone-500">出身：</span>{player.familyBackground}</div><div><span className="text-stone-500">性格：</span>{player.personality}</div><div><span className="text-stone-500">外貌：</span>{player.appearance}</div><div><span className="text-stone-500">目标：</span>{player.lifeGoal}</div><div><span className="text-stone-500">天赋：</span>{player.talent}</div></div> },
         { key: "inventory", label: `背包 · ${inventory.items.length}`, icon: <Backpack className="size-4" />, children: <div className="space-y-3 text-xs"><div className="flex items-center justify-between"><span className="text-stone-500">灵石</span><span>{inventory.gold}</span></div>{Object.entries(itemGroups).map(([category, items]) => <div key={category}><div className="mb-1 text-stone-500">{category}</div>{items.map((item) => <div key={item.id} className="flex justify-between gap-2 py-1"><span className="truncate" title={item.description}>{item.name}</span><span className="shrink-0">×{item.quantity}</span></div>)}</div>)}{!inventory.items.length ? <div className="text-stone-400">背包尚空</div> : null}</div> },
         { key: "techniques", label: `功法与斗技 · ${session.state.techniques.length}`, icon: <BookOpen className="size-4" />, children: <div className="space-y-3 text-xs"><TechniqueGroup title="功法" items={session.state.techniques.filter((technique) => technique.kind === "功法")} /><TechniqueGroup title="斗技" items={session.state.techniques.filter((technique) => technique.kind === "斗技")} />{!session.state.techniques.length ? <div className="text-stone-400">尚未获得功法或斗技</div> : null}</div> },
-        { key: "npcs", label: `NPC 关系 · ${session.state.npcs.length}`, icon: <UserRound className="size-4" />, children: <div className="space-y-2 text-xs">{session.state.npcs.map((npc) => <div key={npc.id} className="border-b border-stone-200/60 pb-2 last:border-0 dark:border-white/10"><div className="flex items-center justify-between gap-2 font-medium"><span>{npc.name}</span><Tag bordered={false}>{npc.relationship > 0 ? `关系 +${npc.relationship}` : `关系 ${npc.relationship}`}</Tag></div><div className="mt-1 text-stone-500">{npc.identity} · {npc.realm} · {npc.faction}</div><div className="mt-1 leading-5">印象：{npc.impression}</div><div className="mt-1 text-stone-400">最近见于：{npc.lastSeenAt}</div></div>)}{!session.state.npcs.length ? <div className="text-stone-400">尚未遇见重要人物</div> : null}</div> },
-        { key: "events", label: `世界事件 · ${session.state.memory.worldEvents.filter((event) => event.known).length}`, icon: <Eye className="size-4" />, children: <div className="space-y-2 text-xs">{session.state.memory.worldEvents.filter((event) => event.known).map((event) => <div key={event.id} className="border-b border-stone-200/60 pb-2 last:border-0 dark:border-white/10"><div className="flex items-center justify-between gap-2 font-medium"><span>{event.title}</span><Tag bordered={false}>{worldEventStatusLabel(event.status)}</Tag></div><div className="mt-1 text-stone-500">{event.location} · {event.occurredAt}</div><div className="mt-1 leading-5">{event.description}</div></div>)}{!session.state.memory.worldEvents.some((event) => event.known) ? <div className="text-stone-400">天地尚未显露事件</div> : null}</div> },
+        { key: "npcs", label: `NPC 关系 · ${session.state.npcs.length}`, icon: <UserRound className="size-4" />, children: <div className="space-y-2 text-xs">{session.state.npcs.map((npc) => <div key={npc.id} className="border-b border-stone-200/60 pb-2 last:border-0 dark:border-white/10"><div className="flex items-center justify-between gap-2 font-medium"><span>{npc.name}</span><Tag variant="filled">{npc.relationship > 0 ? `关系 +${npc.relationship}` : `关系 ${npc.relationship}`}</Tag></div><div className="mt-1 text-stone-500">{npc.identity} · {npc.realm} · {npc.faction}</div><div className="mt-1 leading-5">印象：{npc.impression}</div><div className="mt-1 text-stone-400">最近见于：{npc.lastSeenAt}</div></div>)}{!session.state.npcs.length ? <div className="text-stone-400">尚未遇见重要人物</div> : null}</div> },
+        { key: "events", label: `世界事件 · ${session.state.memory.worldEvents.filter((event) => event.known).length}`, icon: <Eye className="size-4" />, children: <div className="space-y-2 text-xs">{session.state.memory.worldEvents.filter((event) => event.known).map((event) => <div key={event.id} className="border-b border-stone-200/60 pb-2 last:border-0 dark:border-white/10"><div className="flex items-center justify-between gap-2 font-medium"><span>{event.title}</span><Tag variant="filled">{worldEventStatusLabel(event.status)}</Tag></div><div className="mt-1 text-stone-500">{event.location} · {event.occurredAt}</div><div className="mt-1 leading-5">{event.description}</div></div>)}{!session.state.memory.worldEvents.some((event) => event.known) ? <div className="text-stone-400">天地尚未显露事件</div> : null}</div> },
     ];
-    return <aside className="min-h-0 overflow-y-auto rounded-xl border border-stone-200/80 bg-white/45 p-4 dark:border-white/10 dark:bg-white/[0.03] max-xl:col-span-2 max-xl:col-start-1 max-xl:row-start-2 max-lg:col-span-1 max-lg:col-start-auto max-lg:row-start-auto"><div className="flex items-center gap-2"><Shield className="size-4 text-amber-600" /><span className="font-medium">{player.name}</span></div><div className="mt-1 text-xs text-stone-500">{player.gender} · {player.age} 岁 · 寿元 {player.lifespan} 岁 · {player.race}</div><div className="mt-1 text-sm font-medium text-amber-700 dark:text-amber-200">{player.realm} · {player.qiStage} 段</div><Divider className="my-3" /><StatusBar icon={<Flame className="size-3.5" />} label="斗气" value={player.qi} max={player.qiMax} /><StatusBar icon={<Heart className="size-3.5" />} label="生命" value={player.life} max={player.lifeMax} /><div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-lg bg-black/[0.03] p-2 dark:bg-white/[0.04]"><div className="text-stone-500">心境</div><div className="mt-1 font-medium">{player.mood}</div></div><div className="rounded-lg bg-black/[0.03] p-2 dark:bg-white/[0.04]"><div className="text-stone-500">状态</div><div className="mt-1 font-medium">{player.condition}</div></div></div>{battle.active ? <div className="mt-4 rounded-lg border border-red-200/70 bg-red-50/50 p-3 text-xs dark:border-red-300/10 dark:bg-red-300/[0.06]"><div className="flex items-center gap-2 font-medium text-red-700 dark:text-red-200"><Swords className="size-3.5" />{battle.enemyName} · {battle.enemyRealm}</div><div className="mt-1">敌方生命 {battle.enemyLife} / {battle.enemyLifeMax}</div><div className="mt-1 text-stone-500">{battle.status}</div></div> : null}<Collapse className="mt-3" ghost items={panels} /></aside>;
+    return <aside className="min-h-0 flex-1 overflow-y-auto p-1"><div className="flex items-center gap-2"><Shield className="size-4 text-amber-600" /><span className="font-medium">{player.name}</span></div><div className="mt-1 text-xs text-stone-500">{player.gender} · {player.age} 岁 · 寿元 {player.lifespan} 岁 · {player.race}</div><div className="mt-1 text-sm font-medium text-amber-700 dark:text-amber-200">{player.realm} · {player.qiStage} 段</div><Divider className="my-3" /><StatusBar icon={<Flame className="size-3.5" />} label="斗气" value={player.qi} max={player.qiMax} /><StatusBar icon={<Heart className="size-3.5" />} label="生命" value={player.life} max={player.lifeMax} /><div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-lg bg-black/[0.03] p-2 dark:bg-white/[0.04]"><div className="text-stone-500">心境</div><div className="mt-1 font-medium">{player.mood}</div></div><div className="rounded-lg bg-black/[0.03] p-2 dark:bg-white/[0.04]"><div className="text-stone-500">状态</div><div className="mt-1 font-medium">{player.condition}</div></div></div>{battle.active ? <div className="mt-4 rounded-lg border border-red-200/70 bg-red-50/50 p-3 text-xs dark:border-red-300/10 dark:bg-red-300/[0.06]"><div className="flex items-center gap-2 font-medium text-red-700 dark:text-red-200"><Swords className="size-3.5" />{battle.enemyName} · {battle.enemyRealm}</div><div className="mt-1">敌方生命 {battle.enemyLife} / {battle.enemyLifeMax}</div><div className="mt-1 text-stone-500">{battle.status}</div></div> : null}<div className="mt-5"><LifeGoals state={session.state} /></div><Collapse className="mt-3" ghost items={panels} /></aside>;
 }
 
 function StatusBar({ icon, label, value, max }: { icon: React.ReactNode; label: string; value: number; max: number }) {
@@ -444,25 +212,30 @@ function StatusBar({ icon, label, value, max }: { icon: React.ReactNode; label: 
     return <div className="mt-3"><div className="flex items-center justify-between text-xs"><span className="flex items-center gap-1.5 text-stone-500">{icon}{label}</span><span>{value} / {max}</span></div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10"><div className="h-full rounded-full bg-amber-500 transition-[width] duration-300" style={{ width: `${ratio * 100}%` }} /></div></div>;
 }
 
-function ActionDock({ state, ended, suggestions, sending, draft, onDraftChange, onSend }: { state: DouQiLifeState; ended: boolean; suggestions: DouQiLifeSuggestion[]; sending: boolean; draft: string; onDraftChange: (value: string) => void; onSend: (action?: string) => void }) {
+export function ActionDock({ state, ended, suggestions, sending, elapsed, draft, onDraftChange, onSend, onStop }: { state: DouQiLifeState; ended: boolean; suggestions: DouQiLifeSuggestion[]; sending: boolean; elapsed: number; draft: string; onDraftChange: (value: string) => void; onSend: (action?: string) => void; onStop: () => void }) {
     const inputRef = useRef<TextAreaRef>(null);
-    const battleActions = state.battle.active
-        ? [
-            ["攻击", "攻击眼前的敌人"],
-            ...(state.techniques.some((item) => item.kind === "斗技") ? [["斗技", "施展斗技"] as const] : []),
-            ["防御", "先稳住身形，进行防御"],
-            ["移动", "向侧方移动并寻找更好的位置"],
-            ["观察", "观察敌人的破绽"],
-            ...(state.inventory.items.some((item) => item.quantity > 0) ? [["道具", "使用手边的道具"] as const] : []),
-            ["逃离", "寻找机会逃离战场"],
-        ] as const
-        : state.player.life <= 0
-            ? [["休养", "我先休养一天，接受天地自然恢复"]] as const
-            : suggestions.length
-                ? []
-                : [["观察", "我先观察周围的环境"], ["探索", "我向前探索，留意沿途的人与事"], ["修炼一日", "我寻找合适的地方修炼一日"]] as const;
-    const disabled = ended || sending;
-    return <div className="mt-3 shrink-0 border-t border-stone-200/70 pt-3 dark:border-white/10"><div className="mb-2 flex items-center gap-2 text-xs font-medium text-stone-500 dark:text-stone-400"><Compass className="size-3.5 text-amber-600" />{ended ? "这段人生已经落幕" : "你准备如何行动？"}</div>{!ended ? <><div className="mb-2 flex flex-wrap gap-2">{battleActions.map(([label, action]) => <Button key={label} size="small" disabled={disabled} icon={state.battle.active ? (label === "移动" ? <Move className="size-3.5" /> : <Swords className="size-3.5" />) : <WandSparkles className="size-3.5" />} onClick={() => onSend(action)}>{label}</Button>)}<Button size="small" type="dashed" disabled={disabled} icon={<Eye className="size-3.5" />} onClick={() => inputRef.current?.focus()}>自由行动</Button>{suggestions.map((item) => <Button key={item.id} size="small" disabled={disabled} onClick={() => onSend(item.action)}>{item.label}</Button>)}</div><div className="flex items-end gap-2"><Input.TextArea ref={inputRef} value={draft} onChange={(event) => onDraftChange(event.target.value)} disabled={disabled} autoSize={{ minRows: 1, maxRows: 4 }} maxLength={4_000} placeholder={state.battle.active ? "描述你的战斗行动，状态由天地裁定" : "写下你要做的事，世界会回应结果"} onPressEnter={(event) => { if (!event.shiftKey) { event.preventDefault(); onSend(); } }} /><Button type="primary" icon={<Send className="size-4" />} disabled={!draft.trim() || disabled} loading={sending} onClick={() => onSend()}>行动</Button></div></> : <div className="text-xs leading-6 text-stone-500">可以回望这段人生，或从命途节点开辟新的支线。</div>}</div>;
+    const [techniqueId, setTechniqueId] = useState("");
+    const [itemId, setItemId] = useState("");
+    const techniques = state.techniques.filter((item) => item.kind === "斗技");
+    const items = usableLifeItems(state);
+    const technique = techniques.find((item) => item.id === techniqueId) || techniques[0];
+    const item = items.find((entry) => entry.id === itemId) || items[0];
+    const actions = state.battle.active ? [["攻击", "攻击眼前的敌人"], ["防御", "先稳住身形，进行防御"], ["观察", "观察敌人的破绽"], ["逃离", "寻找机会逃离战场"]] : state.player.life <= 0 ? [["休养一天", "我先休养一天，接受天地自然恢复"]] : suggestions.length ? suggestions.slice(0, 3).map((entry) => [entry.label, entry.action]) : [["观察", "我先观察周围的环境"], ["探索", "我向前探索，留意沿途的人与事"], ["修炼一日", "我寻找合适的地方修炼一日"]];
+    return <div className="mt-3 border-t border-stone-200 pt-3 dark:border-white/10">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span>{ended ? "这段人生已经落幕" : sending ? `正在推演 · ${elapsed} 秒` : state.battle.active ? "战斗行动" : "你准备如何行动？"}</span>
+            {sending ? <Button onClick={onStop} icon={<Square className="size-3.5" />}>停止推演</Button> : null}
+        </div>
+        {!ended ? <>
+            <div className="mb-3 flex flex-wrap gap-2">{actions.map(([label, action]) => <Button key={label} disabled={sending} onClick={() => onSend(action)}>{label}</Button>)}<Button type="text" onClick={() => inputRef.current?.focus()}>自由行动</Button></div>
+            {state.battle.active && (technique || item) ? <details className="mb-3"><summary className="cursor-pointer text-sm text-stone-600 focus-visible:outline focus-visible:outline-2 dark:text-stone-300">斗技与道具 · 选择具体资源</summary><div className="mt-3 space-y-3">
+                {technique ? <div><label htmlFor="life-technique" className="mb-2 block text-xs text-stone-600 dark:text-stone-400">斗技 · 消耗 12 斗气{state.player.qi < 12 ? " · 当前斗气不足" : ""}</label><div className="flex gap-2"><Select id="life-technique" className="min-w-0 flex-1" value={technique.id} onChange={setTechniqueId} options={techniques.map((entry) => ({ value: entry.id, label: `${entry.name} · ${entry.grade}` }))} /><Button disabled={sending || state.player.qi < 12} onClick={() => onSend(`施展斗技：${technique.name}`)}>施展</Button></div></div> : null}
+                {item ? <div><label htmlFor="life-item" className="mb-2 block text-xs text-stone-600 dark:text-stone-400">恢复道具 · 每次消耗 1 份</label><div className="flex gap-2"><Select id="life-item" className="min-w-0 flex-1" value={item.id} onChange={setItemId} options={items.map((entry) => ({ value: entry.id, label: `${entry.name} ×${entry.quantity}` }))} /><Button disabled={sending} onClick={() => onSend(`使用道具：${item.name}`)}>使用</Button></div></div> : null}
+            </div></details> : null}
+            <label htmlFor="life-action" className="sr-only">行动描述</label><div className="flex items-end gap-2"><Input.TextArea id="life-action" ref={inputRef} value={draft} onChange={(event) => onDraftChange(event.target.value)} autoSize={{ minRows: 1, maxRows: 4 }} maxLength={4_000} className="!text-base" placeholder={sending ? "可先写好下一步，当前回应结束后再行动" : state.battle.active ? "描述战斗行动，战斗期间不能修炼或突破" : "写下你要做的事"} onPressEnter={(event) => { if (shouldSubmitLifeAction(event) && !sending) { event.preventDefault(); onSend(); } }} /><Button type="primary" icon={<Send className="size-4" />} disabled={!draft.trim() || sending} onClick={() => onSend()}>行动</Button></div>
+            <p className="mt-2 text-xs leading-5 text-stone-600 dark:text-stone-400">{sending ? "推演尚未完成，可随时停止；停止不保证上游免计费。" : state.battle.active ? `普通攻击最多消耗 5 斗气（当前实际 ${Math.min(state.player.qi, 5)}）；修炼需先结束战斗。` : "Enter 行动 · Shift + Enter 换行 · 中文选字不会提交"}</p>
+        </> : <p className="text-sm leading-6 text-stone-600 dark:text-stone-400">在“回顾”中回望这段人生，或预览命途节点后开辟新的支线。</p>}
+    </div>;
 }
 
 function groupItems(items: DouQiLifeState["inventory"]["items"]) {
@@ -478,16 +251,16 @@ function worldEventStatusLabel(status: string) {
 
 function TechniqueGroup({ title, items }: { title: string; items: DouQiLifeState["techniques"] }) {
     if (!items.length) return null;
-    return <div><div className="mb-1 text-stone-500">{title}</div>{items.map((technique) => <div key={technique.id} className="border-b border-stone-200/60 pb-2 last:border-0 dark:border-white/10"><div className="flex justify-between gap-2 font-medium"><span>{technique.name}</span><Tag bordered={false} color="gold">{technique.grade}</Tag></div><div className="mt-1 text-stone-500">{technique.attribute} · 熟练度 {technique.proficiency}%</div><div className="mt-1 leading-5">{technique.effect}</div><div className="mt-1 text-stone-400">来源：{technique.source}</div></div>)}</div>;
+    return <div><div className="mb-1 text-stone-500">{title}</div>{items.map((technique) => <div key={technique.id} className="border-b border-stone-200/60 pb-2 last:border-0 dark:border-white/10"><div className="flex justify-between gap-2 font-medium"><span>{technique.name}</span><Tag variant="filled" color="gold">{technique.grade}</Tag></div><div className="mt-1 text-stone-500">{technique.attribute} · 熟练度 {technique.proficiency}%</div><div className="mt-1 leading-5">{technique.effect}</div><div className="mt-1 text-stone-400">来源：{technique.source}</div></div>)}</div>;
 }
 
 function isAbortError(error: unknown) {
     return error instanceof DOMException && error.name === "AbortError";
 }
 
-function LifeMessage({ item, onRetry }: { item: DouQiLifeMessage; onRetry?: () => void }) {
+function LifeMessage({ item, onRetry, retryDisabled }: { item: DouQiLifeMessage; onRetry?: () => void; retryDisabled: boolean }) {
     const isPlayer = item.role === "player";
     const content = item.content || (item.status === "streaming" ? "天地正在推演……" : item.error || "回应未留下痕迹");
     if (item.kind === "system") return <div className="relative flex gap-3 py-2 pl-2"><div className="mt-1 grid size-7 shrink-0 place-items-center rounded-full border border-amber-300/60 bg-amber-50 text-amber-700 dark:border-amber-200/20 dark:bg-amber-300/10 dark:text-amber-200"><Clock3 className="size-3.5" /></div><div className="min-w-0 flex-1 border-b border-dashed border-amber-300/50 pb-3 text-sm leading-7 text-stone-600 dark:border-amber-200/20 dark:text-stone-300"><div className="mb-1 text-[11px] font-medium tracking-[0.12em] text-amber-700 dark:text-amber-200">天地流转</div><div className="whitespace-pre-wrap break-words">{content}</div></div></div>;
-    return <article className="relative pl-9"><div className="absolute bottom-0 left-3 top-1 w-px bg-stone-200/80 dark:bg-white/10" /><div className={cn("absolute left-0 top-1 grid size-7 place-items-center rounded-full border text-stone-500 dark:text-stone-300", isPlayer ? "border-stone-300 bg-stone-100 dark:border-white/20 dark:bg-white/10" : "border-amber-300/70 bg-amber-50 text-amber-700 dark:border-amber-200/20 dark:bg-amber-300/10 dark:text-amber-200")}>{isPlayer ? <MessageCircle className="size-3.5" /> : <ChevronRight className="size-3.5" />}</div><div className={cn("border-b pb-4 text-sm leading-7", isPlayer ? "border-stone-200/70 text-stone-600 dark:border-white/10 dark:text-stone-300" : "border-amber-200/50 text-stone-800 dark:border-amber-200/10 dark:text-stone-100")}><div className="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-[0.08em] text-stone-500 dark:text-stone-400">{isPlayer ? "你的行动" : "天地回应"}{item.status === "streaming" ? <span className="animate-pulse text-amber-600">推演中</span> : null}{item.status === "failed" ? <span className="text-red-600 dark:text-red-300">未完成</span> : null}</div><div className="whitespace-pre-wrap break-words">{content}</div>{!isPlayer && item.metadata.changes?.length ? <div className="mt-3 flex flex-wrap gap-1.5">{item.metadata.changes.map((change) => <Tag key={change} bordered={false} color="gold">{change}</Tag>)}</div> : null}{item.status === "failed" && onRetry ? <Button type="link" size="small" className="!px-0" icon={<RefreshCw className="size-3.5" />} onClick={onRetry}>重试这一步</Button> : null}</div></article>;
+    return <article className="relative pl-9"><div className="absolute bottom-0 left-3 top-1 w-px bg-stone-200/80 dark:bg-white/10" /><div className={cn("absolute left-0 top-1 grid size-7 place-items-center rounded-full border text-stone-500 dark:text-stone-300", isPlayer ? "border-stone-300 bg-stone-100 dark:border-white/20 dark:bg-white/10" : "border-amber-300/70 bg-amber-50 text-amber-700 dark:border-amber-200/20 dark:bg-amber-300/10 dark:text-amber-200")}>{isPlayer ? <MessageCircle className="size-3.5" /> : <ChevronRight className="size-3.5" />}</div><div className={cn("border-b pb-4 text-sm leading-7", isPlayer ? "border-stone-200/70 text-stone-600 dark:border-white/10 dark:text-stone-300" : "border-amber-200/50 text-stone-800 dark:border-amber-200/10 dark:text-stone-100")}><div className="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-[0.08em] text-stone-500 dark:text-stone-400">{isPlayer ? "你的行动" : "天地回应"}{item.status === "streaming" ? <span className="motion-safe:animate-pulse text-amber-700 dark:text-amber-200">推演中</span> : null}{item.status === "failed" ? <span className="text-red-600 dark:text-red-300">未完成</span> : null}</div><div className="whitespace-pre-wrap break-words">{content}</div>{!isPlayer && item.metadata.notice ? <p className="mt-2 text-sm text-stone-600 dark:text-stone-300">规则结算：{item.metadata.notice}</p> : null}{!isPlayer && item.metadata.changes?.length ? <div className="mt-3 flex flex-wrap gap-1.5">{item.metadata.changes.map((change) => <Tag key={change} variant="filled" color="gold">{change}</Tag>)}</div> : null}{item.status === "failed" ? <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">{item.error || "回应未完成，可以编辑行动后重试。"}</p> : null}{item.status === "failed" && onRetry ? <Button disabled={retryDisabled} type="link" size="small" className="!px-0" icon={<RefreshCw className="size-3.5" />} onClick={onRetry}>重试这一步</Button> : null}</div></article>;
 }

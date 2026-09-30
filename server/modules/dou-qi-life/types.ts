@@ -152,6 +152,8 @@ export type DouQiWorldEvent = {
 };
 
 export type DouQiMemoryState = {
+  /** The source save's identity and creation time for a restored branch. */
+  branchOrigin?: { sessionId: string; saveId: string; title: string; createdAt: number };
   /** A bounded, server-maintained summary that survives message trimming. */
   storySummary?: string;
   /** Goals that are still actionable in the current life. */
@@ -233,4 +235,11 @@ export type DouQiLifeSave = {
   kind: "auto" | "manual";
   createdAt: number;
   updatedAt: number;
+};
+
+export type DouQiLifeSavePreview = {
+  save: DouQiLifeSave;
+  title: string;
+  state: DouQiLifeState;
+  lastNarrative: string;
 };

@@ -42,7 +42,7 @@ export const DOU_QI_LIFE_SYSTEM_PROMPT = `你是“斗气大陆世界意志”�
   "notice": "可选的玩家注意到的信息"
 }
 
-statePatch 只描述世界变化建议，最终状态由程序校验和裁定。advanceTimeHours 必须是 0 到 8760 的整数；闭关一个月、三个月、半年分别使用 720、2160、4320 小时；不要直接把玩家提升到更高境界，也不要直接写入战斗中的敌方生命。若上下文给出了程序裁定结果，不要重新裁定。若玩家提出闭关但未说明时长，应先询问时长或给出时长选择，不要推进时间。建议行动必须是当前场景中合理的 3 到 4 个选择，程序会自动补上“自由行动”。`;
+statePatch 只描述世界变化建议，最终状态由程序校验和裁定。advanceTimeHours 必须是 0 到 8760 的整数；闭关一个月、三个月、半年分别使用 720、2160、4320 小时；不要直接把玩家提升到更高境界，也不要直接写入战斗中的敌方生命。若上下文给出了程序裁定结果，只可补充 npcUpdates、event 和 worldEvent 的关系、事件与记忆描述，不要重新裁定时间、生命、斗气、境界、战斗、物品或功法。战斗中不能闭关、修炼或突破；施展斗技需要至少 12 点斗气，使用道具必须确有库存且可用于疗伤。指定斗技与道具的建议行动分别写作“施展斗技：已有斗技名称”和“使用道具：已有道具名称”，名称必须与当前状态一致。近期 failed 回应对应的行动尚未结算，不能当作已发生的经历。若玩家提出闭关但未说明时长，应先询问时长或给出时长选择，不要推进时间。建议行动必须是当前场景中合理的 3 到 4 个选择，程序会自动补上“自由行动”。`;
 
 export function buildDouQiLifeTurnPrompt(
   state: DouQiLifeState,
@@ -54,6 +54,8 @@ export function buildDouQiLifeTurnPrompt(
   const recent = recentMessages.slice(-8).map((message) => ({
     role: message.role,
     kind: message.kind,
+    status: message.status,
+    error: message.error,
     content: message.content.slice(0, 1_200),
   }));
   return [
@@ -117,6 +119,7 @@ export function projectDouQiLifeContext(state: DouQiLifeState) {
     storySummary: memory.storySummary || "",
     unresolvedGoals: (memory.unresolvedGoals || []).slice(0, 8),
     turnCount: Number.isFinite(memory.turnCount) ? memory.turnCount : 0,
+    branchOrigin: memory.branchOrigin,
     recentEvents: (memory.recentEvents || []).slice(0, 12),
     longTermFacts: (memory.longTermFacts || []).slice(0, 12),
     choices: (memory.choices || []).slice(0, 10),
@@ -162,9 +165,10 @@ export function parseDouQiLifeTurnResult(text: string): DouQiLifeTurnResult {
         };
       }
     } catch {
-      // Fall back to the raw model response when a provider ignores the JSON contract.
+      // Plain prose is allowed below; malformed structured responses must fail the turn.
     }
   }
+  if (/^(?:```(?:json)?\s*)?[\[{]/i.test(source)) throw new Error("世界回应格式无效，请重试");
   return {
     narrative: source || "天地暂未显露新的回应。",
     suggestions: [],

@@ -76,4 +76,19 @@ describe("dou qi life prompt protocol", () => {
     expect(parseDouQiLifeTurnResult("世界暂未显露新的回应。"))
       .toEqual({ narrative: "世界暂未显露新的回应。", suggestions: [] });
   });
+
+  test.each([
+    '{"narrative":"山风停了。","statePatch":',
+    '{"statePatch":{"player":{"qiDelta":60}}}',
+    '```json\n{"narrative":"未闭合"',
+  ])("rejects malformed structured responses instead of storing raw JSON: %s", (text) => {
+    expect(() => parseDouQiLifeTurnResult(text)).toThrow("世界回应格式无效");
+  });
+
+  test("marks failed responses in recent context so abandoned actions are not treated as settled", () => {
+    const messages = [{ role: "world", kind: "narrative", content: "未完成的叙事", status: "failed", error: "上游故障" }] as DouQiLifeMessage[];
+    const prompt = buildDouQiLifeTurnPrompt(state, messages, "继续观察");
+    expect(prompt).toContain('"status":"failed"');
+    expect(prompt).toContain("上游故障");
+  });
 });

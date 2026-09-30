@@ -10,6 +10,7 @@ import { cancelChatMessage, createChatConversation, createChatMemory, deleteChat
 import { clearChatBootstrapCache, getChatBootstrapRequests } from "@/services/chat-bootstrap-cache";
 import { saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { readChatMode, writeLifePreference } from "./dou-qi-life-preferences";
 import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
 import { useChatRuntimeStore } from "@/stores/use-chat-runtime-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId, type ChatPresetOption } from "./chat-presets";
@@ -60,7 +61,16 @@ export default function ChatPage() {
     const [creating, setCreating] = useState(false);
     const [importing, setImporting] = useState(false);
     const [sending, setSending] = useState(false);
-    const [mode, setMode] = useState<ChatMode>("chat");
+    const [mode, setMode] = useState<ChatMode>(() => readChatMode(userId));
+    const modeUserRef = useRef(userId);
+    useEffect(() => {
+        if (modeUserRef.current !== userId) {
+            modeUserRef.current = userId;
+            setMode(readChatMode(userId));
+        } else {
+            writeLifePreference(userId, "mode", mode);
+        }
+    }, [mode, userId]);
     const [uploading, setUploading] = useState(false);
     const [draft, setDraft] = useState("");
     const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
