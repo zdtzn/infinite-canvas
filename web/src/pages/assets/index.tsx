@@ -1,5 +1,8 @@
 import { Copy, Download, Eye, PencilLine, Search, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router";
+import { creativeImageTransferState } from "@/lib/creative-image-transfer";
+import { collectExportAssets } from "./export-library";
 import { App, Button, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
 
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -86,7 +89,6 @@ async function loadImageElement(source: string) {
 
 /**
  * 藏卷阁 · 作品库(方案B「山海境」)
- * 资产增删改查 / 导入导出 / 分页 / 详情抽屉逻辑零改动,仅重做呈现:
  * 螺旋山谷阁头 + 画轴卡片 + hover 浮现操作层。
  */
 export default function AssetsPage() {
@@ -102,11 +104,15 @@ export default function AssetsPage() {
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
+    const [searchInput, setSearchInput] = useState("");
+    const [exportProgress, setExportProgress] = useState<string | null>(null);
+    const exportingRef = useRef(false);
+    const [deleteBusy, setDeleteBusy] = useState(false);
     const [kindFilter, setKindFilter] = useState<AssetKind | "all">("all");
     const [category, setCategory] = useState<string | undefined>();
     const [filterTags, setFilterTags] = useState<string[]>([]);
     const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(10);
+    const [pageSize, setPageSize] = useState(12);
     const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
     const [isAssetOpen, setIsAssetOpen] = useState(false);
     const [savingAsset, setSavingAsset] = useState(false);
@@ -114,7 +120,8 @@ export default function AssetsPage() {
     const [deletingAsset, setDeletingAsset] = useState<Asset | null>(null);
     const [formKind, setFormKind] = useState<AssetKind>("text");
     const [imageDraft, setImageDraft] = useState<ImageDraft>(null);
-    const [remoteLibrary, setRemoteLibrary] = useState<ServerAssetLibrary | null>(null);
+    const [remoteResult, setRemoteLibrary] = useState<(ServerAssetLibrary & { owner: string }) | null>(null);
+    const remoteLibrary = remoteResult?.owner === userId ? remoteResult : null;
     const [remoteRefresh, setRemoteRefresh] = useState(0);
     const [remoteStatus, setRemoteStatus] = useState<"loading" | "ready" | "error">("loading");
     const coverUrl = Form.useWatch("coverUrl", form) || "";
@@ -123,6 +130,11 @@ export default function AssetsPage() {
     const content = Form.useWatch("content", form) || "";
     const validAssets = useMemo(() => assets.filter((asset) => asset.kind === "text" || asset.kind === "image" || asset.kind === "video"), [assets]);
     const useRemoteLibrary = PUBLIC_MODE && Boolean(userId);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => { setKeyword(searchInput); setPage(1); }, 300);
+        return () => window.clearTimeout(timer);
+    }, [searchInput]);
 
     const filteredAssets = useMemo(() => {
         return validAssets.filter((asset) => matchesAssetFilters(asset, { keyword, kind: kindFilter, category, tags: filterTags }));
@@ -142,7 +154,6 @@ export default function AssetsPage() {
         let active = true;
         const controller = new AbortController();
         setRemoteStatus("loading");
-        setRemoteLibrary(null);
         void fetchServerAssetLibrary(userId, {
             page,
             pageSize,
@@ -154,13 +165,13 @@ export default function AssetsPage() {
         })
             .then((result) => {
                 if (active) {
-                    setRemoteLibrary(result);
+                    setRemoteLibrary({ ...result, owner: userId });
+                    setPage(Math.min(page, Math.max(1, Math.ceil((result.total || 0) / pageSize))));
                     setRemoteStatus("ready");
                 }
             })
             .catch(() => {
                 if (active) {
-                    setRemoteLibrary(null);
                     setRemoteStatus("error");
                 }
             });
@@ -171,7 +182,7 @@ export default function AssetsPage() {
     }, [kindFilter, keyword, category, filterTags, page, pageSize, remoteRefresh, useRemoteLibrary, userId]);
 
     const serverLibraryReady = Boolean(useRemoteLibrary && remoteLibrary?.initialized);
-    const remoteBlocked = useRemoteLibrary && remoteStatus !== "ready";
+    const remoteBlocked = useRemoteLibrary && !remoteLibrary;
     const displayedAssets = remoteBlocked ? [] : serverLibraryReady ? remoteLibrary!.items : visibleAssets;
     const displayedTotal = remoteBlocked ? 0 : serverLibraryReady ? remoteLibrary!.total || 0 : filteredAssets.length;
     const displayedCount = serverLibraryReady ? remoteLibrary!.total || 0 : validAssets.length;
@@ -332,12 +343,23 @@ export default function AssetsPage() {
     };
 
     const exportAllAssets = async () => {
-        if (!validAssets.length) {
-            message.warning("暂无资产可导出");
-            return;
+        if (exportingRef.current) return;
+        exportingRef.current = true;
+        let current = true;
+        const unsubscribe = useUserStore.subscribe((state, previous) => { if (state.user?.id !== previous.user?.id) current = false; });
+        const assertCurrent = () => { if (!current || (PUBLIC_MODE && useUserStore.getState().user?.id !== userId)) throw new Error("账号已切换，导出已停止"); };
+        setExportProgress("读取全部素材…");
+        try {
+            const items = useRemoteLibrary ? await collectExportAssets((nextPage) => fetchServerAssetLibrary(userId, { page: nextPage, pageSize: 60 }), assertCurrent) : validAssets;
+            if (!items.length) { message.warning("暂无资产可导出"); return; }
+            const { exportAssets } = await import("./asset-transfer");
+            await exportAssets(items, userId, assertCurrent, (count) => setExportProgress(`打包 ${count}/${items.length}`));
+            message.success(`已导出 ${items.length} 个资产`);
+        } catch (error) {
+            message.error(error instanceof Error ? `导出失败：${error.message}` : "导出失败，请重试");
+        } finally {
+            current = false; unsubscribe(); exportingRef.current = false; setExportProgress(null);
         }
-        const { exportAssets } = await import("./asset-transfer");
-        await exportAssets(validAssets);
     };
 
     const importAssetZip = async (file?: File) => {
@@ -361,12 +383,18 @@ export default function AssetsPage() {
         }
     };
 
-    const confirmDelete = () => {
-        if (!deletingAsset) return;
-        removeAsset(deletingAsset.id);
-        window.setTimeout(() => setRemoteRefresh((value) => value + 1), 250);
-        message.success("资产已删除");
-        setDeletingAsset(null);
+    const confirmDelete = async () => {
+        if (!deletingAsset || deleteBusy) return;
+        setDeleteBusy(true);
+        try {
+            await removeAsset(deletingAsset.id);
+            if (PUBLIC_MODE && useUserStore.getState().user?.id !== userId) return;
+            setRemoteRefresh((value) => value + 1);
+            message.success("资产已删除");
+            setDeletingAsset(null);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "删除失败，素材已保留，请重试");
+        } finally { setDeleteBusy(false); }
     };
 
     return (
@@ -391,15 +419,15 @@ export default function AssetsPage() {
                             size="large"
                             allowClear
                             prefix={<Search className="size-4 text-stone-400" />}
-                            value={keyword}
+                            value={searchInput}
                             placeholder="搜索标题、内容、标签或来源"
                             onChange={(event) => {
-                                setPage(1);
-                                setKeyword(event.target.value);
+                                setSearchInput(event.target.value);
                             }}
                             onSearch={(value) => {
                                 setPage(1);
                                 setKeyword(value);
+                                setSearchInput(value);
                             }}
                         />
                         <div className="flex flex-wrap items-center gap-4">
@@ -407,9 +435,10 @@ export default function AssetsPage() {
                                 type="button"
                                 className="asset-transfer-button inline-flex h-10 items-center gap-2 rounded-md border border-[rgb(201_168_106/0.16)] bg-white/[0.025] px-3 text-sm font-medium text-[#c9c4b9] transition-[color,background-color,border-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a86a]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e0e12]"
                                 onClick={() => void exportAllAssets()}
+                                disabled={exportProgress !== null}
                             >
                                 <Download className="size-4 text-[#8a8a96] transition-colors duration-200" aria-hidden />
-                                导出资产
+                                {exportProgress || "导出全部资产"}
                             </button>
                             <button
                                 type="button"
@@ -466,9 +495,9 @@ export default function AssetsPage() {
                         ))}
                     </div>
 
-                    {remoteBlocked && (
+                    {useRemoteLibrary && remoteStatus !== "ready" && (
                         <div className="flex flex-col items-center gap-4 py-16 text-center text-sm text-[#c9c4b9]" role="status" aria-live="polite">
-                            <p>{remoteStatus === "loading" ? "正在加载云端藏卷…" : "云端藏卷加载失败，请重试。"}</p>
+                            <p>{remoteStatus === "loading" ? "正在更新云端藏卷…" : remoteLibrary ? "更新失败，已保留上次结果，请重试。" : "云端藏卷加载失败，请重试。"}</p>
                             {remoteStatus === "error" && <Button onClick={() => setRemoteRefresh((value) => value + 1)}>重新加载</Button>}
                         </div>
                     )}
@@ -496,7 +525,11 @@ export default function AssetsPage() {
                                 <Button
                                     onClick={() => {
                                         setKeyword("");
+                                        setSearchInput("");
                                         setKindFilter("all");
+                                        setCategory(undefined);
+                                        setFilterTags([]);
+                                        setPage(1);
                                     }}
                                 >
                                     清除筛选条件
@@ -504,14 +537,15 @@ export default function AssetsPage() {
                             </div>
                         ))}
 
-                    {displayedTotal > pageSize ? (
+                    {displayedTotal > 0 ? (
                         <div className="flex justify-center">
                             <Pagination
                                 current={page}
                                 pageSize={pageSize}
                                 total={displayedTotal}
                                 showSizeChanger
-                                pageSizeOptions={[10, 20, 50, 100]}
+                                pageSizeOptions={[12, 24, 48]}
+                                showTotal={(total, range) => `第 ${range[0]}–${range[1]} 卷，共 ${total} 卷`}
                                 onChange={(nextPage, nextPageSize) => {
                                     setPage(nextPage);
                                     setPageSize(nextPageSize);
@@ -647,7 +681,7 @@ export default function AssetsPage() {
 
             <input ref={assetInputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importAssetZip(event.target.files?.[0])} />
 
-            <Modal title="删除资产" open={Boolean(deletingAsset)} onCancel={() => setDeletingAsset(null)} onOk={confirmDelete} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
+            <Modal title="删除资产" open={Boolean(deletingAsset)} onCancel={() => !deleteBusy && setDeletingAsset(null)} onOk={confirmDelete} confirmLoading={deleteBusy} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
                 确定删除「{deletingAsset?.title}」吗？删除后会从我的资产中移除。
             </Modal>
         </div>
@@ -724,6 +758,12 @@ function AssetScrollCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }
 }
 
 function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | null; onClose: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void }) {
+    const navigate = useNavigate();
+    const sourcePrompt = typeof asset?.metadata?.prompt === "string" ? asset.metadata.prompt : "";
+    const continueImage = (path: string) => {
+        if (asset?.kind !== "image") return;
+        navigate(path, { state: creativeImageTransferState({ id: `asset:${asset.id}:${Date.now()}`, source: "image-workbench", ownerUserId: useUserStore.getState().user?.id || "", title: asset.title, prompt: sourcePrompt, ...asset.data }) });
+    };
     const cover = asset ? assetOriginalImageUrl(asset) : "";
     return (
         <Drawer title="资产详情" open={Boolean(asset)} size="large" onClose={onClose}>
@@ -765,7 +805,9 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | nu
                             <Typography.Paragraph className="mt-1">{asset.note}</Typography.Paragraph>
                         </div>
                     ) : null}
-                    <Space>
+                    {sourcePrompt ? <div><Typography.Text type="secondary">原始提示词</Typography.Text><Typography.Paragraph copyable className="mt-2 whitespace-pre-wrap">{sourcePrompt}</Typography.Paragraph></div> : null}
+                    <Space wrap>
+                        {asset.kind === "image" ? <><Button onClick={() => continueImage("/canvas?mode=transfer")}>放入画布</Button><Button onClick={() => continueImage("/color-alchemy")}>前往灵彩调色</Button></> : null}
                         {asset.kind === "text" ? (
                             <Button type="primary" icon={<Copy className="size-4" />} onClick={() => onCopy(asset)}>
                                 复制文本

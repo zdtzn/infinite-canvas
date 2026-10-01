@@ -76,7 +76,13 @@ export function generationFailureFeedback(error: unknown, options: GenerationFai
     const kind = generationFailureKind(error, options);
     const messages = generationFailedMessages[kind];
     const message = messages[messageIndex(messages.length, options.seed)] || messages[0];
-    return { kind, ...message, reference: failureSupportReference(error) };
+    const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    const description = /policy|safety|moderation|审核|违规|安全策略/i.test(detail)
+        ? "本次生成未完成：内容被服务方拒绝。请调整提示词或参考图后再试。"
+        : /api.?key|401|403|认证|权限|身份验证/i.test(detail)
+          ? "本次生成未完成。请检查模型配置、凭证与使用权限。"
+          : "本次生成未完成，请查看错误详情后再试；系统不会自动重新提交。";
+    return { kind, title: message.title, description, reference: failureSupportReference(error) };
 }
 
 export function generationFailureText(feedback: GenerationFailureFeedback) {

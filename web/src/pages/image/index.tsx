@@ -625,15 +625,18 @@ export default function ImagePage() {
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
         if (savingAssetIdsRef.current.has(image.id)) return;
+        const operation = beginResultTransfer();
+        const sourcePrompt = previewLog ? generationUserPrompt(previewLog.prompt) : generationJob?.snapshot?.text || "";
         savingAssetIdsRef.current.add(image.id);
         setSavingAssetIds((ids) => [...ids, image.id]);
         try {
             // Generated results are already persisted by the job flow. Reusing that asset avoids a
             // duplicate upload and prevents upstream MIME headers from affecting asset registration.
-            const result = await ensureStoredResult(image);
+            const result = await ensureStoredResult(image, operation);
+            if (!operation.isCurrent()) return;
             addAsset({
                 kind: "image",
-                title: `生成结果 ${index + 1}`,
+                title: `${sourcePrompt.trim().replace(/\s+/g, " ").slice(0, 32) || "丹青台作品"} · ${index + 1}`,
                 coverUrl: result.thumbnailUrl || result.dataUrl,
                 tags: [],
                 source: IMAGE_WORKBENCH_ASSET_SOURCE,
@@ -647,11 +650,12 @@ export default function ImagePage() {
                     bytes: result.bytes,
                     mimeType: result.mimeType || "image/*",
                 },
-                metadata: { source: "image-page", prompt },
+                metadata: { source: "image-page", prompt: sourcePrompt },
             });
             message.success("已入藏卷阁");
         } catch (error) {
             console.error("Failed to save generated image as an asset", error);
+            if (!operation.isCurrent()) return;
             message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
         } finally {
             savingAssetIdsRef.current.delete(image.id);

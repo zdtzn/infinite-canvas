@@ -43,7 +43,7 @@ type AssetStore = {
     assets: Asset[];
     addAsset: (asset: Omit<Asset, "id" | "createdAt" | "updatedAt">) => string;
     updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
-    removeAsset: (id: string) => void;
+    removeAsset: (id: string) => Promise<void>;
     replaceAssets: (assets: Asset[]) => void;
     prepareForUser: (userId: string) => void;
     hydrateFromServer: (userId: string) => Promise<void>;
@@ -125,13 +125,13 @@ export const useAssetStore = create<AssetStore>()(
                 const current = get();
                 if (updated && shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => upsertServerAssetLibraryItem(updated!, current.ownerUserId));
             },
-            removeAsset: (id) => {
-                set((state) => {
-                    const assets = state.assets.filter((asset) => asset.id !== id);
-                    return { assets };
-                });
+            removeAsset: async (id) => {
                 const current = get();
-                if (shouldSyncAssetLibrary(current)) enqueueAssetLibraryMutation(() => deleteServerAssetLibraryItem(id, current.ownerUserId));
+                const version = assetHydrationVersion;
+                if (PUBLIC_MODE && !shouldSyncAssetLibrary(current)) throw new Error("素材库尚未同步，请稍后重试");
+                if (shouldSyncAssetLibrary(current)) await enqueueAssetLibraryMutation(() => deleteServerAssetLibraryItem(id, current.ownerUserId));
+                if (version !== assetHydrationVersion || get().ownerUserId !== current.ownerUserId) return;
+                set((state) => ({ assets: state.assets.filter((asset) => asset.id !== id) }));
             },
             replaceAssets: (assets) => {
                 const normalizedAssets = assets.map(normalizeAssetRecord);
@@ -284,6 +284,7 @@ function enqueueAssetLibraryMutation(operation: () => Promise<unknown>) {
             reportAssetSyncError(error);
         },
     );
+    return pending;
 }
 
 async function hydrateServerAsset(asset: Asset): Promise<Asset> {

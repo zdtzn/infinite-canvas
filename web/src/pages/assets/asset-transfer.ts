@@ -1,8 +1,10 @@
 import { saveAs } from "file-saver";
 
 import { createZip, readZip } from "@/lib/zip";
-import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
-import { getImageBlob, setImageBlob } from "@/services/image-storage";
+import { setMediaBlob } from "@/services/file-storage";
+import { setImageBlob } from "@/services/image-storage";
+import { runWithConcurrency } from "@/lib/async-pool";
+import { readAssetDownload } from "./asset-download";
 import type { Asset } from "@/stores/use-asset-store";
 
 type AssetExportFile = {
@@ -20,25 +22,28 @@ type AssetExportItem = {
     bytes: number;
 };
 
-export async function exportAssets(assets: Asset[]) {
+export async function exportAssets(assets: Asset[], userId: string, assertCurrent: () => void, onProgress: (count: number) => void) {
     const files: AssetExportItem[] = [];
     const zipFiles: { name: string; data: BlobPart }[] = [];
 
-    await Promise.all(
-        assets.map(async (asset) => {
-            if (asset.kind !== "image" && asset.kind !== "video") return;
-            const storageKey = asset.data.storageKey;
-            if (!storageKey) return;
-            const blob = asset.kind === "image" ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
-            if (!blob) return;
-            const path = `files/${safeFileName(storageKey)}.${fileExtension(blob.type, asset.kind)}`;
+    let completed = 0;
+    const exportedAssets = await runWithConcurrency(assets, 3, async (asset, index) => {
+            assertCurrent();
+            if (asset.kind !== "image" && asset.kind !== "video") { onProgress(++completed); return asset; }
+            const storageKey = asset.data.storageKey || `${asset.kind}:export-${asset.id}`;
+            const { blob } = await readAssetDownload(asset, userId);
+            assertCurrent();
+            const path = `files/${index}-${safeFileName(storageKey)}.${fileExtension(blob.type, asset.kind)}`;
             files.push({ storageKey, path, mimeType: blob.type || asset.data.mimeType, bytes: blob.size });
             zipFiles.push({ name: path, data: blob });
-        }),
-    );
+            onProgress(++completed);
+            return { ...asset, data: { ...asset.data, storageKey } } as Asset;
+        });
 
-    const data: AssetExportFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), assets, files };
+    assertCurrent();
+    const data: AssetExportFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), assets: exportedAssets, files };
     const zip = await createZip([{ name: "assets.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);
+    assertCurrent();
     saveAs(zip, "我的资产.zip");
 }
 

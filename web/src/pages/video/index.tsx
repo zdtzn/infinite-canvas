@@ -2,6 +2,7 @@ import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import { nanoid } from "nanoid";
+import { queryVideoTask } from "./query-task";
 
 import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
@@ -95,6 +96,7 @@ export default function VideoPage() {
     const activeLogIdsRef = useRef<Set<string>>(new Set());
     const deletedLogIdsRef = useRef<Set<string>>(new Set());
     const historyRefreshRef = useRef<Promise<GenerationLog[]> | null>(null);
+    const pollLifetime = useRef({ controller: new AbortController(), version: 0 });
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -141,6 +143,14 @@ export default function VideoPage() {
     const canGenerate = Boolean(prompt.trim()) && !generationBlockReason;
     const selectedPreviewLog = previewLog ? logs.find((log) => log.id === previewLog.id) || previewLog : null;
     const displayResults = selectedPreviewLog ? videoLogResults(selectedPreviewLog) : results;
+
+    useEffect(() => {
+        pollLifetime.current = { controller: new AbortController(), version: pollLifetime.current.version + 1 };
+        activeLogIdsRef.current.clear();
+        historyRefreshRef.current = null;
+        setResults([]); setLogs([]); setPreviewLog(null); setRunning(false);
+        return () => { pollLifetime.current.controller.abort(); };
+    }, [historyUserId]);
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -406,13 +416,17 @@ export default function VideoPage() {
     };
 
     const saveLog = async (log: GenerationLog, resumePending = true) => {
+        const lifetime = pollLifetime.current;
         const logStore = await getLogStore();
+        if (lifetime.controller.signal.aborted || lifetime !== pollLifetime.current || (PUBLIC_MODE && useUserStore.getState().user?.id !== historyUserId)) return;
         await persistGenerationHistoryRecord({ kind: "video", userId: historyUserId, store: logStore, hydrate: normalizeLog, prepare: prepareVideoLogForServer }, { ...serializeLog(log), updatedAt: Date.now() });
+        if (lifetime.controller.signal.aborted || lifetime !== pollLifetime.current) return;
         await refreshLogs(resumePending);
     };
 
     const refreshLogs = (resumePending = true) => {
         if (historyRefreshRef.current) return historyRefreshRef.current;
+        const lifetime = pollLifetime.current;
         setLogsLoading(true);
         const pending = (async () => {
             const logStore = await getLogStore();
@@ -423,10 +437,12 @@ export default function VideoPage() {
                 hydrate: normalizeLog,
                 prepare: prepareVideoLogForServer,
             });
+            if (lifetime !== pollLifetime.current || lifetime.controller.signal.aborted) return [];
             setLogs(nextLogs);
             if (resumePending) resumePendingLogs(nextLogs);
             return nextLogs;
         })().finally(() => {
+            if (lifetime !== pollLifetime.current || lifetime.controller.signal.aborted) return;
             historyRefreshRef.current = null;
             setLogsLoading(false);
         });
@@ -447,18 +463,23 @@ export default function VideoPage() {
 
     const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig, agentTaskId?: string) => {
         if (!log.task || deletedLogIdsRef.current.has(log.id) || activeLogIdsRef.current.has(log.id)) return;
+        const lifetime = pollLifetime.current;
+        const isCurrent = () => lifetime === pollLifetime.current && !lifetime.controller.signal.aborted && (!PUBLIC_MODE || useUserStore.getState().user?.id === historyUserId);
+        let terminalFailure = false;
         activeLogIdsRef.current.add(log.id);
         setRunning(true);
         setStartedAt((value) => value || performance.now());
-        setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
+        setResults([{ id: log.id, status: "pending" }]);
+        setLogs((items) => items.map((item) => item.id === log.id ? { ...item, error: undefined } : item));
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         try {
             for (let attempt = 0; attempt < 120; attempt += 1) {
-                if (deletedLogIdsRef.current.has(log.id)) return;
-                const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
-                if (deletedLogIdsRef.current.has(log.id)) return;
+                if (!isCurrent() || deletedLogIdsRef.current.has(log.id)) return;
+                const state = await queryVideoTask(() => pollVideoGenerationTask(configOverride || taskConfig, log.task!, { signal: lifetime.controller.signal }), delay, () => isCurrent() && !deletedLogIdsRef.current.has(log.id));
+                if (!isCurrent() || deletedLogIdsRef.current.has(log.id)) return;
                 if (state.status === "completed") {
                     const stored = await storeGeneratedVideo(state.result);
+                    if (!isCurrent()) return;
                     if (deletedLogIdsRef.current.has(log.id)) {
                         if (stored.storageKey) await deleteStoredMedia([stored.storageKey], historyUserId);
                         return;
@@ -479,18 +500,26 @@ export default function VideoPage() {
                     message.success("视频已生成");
                     return;
                 }
-                if (state.status === "failed") throw new Error(state.error);
-                if (attempt === 119) throw new Error("视频生成超时，请稍后重试");
+                if (state.status === "failed") { terminalFailure = true; throw new Error(state.error); }
+                if (attempt === 119) throw new Error("本轮查询已结束，任务结果尚未确认");
                 await delay(log.task.provider === "seedance" ? 5000 : 2500);
             }
         } catch (error) {
-            if (deletedLogIdsRef.current.has(log.id)) return;
+            if (!isCurrent() || deletedLogIdsRef.current.has(log.id)) return;
             const errorMessage = error instanceof Error ? error.message : "生成失败";
+            if (!terminalFailure) {
+                const recoveryMessage = `结果暂未确认：${errorMessage}。可继续查询原任务，不会重新生成。`;
+                setResults([{ id: log.id, status: "pending", error: recoveryMessage }]);
+                await saveLog({ ...log, status: "生成中", error: recoveryMessage }, false).catch(() => message.warning("查询中断，记录同步失败，请保留本页并稍后重试"));
+                if (isCurrent()) message.warning("查询已暂停，原任务已保留；请继续查询，不必重新生成");
+                return;
+            }
             setResults([{ id: log.id, status: "failed", error: errorMessage }]);
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
-            await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, error: errorMessage });
-            message.error(errorMessage);
+            await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, error: errorMessage }, false).catch(() => { if (isCurrent()) message.warning("任务失败记录暂未同步，请稍后刷新"); });
+            if (isCurrent()) message.error(errorMessage);
         } finally {
+            if (!isCurrent()) return;
             activeLogIdsRef.current.delete(log.id);
             if (!activeLogIdsRef.current.size) {
                 setRunning(false);
@@ -788,7 +817,7 @@ export default function VideoPage() {
                                     ) : result.status === "failed" ? (
                                         <FailedVideoCard key={result.id} error={result.error || "生成失败"} onRetry={retryResult} />
                                     ) : (
-                                        <PendingVideoCard key={result.id} />
+                                        <PendingVideoCard key={result.id} error={result.error} onResume={() => { void refreshLogs(true).catch(() => message.error("查询失败，请稍后再试")); }} />
                                     ),
                                 )}
                             </div>
@@ -912,12 +941,13 @@ function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedV
     );
 }
 
-function PendingVideoCard() {
+function PendingVideoCard({ error, onResume }: { error?: string; onResume: () => void }) {
     return (
         <div className="relative aspect-video overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
-                <LoaderCircle className="size-6 animate-spin" />
-                <span>生成中</span>
+                {!error && <LoaderCircle className="size-6 animate-spin" />}
+                <span className="max-w-lg px-4 text-center">{error || "生成中"}</span>
+                {error && <Button onClick={onResume}>继续查询原任务</Button>}
             </div>
         </div>
     );
@@ -1080,7 +1110,7 @@ function LogCard({
 }
 
 function videoLogResults(log: GenerationLog): GenerationResult[] {
-    if (log.status === "生成中") return [{ id: log.id, status: "pending" }];
+    if (log.status === "生成中") return [{ id: log.id, status: "pending", error: log.error }];
     if (log.video) return [{ id: log.video.id, status: "success", video: log.video }];
     return [{ id: log.id, status: "failed", error: log.error || "生成失败" }];
 }
