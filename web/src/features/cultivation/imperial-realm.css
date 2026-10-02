@@ -98,6 +98,16 @@
     line-height: 1.6;
     color: #f2f3ec;
 }
+.imperial-realm h1.imperial-realm-wordmark {
+    width: min(100%, 720px);
+    margin: 18px 0 16px;
+    line-height: 0;
+}
+.imperial-realm-wordmark img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
 .imperial-realm-actions {
     display: flex;
     flex-wrap: wrap;
@@ -244,6 +254,10 @@
         font-size: clamp(44px, 7.5vw, 64px);
         margin: 10px 0;
     }
+    .imperial-realm h1.imperial-realm-wordmark {
+        width: min(100%, 450px);
+        margin: 12px 0;
+    }
     .imperial-realm-actions {
         margin-top: 16px;
     }
@@ -272,6 +286,10 @@
     }
     .imperial-realm h1 {
         font-size: 44px;
+        margin: 6px 0;
+    }
+    .imperial-realm h1.imperial-realm-wordmark {
+        width: min(100%, 300px);
         margin: 6px 0;
     }
     .imperial-realm-heading > p {

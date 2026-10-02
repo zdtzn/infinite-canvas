@@ -1,3 +1,14 @@
+.home-wordmark {
+    width: min(100%, 848px);
+    line-height: 0;
+}
+
+.home-wordmark img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
 .home-page--imperial .imperial-realm::after {
     content: "";
     position: absolute;

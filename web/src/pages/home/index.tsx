@@ -125,7 +125,10 @@ export default function IndexPage() {
                     <div className="relative z-10 flex max-w-4xl flex-col items-center px-6 text-center">
                         <span className="shj-hero-eyebrow home-enter-rise home-enter-delay-1">Infinite Canvas</span>
 
-                        <h1 className="font-brush shj-title-sheen home-enter-rise home-enter-delay-2 mt-8 whitespace-nowrap text-[4rem] leading-none sm:mt-10 sm:text-9xl md:text-[10rem] lg:text-[11rem]">无限画布</h1>
+                        <h1 className="home-wordmark home-enter-rise home-enter-delay-2 mt-8 sm:mt-10">
+                            <span className="sr-only">无限画布</span>
+                            <img src="/images/infinite-canvas-wordmark.webp" srcSet="/images/infinite-canvas-wordmark-mobile.webp 840w, /images/infinite-canvas-wordmark.webp 1680w" sizes="(max-width: 640px) calc(100vw - 48px), 848px" width={1680} height={560} alt="" aria-hidden="true" loading="eager" decoding="async" />
+                        </h1>
 
                         <p className="font-display shj-hero-tagline home-enter-rise home-enter-delay-3 mt-8 text-balance text-xl leading-8 tracking-[0.3em] sm:text-2xl">一笔落,万象生</p>
 
