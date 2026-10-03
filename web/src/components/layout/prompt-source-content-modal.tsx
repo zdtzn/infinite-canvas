@@ -6,6 +6,7 @@ import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dia
 import { promptImageCandidates, PromptCover } from "@/components/prompts/prompt-cover";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { assetSaveMessage } from "@/stores/asset-sync-queue";
 import { fetchSourcePrompts, refreshSource, type Prompt } from "@/services/api/prompts";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
@@ -37,9 +38,14 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
         else setItems([]);
     }, [source, load]);
 
-    const saveAsset = (item: Prompt) => {
-        addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
-        message.success("已收入藏卷阁");
+    const saveAsset = async (item: Prompt) => {
+        try {
+            const id = addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
+            const status = await useAssetStore.getState().waitForAssetLocalSave(id);
+            message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: assetSaveMessage(status) });
+        } catch (error) {
+            message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
+        }
     };
 
     return (

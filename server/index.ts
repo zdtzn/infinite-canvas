@@ -2,11 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, statSync, unlinkSync } from "node:fs";
 import { isIP } from "node:net";
 import { createEmailRegistration, normalizeRegistrationEmail, smtpConfigured } from "./lib/email-registration";
+import { createPasswordReset, PasswordResetError, type PasswordResetInput } from "./lib/password-reset";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, personalPasswordIssue, readCookie, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./lib/asset-library";
 import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
+import { buildStorageOverview, indexStorageReferences, planStorageCleanup, type StorageReferenceRoot } from "./lib/storage-overview";
 import { AsyncSemaphore } from "./lib/async-semaphore";
 import { PerformanceMetrics, PerformanceRateLimiter, PerformanceInputError, PERFORMANCE_BODY_BYTES, parsePerformanceSamples, type ImagePerformanceOutcome } from "./lib/performance-metrics";
 import { createSharedTasks } from "./lib/shared-task";
@@ -208,6 +210,15 @@ if (appDatabase.raw && appDatabase.loadSetting("prompt_index_taxonomy_revision")
 }
 let state = appDatabase.loadState();
 const emailRegistration = appDatabase.raw ? createEmailRegistration(appDatabase.raw, state.auth.sessionSecret) : null;
+const passwordReset = appDatabase.raw ? createPasswordReset(appDatabase.raw, state.auth.sessionSecret, {
+    getUser: userId => state.users[userId],
+    commitPassword: (userId, loginHash) => {
+        const previous = state.users[userId];
+        if (!previous || isUserDisabled(previous)) throw new Error("Account unavailable");
+        state.users[userId] = { ...previous, loginHash, sessionVersion: currentSessionVersion(previous) + 1 };
+        try { writeState(); } catch (error) { state.users[userId] = previous; throw error; }
+    },
+}) : null;
 const assetBytesByUser = new Map<string, number>();
 for (const asset of Object.values(state.assets)) assetBytesByUser.set(asset.userId, (assetBytesByUser.get(asset.userId) || 0) + asset.bytes);
 const jobFileBytesByUser = new Map<string, number>();
@@ -407,6 +418,10 @@ async function route(request: Request, requestId: string) {
         enforceSameOrigin(request);
         return registerWithEmail(request, url.pathname.endsWith("register-code"));
     }
+    if (["/api/auth/password-reset-code", "/api/auth/password-reset"].includes(url.pathname) && request.method === "POST") {
+        enforceSameOrigin(request);
+        return resetPasswordWithEmail(request, url.pathname.endsWith("-code"), requestId);
+    }
     if (url.pathname === "/api/auth/setup" && request.method === "POST") {
         enforceSameOrigin(request);
         if (!isLoopbackSetupRequest(request.url, requestPeerIps.get(request) || "unknown")) throw new HttpError(403, "管理员初始化只能通过服务器回环地址完成");
@@ -558,6 +573,8 @@ async function route(request: Request, requestId: string) {
         if (colorAlchemyDocumentMatch && request.method === "DELETE")
             return deleteColorAlchemyDocument(session, decodeRouteSegment(colorAlchemyDocumentMatch[1], "灵彩草稿 ID"));
         if (url.pathname === "/api/library-assets" && request.method === "GET") return listLibraryAssets(url, session);
+        if (url.pathname === "/api/storage" && request.method === "GET") return personalStorageOverview(url, session);
+        if (url.pathname === "/api/storage/cleanup" && request.method === "POST") return cleanupPersonalStorage(request, session);
         if (url.pathname === "/api/library-assets" && request.method === "PUT") return heavyRequestSemaphore.run(request.signal, () => replaceLibraryAssets(request, session));
         const libraryAssetMatch = url.pathname.match(/^\/api\/library-assets\/([^/]+)$/);
         if (libraryAssetMatch && request.method === "PUT") return saveLibraryAsset(request, session, decodeRouteSegment(libraryAssetMatch[1], "资产记录 ID"));
@@ -617,6 +634,7 @@ async function authStatus(request: Request) {
         user: session && user ? publicAuthUser(user) : null,
         publicMode: true,
         emailRegistrationEnabled: ALLOW_NEW_USERS && smtpConfigured() && Boolean(emailRegistration) && Boolean(state.auth.accessCodeHash),
+        passwordResetEnabled: smtpConfigured() && Boolean(passwordReset) && Boolean(state.auth.accessCodeHash),
     });
 }
 
@@ -690,6 +708,24 @@ async function registerWithEmail(request: Request, codeOnly: boolean) {
         } catch (error) { delete state.users[user.userId]; throw error; }
         return authenticatedResponse(user);
     });
+}
+
+async function resetPasswordWithEmail(request: Request, codeOnly: boolean, requestId: string) {
+    enforceRateLimit(`password-reset:${codeOnly ? "code" : "confirm"}:${clientIp(request)}`, codeOnly ? 5 : 12);
+    if (!passwordReset || !smtpConfigured() || !state.auth.accessCodeHash) throw new HttpError(503, "邮箱找回暂未开放，请联系管理员");
+    const body = await readJson<PasswordResetInput>(request, 16 * 1024);
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "请求内容无效");
+    try {
+        const result = codeOnly
+            ? await passwordReset.request(body.email, clientIp(request), requestId)
+            : await withAuthMutation(() => passwordReset.confirm(body, clientIp(request)));
+        return json(result, 200, { "Cache-Control": "no-store" });
+    } catch (error) {
+        if (!(error instanceof PasswordResetError)) throw error;
+        return json({ error: { message: error.message } }, error.status, {
+            "Cache-Control": "no-store", ...(error.retryAfter ? { "Retry-After": String(error.retryAfter) } : {}),
+        });
+    }
 }
 
 async function login(request: Request) {
@@ -2773,6 +2809,44 @@ function serveStoredAsset(request: Request, asset: StoredAsset) {
 async function deleteAsset(session: SessionPayload, key: string) {
     await removeAsset(session, key);
     return new Response(null, { status: 204 });
+}
+
+function personalStorageInput(userId: string) {
+    const roots: StorageReferenceRoot[] = [
+        ...Object.values(state.projects[userId] || {}).map(({ project }) => ({ label: `画布：${String(project.title || "未命名画布")}`, value: project })),
+        { label: "藏卷阁收藏", value: appDatabase.loadAssetLibrary(userId).items.map(item => item.payload) },
+        { label: "丹青台生成历史", value: appDatabase.loadGenerationHistory(userId, "image").map(item => item.payload) },
+        { label: "流光阁生成历史", value: appDatabase.loadGenerationHistory(userId, "video").map(item => item.payload) },
+        { label: "历史商品项目", value: legacyProductAssetReferenceRoots(userId) },
+        { label: "问道台对话", value: chat?.assetReferenceRoots(userId) || [] },
+        { label: "灵彩草稿", value: colorAlchemy?.assetReferenceRoots(userId) || [] },
+        { label: "个人头像", value: { storageKey: AVATAR_ASSET_KEY } },
+    ];
+    return { assets: Object.values(state.assets), userId, references: indexStorageReferences(roots), now: Date.now(), graceMs: ASSET_GC_GRACE_MS };
+}
+
+function personalStorageOverview(url: URL, session: SessionPayload) {
+    enforceRateLimit(`${session.userId}:storage-overview`, 30);
+    const overview = buildStorageOverview({
+        ...personalStorageInput(session.userId), limitBytes: MAX_USER_ASSET_BYTES,
+        page: Number(url.searchParams.get("page") || 1), pageSize: 20, filter: url.searchParams.get("filter") || "all",
+    });
+    return json({ ...overview, generationOutputs: { usedBytes: jobFileBytesByUser.get(session.userId) || 0, limitBytes: MAX_USER_JOB_FILE_BYTES } }, 200, { "Cache-Control": "private, no-store" });
+}
+
+async function cleanupPersonalStorage(request: Request, session: SessionPayload) {
+    enforceRateLimit(`${session.userId}:storage-cleanup`, 10);
+    const body = await readJson<{ keys?: unknown; confirmed?: unknown }>(request, 32 * 1024);
+    if (!body || body.confirmed !== true || !Array.isArray(body.keys) || !body.keys.length || body.keys.length > 50 || body.keys.some(key => typeof key !== "string" || key.length > 200)) {
+        throw new HttpError(400, "请确认并选择 1–50 个待清理文件");
+    }
+    return withAssetMutation(async () => {
+        // Re-read references inside the mutation gate; the preview is never deletion authority.
+        const plan = planStorageCleanup({ ...personalStorageInput(session.userId), keys: body.keys as string[] });
+        let freedBytes = 0;
+        for (const asset of plan.removable) freedBytes += removeStoredAssetRecord(asset).freedBytes;
+        return json({ deletedCount: plan.removable.length, freedBytes, skippedCount: plan.skipped.length }, 200, { "Cache-Control": "private, no-store" });
+    });
 }
 
 async function removeAsset(session: SessionPayload, key: string, allowReferenced = false) {

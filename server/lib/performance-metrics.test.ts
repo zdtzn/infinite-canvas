@@ -40,6 +40,21 @@ test("fixed histograms return bucket upper bounds and noncumulative counts", () 
     expect(metrics.snapshot().series[1].buckets.at(-1)).toEqual({ upperMs: null, count: 1 });
 });
 
+test("paint and event latency retain milliseconds through strict ingestion and metric-specific buckets", () => {
+    const metrics = new PerformanceMetrics(0);
+    for (const name of ["lcp", "event_interaction_latency"] as const) {
+        const durationMs = name === "lcp" ? 2400 : 192;
+        for (const item of parsePerformanceSamples(encode({ samples: [{ route: "/canvas/:id", name, durationMs }] }))) metrics.recordFrontend(item);
+    }
+    const [lcp, interaction] = metrics.snapshot().series;
+    expect(lcp).toMatchObject({ route: "/canvas/:id", name: "lcp", unit: "ms", count: 1, p50UpperMs: 2500, p95UpperMs: 2500 });
+    expect(interaction).toMatchObject({ name: "event_interaction_latency", unit: "ms", count: 1, p50UpperMs: 200, p95UpperMs: 200 });
+    expect(interaction.buckets.reduce((sum, bucket) => sum + bucket.count, 0)).toBe(1);
+    for (const name of ["inp", "cls", "https://private.test"]) expect(() => parsePerformanceSamples(encode({ samples: [{ ...sample, name }] }))).toThrow(PerformanceInputError);
+    metrics.recordImage("image_job_outcome", "succeeded", 0);
+    expect(metrics.snapshot().series[2]).toMatchObject({ unit: "count", p50UpperMs: null, p95UpperMs: null, buckets: [] });
+});
+
 test("labels stay bounded, image outcomes separate, and snapshots cannot mutate storage", () => {
     const metrics = new PerformanceMetrics();
     for (const route of PERFORMANCE_ROUTES) for (const name of FRONTEND_PERFORMANCE_NAMES) metrics.recordFrontend({ route, name, durationMs: 1 });
@@ -50,7 +65,7 @@ test("labels stay bounded, image outcomes separate, and snapshots cannot mutate 
     metrics.recordImage("secret" as never, "failed", 1);
     metrics.recordImage("image_job_total", "secret" as never, 1);
     const result = metrics.snapshot();
-    expect(result.series).toHaveLength(PERFORMANCE_ROUTES.length * 3 + 3);
+    expect(result.series).toHaveLength(PERFORMANCE_ROUTES.length * FRONTEND_PERFORMANCE_NAMES.length + 3);
     expect(result.series.every((row) => row.count === 1)).toBe(true);
     expect(JSON.stringify(result)).not.toContain("private");
     result.series[0].buckets[0].count = 900;

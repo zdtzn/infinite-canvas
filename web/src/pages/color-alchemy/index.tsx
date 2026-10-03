@@ -8,6 +8,7 @@ import { createCanvasNode, imageMetadata } from "@/lib/canvas/canvas-node-factor
 import { uploadImage } from "@/services/image-storage";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { assetSaveMessage } from "@/stores/asset-sync-queue";
 import { useUserStore } from "@/stores/use-user-store";
 import { CanvasNodeType } from "@/types/canvas";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -400,7 +401,7 @@ export default function ColorAlchemyPage() {
             if (!operation.isCurrent()) return;
             const image = await uploadImage(blob, { createThumbnail: true, expectedUserId: operation.ownerId, signal: operation.signal });
             if (!operation.isCurrent() || (PUBLIC_MODE && useAssetStore.getState().ownerUserId !== operation.ownerId)) return;
-            addAsset({
+            const id = addAsset({
                 kind: "image",
                 title: `${document.source.title} · 灵彩`,
                 coverUrl: image.thumbnailUrl || image.url,
@@ -409,7 +410,9 @@ export default function ColorAlchemyPage() {
                 data: { dataUrl: image.url, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey, thumbnailUrl: image.thumbnailUrl, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType },
                 metadata: { source: "color-alchemy", sourceKey: document.source.key, sourceStorageKey: document.source.storageKey, colorSettings: workingSettings || document.settings },
             });
-            message.success(compressed ? "调色作品已压缩并入藏卷阁" : "调色作品已入藏卷阁");
+            const status = await useAssetStore.getState().waitForAssetLocalSave(id);
+            if (!operation.isCurrent()) return;
+            message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: `${compressed ? "作品已压缩。" : ""}${assetSaveMessage(status)}` });
         } catch (error) {
             if (operation.isCurrent()) message.error(error instanceof Error ? error.message : "保存失败，请重试");
         } finally {

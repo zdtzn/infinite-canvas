@@ -11,6 +11,8 @@ import { preloadRoute } from "@/lib/route-loaders";
 import { cancelServerJob, fetchServerJobs, retryServerJob, type ServerJob } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { taskProgressProps } from "./task-progress";
+import { useVideoTaskStore, videoTaskOwner, videoTasks } from "@/stores/use-video-task-store";
+import { isActiveVideoTask, videoTaskLabel, videoTaskPhase, type VideoGenerationLog } from "@/services/video-task-model";
 
 const RECENT_SUCCESS_MS = 60_000;
 const ACTIONABLE_FAILURE_MS = 24 * 60 * 60 * 1000;
@@ -28,7 +30,20 @@ export function TaskCenter() {
     const retryKeys = useRef(new Map<string, string>());
     const userId = useUserStore((state) => state.user?.id || "");
     const activeJobs = useMemo(() => jobs.filter(isActiveJob).sort(sortJobs), [jobs]);
-    const activeCount = activeJobs.length;
+    const storedVideos = useVideoTaskStore((state) => state.logs);
+    const videoOwner = useVideoTaskStore((state) => state.ownerId);
+    const videoJobs = useMemo(() => (videoOwner === (PUBLIC_MODE ? userId : "local") ? storedVideos : []), [storedVideos, videoOwner, userId]);
+    const activeVideos = videoJobs.filter(isActiveVideoTask);
+    const actionableVideos = videoJobs.filter((job) => ["paused", "unknown", "failed", "canceled"].includes(videoTaskPhase(job)) && !dismissedJobIds.includes(`video:${job.id}`)).slice(0, MAX_ACTIONABLE_FAILURES);
+    const completedVideos = videoJobs.filter((job) => videoTaskPhase(job) === "succeeded" && Date.now() - (job.updatedAt || job.createdAt) <= RECENT_SUCCESS_MS).slice(0, 2);
+    const activeCount = activeJobs.length + activeVideos.length;
+
+    useEffect(() => {
+        void videoTasks.prepare(videoTaskOwner());
+    }, [userId]);
+    useEffect(() => {
+        if (open) void videoTasks.refresh();
+    }, [open, userId]);
     const recentSuccessJobs = useMemo(() => {
         const now = Date.now();
         return jobs
@@ -63,7 +78,7 @@ export function TaskCenter() {
         }
         let disposed = false;
         let timer: number | undefined;
-        const delay = activeCount ? 3000 : open ? 15000 : 30000;
+        const delay = activeJobs.length ? 3000 : open ? 15000 : 30000;
         const schedule = () => {
             if (disposed || document.hidden) return;
             timer = window.setTimeout(() => void poll(), delay);
@@ -88,11 +103,9 @@ export function TaskCenter() {
             if (timer) window.clearTimeout(timer);
             document.removeEventListener("visibilitychange", handleVisibilityChange);
         };
-    }, [userId, activeCount, open]);
+    }, [userId, activeJobs.length, open]);
 
     useEffect(() => setDismissedJobIds([]), [userId]);
-
-    if (!PUBLIC_MODE) return null;
 
     const act = async (job: ServerJob, action: "cancel" | "retry") => {
         const expectedUserId = userId;
@@ -123,11 +136,24 @@ export function TaskCenter() {
         }
         setOpen(false);
     };
+    const openVideo = (job: VideoGenerationLog) => {
+        videoTasks.select(job.id);
+        void preloadRoute("/video");
+        navigate("/video");
+        setOpen(false);
+    };
+    const resumeVideo = (job: VideoGenerationLog) => {
+        try {
+            videoTasks.resume(job.id);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "恢复视频查询失败");
+        }
+    };
     const sections = [
-        { key: "active", title: "进行中", icon: <ListTodo className="size-4" />, jobs: activeJobs },
-        { key: "actionable", title: "需要处理", icon: <CircleAlert className="size-4" />, jobs: actionableJobs },
-        { key: "completed", title: "刚刚完成", icon: <CheckCircle2 className="size-4" />, jobs: recentSuccessJobs },
-    ].filter((section) => section.jobs.length);
+        { key: "active", title: "进行中", icon: <ListTodo className="size-4" />, jobs: activeJobs, videos: activeVideos },
+        { key: "actionable", title: "需要处理", icon: <CircleAlert className="size-4" />, jobs: actionableJobs, videos: actionableVideos },
+        { key: "completed", title: "刚刚完成", icon: <CheckCircle2 className="size-4" />, jobs: recentSuccessJobs, videos: completedVideos },
+    ].filter((section) => section.jobs.length + section.videos.length);
 
     return (
         <>
@@ -147,9 +173,19 @@ export function TaskCenter() {
                                     {section.icon}
                                     {section.title}
                                 </span>
-                                <span className="text-xs font-normal text-stone-400">{section.jobs.length}</span>
+                                <span className="text-xs font-normal text-stone-400">{section.jobs.length + section.videos.length}</span>
                             </div>
                             <div className="divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
+                                {section.videos.map((job) => (
+                                    <VideoTaskItem
+                                        key={`video:${job.id}`}
+                                        job={job}
+                                        onOpen={() => openVideo(job)}
+                                        onStop={() => videoTasks.stop(job.id)}
+                                        onResume={() => resumeVideo(job)}
+                                        onDismiss={() => setDismissedJobIds((ids) => [...ids, `video:${job.id}`])}
+                                    />
+                                ))}
                                 {section.jobs.map((job) => (
                                     <TaskItem
                                         key={job.id}
@@ -164,7 +200,7 @@ export function TaskCenter() {
                         </section>
                     ))}
                     {!sections.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无进行中的生成" /> : null}
-                    {actionableJobs.length ? <p className="text-xs leading-5 text-stone-400">失败任务仅保留最近需要处理的项目，完整生成记录可在各工作台的“太古遗迹”中查看。</p> : null}
+                    {actionableJobs.length + actionableVideos.length ? <p className="text-xs leading-5 text-stone-400">失败任务仅保留最近需要处理的项目，完整生成记录可在各工作台的“太古遗迹”中查看。</p> : null}
                 </div>
             </Drawer>
         </>
@@ -247,4 +283,45 @@ function jobStatusLabel(job: ServerJob) {
     if (job.status === "succeeded") return "已完成";
     if (job.status === "failed") return "待重试";
     return "已取消";
+}
+
+function VideoTaskItem({ job, onOpen, onStop, onResume, onDismiss }: { job: VideoGenerationLog; onOpen: () => void; onStop: () => void; onResume: () => void; onDismiss: () => void }) {
+    const phase = videoTaskPhase(job);
+    const active = isActiveVideoTask(job);
+    const resumable = phase === "paused" || phase === "canceled";
+    return (
+        <div className="py-3">
+            <div className="flex items-start justify-between gap-3">
+                <button type="button" className="min-w-0 flex-1 text-left" onClick={onOpen}>
+                    <div className="truncate text-sm font-medium">流光阁 · 视频</div>
+                    <div className="mt-1 truncate text-xs text-stone-500">{job.prompt || job.title}</div>
+                    <div className="mt-1 truncate text-xs text-stone-400">
+                        {job.model} · {job.seconds}s · {job.resolution}p
+                    </div>
+                </button>
+                <Tag className="m-0 shrink-0" color={active ? "processing" : phase === "succeeded" ? "success" : "default"}>
+                    {videoTaskLabel(job)}
+                </Tag>
+            </div>
+            <div className="mt-2 flex flex-wrap justify-end gap-1">
+                {active && !job.trackingStopped ? (
+                    <Tooltip title="停止查询不会取消上游生成，上游仍可能生成和计费">
+                        <Button size="small" type="text" onClick={onStop}>
+                            {job.task || phase === "submitting" ? "停止查询" : "移出队列"}
+                        </Button>
+                    </Tooltip>
+                ) : null}
+                {resumable ? (
+                    <Button size="small" type="text" onClick={onResume}>
+                        {job.task ? "继续查询原任务" : "继续排队"}
+                    </Button>
+                ) : null}
+                <Button size="small" type="text" onClick={onOpen}>
+                    查看任务
+                </Button>
+                {!active && phase !== "succeeded" ? <Button aria-label="暂时隐藏视频任务" type="text" size="small" icon={<X className="size-3.5" />} onClick={onDismiss} /> : null}
+            </div>
+            {job.error ? <div className="mt-2 line-clamp-3 text-xs leading-5 text-stone-500">{friendlyErrorMessage(job.error)}</div> : null}
+        </div>
+    );
 }

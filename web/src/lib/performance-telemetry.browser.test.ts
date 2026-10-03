@@ -4,10 +4,11 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { parsePerformanceSamples, PerformanceMetrics } from "../../../server/lib/performance-metrics";
 
 // Opt in: uses only a fresh disposable profile and loopback fixture, never a user session.
 const chrome = process.env.TELEMETRY_TEST_CHROME;
-test.skipIf(!chrome || !existsSync(chrome))("isolated Chrome: real lazy module, StrictMode, canceled navigation and private request headers", async () => {
+test.skipIf(!chrome || !existsSync(chrome))("isolated Chrome: route regressions, real LCP/input, SPA attribution and pagehide delivery", async () => {
     const root = resolve(import.meta.dir, "..").replaceAll("\\", "/");
     // Execute the production wrapper with the real browser router, without loading app pages/auth.
     const routerSource = await Bun.file(new URL("../router.tsx", import.meta.url)).text();
@@ -27,6 +28,8 @@ test.skipIf(!chrome || !existsSync(chrome))("isolated Chrome: real lazy module, 
         const slowUrl = "/slow.js";
         const Slow = lazy(() => import(slowUrl));
         const scenario = new URLSearchParams(location.search).get("scenario");
+        window.observedLcp = [];
+        new PerformanceObserver((list) => window.observedLcp.push(...list.getEntries().map((entry) => entry.startTime))).observe({ type: "largest-contentful-paint", buffered: true });
         ${routePage}
         function RouteLoading() { return <p>loading-module</p>; }
         window.mounts = 0;
@@ -34,6 +37,14 @@ test.skipIf(!chrome || !existsSync(chrome))("isolated Chrome: real lazy module, 
             const [filter, setFilter] = useState("initial");
             useEffect(() => { window.mounts++; }, []);
             return <><button id="filter-button" onClick={() => setFilter("blue")}>filter</button><output id="filter">{filter}</output></>;
+        }
+        function PerceivedPage() {
+            const [done, setDone] = useState(false);
+            return <><h1>First screen content in the document</h1><button id="slow-input" onClick={() => {
+                const end = clock() + 120;
+                while (clock() < end) {}
+                setDone(true);
+            }}>{done ? "updated" : "interact"}</button></>;
         }
         function App() {
             const current = useLocation();
@@ -47,10 +58,12 @@ test.skipIf(!chrome || !existsSync(chrome))("isolated Chrome: real lazy module, 
                 pathname: () => flushSync(() => navigate("/canvas/another-id")),
             };
             return <RoutePage>
-                {scenario === "filters" ? <StatefulPage /> : page || scenario === "frames" ? <p>ready-page</p> : <Slow />}
+                {scenario === "filters" ? <StatefulPage /> : page || scenario === "frames" ? <p>ready-page</p> : scenario === "perceived" ? <PerceivedPage /> : <Slow />}
             </RoutePage>;
         }
-        flushSync(() => createRoot(document.getElementById("root")).render(<StrictMode><BrowserRouter><App /></BrowserRouter></StrictMode>));
+        // The frame-cancellation case needs a synchronous route commit: the router's
+        // default startTransition may otherwise keep the old UI for two valid frames.
+        flushSync(() => createRoot(document.getElementById("root")).render(<StrictMode><BrowserRouter useTransitions={scenario === "frames" ? false : undefined}><App /></BrowserRouter></StrictMode>));
         if (scenario === "cancel") setTimeout(() => window.qa.navigate(), 40);
         if (scenario === "frames") requestAnimationFrame(() => window.qa.navigate());
     `;
@@ -113,21 +126,58 @@ test.skipIf(!chrome || !existsSync(chrome))("isolated Chrome: real lazy module, 
             if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
             return result.result.value;
         };
-        for (const scenario of ["slow", "cancel", "frames", "filters"]) {
+        const samplesNamed = (name: string) => requests.flatMap((request) => request.body.samples).filter((sample) => sample.name === name);
+        for (const scenario of ["slow", "cancel", "frames", "filters", "perceived"]) {
             requests.length = 0;
+            await command("Page.bringToFront");
             await command("Page.navigate", { url: `http://127.0.0.1:${server.port}/canvas/private-id?token=private&scenario=${scenario}` });
-            const limit = Date.now() + 5000;
-            while (!requests.length && Date.now() < limit) await Bun.sleep(25);
-            expect(requests).toHaveLength(1);
-            const samples = requests.flatMap((request) => request.body.samples).filter((sample) => sample.name === "route_ready");
+            const limit = Date.now() + 8000;
+            // A canceled initial route may finalize LCP before route_ready. Wait for
+            // the bounded reporter to deliver the remaining document/route batch.
+            while ((!samplesNamed("route_ready").length || !samplesNamed("ttfb").length) && Date.now() < limit) await Bun.sleep(25);
+            const samples = samplesNamed("route_ready");
             expect(samples).toHaveLength(1);
-            expect(samples[0].route).toBe(scenario === "slow" || scenario === "filters" ? "/canvas/:id" : "/image");
-            const documentSamples = requests[0].body.samples.filter((sample) => sample.name !== "route_ready");
+            expect(samples[0].route).toBe(["slow", "filters", "perceived"].includes(scenario) ? "/canvas/:id" : "/image");
+            const documentSamples = [...samplesNamed("document_ready"), ...samplesNamed("ttfb")];
             expect(documentSamples).toHaveLength(2);
             expect(documentSamples.every((sample) => sample.route === "/canvas/:id")).toBe(true);
             if (scenario === "slow") expect(samples[0].durationMs).toBeGreaterThanOrEqual(250);
-            expect(requests[0].referer).toBeNull();
+            expect(requests.every((request) => request.referer === null)).toBe(true);
             expect(JSON.stringify(requests)).not.toContain("private");
+            if (scenario === "perceived") {
+                // Chrome may hold initial presentation beyond the route's two rAFs.
+                // Wait for actual content paint before input terminates LCP collection.
+                const paintLimit = Date.now() + 3000;
+                while (!(await evaluate("window.observedLcp.length")) && Date.now() < paintLimit) await Bun.sleep(25);
+                expect(await evaluate("window.observedLcp.length")).toBeGreaterThan(0);
+                const point = await evaluate('(() => { const rect = document.getElementById("slow-input").getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }; })()');
+                await command("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", clickCount: 1 });
+                await command("Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: "left", clickCount: 1 });
+                await evaluate('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+                await Bun.sleep(150);
+                expect(await evaluate('document.getElementById("slow-input").textContent')).toBe("updated");
+                const lcp = await evaluate("window.observedLcp.at(-1)");
+                expect(lcp).toBeGreaterThan(0);
+                await evaluate("window.qa.navigate()");
+                await Bun.sleep(150);
+                await command("Page.navigate", { url: "about:blank" }); // Real pagehide; pending fetch uses keepalive.
+                const exitLimit = Date.now() + 3000;
+                while ((!samplesNamed("event_interaction_latency").length || samplesNamed("route_ready").length < 2) && Date.now() < exitLimit) await Bun.sleep(25);
+                expect(samplesNamed("lcp")).toEqual([{ route: "/canvas/:id", name: "lcp", durationMs: Math.round(lcp) }]);
+                expect(samplesNamed("event_interaction_latency")).toHaveLength(1);
+                expect(samplesNamed("event_interaction_latency")[0].route).toBe("/canvas/:id");
+                expect(samplesNamed("event_interaction_latency")[0].durationMs).toBeGreaterThanOrEqual(120);
+                expect(samplesNamed("route_ready").map((sample) => sample.route)).toEqual(["/canvas/:id", "/image"]);
+                expect(requests).toHaveLength(2);
+                expect(requests.every((request) => request.referer === null)).toBe(true);
+                expect(JSON.stringify(requests)).not.toContain("private");
+                const metrics = new PerformanceMetrics();
+                for (const request of requests) for (const sample of parsePerformanceSamples(new TextEncoder().encode(JSON.stringify(request.body)))) metrics.recordFrontend(sample);
+                expect(metrics.snapshot().series.find((row) => row.name === "lcp")).toMatchObject({ unit: "ms", count: 1 });
+                expect(metrics.snapshot().series.find((row) => row.name === "event_interaction_latency")).toMatchObject({ unit: "ms", count: 1 });
+                console.log(`telemetry browser perceived: LCP ${Math.round(lcp)}ms matches native entry, input ${samplesNamed("event_interaction_latency")[0].durationMs}ms, initial-route attribution, keepalive exit delivery`);
+                continue;
+            }
             if (scenario === "filters") {
                 await evaluate('document.getElementById("filter-button").click(); window.savedFilter = document.getElementById("filter"); void 0;');
                 await Bun.sleep(30);
@@ -142,18 +192,20 @@ test.skipIf(!chrome || !existsSync(chrome))("isolated Chrome: real lazy module, 
                 }
                 expect(await evaluate("location.search + location.hash")).toBe("?filter=blue#results");
                 await evaluate("window.qa.pathname()");
-                const resetDeadline = Date.now() + 2000;
-                while (requests.length < 2 && Date.now() < resetDeadline) await Bun.sleep(25);
+                const resetDeadline = Date.now() + 8000;
+                while (samplesNamed("route_ready").length < 2 && Date.now() < resetDeadline) await Bun.sleep(25);
                 expect(await evaluate('document.getElementById("filter").textContent')).toBe("initial");
                 expect(await evaluate("window.mounts")).toBeGreaterThan(mounts);
-                expect(requests).toHaveLength(2);
-                expect(requests[1].body.samples).toHaveLength(1);
+                expect(samplesNamed("route_ready")).toHaveLength(2);
+                expect(samplesNamed("document_ready")).toHaveLength(1);
+                expect(samplesNamed("lcp")).toHaveLength(1);
                 console.log("telemetry browser filters: query/hash preserve state, DOM identity and mount count; pathname resets and samples once");
                 continue;
             }
+            const requestCount = requests.length;
             await evaluate("window.qa.changeOwner()");
             await Bun.sleep(400); // Also let the abandoned slow import resolve.
-            expect(requests).toHaveLength(1);
+            expect(requests).toHaveLength(requestCount);
             console.log(`telemetry browser ${scenario}: one route sample, ${samples[0].durationMs}ms, no Referer, no account-change duplicate`);
         }
     } finally {
@@ -165,4 +217,4 @@ test.skipIf(!chrome || !existsSync(chrome))("isolated Chrome: real lazy module, 
         server.stop(true);
         await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch((error) => console.warn(`Fixture profile cleanup: ${error.message}`));
     }
-}, 30000);
+}, 45000);

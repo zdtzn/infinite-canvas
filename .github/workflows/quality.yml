@@ -44,6 +44,10 @@ jobs:
         working-directory: .
         run: bun run ops/email-registration-smoke.ts
 
+      - name: Creative reliability API smoke test
+        working-directory: .
+        run: bun run ops/creative-reliability-smoke.ts
+
       - name: Type check
         run: bun run typecheck
 

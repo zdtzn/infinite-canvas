@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { assetSaveMessage } from "@/stores/asset-sync-queue";
 
 // Execute the real handlers with deferred I/O, without mounting the app or uploading files.
 const source = ts.createSourceFile("index.tsx", readFileSync(new URL("./index.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -28,11 +29,12 @@ function fixture() {
         userId: "owner-a", PUBLIC_MODE: true,
         operationLifetimeRef: { current: { capture: () => operation } },
         captureOperation: () => operation,
-        useAssetStore: { getState: () => ({ ownerUserId: "owner-a" }) },
+        useAssetStore: { getState: () => ({ ownerUserId: "owner-a", waitForAssetLocalSave: async () => "pending" }) },
+        assetSaveMessage,
         setSaving: () => {}, createRenderedImage: () => rendered.promise,
         uploadImage: async (_blob: Blob, options: unknown) => { uploads.push(options); return { url: "a.png", storageKey: "a" }; },
-        addAsset: (asset: unknown) => assets.push(asset),
-        message: { success: (value: unknown) => messages.push(value), error: (value: unknown) => messages.push(value) },
+        addAsset: (asset: unknown) => { assets.push(asset); return "asset"; },
+        message: { success: (value: unknown) => messages.push(value), open: ({ content }: { content: string }) => messages.push(content), error: (value: unknown) => messages.push(value) },
     };
     return { context, uploads, assets, messages, rendered, invalidate: () => { active = false; } };
 }
@@ -55,6 +57,7 @@ test("same-account save binds upload ownership and still archives the result", a
     await pending;
     expect(f.uploads).toEqual([{ createThumbnail: true, expectedUserId: "owner-a", signal: f.context.captureOperation().signal }]);
     expect(f.assets).toHaveLength(1);
+    expect(f.messages).toEqual([assetSaveMessage("pending")]);
 });
 
 test("save ignores an upload completed after account/page invalidation", async () => {
@@ -71,7 +74,8 @@ test("save ignores an upload completed after account/page invalidation", async (
 
 test("a mismatched asset store prevents saving even while the account still matches", async () => {
     const f = fixture();
-    f.context.useAssetStore.getState = () => ({ ownerUserId: "owner-b" });
+    const getState = f.context.useAssetStore.getState;
+    f.context.useAssetStore.getState = () => ({ ...getState(), ownerUserId: "owner-b" });
     await handler("saveToAssets", f.context)();
     expect(f.uploads).toHaveLength(0);
     expect(f.assets).toHaveLength(0);

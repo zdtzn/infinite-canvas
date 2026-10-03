@@ -35,6 +35,7 @@ import {
 } from "@/services/image-generation-runtime";
 import { IMAGE_WORKBENCH_ASSET_SOURCE } from "@/stores/asset-source";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { assetSaveMessage } from "@/stores/asset-sync-queue";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
@@ -634,7 +635,7 @@ export default function ImagePage() {
             // duplicate upload and prevents upstream MIME headers from affecting asset registration.
             const result = await ensureStoredResult(image, operation);
             if (!operation.isCurrent()) return;
-            addAsset({
+            const id = addAsset({
                 kind: "image",
                 title: `${sourcePrompt.trim().replace(/\s+/g, " ").slice(0, 32) || "丹青台作品"} · ${index + 1}`,
                 coverUrl: result.thumbnailUrl || result.dataUrl,
@@ -652,7 +653,9 @@ export default function ImagePage() {
                 },
                 metadata: { source: "image-page", prompt: sourcePrompt },
             });
-            message.success("已入藏卷阁");
+            const status = await useAssetStore.getState().waitForAssetLocalSave(id);
+            if (!operation.isCurrent()) return;
+            message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: assetSaveMessage(status) });
         } catch (error) {
             console.error("Failed to save generated image as an asset", error);
             if (!operation.isCurrent()) return;

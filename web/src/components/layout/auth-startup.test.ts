@@ -16,7 +16,7 @@ findEffect(parsed);
 function runStartup(publicMode = true) {
     expect(startupEffect).not.toBe("");
     const events: unknown[][] = [];
-    let resolveAuth!: (value: { configured: boolean; user: unknown; emailRegistrationEnabled?: boolean }) => void;
+    let resolveAuth!: (value: { configured: boolean; user: unknown; emailRegistrationEnabled?: boolean; passwordResetEnabled?: boolean }) => void;
     let rejectAuth!: (reason: Error) => void;
     const auth = new Promise((resolve, reject) => {
         resolveAuth = resolve;
@@ -49,6 +49,7 @@ function runStartup(publicMode = true) {
         setLoading: record("loading"),
         setConfigured: record("configured"),
         setRegistrationEnabled: record("registration"),
+        setPasswordResetEnabled: record("password-reset"),
         setError: record("error"),
     };
     const compiled = ts.transpileModule(`const run = ${startupEffect};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -64,6 +65,7 @@ test("current route imports start alongside auth, with no intent data prefetch",
     const user = { userId: "verified" };
     resolveAuth({ configured: true, user });
     await settle();
+    expect(events.some(([name]) => name === "error")).toBe(false);
     expect(events.some(([name]) => name === "activate")).toBe(true);
     expect(events.at(-1)).toEqual(["loading", false]);
     // An unresolved route import must not delay auth success.
@@ -74,9 +76,24 @@ test("anonymous auth retains login and never activates an account", async () => 
     const { events, resolveAuth } = runStartup();
     resolveAuth({ configured: false, user: null });
     await settle();
+    expect(events.some(([name]) => name === "error")).toBe(false);
     expect(events).toContainEqual(["clear"]);
     expect(events).toContainEqual(["login-form"]);
     expect(events.some(([name]) => name === "activate" || name === "runtime")).toBe(false);
+});
+
+test("password reset availability is independent of registration and defaults off when absent", async () => {
+    for (const passwordResetEnabled of [true, false, undefined]) {
+        const { events, resolveAuth } = runStartup();
+        resolveAuth({ configured: true, user: null, emailRegistrationEnabled: false, passwordResetEnabled });
+        await settle();
+        expect(events).toContainEqual(["registration", false]);
+        expect(events).toContainEqual(["password-reset", Boolean(passwordResetEnabled)]);
+        expect(events).toContainEqual(["clear"]);
+        expect(events).toContainEqual(["login-form"]);
+        expect(events.some(([name]) => name === "error" || name === "activate" || name === "runtime")).toBe(false);
+        expect(events.at(-1)).toEqual(["loading", false]);
+    }
 });
 
 test("failed or cancelled auth cannot activate a preloaded route", async () => {
@@ -87,7 +104,7 @@ test("failed or cancelled auth cannot activate a preloaded route", async () => {
     expect(failed.events.some(([name]) => name === "activate")).toBe(false);
     const cancelled = runStartup();
     cancelled.cleanup?.();
-    cancelled.resolveAuth({ configured: true, user: { userId: "late" } });
+    cancelled.resolveAuth({ configured: true, user: { userId: "late" }, passwordResetEnabled: true });
     await settle();
     expect(cancelled.events).toHaveLength(2);
 });
@@ -102,6 +119,7 @@ test("non-public mode preloads code without making an auth request", () => {
 test("protected children still wait for loading and session checks", () => {
     expect(source.indexOf("if (loading) return <AuthLoadingScreen />")).toBeLessThan(source.indexOf("if (user) return <>{children}</>"));
     expect(source).toContain("<LoginFormView");
+    expect(source).toContain("passwordResetEnabled={passwordResetEnabled}");
     const loaders = readFileSync(new URL("../../lib/route-loaders.ts", import.meta.url), "utf8");
     expect(loaders).toContain('if (!options.fromWarmup && routeKey === "/chat")');
 });

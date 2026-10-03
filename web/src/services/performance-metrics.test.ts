@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { fetchPerformanceMetrics } from "./performance-metrics";
+import { FRONTEND_PERFORMANCE_NAMES, PERFORMANCE_ROUTES, PerformanceMetrics } from "../../../server/lib/performance-metrics";
 
 async function withResponse(body: unknown, status: number, run: (calls: { url: string; init?: RequestInit }[]) => Promise<void>) {
     const previousFetch = globalThis.fetch;
@@ -28,8 +29,29 @@ test("permission and service failures reject once without retries", async () => 
 });
 
 test("malformed snapshots fail locally instead of reaching table rendering", async () => {
-    for (const body of [null, {}, { ...snapshot, since: "bad" }, { ...snapshot, series: [null] }, { ...snapshot, series: Array(64).fill({}) },
+    for (const body of [null, {}, { ...snapshot, since: "bad" }, { ...snapshot, series: [null] }, { ...snapshot, series: Array(96).fill({}) },
         { ...snapshot, series: [{ route: "/image", name: "ttfb", outcome: "observed", count: 1, p50UpperMs: "wrong", p95UpperMs: 100 }] }]) {
         await withResponse(body, 200, async () => { await expect(fetchPerformanceMetrics()).rejects.toThrow("性能统计响应格式无效"); });
+    }
+});
+
+test("accepts the complete bounded server snapshot including all new metrics and units", async () => {
+    const metrics = new PerformanceMetrics();
+    for (const route of PERFORMANCE_ROUTES) for (const name of FRONTEND_PERFORMANCE_NAMES) metrics.recordFrontend({ route, name, durationMs: 123 });
+    for (const name of ["image_job_queue", "image_job_upstream", "image_job_persistence", "image_job_total", "image_job_outcome"] as const) {
+        for (const outcome of ["succeeded", "failed", "canceled"] as const) metrics.recordImage(name, outcome, 10);
+    }
+    const body = metrics.snapshot();
+    expect(body.series).toHaveLength(95);
+    await withResponse(body, 200, async () => { expect(await fetchPerformanceMetrics()).toEqual(body); });
+});
+
+test("rejects unknown labels, wrong units, and invalid histogram buckets", async () => {
+    const metrics = new PerformanceMetrics();
+    metrics.recordFrontend({ route: "/image", name: "event_interaction_latency", durationMs: 160 });
+    const row = metrics.snapshot().series[0];
+    for (const invalid of [{ name: "inp" }, { name: "toString" }, { name: ["lcp"] }, { route: "/image?token=secret" }, { unit: "s" }, { unit: undefined },
+        { buckets: null }, { buckets: Array(16).fill({ upperMs: 1, count: 1 }) }, { buckets: [{ upperMs: -1, count: 1 }] }, { buckets: [{ upperMs: 1, count: -1 }] }]) {
+        await withResponse({ ...snapshot, series: [{ ...row, ...invalid }] }, 200, async () => { await expect(fetchPerformanceMetrics()).rejects.toThrow("性能统计响应格式无效"); });
     }
 });

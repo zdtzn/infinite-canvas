@@ -1,13 +1,40 @@
-import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
-import { reportPerformance, performanceRoute, type PerformanceSample } from "@/lib/performance-telemetry";
+import { createPerformanceReporter, performanceRoute, type PerformanceSample } from "@/lib/performance-telemetry";
+import { createPerceivedPerformance } from "@/lib/performance-telemetry-observers";
 import { useUserStore } from "@/stores/use-user-store";
 
 let documentReported = false;
+let activeOwner: string | undefined;
+let lease = 0;
+const reportPerformance = createPerformanceReporter({ isEnabled: () => !!PUBLIC_MODE && !!activeOwner && useUserStore.getState().user?.id === activeOwner });
+let perceived: ReturnType<typeof createPerceivedPerformance> | undefined;
 
 /** The clock must live outside Suspense, whose uncommitted state can be discarded. */
 export function MeasuredRoute({ children, pathname, fallback }: { children: ReactNode; pathname: string; fallback: ReactNode }) {
     const [startedAt] = useState(() => performance.now());
+    const owner = useUserStore((s) => s.user?.id);
+    useLayoutEffect(() => {
+        const currentLease = ++lease;
+        if (activeOwner !== owner) {
+            perceived?.stop();
+            reportPerformance.clear();
+            activeOwner = owner;
+        }
+        if (!PUBLIC_MODE || !owner) return;
+        perceived ??= createPerceivedPerformance(reportPerformance, () => reportPerformance.flush(true));
+        // Outside Suspense so first-screen paint and input during lazy loading count.
+        perceived.start(pathname, startedAt);
+        return () => {
+            // React StrictMode and pathname remounts reuse one document observer.
+            queueMicrotask(() => {
+                if (lease !== currentLease) return;
+                perceived?.stop();
+                reportPerformance.clear();
+                activeOwner = undefined;
+            });
+        };
+    }, [owner, pathname, startedAt]);
     return <Suspense fallback={fallback}>{children}<RoutePerformance startedAt={startedAt} pathname={pathname} /></Suspense>;
 }
 

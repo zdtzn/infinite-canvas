@@ -14,6 +14,14 @@ export function smtpConfigured(env = process.env) {
 }
 
 export async function sendRegistrationEmail(email: string, code: string) {
+    return sendVerificationEmail(email, code, "注册");
+}
+
+export async function sendPasswordResetEmail(email: string, code: string) {
+    return sendVerificationEmail(email, code, "重置密码");
+}
+
+async function sendVerificationEmail(email: string, code: string, purpose: string) {
     if (!smtpConfigured()) throw new Error("邮件服务尚未配置");
     const port = Number(process.env.SMTP_PORT || 587);
     const transport = nodemailer.createTransport({
@@ -24,14 +32,13 @@ export async function sendRegistrationEmail(email: string, code: string) {
     try {
         await transport.sendMail({
             from: { name: "无限画布", address: process.env.SMTP_FROM! }, to: email,
-            subject: "无限画布注册验证码",
-            text: `你的注册验证码为：${code}\n\n10 分钟内有效，请勿向他人透露。\n若非本人操作，请忽略此邮件。`,
+            subject: `无限画布${purpose}验证码`,
+            text: `你的${purpose}验证码为：${code}\n\n10 分钟内有效，请勿向他人透露。\n若非本人操作，请忽略此邮件。`,
         });
     } finally { transport.close(); }
 }
 
-// Persist attempts and send budgets so restarting cannot bypass verification limits.
-export function createEmailRegistration(db: Database, secret: string, send = sendRegistrationEmail, now = Date.now) {
+export function ensureEmailVerificationTables(db: Database) {
     db.exec(`CREATE TABLE IF NOT EXISTS registration_codes (
         email_key TEXT PRIMARY KEY, code_hash TEXT NOT NULL, expires_at INTEGER NOT NULL,
         attempts INTEGER NOT NULL, ready INTEGER NOT NULL DEFAULT 0);
@@ -40,6 +47,11 @@ export function createEmailRegistration(db: Database, secret: string, send = sen
         CREATE TABLE IF NOT EXISTS user_emails (
         user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
         email TEXT NOT NULL UNIQUE, verified_at INTEGER NOT NULL);`);
+}
+
+// Persist attempts and send budgets so restarting cannot bypass verification limits.
+export function createEmailRegistration(db: Database, secret: string, send = sendRegistrationEmail, now = Date.now) {
+    ensureEmailVerificationTables(db);
     const digest = (value: string) => createHmac("sha256", secret).update(value).digest("hex");
     function budget(key: string, max: number, cooldown: number, time: number) {
         const row = db.query("SELECT count, reset_at, last_at FROM registration_send_limits WHERE key = ?").get(key) as { count: number; reset_at: number; last_at: number } | null;

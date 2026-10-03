@@ -8,6 +8,8 @@ import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { assetSaveMessage } from "@/stores/asset-sync-queue";
+import { useUserStore } from "@/stores/use-user-store";
 import { modelOptionLabel, modelOptionName, normalizeImageSizeSelection, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -327,36 +329,51 @@ async function addAsset(input: SiteToolInput) {
         const content = String(input.content || "").trim();
         if (!content) throw new Error("kind=text 时需要提供 content 文本内容");
         const id = store.addAsset({ kind: "text", title, coverUrl: "", tags, source, note, data: { content } });
-        return { ok: true, id, kind: "text" };
+        const status = await useAssetStore.getState().waitForAssetLocalSave(id);
+        return { ok: true, id, kind: "text", syncStatus: status, message: assetSaveMessage(status) };
     }
     if (kind === "image") {
         const imageUrl = String(input.imageUrl || "").trim();
         if (!imageUrl) throw new Error("kind=image 时需要提供 imageUrl（图片地址或 dataURL）");
-        let stored;
+        const expectedUserId = useUserStore.getState().user?.id || "";
+        let accountChanged = false;
+        const unsubscribe = useUserStore.subscribe((state, previous) => { if (state.user?.id !== previous.user?.id) accountChanged = true; });
+        const assertSaveOwner = () => {
+            if (accountChanged || useAssetStore.getState().ownerUserId !== store.ownerUserId || (useUserStore.getState().user?.id || "") !== expectedUserId) throw new Error("账号已切换，请重新添加素材");
+        };
         try {
-            stored = await uploadImage(imageUrl);
-        } catch {
-            throw new Error("无法读取该图片地址，请改用 dataURL 或可跨域访问的图片链接");
+            let stored;
+            try {
+                stored = await uploadImage(imageUrl, { expectedUserId });
+            } catch {
+                assertSaveOwner();
+                throw new Error("无法读取该图片地址，请改用 dataURL 或可跨域访问的图片链接");
+            }
+            assertSaveOwner();
+            const id = store.addAsset({
+                kind: "image",
+                title,
+                coverUrl: stored.thumbnailUrl || stored.url,
+                tags,
+                source,
+                note,
+                data: {
+                    dataUrl: stored.url,
+                    storageKey: stored.storageKey,
+                    thumbnailKey: stored.thumbnailKey,
+                    thumbnailUrl: stored.thumbnailUrl,
+                    width: stored.width,
+                    height: stored.height,
+                    bytes: stored.bytes,
+                    mimeType: stored.mimeType,
+                },
+            });
+            const status = await useAssetStore.getState().waitForAssetLocalSave(id);
+            assertSaveOwner();
+            return { ok: true, id, kind: "image", syncStatus: status, message: assetSaveMessage(status) };
+        } finally {
+            unsubscribe();
         }
-        const id = store.addAsset({
-            kind: "image",
-            title,
-            coverUrl: stored.thumbnailUrl || stored.url,
-            tags,
-            source,
-            note,
-            data: {
-                dataUrl: stored.url,
-                storageKey: stored.storageKey,
-                thumbnailKey: stored.thumbnailKey,
-                thumbnailUrl: stored.thumbnailUrl,
-                width: stored.width,
-                height: stored.height,
-                bytes: stored.bytes,
-                mimeType: stored.mimeType,
-            },
-        });
-        return { ok: true, id, kind: "image" };
     }
     throw new Error("assets_add 仅支持 kind=text 或 kind=image");
 }

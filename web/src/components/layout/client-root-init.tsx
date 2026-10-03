@@ -236,14 +236,40 @@ export function ClientRootInit() {
     }, [message, promptSources, promptSourcesHydrated, setSharedPromptSources, user?.admin, user?.id]);
 
     useLayoutEffect(() => {
-        if (PUBLIC_MODE && user?.id) prepareAssetsForUser(user.id);
+        if (PUBLIC_MODE) prepareAssetsForUser(user?.id || "");
     }, [prepareAssetsForUser, user?.id]);
 
     useEffect(() => {
         if (!PUBLIC_MODE || !user?.id || !localAssetsHydrated) return;
-        void hydrateAssetsFromServer(user.id).catch((error) => {
-            message.error(error instanceof Error ? error.message : "个人资产同步失败");
-        });
+        let active = true;
+        let loading = false;
+        let attempts = 0;
+        let retryTimer: ReturnType<typeof setTimeout> | undefined;
+        const sync = async () => {
+            if (!active || loading || !navigator.onLine) return;
+            clearTimeout(retryTimer);
+            loading = true;
+            try {
+                if (!useAssetStore.getState().serverHydrated && attempts < 3) {
+                    attempts += 1;
+                    await hydrateAssetsFromServer(user.id);
+                }
+            } catch (error) {
+                if (active && attempts < 3) retryTimer = setTimeout(() => void sync(), attempts === 1 ? 1500 : 5000);
+                if (active && attempts === 3) message.error(error instanceof Error ? error.message : "个人资产同步失败，可在藏卷阁重试");
+            } finally {
+                loading = false;
+                if (active) void useAssetStore.getState().flushAssetSync();
+            }
+        };
+        const online = () => void sync();
+        window.addEventListener("online", online);
+        void sync();
+        return () => {
+            active = false;
+            clearTimeout(retryTimer);
+            window.removeEventListener("online", online);
+        };
     }, [hydrateAssetsFromServer, localAssetsHydrated, message, user?.id]);
 
     useEffect(() => {

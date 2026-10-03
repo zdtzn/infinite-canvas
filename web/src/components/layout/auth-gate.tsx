@@ -39,6 +39,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const clearSession = useUserStore((state) => state.clearSession);
     const [configured, setConfigured] = useState(true);
     const [registrationEnabled, setRegistrationEnabled] = useState(false);
+    const [passwordResetEnabled, setPasswordResetEnabled] = useState(false);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
@@ -58,6 +59,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 if (!active) return;
                 setConfigured(status.configured);
                 setRegistrationEnabled(Boolean(status.emailRegistrationEnabled));
+                setPasswordResetEnabled(Boolean(status.passwordResetEnabled));
                 if (status.user) {
                     void preloadAccountSessionRuntime();
                     activateUser(status.user, setSession);
@@ -109,7 +111,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
     return (
         <Suspense fallback={<AuthLoadingScreen />}>
-            <LoginFormView configured={configured} registrationEnabled={registrationEnabled} error={error} submitting={submitting} submit={submit} />
+            <LoginFormView configured={configured} registrationEnabled={registrationEnabled} passwordResetEnabled={passwordResetEnabled} error={error} submitting={submitting} submit={submit} />
         </Suspense>
     );
 }

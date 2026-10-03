@@ -8,7 +8,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
 export type AuthUser = { userId: string; displayName: string; admin?: boolean; avatarUrl?: string; realmId?: string };
-export type AuthStatus = { configured: boolean; authenticated: boolean; user: AuthUser | null; publicMode: boolean; emailRegistrationEnabled?: boolean };
+export type AuthStatus = { configured: boolean; authenticated: boolean; user: AuthUser | null; publicMode: boolean; emailRegistrationEnabled?: boolean; passwordResetEnabled?: boolean };
 
 export async function requestRegistrationCode(email: string) {
     return serverRequest<{ ok: true; message: string; retryAfter: number }>("/api/auth/register-code", { method: "POST", body: { email }, timeoutMs: 45_000 });

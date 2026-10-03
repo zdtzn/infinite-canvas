@@ -10,6 +10,7 @@ import { useCopyText } from "@/hooks/use-copy-text";
 import { lazyRoute } from "@/lib/lazy-route";
 import { cn } from "@/lib/utils";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { assetSaveMessage } from "@/stores/asset-sync-queue";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
 
 const PromptDetailDialog = lazyRoute(() => import("./components/prompt-detail-dialog").then(({ PromptDetailDialog: Component }) => ({ default: Component })));
@@ -36,9 +37,14 @@ export default function PromptsPage() {
         setSelectedTags((items) => (items[0] === tag ? [] : [tag]));
     };
 
-    const savePromptAsset = (item: Prompt) => {
-        addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
-        message.success("已收入藏卷阁");
+    const savePromptAsset = async (item: Prompt) => {
+        try {
+            const id = addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
+            const status = await useAssetStore.getState().waitForAssetLocalSave(id);
+            message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: assetSaveMessage(status) });
+        } catch (error) {
+            message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
+        }
     };
 
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {

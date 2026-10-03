@@ -30,11 +30,12 @@ export function shouldFetchCompleteServerLibraryForMigration({ localCount, remot
     return localCount > 0 && remoteInitialized && !localAlreadyMigrated && remoteHasMore;
 }
 
-export function mergeAssetRecords<T extends UpdatedRecord>(local: T[], remote: T[]) {
+export function mergeAssetRecords<T extends UpdatedRecord>(local: T[], remote: T[], pendingIds: ReadonlySet<string> = new Set()) {
     const records = new Map(remote.map((item) => [item.id, item]));
     for (const item of local) {
         const current = records.get(item.id);
-        if (!current || recordVersion(item) > recordVersion(current)) records.set(item.id, item);
+        // An unacknowledged edit wins even if another device's clock is ahead.
+        if (!current || pendingIds.has(item.id) || recordVersion(item) > recordVersion(current)) records.set(item.id, item);
     }
     return Array.from(records.values()).sort((left, right) => recordVersion(right) - recordVersion(left));
 }

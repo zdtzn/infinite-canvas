@@ -10,7 +10,7 @@ import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { assetCardImageUrl, assetNeedsThumbnail, assetOriginalImageUrl } from "@/lib/asset-image";
 import { createThumbnailFromImageElement, deleteStoredImages, fitImageWithinEdge, uploadImage } from "@/services/image-storage";
-import { fetchServerAssetLibrary, upsertServerAssetLibraryItem, type ServerAssetLibrary } from "@/services/server-api";
+import { fetchServerAssetLibrary, type ServerAssetLibrary } from "@/services/server-api";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -18,6 +18,9 @@ import { DeferredImage } from "@/components/ui/deferred-image";
 import { readAssetDownload } from "./asset-download";
 import { assetFacets, matchesAssetFilters } from "@/lib/asset-filters";
 import { AssetFilterControls } from "@/components/assets/asset-filter-controls";
+import StorageManager from "./storage-manager";
+import { AssetSyncStatus } from "@/components/assets/asset-sync-status";
+import { ASSET_SYNC_SUCCESS_EVENT, assetSaveMessage, pendingAssetUpserts, type AssetSyncSuccessDetail } from "@/stores/asset-sync-queue";
 
 type AssetFormValues = {
     kind: AssetKind;
@@ -101,7 +104,8 @@ export default function AssetsPage() {
     const userId = useUserStore((state) => state.user?.id || "");
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
-    const updateAsset = useAssetStore((state) => state.updateAsset);
+    const persistAsset = useAssetStore((state) => state.saveAsset);
+    const syncOutbox = useAssetStore((state) => state.syncOutbox);
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
     const [searchInput, setSearchInput] = useState("");
@@ -130,6 +134,18 @@ export default function AssetsPage() {
     const content = Form.useWatch("content", form) || "";
     const validAssets = useMemo(() => assets.filter((asset) => asset.kind === "text" || asset.kind === "image" || asset.kind === "video"), [assets]);
     const useRemoteLibrary = PUBLIC_MODE && Boolean(userId);
+    const pendingAssets = useMemo(() => useRemoteLibrary ? pendingAssetUpserts(syncOutbox, userId).filter(asset => matchesAssetFilters(asset, { keyword, kind: kindFilter, category, tags: filterTags })) : [], [syncOutbox, userId, useRemoteLibrary, keyword, kindFilter, category, filterTags]);
+
+    useEffect(() => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const synced = (event: Event) => {
+            if ((event as CustomEvent<AssetSyncSuccessDetail>).detail?.userId !== userId) return;
+            clearTimeout(timer);
+            timer = setTimeout(() => setRemoteRefresh(value => value + 1), 200);
+        };
+        window.addEventListener(ASSET_SYNC_SUCCESS_EVENT, synced);
+        return () => { window.removeEventListener(ASSET_SYNC_SUCCESS_EVENT, synced); clearTimeout(timer); };
+    }, [userId]);
 
     useEffect(() => {
         const timer = window.setTimeout(() => { setKeyword(searchInput); setPage(1); }, 300);
@@ -283,22 +299,11 @@ export default function AssetsPage() {
 
         setSavingAsset(true);
         try {
-            if (useRemoteLibrary) {
-                // A server page may contain records absent from the local 60-item cache.
-                // Save that complete record directly and wait for confirmation before refreshing.
-                const result = await upsertServerAssetLibraryItem(asset, userId);
-                if ((useUserStore.getState().user?.id || "") !== userId) return;
-                useAssetStore.setState((state) =>
-                    state.ownerUserId !== userId
-                        ? {}
-                        : {
-                              assets: [result.item, ...state.assets.filter((item) => item.id !== result.item.id)],
-                          },
-                );
-            } else {
-                editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
-            }
-            message.success(editingAsset ? "资产已更新" : "资产已保存");
+            // Complete records from any remote page use the same durable outbox as workbench saves.
+            const id = persistAsset(asset);
+            const status = await useAssetStore.getState().waitForAssetLocalSave(id);
+            if (PUBLIC_MODE && (useUserStore.getState().user?.id || "") !== userId) return;
+            message[status === "failed" ? "warning" : "success"](assetSaveMessage(status));
             setRemoteRefresh((value) => value + 1);
             setIsAssetOpen(false);
         } catch (error) {
@@ -367,15 +372,19 @@ export default function AssetsPage() {
         try {
             const { readAssetPackage } = await import("./asset-transfer");
             const importedAssets = await readAssetPackage(file);
-            importedAssets.forEach((asset) => {
+            if (PUBLIC_MODE && useUserStore.getState().user?.id !== userId) return;
+            const ids = importedAssets.map((asset) => {
                 const payload = { ...asset } as Record<string, unknown>;
                 delete payload.id;
                 delete payload.createdAt;
                 delete payload.updatedAt;
-                addAsset(payload as Parameters<typeof addAsset>[0]);
+                return addAsset(payload as Parameters<typeof addAsset>[0]);
             });
-            window.setTimeout(() => setRemoteRefresh((value) => value + 1), 400);
-            message.success(`已导入 ${importedAssets.length} 个资产`);
+            const statuses = await Promise.all(ids.map(id => useAssetStore.getState().waitForAssetLocalSave(id)));
+            if (PUBLIC_MODE && useUserStore.getState().user?.id !== userId) return;
+            const status = statuses.includes("failed") ? "failed" : statuses.includes("pending") ? "pending" : PUBLIC_MODE ? "synced" : "local";
+            message[status === "failed" ? "warning" : "success"](`已导入 ${ids.length} 项，${assetSaveMessage(status)}`);
+            setRemoteRefresh(value => value + 1);
         } catch (error) {
             message.error(error instanceof Error ? `导入失败：${error.message}` : "导入失败，请选择有效的资产压缩包");
         } finally {
@@ -431,6 +440,7 @@ export default function AssetsPage() {
                             }}
                         />
                         <div className="flex flex-wrap items-center gap-4">
+                            {useRemoteLibrary && <StorageManager />}
                             <button
                                 type="button"
                                 className="asset-transfer-button inline-flex h-10 items-center gap-2 rounded-md border border-[rgb(201_168_106/0.16)] bg-white/[0.025] px-3 text-sm font-medium text-[#c9c4b9] transition-[color,background-color,border-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a86a]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e0e12]"
@@ -453,6 +463,8 @@ export default function AssetsPage() {
                             </button>
                         </div>
                     </div>
+
+                    <AssetSyncStatus className="mt-4" />
 
                     <div className="mt-5 flex items-center gap-3">
                         <span className="text-xs tracking-[0.2em] text-[#8a8a96]">类型</span>
@@ -489,8 +501,12 @@ export default function AssetsPage() {
 
                 {/* ── 画轴瀑布 ── */}
                 <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 pb-12">
+                    {pendingAssets.length > 0 && <section aria-label="待同步的本机素材" className="space-y-4">
+                        <div><h2 className="text-base font-medium">待同步的本机素材</h2><p className="mt-1 text-sm text-muted-foreground">以下收藏已留在本机，同步到云端后即可在其他设备查看。</p></div>
+                        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{pendingAssets.map(asset => <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />)}</div>
+                    </section>}
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {displayedAssets.map((asset) => (
+                        {displayedAssets.filter(asset => !pendingAssets.some(pending => pending.id === asset.id)).map((asset) => (
                             <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                         ))}
                     </div>
@@ -507,6 +523,7 @@ export default function AssetsPage() {
                         </p>
                     )}
                     {!remoteBlocked &&
+                        !pendingAssets.length &&
                         !displayedAssets.length &&
                         (displayedCount === 0 ? (
                             <div className="flex flex-col items-center justify-center gap-5 py-24 text-center">
@@ -682,7 +699,7 @@ export default function AssetsPage() {
             <input ref={assetInputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importAssetZip(event.target.files?.[0])} />
 
             <Modal title="删除资产" open={Boolean(deletingAsset)} onCancel={() => !deleteBusy && setDeletingAsset(null)} onOk={confirmDelete} confirmLoading={deleteBusy} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
-                确定删除「{deletingAsset?.title}」吗？删除后会从我的资产中移除。
+                确定删除「{deletingAsset?.title}」吗？这会移除收藏记录，不会直接删除仍被画布或历史记录使用的原文件。释放空间请使用「存储管理」。
             </Modal>
         </div>
     );
@@ -753,6 +770,7 @@ function AssetScrollCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }
                     ))}
                 </div>
             </button>
+            <AssetSyncStatus assetId={asset.id} className="px-4 pb-4" />
         </div>
     );
 }

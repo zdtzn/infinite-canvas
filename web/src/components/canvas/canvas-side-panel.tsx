@@ -11,6 +11,8 @@ import { DeferredImage } from "@/components/ui/deferred-image";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
+import { assetSaveMessage, type AssetSyncStatus } from "@/stores/asset-sync-queue";
+import { useUserStore } from "@/stores/use-user-store";
 import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, persistCanvasSidePanelWidth, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -321,11 +323,22 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
         setUploading(true);
         const hide = message.loading("正在加入藏卷阁…", 0);
         let added = 0;
+        const statuses: AssetSyncStatus[] = [];
+        const ownerUserId = useAssetStore.getState().ownerUserId;
+        const expectedUserId = useUserStore.getState().user?.id || "";
+        let accountChanged = false;
+        const unsubscribe = useUserStore.subscribe((state, previous) => { if (state.user?.id !== previous.user?.id) accountChanged = true; });
+        const assertSaveOwner = () => {
+            if (accountChanged || useAssetStore.getState().ownerUserId !== ownerUserId || (useUserStore.getState().user?.id || "") !== expectedUserId) throw new Error("账号已切换，请重新添加素材");
+        };
         try {
             for (const file of files) {
+                assertSaveOwner();
+                let id: string;
                 if (file.type.startsWith("image/")) {
-                    const image = await uploadImage(file);
-                    addAsset({
+                    const image = await uploadImage(file, { expectedUserId });
+                    assertSaveOwner();
+                    id = addAsset({
                         kind: "image",
                         title: file.name || "图片",
                         coverUrl: image.thumbnailUrl || image.url,
@@ -341,19 +354,25 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                             mimeType: image.mimeType,
                         },
                     });
-                    added += 1;
                 } else if (file.type.startsWith("video/")) {
-                    const media = await uploadMediaFile(file, "video");
-                    addAsset({ kind: "video", title: file.name || "视频", coverUrl: "", tags: [], data: { url: media.url, storageKey: media.storageKey, width: media.width || 0, height: media.height || 0, bytes: media.bytes, mimeType: media.mimeType } });
-                    added += 1;
-                }
+                    const media = await uploadMediaFile(file, "video", expectedUserId);
+                    assertSaveOwner();
+                    id = addAsset({ kind: "video", title: file.name || "视频", coverUrl: "", tags: [], data: { url: media.url, storageKey: media.storageKey, width: media.width || 0, height: media.height || 0, bytes: media.bytes, mimeType: media.mimeType } });
+                } else continue;
+                statuses.push(await useAssetStore.getState().waitForAssetLocalSave(id));
+                assertSaveOwner();
+                added += 1;
             }
-            if (added) message.success(`已加入藏卷阁，共 ${added} 项`);
+            if (added) {
+                const status = statuses.includes("failed") ? "failed" : statuses.includes("pending") ? "pending" : statuses.includes("local") ? "local" : "synced";
+                message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: `${assetSaveMessage(status)}，共 ${added} 项` });
+            }
             else message.warning("仅支持图片或视频文件");
         } catch (error) {
             console.error(error);
-            message.error("添加失败，请重试");
+            message.error(error instanceof Error ? error.message : "添加失败，请重试");
         } finally {
+            unsubscribe();
             hide();
             setUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = "";

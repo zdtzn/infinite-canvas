@@ -1,7 +1,9 @@
 export const PERFORMANCE_ROUTES = ["/", "/canvas", "/canvas/:id", "/chat", "/image", "/color-alchemy", "/wallet", "/cultivation", "/prompts", "/assets", "/video", "/announcements", "/config", "/docs", "/admin/cultivation", "/other"] as const;
-export const FRONTEND_PERFORMANCE_NAMES = ["route_ready", "document_ready", "ttfb"] as const;
+export const FRONTEND_PERFORMANCE_NAMES = ["route_ready", "document_ready", "ttfb", "lcp", "event_interaction_latency"] as const;
 export const PERFORMANCE_BODY_BYTES = 2048;
 export const PERFORMANCE_BUCKETS_MS = [50, 100, 250, 500, 1000, 2000, 5000, 10000, 30000, 60000, 120000, 300000] as const;
+const LCP_BUCKETS_MS = [500, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 10000, 30000, 60000, 120000, 300000];
+const INTERACTION_BUCKETS_MS = [16, 50, 100, 200, 300, 500, 1000, 2000, 5000, 10000, 30000, 60000, 120000, 300000];
 const IMAGE_NAMES = ["image_job_queue", "image_job_upstream", "image_job_persistence", "image_job_total", "image_job_outcome"] as const;
 type Route = typeof PERFORMANCE_ROUTES[number];
 type FrontendName = typeof FRONTEND_PERFORMANCE_NAMES[number];
@@ -55,6 +57,7 @@ export function parsePerformanceSamples(bytes: Uint8Array): FrontendPerformanceS
 }
 
 type Histogram = { route: Route; name: FrontendName | ImageName; outcome: "observed" | ImagePerformanceOutcome; count: number; buckets: number[] };
+const boundsFor = (name: Histogram["name"]): readonly number[] => name === "lcp" ? LCP_BUCKETS_MS : name === "event_interaction_latency" ? INTERACTION_BUCKETS_MS : PERFORMANCE_BUCKETS_MS;
 
 /** Process-local fixed-label histograms. No samples, job IDs or user IDs are retained. */
 export class PerformanceMetrics {
@@ -76,29 +79,33 @@ export class PerformanceMetrics {
     private record(route: Route, name: Histogram["name"], outcome: Histogram["outcome"], durationMs: number) {
         if (!Number.isFinite(durationMs) || durationMs < 0) return;
         const key = `${route}:${name}:${outcome}`;
+        const bounds = boundsFor(name);
         let histogram = this.series.get(key);
         if (!histogram) {
-            histogram = { route, name, outcome, count: 0, buckets: Array(PERFORMANCE_BUCKETS_MS.length + 1).fill(0) };
+            histogram = { route, name, outcome, count: 0, buckets: Array(bounds.length + 1).fill(0) };
             this.series.set(key, histogram);
         }
-        const index = PERFORMANCE_BUCKETS_MS.findIndex((upper) => durationMs <= upper);
-        histogram.buckets[index < 0 ? PERFORMANCE_BUCKETS_MS.length : index] += 1;
+        const index = bounds.findIndex((upper) => durationMs <= upper);
+        histogram.buckets[index < 0 ? bounds.length : index] += 1;
         histogram.count += 1;
     }
 
     snapshot() {
         return { since: this.since, lifetime: "process" as const, series: [...this.series.values()].map((histogram) => {
+            const bounds = boundsFor(histogram.name);
+            const unit = histogram.name === "image_job_outcome" ? "count" as const : "ms" as const;
             const percentile = (fraction: number) => {
+                if (unit === "count") return null;
                 let count = 0;
                 for (let index = 0; index < histogram.buckets.length; index++) {
                     count += histogram.buckets[index];
-                    if (count >= Math.ceil(histogram.count * fraction)) return PERFORMANCE_BUCKETS_MS[index] ?? null;
+                    if (count >= Math.ceil(histogram.count * fraction)) return bounds[index] ?? null;
                 }
                 return null;
             };
-            return { route: histogram.route, name: histogram.name, outcome: histogram.outcome, count: histogram.count,
+            return { route: histogram.route, name: histogram.name, outcome: histogram.outcome, unit, count: histogram.count,
                 p50UpperMs: percentile(0.5), p95UpperMs: percentile(0.95),
-                buckets: histogram.buckets.map((count, index) => ({ upperMs: PERFORMANCE_BUCKETS_MS[index] ?? null, count })) };
+                buckets: unit === "count" ? [] : histogram.buckets.map((count, index) => ({ upperMs: bounds[index] ?? null, count })) };
         }) };
     }
 }

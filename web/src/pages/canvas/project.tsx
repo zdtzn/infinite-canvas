@@ -21,6 +21,7 @@ import { collectMovableCanvasNodeIds } from "@/lib/canvas/canvas-interaction";
 import { canvasGroupShortcut } from "@/lib/canvas/canvas-shortcuts";
 import { mediaResultPosition } from "@/lib/canvas/media-result-position";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { assetSaveMessage } from "@/stores/asset-sync-queue";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { CANVAS_THUMBNAIL_MAX_EDGE, needsCanvasImageThumbnail } from "@/lib/canvas/canvas-image-loading";
@@ -2423,48 +2424,50 @@ function InfiniteCanvasPage() {
 
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
-            if (node.type === CanvasNodeType.Text) {
-                const content = node.metadata?.content?.trim();
-                if (!content) return message.error("没有可保存的文本");
-                addAsset({ kind: "text", title: node.metadata?.prompt?.slice(0, 24) || "画布文本", coverUrl: "", tags: [], source: "Canvas", data: { content }, metadata: { source: "canvas", nodeId: node.id } });
-                message.success("已加入藏卷阁");
-                return;
+            try {
+                let id: string;
+                if (node.type === CanvasNodeType.Text) {
+                    const content = node.metadata?.content?.trim();
+                    if (!content) return message.error("没有可保存的文本");
+                    id = addAsset({ kind: "text", title: node.metadata?.prompt?.slice(0, 24) || "画布文本", coverUrl: "", tags: [], source: "Canvas", data: { content }, metadata: { source: "canvas", nodeId: node.id } });
+                } else if (node.type === CanvasNodeType.Video) {
+                    if (!node.metadata?.content) return message.error("没有可保存的视频");
+                    id = addAsset({
+                        kind: "video",
+                        title: node.metadata?.prompt?.slice(0, 24) || "画布视频",
+                        coverUrl: "",
+                        tags: [],
+                        source: "Canvas",
+                        data: { url: node.metadata.content, storageKey: node.metadata.storageKey, width: node.width, height: node.height, bytes: node.metadata.bytes || 0, mimeType: node.metadata.mimeType || "video/mp4" },
+                        metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
+                    });
+                } else {
+                    if (!node.metadata?.content) return message.error("没有可保存的图片");
+                    const dataUrl = node.metadata.storageKey ? "" : node.metadata.content;
+                    id = addAsset({
+                        kind: "image",
+                        title: node.metadata?.prompt?.slice(0, 24) || "画布图片",
+                        coverUrl: node.metadata.thumbnailUrl || node.metadata.content,
+                        tags: [],
+                        source: "Canvas",
+                        data: {
+                            dataUrl,
+                            storageKey: node.metadata.storageKey,
+                            thumbnailKey: node.metadata.thumbnailKey,
+                            thumbnailUrl: node.metadata.thumbnailUrl,
+                            width: node.metadata.naturalWidth || node.width,
+                            height: node.metadata.naturalHeight || node.height,
+                            bytes: node.metadata.bytes || getDataUrlByteSize(dataUrl),
+                            mimeType: node.metadata.mimeType || "image/png",
+                        },
+                        metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
+                    });
+                }
+                const status = await useAssetStore.getState().waitForAssetLocalSave(id);
+                message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: assetSaveMessage(status) });
+            } catch (error) {
+                message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
             }
-            if (node.type === CanvasNodeType.Video) {
-                if (!node.metadata?.content) return message.error("没有可保存的视频");
-                addAsset({
-                    kind: "video",
-                    title: node.metadata?.prompt?.slice(0, 24) || "画布视频",
-                    coverUrl: "",
-                    tags: [],
-                    source: "Canvas",
-                    data: { url: node.metadata.content, storageKey: node.metadata.storageKey, width: node.width, height: node.height, bytes: node.metadata.bytes || 0, mimeType: node.metadata.mimeType || "video/mp4" },
-                    metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
-                });
-                message.success("已加入藏卷阁");
-                return;
-            }
-            if (!node.metadata?.content) return message.error("没有可保存的图片");
-            const dataUrl = node.metadata.storageKey ? "" : node.metadata.content;
-            addAsset({
-                kind: "image",
-                title: node.metadata?.prompt?.slice(0, 24) || "画布图片",
-                coverUrl: node.metadata.thumbnailUrl || node.metadata.content,
-                tags: [],
-                source: "Canvas",
-                data: {
-                    dataUrl,
-                    storageKey: node.metadata.storageKey,
-                    thumbnailKey: node.metadata.thumbnailKey,
-                    thumbnailUrl: node.metadata.thumbnailUrl,
-                    width: node.metadata.naturalWidth || node.width,
-                    height: node.metadata.naturalHeight || node.height,
-                    bytes: node.metadata.bytes || getDataUrlByteSize(dataUrl),
-                    mimeType: node.metadata.mimeType || "image/png",
-                },
-                metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
-            });
-            message.success("已加入藏卷阁");
         },
         [addAsset, message],
     );
