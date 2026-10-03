@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { DriftWall } from "@/components/home/drift-wall";
 import { LightRays } from "@/components/home/light-rays";
+import { LivingWordmark } from "@/components/home/living-wordmark";
 import { useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { ImperialSeal } from "@/features/cultivation/imperial-seal";
@@ -125,10 +126,7 @@ export default function IndexPage() {
                     <div className="relative z-10 flex max-w-4xl flex-col items-center px-6 text-center">
                         <span className="shj-hero-eyebrow home-enter-rise home-enter-delay-1">Infinite Canvas</span>
 
-                        <h1 className="home-wordmark home-enter-rise home-enter-delay-2 mt-8 sm:mt-10">
-                            <span className="sr-only">无限画布</span>
-                            <img src="/images/infinite-canvas-wordmark.webp" srcSet="/images/infinite-canvas-wordmark-mobile.webp 840w, /images/infinite-canvas-wordmark.webp 1680w" sizes="(max-width: 640px) calc(100vw - 48px), 848px" width={1680} height={560} alt="" aria-hidden="true" loading="eager" decoding="async" />
-                        </h1>
+                        <LivingWordmark className="home-wordmark mt-8 sm:mt-10" sizes="(max-width: 640px) calc(100vw - 48px), 848px" />
 
                         <p className="font-display shj-hero-tagline home-enter-rise home-enter-delay-3 mt-8 text-balance text-xl leading-8 tracking-[0.3em] sm:text-2xl">一笔落,万象生</p>
 

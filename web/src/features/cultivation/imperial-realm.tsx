@@ -2,6 +2,7 @@ import { ArrowDown, ArrowRight, PenLine } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { LightRays } from "@/components/home/light-rays";
+import { LivingWordmark } from "@/components/home/living-wordmark";
 import { SpecularButton } from "@/components/ui/specular-button";
 import { preloadRoute } from "@/lib/route-loaders";
 
@@ -42,10 +43,7 @@ export default function ImperialRealm({ preview = false }: { preview?: boolean }
                     <span>斗帝 · 诸天至尊</span>
                     <i aria-hidden="true" />
                 </div>
-                <h1 className="imperial-realm-wordmark">
-                    <span className="sr-only">无限画布</span>
-                    <img src="/images/infinite-canvas-wordmark.webp" srcSet="/images/infinite-canvas-wordmark-mobile.webp 840w, /images/infinite-canvas-wordmark.webp 1680w" sizes="(max-width: 640px) calc(100vw - 32px), (max-height: 740px) 450px, 720px" width={1680} height={560} alt="" aria-hidden="true" loading="eager" decoding="async" />
-                </h1>
+                <LivingWordmark className="imperial-realm-wordmark" sizes="(max-width: 640px) calc(100vw - 32px), (max-height: 740px) 450px, 720px" />
                 <p className="font-display">执笔天地，万象由心。</p>
                 {preview ? (
                     <span className="imperial-realm-preview-label">帝临模式 · 外观预览</span>

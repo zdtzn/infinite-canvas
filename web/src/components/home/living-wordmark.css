@@ -1,0 +1,306 @@
+.living-wordmark {
+    position: relative;
+    isolation: isolate;
+    --wordmark-unit: 1px;
+    --wordmark-gold: #edcf8f;
+}
+
+.wordmark-image {
+    position: relative;
+    z-index: 1;
+}
+
+.living-wordmark[data-ready="true"] .wordmark-image {
+    animation: wordmark-arrive 1100ms ease-out backwards;
+}
+
+.wordmark-effects,
+.wordmark-halo-strength,
+.wordmark-mask,
+.wordmark-orbit-field {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.wordmark-effects {
+    z-index: 2;
+    display: none;
+}
+
+.living-wordmark[data-ready="true"] .wordmark-effects {
+    display: block;
+    animation: wordmark-energy-arrive 750ms 850ms ease-out backwards;
+}
+
+.wordmark-halo-strength {
+    z-index: 0;
+    opacity: 0.85;
+    transition: opacity 900ms ease;
+}
+
+.wordmark-halo {
+    position: absolute;
+    inset: -14% -3%;
+    background: radial-gradient(ellipse at 52% 54%, #e3b866 0%, rgb(227 184 102 / 45%) 34%, transparent 70%);
+    opacity: 0.08;
+    animation: wordmark-breathe 6s ease-in-out infinite;
+}
+
+.living-wordmark[data-hovered="true"] .wordmark-halo-strength {
+    opacity: 1.1;
+}
+
+.wordmark-mask {
+    overflow: hidden;
+    mask-image: var(--wordmark-mask);
+    mask-size: 100% 100%;
+    mask-repeat: no-repeat;
+}
+
+.wordmark-idle-sheen {
+    transition: opacity 220ms ease;
+}
+
+.living-wordmark[data-hovered="true"] .wordmark-idle-sheen {
+    opacity: 0;
+}
+
+.wordmark-sheen {
+    position: absolute;
+    inset: -50% -20%;
+    background: linear-gradient(38deg, transparent 39%, rgb(250 223 160 / 24%) 46%, #fff2c8 50%, rgb(250 223 160 / 24%) 54%, transparent 61%);
+    opacity: 0;
+    transform: translate(-85%, 28%);
+    animation: wordmark-sheen-pass 10.5s 1.6s ease-in-out infinite;
+}
+
+.wordmark-hover-sheen {
+    animation: none;
+}
+
+.wordmark-tracks {
+    display: block;
+    width: 100%;
+    height: 100%;
+    opacity: 0.12;
+    animation: wordmark-track-flow 7.5s ease-in-out infinite;
+}
+
+.wordmark-orbit-field {
+    transition: transform 900ms ease;
+}
+
+.living-wordmark[data-hovered="true"] .wordmark-orbit-field.is-inner {
+    transform: scale(0.97);
+}
+
+.wordmark-particle {
+    position: absolute;
+    left: 50%;
+    top: 52%;
+    width: var(--particle-size);
+    height: var(--particle-size);
+    border-radius: 50%;
+    background: var(--wordmark-gold);
+    opacity: var(--particle-opacity);
+    animation: wordmark-orbit var(--orbit-duration) var(--orbit-delay) linear infinite;
+}
+
+.is-outer .wordmark-particle {
+    animation-direction: reverse;
+}
+
+.wordmark-spark {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    border-radius: 50%;
+    background: #fff0bc;
+    opacity: 0;
+    animation: wordmark-spark-drift var(--spark-duration) var(--spark-delay, 5s) ease-out infinite;
+}
+
+.living-wordmark[data-active="false"] *,
+.living-wordmark[data-ready="false"] * {
+    animation-play-state: paused !important;
+}
+
+@keyframes wordmark-arrive {
+    from {
+        opacity: 0.45;
+        filter: blur(2px);
+    }
+    to {
+        opacity: 1;
+        filter: none;
+    }
+}
+
+@keyframes wordmark-energy-arrive {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes wordmark-breathe {
+    0%,
+    100% {
+        opacity: 0.08;
+        transform: scale(0.98);
+    }
+    50% {
+        opacity: 0.16;
+        transform: scale(1.03);
+    }
+}
+
+/* 2.6 second diagonal passage followed by almost 8 seconds of stillness. */
+@keyframes wordmark-sheen-pass {
+    0% {
+        transform: translate(-85%, 28%);
+        opacity: 0;
+    }
+    4% {
+        transform: translate(-60%, 20%);
+        opacity: 0.13;
+    }
+    21% {
+        transform: translate(60%, -20%);
+        opacity: 0.13;
+    }
+    25%,
+    100% {
+        transform: translate(85%, -28%);
+        opacity: 0;
+    }
+}
+
+@keyframes wordmark-track-flow {
+    0%,
+    100% {
+        opacity: 0.07;
+        transform: translate(-0.5px, 0.25px);
+    }
+    50% {
+        opacity: 0.24;
+        transform: translate(0.8px, -0.4px);
+    }
+}
+
+/* Small, separately composited points trace an asymmetrical ellipse; no visible path. */
+@keyframes wordmark-orbit {
+    0%,
+    100% {
+        transform: translate(var(--orbit-x), 0);
+    }
+    6.25% {
+        transform: translate(calc(var(--orbit-x) * 0.92), calc(var(--orbit-y) * 0.42));
+    }
+    12.5% {
+        transform: translate(calc(var(--orbit-x) * 0.71), calc(var(--orbit-y) * 0.71));
+    }
+    18.75% {
+        transform: translate(calc(var(--orbit-x) * 0.33), calc(var(--orbit-y) * 0.94));
+    }
+    25% {
+        transform: translate(calc(var(--orbit-x) * -0.02), var(--orbit-y));
+    }
+    31.25% {
+        transform: translate(calc(var(--orbit-x) * -0.4), calc(var(--orbit-y) * 0.86));
+    }
+    37.5% {
+        transform: translate(calc(var(--orbit-x) * -0.74), calc(var(--orbit-y) * 0.65));
+    }
+    43.75% {
+        transform: translate(calc(var(--orbit-x) * -0.94), calc(var(--orbit-y) * 0.28));
+    }
+    50% {
+        transform: translate(calc(var(--orbit-x) * -1), calc(var(--orbit-y) * -0.06));
+    }
+    56.25% {
+        transform: translate(calc(var(--orbit-x) * -0.9), calc(var(--orbit-y) * -0.44));
+    }
+    62.5% {
+        transform: translate(calc(var(--orbit-x) * -0.65), calc(var(--orbit-y) * -0.75));
+    }
+    68.75% {
+        transform: translate(calc(var(--orbit-x) * -0.3), calc(var(--orbit-y) * -0.94));
+    }
+    75% {
+        transform: translate(calc(var(--orbit-x) * 0.03), calc(var(--orbit-y) * -1));
+    }
+    81.25% {
+        transform: translate(calc(var(--orbit-x) * 0.41), calc(var(--orbit-y) * -0.88));
+    }
+    87.5% {
+        transform: translate(calc(var(--orbit-x) * 0.77), calc(var(--orbit-y) * -0.62));
+    }
+    93.75% {
+        transform: translate(calc(var(--orbit-x) * 0.94), calc(var(--orbit-y) * -0.28));
+    }
+}
+
+@keyframes wordmark-spark-drift {
+    0% {
+        opacity: 0;
+        transform: translate(0, 0) scale(0.7);
+    }
+    2% {
+        opacity: 0.75;
+        transform: translate(0, 0) scale(1);
+    }
+    9%,
+    100% {
+        opacity: 0;
+        transform: translate(var(--spark-x), var(--spark-y)) scale(0.4);
+    }
+}
+
+@media (max-width: 640px), (pointer: coarse) {
+    .wordmark-particle:not(.is-mobile),
+    .wordmark-spark:not(.is-mobile) {
+        display: none;
+    }
+    .wordmark-halo-strength {
+        opacity: 0.6;
+    }
+    .wordmark-tracks-mask {
+        display: none;
+    }
+    .wordmark-idle-sheen {
+        opacity: 0.7;
+    }
+    .wordmark-spark {
+        width: 1px;
+        height: 1px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .living-wordmark * {
+        animation: none !important;
+        transition: none !important;
+    }
+
+    .living-wordmark[data-ready="true"] .wordmark-effects {
+        display: none;
+    }
+    .living-wordmark .wordmark-image {
+        animation: none;
+        opacity: 1;
+        filter: none;
+    }
+    .wordmark-halo-strength {
+        opacity: 0.65;
+        transition: none;
+    }
+    .wordmark-halo {
+        animation: none;
+        opacity: 0.08;
+        transform: none;
+    }
+}
