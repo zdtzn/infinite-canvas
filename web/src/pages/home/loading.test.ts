@@ -70,3 +70,28 @@ test("home starts the correct hero without an extra lazy module or duplicate CSS
     expect(css).not.toContain("/images/hero-main.webp");
     expect(homeCss).toMatch(/\.shj-hero-image\s*\{[^}]*z-index: -2/s);
 });
+
+test("home scene crosses the seam without a new asset or an animated transition layer", () => {
+    const source = readFileSync(new URL("./index.tsx", import.meta.url), "utf8");
+    const css = readFileSync(new URL("./home.css", import.meta.url), "utf8");
+    const tail = css.match(/\.home-hero-stage::after\s*\{([^}]+)\}/s)?.[1] || "";
+    expect(source.match(/className="home-hero-stage"/g)).toHaveLength(1);
+    expect(source).toContain('className="home-hero-ink-fade" aria-hidden="true"');
+    expect(source).not.toContain('className="shj-scroll-cue"');
+    expect(css).toContain('--home-scene: url("/images/hero-main.webp")');
+    expect(css).toContain('--home-scene: url("/imperial/realm-scene-v2.webp")');
+    expect(css).toContain('--home-scene: url("/imperial/realm-scene-mobile-v2.webp")');
+    expect(css).toContain("--home-scene-fade: clamp(180px, 26svh, 260px)");
+    expect(tail).toContain("opacity: 0.05");
+    expect(tail).toContain("pointer-events: none");
+    expect(tail).not.toMatch(/animation|filter|will-change/);
+});
+
+test("home bridge overlap adapts to avoid covering the CTA in short windows", () => {
+    const css = readFileSync(new URL("./home.css", import.meta.url), "utf8");
+    expect(css).toContain("--home-bridge-overlap: 80px");
+    expect(css).toMatch(/@media \(max-width: 640px\)[\s\S]*?--home-bridge-overlap: 64px/);
+    expect(css).toMatch(/@media \(max-height: 640px\)[\s\S]*?--home-bridge-overlap: 48px/);
+    expect(css).toMatch(/@media \(max-height: 550px\)[\s\S]*?--home-bridge-overlap: 8px/);
+    expect(css).toMatch(/\.home-cultivation-strip\s*\{[^}]*margin-top: calc\(-1 \* var\(--home-bridge-overlap\)\)/s);
+});

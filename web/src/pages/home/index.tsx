@@ -90,96 +90,97 @@ export default function IndexPage() {
     return (
         <main className={cn("home-page h-full overflow-y-auto bg-background text-foreground", isImperialMode && "home-page--imperial")}>
             {/* ── 山门 · 全屏 Hero ─────────────────────────── */}
-            {isImperialMode ? (
-                <ImperialRealm />
-            ) : (
-                <section className="shj-hero relative flex min-h-[calc(100dvh-3.5rem)] flex-col items-center justify-center overflow-hidden">
-                    <img className="shj-hero-image" src="/images/hero-main.webp" alt="" aria-hidden="true" loading="eager" fetchPriority="high" decoding="async" />
-                    <div className="shj-hero-stars" aria-hidden />
-                    <div className="shj-hero-mist" aria-hidden />
-                    <LightRays
-                        raysOrigin="top-center"
-                        raysColor={isImperialMode ? "#ffd166" : "#59d3ff"}
-                        raysSpeed={0.72}
-                        lightSpread={0.74}
-                        rayLength={1.68}
-                        pulsating
-                        fadeDistance={1.2}
-                        saturation={1.16}
-                        followMouse
-                        mouseInfluence={0.08}
-                        noiseAmount={0.045}
-                        distortion={0.045}
-                        className={cn("homepage-light-rays", isImperialMode && "is-imperial")}
-                    />
-                    <div className="shj-hero-motes" aria-hidden />
-                    <div className="shj-grain" aria-hidden />
+            <div className="home-hero-stage">
+                {isImperialMode ? (
+                    <ImperialRealm />
+                ) : (
+                    <section className="shj-hero relative flex min-h-[calc(100dvh-3.5rem)] flex-col items-center justify-center overflow-hidden">
+                        <img className="shj-hero-image" src="/images/hero-main.webp" alt="" aria-hidden="true" loading="eager" fetchPriority="high" decoding="async" />
+                        <div className="shj-hero-stars" aria-hidden />
+                        <div className="shj-hero-mist" aria-hidden />
+                        <LightRays
+                            raysOrigin="top-center"
+                            raysColor={isImperialMode ? "#ffd166" : "#59d3ff"}
+                            raysSpeed={0.72}
+                            lightSpread={0.74}
+                            rayLength={1.68}
+                            pulsating
+                            fadeDistance={1.2}
+                            saturation={1.16}
+                            followMouse
+                            mouseInfluence={0.08}
+                            noiseAmount={0.045}
+                            distortion={0.045}
+                            className={cn("homepage-light-rays", isImperialMode && "is-imperial")}
+                        />
+                        <div className="shj-hero-motes" aria-hidden />
+                        <div className="shj-grain" aria-hidden />
 
-                    {/* 两侧竖排楹联(仅宽屏,低存在感) */}
-                    <span className="shj-vertical shj-couplet font-display home-enter-fade home-enter-delay-5 absolute left-10 top-1/2 hidden -translate-y-1/2 text-sm lg:block" aria-hidden>
-                        雲海千重皆入畫
-                    </span>
-                    <span className="shj-vertical shj-couplet font-display home-enter-fade home-enter-delay-5 absolute right-10 top-1/2 hidden -translate-y-1/2 text-sm lg:block" aria-hidden>
-                        心藏萬象筆先成
-                    </span>
+                        {/* 两侧竖排楹联(仅宽屏,低存在感) */}
+                        <span className="shj-vertical shj-couplet font-display home-enter-fade home-enter-delay-5 absolute left-10 top-1/2 hidden -translate-y-1/2 text-sm lg:block" aria-hidden>
+                            雲海千重皆入畫
+                        </span>
+                        <span className="shj-vertical shj-couplet font-display home-enter-fade home-enter-delay-5 absolute right-10 top-1/2 hidden -translate-y-1/2 text-sm lg:block" aria-hidden>
+                            心藏萬象筆先成
+                        </span>
 
-                    <div className="relative z-10 flex max-w-4xl flex-col items-center px-6 text-center">
-                        <span className="shj-hero-eyebrow home-enter-rise home-enter-delay-1">Infinite Canvas</span>
+                        <div className="relative z-10 flex max-w-4xl flex-col items-center px-6 text-center">
+                            <span className="shj-hero-eyebrow home-enter-rise home-enter-delay-1">Infinite Canvas</span>
 
-                        <LivingWordmark className="home-wordmark mt-8 sm:mt-10" sizes="(max-width: 640px) calc(100vw - 48px), 848px" />
+                            <LivingWordmark className="home-wordmark mt-8 sm:mt-10" sizes="(max-width: 640px) calc(100vw - 48px), 848px" />
 
-                        <p className="font-display shj-hero-tagline home-enter-rise home-enter-delay-3 mt-8 text-balance text-xl leading-8 tracking-[0.3em] sm:text-2xl">一笔落,万象生</p>
+                            <p className="font-display shj-hero-tagline home-enter-rise home-enter-delay-3 mt-8 text-balance text-xl leading-8 tracking-[0.3em] sm:text-2xl">一笔落,万象生</p>
 
-                        {cultivation ? (
-                            <div className="home-enter-stamp home-enter-delay-4 mt-10 flex items-center gap-4">
-                                <span className="shj-hero-realm-label text-sm tracking-[0.3em]">汝之境界</span>
-                                <span className={cn("shj-seal-lg", isImperialMode && "is-imperial")}>{cultivationStageLabel(cultivation.realmName, cultivation.stageName)}</span>
+                            {cultivation ? (
+                                <div className="home-enter-stamp home-enter-delay-4 mt-10 flex items-center gap-4">
+                                    <span className="shj-hero-realm-label text-sm tracking-[0.3em]">汝之境界</span>
+                                    <span className={cn("shj-seal-lg", isImperialMode && "is-imperial")}>{cultivationStageLabel(cultivation.realmName, cultivation.stageName)}</span>
+                                </div>
+                            ) : null}
+
+                            <div className="home-enter-rise home-enter-delay-5 mt-14 flex flex-wrap items-center justify-center gap-4">
+                                <SpecularButton
+                                    onClick={() => navigate("/canvas?mode=new")}
+                                    onPointerEnter={() => void preloadRoute("/canvas")}
+                                    onFocus={() => void preloadRoute("/canvas")}
+                                    onPointerDown={() => void preloadRoute("/canvas")}
+                                    onTouchStart={() => void preloadRoute("/canvas")}
+                                    radius={8}
+                                    tint="#d8402a"
+                                    tintOpacity={0.96}
+                                    blur={4}
+                                    textColor="#fff7ee"
+                                    lineColor="#ffe7b3"
+                                    baseColor="#8f2a20"
+                                    intensity={1.15}
+                                    shineSize={9}
+                                    shineFade={38}
+                                    thickness={1}
+                                    proximity={220}
+                                    className="group tracking-[0.2em]"
+                                >
+                                    起笔 · 新建画布
+                                    <ArrowRight className="size-5 transition-transform duration-300 group-hover:translate-x-0.5" />
+                                </SpecularButton>
+                                <button
+                                    type="button"
+                                    onClick={() => navigate("/canvas?mode=recent")}
+                                    onPointerEnter={() => void preloadRoute("/canvas")}
+                                    onFocus={() => void preloadRoute("/canvas")}
+                                    onPointerDown={() => void preloadRoute("/canvas")}
+                                    onTouchStart={() => void preloadRoute("/canvas")}
+                                    className="shj-btn-ghost"
+                                >
+                                    继续最近项目
+                                </button>
                             </div>
-                        ) : null}
-
-                        <div className="home-enter-rise home-enter-delay-5 mt-14 flex flex-wrap items-center justify-center gap-4">
-                            <SpecularButton
-                                onClick={() => navigate("/canvas?mode=new")}
-                                onPointerEnter={() => void preloadRoute("/canvas")}
-                                onFocus={() => void preloadRoute("/canvas")}
-                                onPointerDown={() => void preloadRoute("/canvas")}
-                                onTouchStart={() => void preloadRoute("/canvas")}
-                                radius={8}
-                                tint="#d8402a"
-                                tintOpacity={0.96}
-                                blur={4}
-                                textColor="#fff7ee"
-                                lineColor="#ffe7b3"
-                                baseColor="#8f2a20"
-                                intensity={1.15}
-                                shineSize={9}
-                                shineFade={38}
-                                thickness={1}
-                                proximity={220}
-                                className="group tracking-[0.2em]"
-                            >
-                                起笔 · 新建画布
-                                <ArrowRight className="size-5 transition-transform duration-300 group-hover:translate-x-0.5" />
-                            </SpecularButton>
-                            <button
-                                type="button"
-                                onClick={() => navigate("/canvas?mode=recent")}
-                                onPointerEnter={() => void preloadRoute("/canvas")}
-                                onFocus={() => void preloadRoute("/canvas")}
-                                onPointerDown={() => void preloadRoute("/canvas")}
-                                onTouchStart={() => void preloadRoute("/canvas")}
-                                className="shj-btn-ghost"
-                            >
-                                继续最近项目
-                            </button>
                         </div>
-                    </div>
 
-                    <div className="home-enter-fade home-enter-delay-6 absolute inset-x-0 bottom-8 z-10 flex justify-center">
-                        <span className="shj-scroll-cue">卷轴展开</span>
-                    </div>
-                </section>
-            )}
+                        <div className="home-hero-ink-fade" aria-hidden="true" />
+                        <span className="home-hero-flow" aria-hidden="true" />
+                    </section>
+                )}
+            </div>
 
             {/* ── 修行引路条 ──────────────────────────────── */}
             {cultivation ? (
