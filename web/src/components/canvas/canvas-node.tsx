@@ -508,7 +508,11 @@ export const CanvasNode = React.memo(function CanvasNode({
                 <ConnectionHandleDot side="right" visible={(definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onPointerDown={(event) => onConnectStart(event, data.id, "source")} />
             ) : null}
 
-            {showPanel && !isGroup && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[600px] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
+            {showPanel && !isGroup && renderPanel ? (
+                <div data-node-panel className="absolute left-1/2 top-full z-[70] w-[min(600px,calc(100vw-32px))] pt-4" style={{ transform: `translateX(-50%) scale(${1 / scale})`, transformOrigin: "top center" }}>
+                    {renderPanel(data)}
+                </div>
+            ) : null}
         </div>
     );
 });

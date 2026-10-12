@@ -14,6 +14,7 @@ import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useUserStore } from "@/stores/use-user-store";
+import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 
 export default function CanvasPage() {
     const [keyword, setKeyword] = useState("");
@@ -39,7 +40,8 @@ export default function CanvasPage() {
     const agentMode = mode === "new" || mode === "recent" || mode === "choose";
     const agentQuery = agentMode ? `?${searchParams.toString()}` : "";
     const enterProject = (id: string) => {
-        navigate(`/canvas/${id}${agentQuery}`, imageTransfer ? { state: location.state } : undefined);
+        const agentHash = hasAgentUrlBootstrap(location.hash) ? location.hash : "";
+        navigate(`/canvas/${id}${agentQuery}${agentHash}`, { replace: Boolean(agentHash), ...(imageTransfer ? { state: location.state } : {}) });
     };
     const createAndEnter = () => enterProject(createProject(`无限画布 ${projects.length + 1}`));
     const importCanvas = async (file?: File) => {

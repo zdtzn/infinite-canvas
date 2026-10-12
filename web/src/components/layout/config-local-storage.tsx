@@ -59,15 +59,17 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
                         <div className="mt-4 grid gap-3 sm:grid-cols-3">
                             <StorageMetric icon={<Database className="size-4" />} label="数据库内容" value={formatStorageBytes(usage.contentBytes)} hint="画布、资源和缓存" />
                             <StorageMetric icon={<HardDrive className="size-4" />} label="站点已用" value={formatStorageBytes(usage.usage)} hint="浏览器估算值" />
-                            <StorageMetric icon={<Layers3 className="size-4" />} label="可用配额" value={formatStorageBytes(usage.quota)} hint="浏览器分配上限" />
+                            <StorageMetric icon={<Layers3 className="size-4" />} label="可用配额" value={formatStorageBytes(usage.quota)} hint={usage.quota ? "浏览器分配上限" : "浏览器未提供配额"} />
                         </div>
-                        <div className="mt-4">
-                            <div className="mb-1 flex justify-between text-xs text-stone-500">
-                                <span>配额使用率</span>
-                                <span className="tabular-nums">{percent.toFixed(2)}%</span>
+                        {usage.quota ? (
+                            <div className="mt-4">
+                                <div className="mb-1 flex justify-between text-xs text-stone-500">
+                                    <span>配额使用率</span>
+                                    <span className="tabular-nums">{percent.toFixed(2)}%</span>
+                                </div>
+                                <Progress percent={percent} showInfo={false} />
                             </div>
-                            <Progress percent={percent} showInfo={false} />
-                        </div>
+                        ) : null}
                     </>
                 ) : null}
             </section>
@@ -108,7 +110,8 @@ function StorageMetric({ icon, label, value, hint }: { icon: ReactNode; label: s
     );
 }
 
-function formatStorageBytes(bytes: number) {
+function formatStorageBytes(bytes: number | null) {
+    if (bytes === null) return "—";
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;

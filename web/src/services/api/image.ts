@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { defaultConfig, normalizeImageSizeSelection, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { assertModelAvailable, defaultConfig, normalizeImageSizeSelection, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -9,7 +9,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { imageToDataUrl } from "@/services/image-storage";
 import { archiveDeferredServerJob, cancelServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput, type ServerJob, type ServerJobProgress } from "@/services/server-api";
-import { deriveImageModelCapabilities, isUuAsyncGptImageModel, isUuImage25Model, supportsGeminiImageSize, validateImageRequest } from "@/stores/model-capabilities";
+import { deriveImageModelCapabilities, isUuAsyncGptImageModel, isUuImage25Model, validateImageRequest } from "@/stores/model-capabilities";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useUserStore } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -218,12 +218,13 @@ function parseImageDimensions(value: string) {
     return { width: Number(match[1]), height: Number(match[2]) };
 }
 
-function resolveGeminiImageConfig(config: AiConfig) {
+function resolveGeminiImageConfig(config: ManagedAiConfig) {
     const value = normalizeImageSizeSelection(config.size);
     const dimensions = parseImageDimensions(value);
     const ratio = dimensions ? `${dimensions.width}:${dimensions.height}` : value;
     const aspectRatio = closestGeminiAspectRatio(ratio);
-    const imageSize = supportsGeminiImageSize(config.model) ? resolveGeminiImageSize(config.quality, dimensions) : undefined;
+    const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat, config.baseUrl, config.imageCapabilities);
+    const imageSize = capabilities.resolutions.includes(config.quality) ? GEMINI_IMAGE_SIZE_BY_RESOLUTION[config.quality] : undefined;
     const image = { ...(aspectRatio ? { aspectRatio } : {}), ...(imageSize ? { imageSize } : {}) };
     return Object.keys(image).length ? { imageConfig: image } : {};
 }
@@ -236,17 +237,6 @@ function closestGeminiAspectRatio(value: string) {
         const bestRatio = parseRatioValue(best);
         return Math.abs(current.width / current.height - target) < Math.abs(bestRatio.width / bestRatio.height - target) ? item : best;
     });
-}
-
-function resolveGeminiImageSize(resolution: string, dimensions: { width: number; height: number } | null) {
-    const normalizedResolution = normalizeResolution(resolution);
-    if (normalizedResolution) return GEMINI_IMAGE_SIZE_BY_RESOLUTION[normalizedResolution];
-    if (!dimensions) return undefined;
-    const edge = Math.max(dimensions.width, dimensions.height);
-    if (edge <= 768) return "512";
-    if (edge <= 1536) return "1K";
-    if (edge <= 3072) return "2K";
-    return "4K";
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>, mimeType: string) {
@@ -708,6 +698,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 
 function resolveImageRequestContext(config: AiConfig, referenceCount: number) {
     const selectedModel = config.imageModel || config.model;
+    assertModelAvailable(config, selectedModel);
     const resolved = resolveImageModelSettings(config, selectedModel);
     const requestConfig = resolveModelRequestConfig(resolved.config, selectedModel);
     const count = Number(resolved.config.count);
@@ -743,7 +734,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, prompt),
                 images: [],
-                params: { size: requestSize, resolution, quality: imageQuality, outputFormat: imageOutputFormat, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, ratio: effectiveConfig.size, resolution, quality: imageQuality, outputFormat: imageOutputFormat, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -822,7 +813,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, requestPrompt),
                 images: refs,
-                params: { size: requestSize, resolution, quality: imageQuality, outputFormat: imageOutputFormat, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, ratio: effectiveConfig.size, resolution, quality: imageQuality, outputFormat: imageOutputFormat, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -902,6 +893,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 }
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
+    assertModelAvailable(config, config.model || config.textModel);
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
     const script = resolveModelScript(config, config.model || config.textModel);
     if (script) {

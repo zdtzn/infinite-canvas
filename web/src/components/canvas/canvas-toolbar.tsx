@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Dropdown, Segmented, Switch } from "antd";
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, CircleDot, Columns2, Eraser, Eye, EyeOff, Film, Grid2x2, Grid3X3, Group, Hand, Image as ImageIcon, Info, Lock, Moon, Music2, Palette, Plus, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Unlock, Upload, Video } from "lucide-react";
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, CircleDot, Columns2, Eraser, Eye, EyeOff, Film, Grid2x2, Grid3X3, Group, Hand, Image as ImageIcon, Info, LocateFixed, Lock, Moon, Music2, Palette, Plus, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Unlock, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -26,6 +26,7 @@ export function CanvasToolbar({
     onAddExtensionNode,
     onUndo,
     onRedo,
+    onFocusSelected,
     onUpload,
     onDelete,
     onClear,
@@ -55,6 +56,7 @@ export function CanvasToolbar({
     onAddExtensionNode: (type: string) => void;
     onUndo: () => void;
     onRedo: () => void;
+    onFocusSelected: () => void;
     onUpload: () => void;
     onDelete: () => void;
     onClear: () => void;
@@ -96,7 +98,7 @@ export function CanvasToolbar({
     }, [appearanceOpen]);
 
     return (
-        <div ref={rootRef} data-canvas-toolbar-root className="pointer-events-none absolute bottom-5 left-4 right-4 z-50 flex justify-center">
+        <div ref={rootRef} data-canvas-toolbar-root data-canvas-bottom-toolbar className="pointer-events-none absolute bottom-5 left-4 right-4 z-50 flex justify-center">
             {tip ? <DockTip label={tip} x={tipX} theme={theme} /> : null}
             <div className="canvas-liquid-glass canvas-liquid-glass-surface canvas-animate-blur-fade-up pointer-events-auto max-w-full rounded-xl" style={{ animationDelay: "260ms" }}>
                 <div ref={wrapRef} className="thin-scrollbar flex h-14 max-w-full items-center gap-1 overflow-x-auto px-2 [&>*]:shrink-0" style={{ color: theme.toolbar.item }}>
@@ -108,6 +110,9 @@ export function CanvasToolbar({
                     </ToolbarButton>
                     <ToolbarButton id="tool-redo" label="重做" disabled={!canRedo} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onRedo}>
                         <Redo2 className="size-4.5" />
+                    </ToolbarButton>
+                    <ToolbarButton id="tool-focus" label="居中选中节点" disabled={!selectedCount} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onFocusSelected}>
+                        <LocateFixed className="size-4.5" />
                     </ToolbarButton>
                     <Divider theme={theme} />
                     <Dropdown
@@ -349,6 +354,7 @@ function toolLabel(id: string) {
     if (id === "tool-hand") return "移动/选择";
     if (id === "tool-undo") return "撤销";
     if (id === "tool-redo") return "重做";
+    if (id === "tool-focus") return "居中选中节点";
     if (id === "tool-text") return "文本";
     if (id === "tool-image") return "图片";
     if (id === "tool-video") return "视频";

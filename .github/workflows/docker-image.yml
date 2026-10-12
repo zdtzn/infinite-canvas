@@ -76,6 +76,13 @@ jobs:
       - name: Test
         run: bun run test
 
+      - name: Verify local Agent
+        working-directory: canvas-agent
+        run: |
+          npm ci --ignore-scripts
+          npm test
+          npx tsc --noEmit -p tsconfig.json
+
       - name: Deployment safeguards
         working-directory: .
         run: |

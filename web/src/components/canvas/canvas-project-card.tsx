@@ -1,12 +1,14 @@
 import { Check, Download, Pencil, Trash2, X } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Input } from "antd";
 
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { preloadRoute } from "@/lib/route-loaders";
+import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 
 export function CanvasProjectCard({ project }: { project: CanvasProject }) {
+    const location = useLocation();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const renameProject = useCanvasStore((state) => state.renameProject);
@@ -21,7 +23,10 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
     const editing = editingId === project.id;
     const selected = selectedIds.includes(project.id);
     const preloadProject = () => void preloadRoute(`/canvas/${project.id}`);
-    const open = () => navigate(`/canvas/${project.id}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`);
+    const open = () => {
+        const agentHash = hasAgentUrlBootstrap(location.hash) ? location.hash : "";
+        navigate(`/canvas/${project.id}${searchParams.toString() ? `?${searchParams.toString()}` : ""}${agentHash}`, { replace: Boolean(agentHash) });
+    };
     const saveTitle = () => {
         renameProject(project.id, editingTitle);
         stopEditing();

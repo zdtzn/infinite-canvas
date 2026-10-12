@@ -9,6 +9,9 @@ import {
     encodeChannelModel,
     normalizeChannelModels,
     normalizeImageSizeSelection,
+    normalizeModelOptionValue,
+    pickPlatformModel,
+    resolveModelChannel,
     resolveModelForCapability,
     resolveModelRequestConfig,
     useConfigStore,
@@ -60,7 +63,44 @@ describe("platform channel hydration", () => {
         const empty = applyPlatformChannels(hydrated, []);
         expect(empty.channels).toEqual([]);
         expect(empty.models).toEqual([]);
-        expect(empty.imageModel).toBe("");
+        expect(empty.imageModel).toBe(hydrated.imageModel);
+        expect(useConfigStore.getState().isAiConfigReady(empty, empty.imageModel)).toBe(false);
+    });
+
+    test("keeps removed selections through channel refresh, normalization and capability resolution", () => {
+        const original = createModelChannel({ id: "original", models: [{ name: "chosen-image", capability: "image" }] });
+        const replacement = createModelChannel({
+            id: "other",
+            apiKey: "different-key",
+            models: [
+                { name: "chosen-image", capability: "image" },
+                { name: "other-video", capability: "video" },
+            ],
+        });
+        const chosen = encodeChannelModel(original.id, "chosen-image");
+        const hydrated = applyPlatformChannels({ ...defaultConfig, imageModel: chosen }, [original, replacement]);
+        const removed = applyPlatformChannels(hydrated, [replacement]);
+
+        expect(removed.imageModel).toBe(chosen);
+        expect(normalizeModelOptionValue(chosen, removed.channels)).toBe(chosen);
+        expect(resolveModelForCapability(removed, chosen, "image")).toBe(chosen);
+        expect(pickPlatformModel(removed, "image", chosen)).toBe(chosen);
+        expect(useConfigStore.getState().isAiConfigReady(removed, chosen)).toBe(false);
+        expect(resolveModelChannel(removed, chosen)).toMatchObject({ baseUrl: "", apiKey: "", credentialState: "missing" });
+        expect(resolveModelRequestConfig(removed, chosen).serverManaged).toBe(false);
+        expect(useConfigStore.getState().isAiConfigReady(hydrated, chosen)).toBe(true);
+        expect(applyPlatformChannels(removed, [original, replacement]).imageModel).toBe(chosen);
+    });
+
+    test("a removed model cannot use the remaining credentials of its original channel", () => {
+        const channel = createModelChannel({ id: "same", apiKey: "fixture-only", credentialState: "saved", models: [{ name: "remaining", capability: "image" }] });
+        const config = { ...defaultConfig, channels: [channel] };
+        const removed = encodeChannelModel(channel.id, "removed");
+
+        expect(useConfigStore.getState().isAiConfigReady(config, removed)).toBe(false);
+        expect(resolveModelChannel(config, removed).baseUrl).toBe("");
+        expect(resolveModelRequestConfig(config, removed).apiKey).toBe("");
+        expect(resolveModelForCapability(config, removed, "image")).toBe(removed);
     });
 
     test("preserves the configured platform channel order for model pickers", () => {
@@ -128,7 +168,7 @@ describe("sensitive browser configuration", () => {
 
         try {
             useConfigStore.setState({
-                config: { ...defaultConfig, quality: "high", count: "4" },
+                config: { ...defaultConfig, quality: "high", count: "4", autoFocusOnSelect: true },
                 webdav: { ...defaultWebdavSyncConfig, url: "https://dav.example.com", username: "alice" },
                 snapDimensionToStep: false,
             });
@@ -138,6 +178,7 @@ describe("sensitive browser configuration", () => {
             useConfigStore.getState().prepareAccountPreferences("user-b");
             expect(useConfigStore.getState().config.count).toBe(defaultGenerationPreferences.count);
             expect(useConfigStore.getState().config.quality).toBe(defaultGenerationPreferences.quality);
+            expect(useConfigStore.getState().config.autoFocusOnSelect).toBe(false);
             expect(useConfigStore.getState().webdav.url).toBe("");
             expect(useConfigStore.getState().snapDimensionToStep).toBe(true);
 
@@ -145,6 +186,7 @@ describe("sensitive browser configuration", () => {
             useConfigStore.getState().prepareAccountPreferences("user-a");
             expect(useConfigStore.getState().config.count).toBe("2");
             expect(useConfigStore.getState().config.quality).toBe("high");
+            expect(useConfigStore.getState().config.autoFocusOnSelect).toBe(true);
             expect(useConfigStore.getState().webdav).toMatchObject({ url: "https://dav.example.com", username: "alice", password: "" });
             expect(useConfigStore.getState().snapDimensionToStep).toBe(false);
         } finally {

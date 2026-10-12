@@ -2,8 +2,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import stripAnsi from "strip-ansi";
 
+import { createAgentLogWriter } from "../utils/agent-runtime.js";
 import { VERSION } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { field, type JsonRecord } from "../utils/value.js";
@@ -43,12 +43,14 @@ export class CodexAppClient {
         const child = spawn(process.execPath, [codexBin(), "app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
         const client = new CodexAppClient(child, emit);
         child.stdout?.on("data", (chunk) => client.read(chunk.toString()));
-        child.stderr?.on("data", (chunk) => {
-            const text = stripAnsi(chunk.toString()).replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, "");
+        const stderr = createAgentLogWriter((text) => {
             logger.warn("Codex app-server stderr", { text });
             emit("agent_log", { text });
-        });
+        }, (text) => text.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, ""));
+        child.stderr?.on("data", (chunk) => stderr.write(chunk.toString()));
+        child.on("close", () => stderr.flush());
         child.on("error", (error) => {
+            stderr.flush();
             logger.error("Codex app-server process error", error);
             emit("agent_error", { message: error.message });
         });

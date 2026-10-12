@@ -60,6 +60,7 @@ export type AiConfig = {
     background: string;
     count: string;
     canvasImageCount: string;
+    autoFocusOnSelect: boolean;
 };
 
 export type WebdavSyncConfig = {
@@ -91,6 +92,7 @@ export type GenerationPreferences = {
     count: string;
     canvasImageCount: string;
     snapDimensionToStep: boolean;
+    autoFocusOnSelect: boolean;
 };
 export type ConfigTabKey = "channels" | "preferences" | "prompt-sources" | "webdav" | "local-storage" | "members";
 
@@ -149,6 +151,7 @@ export const defaultConfig: AiConfig = {
     background: "",
     count: "1",
     canvasImageCount: "3",
+    autoFocusOnSelect: false,
 };
 
 export const defaultWebdavSyncConfig: WebdavSyncConfig = {
@@ -179,6 +182,7 @@ const generationPreferenceConfigKeys = new Set<keyof AiConfig>([
     "background",
     "count",
     "canvasImageCount",
+    "autoFocusOnSelect",
 ]);
 
 export const defaultGenerationPreferences: GenerationPreferences = generationPreferencesFromConfig(defaultConfig, true);
@@ -238,8 +242,12 @@ export function modelMatchesCapability(config: AiConfig, value: string, capabili
 export function resolveModelForCapability(config: AiConfig, currentModel: string | undefined, capability: ModelCapability) {
     const defaultModel = capability === "image" ? config.imageModel : capability === "video" ? config.videoModel : capability === "audio" ? config.audioModel : config.textModel;
     const fallbackModel = capability === "image" ? defaultConfig.imageModel : capability === "video" ? defaultConfig.videoModel : capability === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
-    if (currentModel && modelMatchesCapability(config, currentModel, capability)) return currentModel;
-    if (defaultModel && modelMatchesCapability(config, defaultModel, capability)) return defaultModel;
+    for (const model of [currentModel, defaultModel]) {
+        if (!model) continue;
+        const configuredCapability = modelCapabilityOf(config, model);
+        // An unavailable selection must stay visible until the user replaces it.
+        if (!configuredCapability || configuredCapability === capability) return model;
+    }
     return fallbackModel;
 }
 
@@ -255,8 +263,12 @@ export function resolveModelScript(config: AiConfig, value: string) {
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
-    const channel = resolveModelChannel(config, model);
-    return Boolean(model.trim() && channel.baseUrl.trim() && (channel.credentialState === "saved" || channel.apiKey.trim()));
+    const match = findChannelModel(config, model);
+    return Boolean(match && match.channel.baseUrl.trim() && (match.channel.credentialState === "saved" || match.channel.apiKey.trim()));
+}
+
+export function assertModelAvailable(config: AiConfig, model: string) {
+    if (!findChannelModel(config, model)) throw new Error("所选模型或原渠道已不可用，请重新选择模型或恢复原渠道");
 }
 
 export const useConfigStore = create<ConfigStore>()(
@@ -419,10 +431,12 @@ export function useEffectiveConfig() {
 }
 
 export function generationPreferencesFromConfig(config: AiConfig, snapDimensionToStep: boolean): GenerationPreferences {
+    const initialDefaults = PUBLIC_MODE && hasInitialDefaultChannel(config);
+    const preferred = (current: string, initial: string) => (initialDefaults && current === initial ? "" : current);
     return normalizeGenerationPreferences({
-        imageModel: config.imageModel,
-        videoModel: config.videoModel,
-        audioModel: config.audioModel,
+        imageModel: preferred(config.imageModel, defaultConfig.imageModel),
+        videoModel: preferred(config.videoModel, defaultConfig.videoModel),
+        audioModel: preferred(config.audioModel, defaultConfig.audioModel),
         audioVoice: config.audioVoice,
         audioFormat: config.audioFormat,
         audioSpeed: config.audioSpeed,
@@ -440,6 +454,7 @@ export function generationPreferencesFromConfig(config: AiConfig, snapDimensionT
         count: config.count,
         canvasImageCount: config.canvasImageCount,
         snapDimensionToStep,
+        autoFocusOnSelect: config.autoFocusOnSelect,
     });
 }
 
@@ -466,17 +481,19 @@ export function normalizeGenerationPreferences(value: unknown): GenerationPrefer
         count: normalizePreferenceCount(source.count, defaultConfig.count),
         canvasImageCount: normalizePreferenceCount(source.canvasImageCount, defaultConfig.canvasImageCount),
         snapDimensionToStep: source.snapDimensionToStep !== false,
+        autoFocusOnSelect: source.autoFocusOnSelect === true,
     };
 }
 
 export function applyGenerationPreferences(config: AiConfig, value: GenerationPreferences): AiConfig {
     const preferences = normalizeGenerationPreferences(value);
+    const imageModel = pickPlatformModel(config, "image", preferences.imageModel);
     return {
         ...config,
-        model: preferences.imageModel || config.model,
-        imageModel: preferences.imageModel,
-        videoModel: preferences.videoModel,
-        audioModel: preferences.audioModel,
+        model: imageModel || config.model,
+        imageModel,
+        videoModel: pickPlatformModel(config, "video", preferences.videoModel),
+        audioModel: pickPlatformModel(config, "audio", preferences.audioModel),
         audioVoice: preferences.audioVoice,
         audioFormat: preferences.audioFormat,
         audioSpeed: preferences.audioSpeed,
@@ -493,6 +510,7 @@ export function applyGenerationPreferences(config: AiConfig, value: GenerationPr
         background: preferences.background,
         count: preferences.count,
         canvasImageCount: preferences.canvasImageCount,
+        autoFocusOnSelect: preferences.autoFocusOnSelect,
     };
 }
 
@@ -721,38 +739,42 @@ export function applyPlatformChannels(config: AiConfig, input: ModelChannel[]): 
         apiKey: "",
         apiFormat: channels[0]?.apiFormat || config.apiFormat,
     };
-    const imageModel = pickPlatformModel(next, "image", config.imageModel);
+    const initialDefaults = hasInitialDefaultChannel(config);
+    const preferred = (current: string, initial: string) => (initialDefaults && current === initial ? "" : current);
+    const imageModel = pickPlatformModel(next, "image", preferred(config.imageModel, defaultConfig.imageModel));
     return {
         ...next,
         model: imageModel || normalizeModelOptionValue(config.model, channels),
         imageModel,
-        videoModel: pickPlatformModel(next, "video", config.videoModel),
-        textModel: pickPlatformModel(next, "text", config.textModel),
-        audioModel: pickPlatformModel(next, "audio", config.audioModel),
+        videoModel: pickPlatformModel(next, "video", preferred(config.videoModel, defaultConfig.videoModel)),
+        textModel: pickPlatformModel(next, "text", preferred(config.textModel, defaultConfig.textModel)),
+        audioModel: pickPlatformModel(next, "audio", preferred(config.audioModel, defaultConfig.audioModel)),
     };
+}
+
+function hasInitialDefaultChannel(config: AiConfig) {
+    return (
+        config.channels.length === 1 &&
+        config.channels[0].id === "default" &&
+        config.channels[0].credentialState !== "saved" &&
+        !config.channels[0].apiKey &&
+        config.channels[0].baseUrl === defaultConfig.baseUrl &&
+        config.channels[0].models.length === defaultConfig.channels[0].models.length &&
+        config.channels[0].models.every((model, index) => model.name === defaultConfig.channels[0].models[index].name && model.capability === defaultConfig.channels[0].models[index].capability)
+    );
 }
 
 export function normalizeModelOptionValue(value: string | undefined, channels: ModelChannel[]) {
     const model = (value || "").trim();
     if (!model) return "";
-    const decoded = decodeChannelModel(model);
-    if (decoded) {
-        const channel = channels.find((item) => item.id === decoded.channelId);
-        return channel && channel.models.some((item) => item.name === decoded.model) ? model : "";
-    }
-    const channel = channels.find((item) => item.models.some((entry) => entry.name === model)) || channels[0];
-    return channel && channel.models.some((item) => item.name === model) ? encodeChannelModel(channel.id, model) : model;
+    if (decodeChannelModel(model)) return model;
+    const channel = channels.find((item) => item.models.some((entry) => entry.name === model));
+    return channel ? encodeChannelModel(channel.id, model) : model;
 }
 
 export function resolveModelChannel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
-    const model = decoded?.model || value;
-    const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.some((item) => item.name === model));
-    return (
-        matched ||
-        config.channels[0] ||
-        createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })) })
-    );
+    return findChannelModel(config, value)?.channel || { id: decoded?.channelId || "", name: "未配置渠道", baseUrl: "", apiKey: "", credentialState: "missing" as const, apiFormat: config.apiFormat, models: [] };
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
@@ -837,10 +859,11 @@ function uniqueModelOptions(models: string[]) {
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)));
 }
 
-function pickPlatformModel(config: AiConfig, capability: ModelCapability, current: string) {
+export function pickPlatformModel(config: AiConfig, capability: ModelCapability, current: string) {
     const options = selectableModelsByCapability(config, capability);
     const normalized = normalizeModelOptionValue(current, config.channels);
-    return options.includes(normalized) ? normalized : options[0] || "";
+    const currentCapability = modelCapabilityOf(config, normalized);
+    return normalized && (!currentCapability || currentCapability === capability) ? normalized : options[0] || "";
 }
 
 export function buildApiUrl(baseUrl: string, path: string) {

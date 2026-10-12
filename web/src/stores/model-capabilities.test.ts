@@ -122,5 +122,8 @@ describe("image model capabilities", () => {
     test("Gemini models without imageSize support keep resolution automatic", () => {
         assert.deepEqual(deriveImageModelCapabilities("gemini-2.5-flash-image", "gemini").resolutions, ["auto"]);
         assert.deepEqual(deriveImageModelCapabilities("gemini-3-pro-image-preview", "gemini").resolutions, ["low", "medium", "high"]);
+        assert.deepEqual(deriveImageModelCapabilities("vendor-3.1-image", "gemini").resolutions, ["auto"]);
+        assert.deepEqual(deriveImageModelCapabilities("vendor-3.1-image", "gemini", "", { mode: "custom", resolutions: ["low", "medium", "high"] }).resolutions, ["low", "medium", "high"]);
+        assert.deepEqual(deriveImageModelCapabilities("gemini-3-pro-image-preview", "gemini", "", { mode: "custom", resolutions: ["auto"] }).resolutions, ["auto"]);
     });
 });

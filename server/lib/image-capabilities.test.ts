@@ -3,6 +3,11 @@ import { describe, expect, test } from "bun:test";
 import { resolveServerImageCapabilityProfile, validateServerImageCapabilityRequest } from "./image-capabilities";
 
 describe("server image channel capabilities", () => {
+  test("Gemini aliases require declared resolution support and explicit limits take priority", () => {
+    expect(resolveServerImageCapabilityProfile("vendor-3.1-image", "gemini").capabilities.resolutions).toEqual(["auto"]);
+    expect(resolveServerImageCapabilityProfile("vendor-3.1-image", "gemini", "", { mode: "custom", resolutions: ["low", "medium", "high"] }).capabilities.resolutions).toEqual(["low", "medium", "high"]);
+    expect(resolveServerImageCapabilityProfile("gemini-3-pro-image-preview", "gemini", "", { mode: "custom", resolutions: ["auto"] }).capabilities.resolutions).toEqual(["auto"]);
+  });
   test("uses conservative defaults for an unrecognized model explicitly set to auto", () => {
     const profile = resolveServerImageCapabilityProfile("vendor-new-image", "openai", "https://api.vendor.example", { mode: "auto" });
 

@@ -249,6 +249,7 @@ export function CanvasNodeHoverToolbar({
     return (
         <>
             <div
+                data-node-toolbar={node.id}
                 className={`absolute z-[70] flex h-11 max-w-[calc(100vw-24px)] -translate-x-1/2 items-center overflow-x-auto rounded-lg border text-sm ${showAbove ? "-translate-y-full" : ""}`}
                 style={{
                     left,

@@ -20,7 +20,7 @@ npx -y @basketikun/canvas-agent
 3. 在 Codex 右侧浏览器打开：
 
 ```text
-https://canvas.best/canvas?mode=new&agentUrl=<Local URL>&agentToken=<Connect token>
+https://canvas.best/canvas?mode=new#agentUrl=<Local URL>&agentToken=<Connect token>
 ```
 
 ## 本地版
@@ -42,8 +42,10 @@ npx -y @basketikun/canvas-agent
 3. 从启动输出取得 `Local URL` 和 `Connect token`，在 Codex 右侧浏览器打开：
 
 ```text
-<Vite Local 地址>/canvas?mode=new&agentUrl=<Local URL>&agentToken=<Connect token>
+<Vite Local 地址>/canvas?mode=new#agentUrl=<Local URL>&agentToken=<Connect token>
 ```
+
+使用 `URLSearchParams` 编码 `#` 后的地址和 token，避免地址中的查询参数破坏 fragment；不要将 token 放到网页查询参数中。
 
 ## MCP 与连接地址
 

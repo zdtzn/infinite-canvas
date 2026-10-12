@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { matchPath, useLocation, useNavigate } from "react-router-dom";
 import { App, Button, Tooltip } from "antd";
 import dayjs from "dayjs";
 import { Bot, History, MessageSquare, PanelRightClose, PlugZap, Plus, Terminal } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { readAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 import { imageMetadata } from "@/lib/canvas/canvas-node-factory";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { readImageMeta } from "@/lib/image-utils";
@@ -76,7 +77,7 @@ type AgentChatEvent = { threadId?: string; sourceClientId?: string; message?: Ag
 export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?: boolean; headless?: boolean; autoConnect?: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { message, modal } = App.useApp();
-    const [searchParams] = useSearchParams();
+    const { hash, pathname, search } = useLocation();
     const navigate = useNavigate();
     // 逐字段 selector + useShallow：只有这些字段变化时才重渲染。
     // 注意：canvasContext 不在此订阅内 —— 它在拖拽/resize 时会被 project 每帧写入，
@@ -121,6 +122,8 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     const confirmToolsRef = useRef(confirmTools);
     const pendingToolRef = useRef<AgentPendingToolCall | null>(null);
     const autoConnectRef = useRef(false);
+    const bootstrapHashRef = useRef("");
+    const connectSequenceRef = useRef(0);
     const connectedRef = useRef(false);
     const errorLoggedRef = useRef(false);
     const attachmentUrlsRef = useRef(new Set<string>());
@@ -190,7 +193,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             const busy = Boolean(parseEventData<AgentHelloEvent>(event)?.codex?.busy);
             errorLoggedRef.current = false;
             connectedRef.current = true;
-            setAgentState({ connected: true, activity: busy ? "Codex 正在运行" : "已连接", waiting: busy, sending: false, connectError: "", silentConnect: false, messages: useAgentStore.getState().messages.filter((item) => !isConnectionErrorMessage(item)) });
+            setAgentState({ connected: true, activity: busy ? "Codex 正在运行" : "已连接", waiting: busy, sending: false, connectError: "", silentConnect: false, fragmentBootstrap: false, messages: useAgentStore.getState().messages.filter((item) => !isConnectionErrorMessage(item)) });
             if (!headless) message.success("本地 Agent 已连接");
             void postState(endpoint, token, clientId, canvasContextRef.current?.snapshot || null);
             if (document.visibilityState === "visible" && document.hasFocus()) void activateAgentClient(endpoint, token, clientId);
@@ -258,7 +261,8 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         });
         source.onerror = () => {
             const wasConnected = connectedRef.current;
-            const silent = useAgentStore.getState().silentConnect && !wasConnected;
+            const bootstrap = useAgentStore.getState().fragmentBootstrap;
+            const silent = useAgentStore.getState().silentConnect && !wasConnected && !bootstrap;
             const text = wasConnected ? "本地 Agent 连接失败或已断开" : "连接失败，请检查地址和 token";
             if (!errorLoggedRef.current || wasConnected) {
                 addEventLog(wasConnected ? "连接断开" : "连接失败", text);
@@ -267,6 +271,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             errorLoggedRef.current = true;
             connectedRef.current = false;
             clearAgentSession({ activity: wasConnected ? "连接断开" : "连接失败", connected: false, connectError: silent ? "" : text, silentConnect: false });
+            if (bootstrap) useAgentStore.getState().openPanel();
             if (!wasConnected) {
                 source.close();
                 setAgentState({ enabled: false });
@@ -543,41 +548,36 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         });
     };
 
-    const toggleAgentConnection = async ({ silent = false }: { silent?: boolean } = {}) => {
-        if (enabled) {
+    const toggleAgentConnection = async ({ silent = false, bootstrap }: { silent?: boolean; bootstrap?: { url: string; token: string } } = {}) => {
+        if (enabled && !bootstrap) {
             clearAgentSession({ enabled: false, connected: false, activity: "离线", connectError: "" });
             return;
         }
-        const urlToken = searchParams.get("agentToken") || "";
-        const urlEndpoint = searchParams.get("agentUrl") || "";
-        const discovered = urlToken ? null : await discoverAgentConfig(endpoint || DEFAULT_AGENT_URL);
-        const nextEndpoint = (urlEndpoint || discovered?.url || endpoint || DEFAULT_AGENT_URL).trim().replace(/\/$/, "");
-        const nextToken = (urlToken || token.trim() || discovered?.token || "").trim();
+        const sequence = ++connectSequenceRef.current;
+        const isCurrent = () => sequence === connectSequenceRef.current && (!bootstrap || useAgentStore.getState().fragmentBootstrap);
+        const reportError = (text: string, warning = false) => {
+            if (!isCurrent()) return;
+            if (silent && !bootstrap) return;
+            setAgentState({ connectError: text, fragmentBootstrap: false, activeTab: "setup", activity: "连接失败" });
+            if (bootstrap) useAgentStore.getState().openPanel();
+            if (!headless && !silent) message[warning ? "warning" : "error"](text);
+        };
+        const discovered = bootstrap ? null : await discoverAgentConfig(endpoint || DEFAULT_AGENT_URL);
+        const nextEndpoint = (bootstrap?.url || discovered?.url || endpoint || DEFAULT_AGENT_URL).trim().replace(/\/$/, "");
+        const nextToken = (bootstrap?.token || token.trim() || discovered?.token || "").trim();
         if (!nextEndpoint) {
-            const text = "请填写本地 Agent 地址";
-            if (!silent) {
-                setAgentState({ connectError: text });
-                if (!headless) message.warning(text);
-            }
+            reportError("请填写本地 Agent 地址", true);
             return;
         }
         if (!nextToken) {
-            const text = "没有发现本地 Agent，请先在 Codex 使用插件或手动启动 Canvas Agent";
-            if (!silent) {
-                setAgentState({ connectError: text });
-                if (!headless) message.warning(text);
-            }
+            reportError("没有发现本地 Agent，请先在 Codex 使用插件或手动启动 Canvas Agent", true);
             return;
         }
         try {
             const parsed = new URL(nextEndpoint);
             if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("invalid protocol");
         } catch {
-            const text = "本地 Agent 地址格式不正确";
-            if (!silent) {
-                setAgentState({ connectError: text });
-                if (!headless) message.warning(text);
-            }
+            reportError("本地 Agent 地址格式不正确", true);
             return;
         }
         try {
@@ -589,15 +589,32 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                         : error.code === "NETWORK_ERROR" ? "无法访问本地 Agent，请确认 Agent 已启动且地址正确"
                             : `Agent 检查失败：${error.message}`
                 : error instanceof Error ? `Agent 检查失败：${error.message}` : "无法访问本地 Agent";
-            if (!silent) {
-                setAgentState({ connectError: text, activeTab: "setup", activity: "连接失败" });
-                if (!headless) message.error(text);
-            }
+            reportError(text);
             return;
         }
+        if (!isCurrent()) return;
         errorLoggedRef.current = false;
-        setAgentState({ url: nextEndpoint, token: nextToken, enabled: true, connected: false, silentConnect: silent, activity: "连接中", connectError: "", activeTab: "setup" });
+        setAgentState({ url: nextEndpoint, token: nextToken, enabled: true, connected: false, silentConnect: silent, fragmentBootstrap: Boolean(bootstrap), activity: "连接中", connectError: "", activeTab: "setup" });
     };
+
+    useLayoutEffect(() => {
+        const bootstrap = readAgentUrlBootstrap(hash);
+        if (!bootstrap || !matchPath("/canvas/:id", pathname)) {
+            bootstrapHashRef.current = "";
+            return;
+        }
+        if (bootstrapHashRef.current === hash) return;
+        bootstrapHashRef.current = hash;
+        navigate(`${pathname}${search}${bootstrap.remainingHash}`, { replace: true });
+        autoConnectRef.current = true;
+        if (!bootstrap.url || !bootstrap.token) {
+            setAgentState({ url: bootstrap.url, token: bootstrap.token, enabled: false, connected: false, fragmentBootstrap: false, activeTab: "setup", connectError: !bootstrap.url ? "请填写本地 Agent 地址" : "没有发现本地 Agent，请先在 Codex 使用插件或手动启动 Canvas Agent" });
+            useAgentStore.getState().openPanel();
+            return;
+        }
+        setAgentState({ url: bootstrap.url.replace(/\/$/, ""), token: bootstrap.token, enabled: false, connected: false, fragmentBootstrap: true, confirmTools: false, connectError: "", activity: "连接中" });
+        void toggleAgentConnection({ silent: true, bootstrap });
+    }, [hash, navigate, pathname, search, setAgentState]);
 
     useEffect(() => {
         if (!autoConnect || autoConnectRef.current || enabled || connected) return;
@@ -606,6 +623,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     }, [autoConnect, connected, enabled]);
 
     function clearAgentSession(patch: Parameters<typeof setAgentState>[0] = {}) {
+        connectSequenceRef.current += 1;
         loadThreadsSequenceRef.current += 1;
         setAgentState({
             messages: [],
@@ -616,6 +634,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             loadingThreads: false,
             waiting: false,
             sending: false,
+            fragmentBootstrap: false,
             pendingTool: null,
             pendingApprovals: [],
             ...patch,

@@ -7,6 +7,9 @@ export const CANVAS_SIDE_PANEL_DEFAULT_WIDTH = 280;
 
 const WIDTH_KEY = "canvas-side-panel-width";
 const OPEN_KEY = "canvas-side-panel-open";
+const NODE_VIEW_KEY = "canvas-side-panel-node-view";
+
+export type CanvasNodeViewMode = "list" | "grid";
 
 type PreferenceReader = Pick<Storage, "getItem">;
 type PreferenceWriter = Pick<Storage, "setItem">;
@@ -64,7 +67,9 @@ type CanvasSidePanelStore = {
     panelOpen: boolean;
     panelMounted: boolean;
     panelClosing: boolean;
+    nodeViewMode: CanvasNodeViewMode;
     setWidth: (width: number) => void;
+    setNodeViewMode: (mode: CanvasNodeViewMode) => void;
     openPanel: () => void;
     closePanel: () => void;
     togglePanel: () => void;
@@ -75,7 +80,12 @@ export const useCanvasSidePanelStore = create<CanvasSidePanelStore>((set, get) =
     panelOpen: initialOpen(),
     panelMounted: initialOpen(),
     panelClosing: false,
+    nodeViewMode: readPreference(NODE_VIEW_KEY) === "grid" ? "grid" : "list",
     setWidth: (width) => set({ width }),
+    setNodeViewMode: (mode) => {
+        writePreference(NODE_VIEW_KEY, mode);
+        set({ nodeViewMode: mode });
+    },
     openPanel: () => {
         writePreference(OPEN_KEY, "1");
         set({ panelOpen: true, panelMounted: true, panelClosing: false });

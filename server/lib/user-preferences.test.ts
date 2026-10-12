@@ -96,6 +96,7 @@ describe("user preferences", () => {
       count: "2",
       canvasImageCount: "3",
       snapDimensionToStep: false,
+      autoFocusOnSelect: true,
       apiKey: "must-not-survive",
     });
 
@@ -120,8 +121,11 @@ describe("user preferences", () => {
       count: "2",
       canvasImageCount: "3",
       snapDimensionToStep: false,
+      autoFocusOnSelect: true,
     });
     expect(readStoredUserGenerationPreferences(preference)).toEqual(preference);
+    expect(normalizeUserGenerationPreferences({ ...preference, autoFocusOnSelect: undefined }).autoFocusOnSelect).toBe(false);
+    expect(() => normalizeUserGenerationPreferences({ ...preference, autoFocusOnSelect: "true" })).toThrow("节点自动居中偏好");
     expect(normalizeUserGenerationPreferences({ ...preference, videoMode: "frames" }).videoMode).toBe("frames");
     expect(normalizeUserGenerationPreferences({ ...preference, videoMode: "reference" }).videoMode).toBe("reference");
     expect(() => normalizeUserGenerationPreferences({ ...preference, videoMode: "invalid" })).toThrow();

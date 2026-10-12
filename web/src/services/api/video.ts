@@ -6,7 +6,7 @@ import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
+import { assertModelAvailable, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import { resolveVideoMode } from "@/lib/video-reference-mode";
 import { withLocalProxy } from "./local-proxy";
@@ -63,6 +63,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const expectedUserId = options?.expectedUserId ?? useUserStore.getState().user?.id ?? "";
     const boundOptions = { ...options, expectedUserId };
     const selectedModel = (config.model || config.videoModel).trim();
+    assertModelAvailable(config, selectedModel);
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const script = resolveModelScript(config, selectedModel);
     if (script && !isServerManagedConfig(requestConfig)) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, videoReferences, audioReferences, boundOptions);
@@ -82,6 +83,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
         const result = task.result ? { ...task.result, url: await resolveMediaUrl(task.result.storageKey, task.result.url), ownerUserId: task.ownerUserId } : undefined;
         return result ? { status: "completed", result } : { status: "failed", error: "插件视频任务已失效，请重新生成" };
     }
+    assertModelAvailable(config, task.model);
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
     const boundOptions = { ...options, expectedUserId: task.ownerUserId || options?.expectedUserId || useUserStore.getState().user?.id || "" };
@@ -116,7 +118,7 @@ async function createPluginVideoTask(
             audios,
             params: {
                 seconds: seedance ? String(normalizeSeedanceDuration(config.videoSeconds)) : normalizeVideoSeconds(config.videoSeconds),
-                size: normalizeVideoSize(config.size),
+                size: normalizeVideoSize(config.size, config.vquality),
                 resolution: seedance ? normalizeSeedanceResolution(config.vquality, modelOptionName(model)) : normalizeVideoResolution(config.vquality),
                 ratio: config.size,
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
@@ -162,18 +164,27 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     body.append("model", modelOptionName(model));
     body.append("prompt", prompt);
     body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
-    if (normalizeVideoSize(config.size)) body.append("size", normalizeVideoSize(config.size)!);
+    const size = normalizeVideoSize(config.size, config.vquality);
+    if (size) body.append("size", size);
+    body.append("ratio", videoAspectRatio(config.size));
     body.append("resolution_name", normalizeVideoResolution(config.vquality));
     body.append("preset", "normal");
     if (!config.videoMode && references.length > 7) throw new Error("默认视频接口最多支持 7 张参考图，请移除多余图片或选择全能参考模式");
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-    if (!config.videoMode) files.forEach((file) => body.append("input_reference[]", file));
+    if (!config.videoMode)
+        files.forEach((file) => {
+            body.append("input_reference[]", file);
+            body.append("images", file);
+        });
     else {
         const mode = resolveVideoMode(config.videoMode, files.length, videoReferences.length + audioReferences.length);
         body.append("mode", mode);
         body.append("generate_audio", String(boolConfig(config.videoGenerateAudio, true)));
         body.append("watermark", String(boolConfig(config.videoWatermark, false)));
-        files.forEach((file, index) => body.append(mode === "frames" ? (index === 0 ? "first_frame" : "last_frame") : "image[]", file));
+        files.forEach((file, index) => {
+            body.append(mode === "frames" ? (index === 0 ? "first_frame" : "last_frame") : "image[]", file);
+            body.append("images", file);
+        });
         for (const item of videoReferences) body.append("video[]", await referenceMediaToFile(item, options));
         for (const item of audioReferences) body.append("audio[]", await referenceMediaToFile(item, options));
     }
@@ -336,11 +347,27 @@ function normalizeVideoSeconds(value: string) {
     return String(Math.max(1, Math.min(20, seconds)));
 }
 
-function normalizeVideoSize(value: string) {
+function normalizeVideoSize(value: string, resolution = "720") {
     if (value === "auto") return null;
-    const size = value || "1280x720";
-    if (/^\d+x\d+$/.test(size)) return size;
-    return ["9:16", "2:3", "3:4"].includes(size) ? "720x1280" : "1280x720";
+    if (/^\d+x\d+$/.test(value)) return value;
+    const [width, height] = videoAspectRatio(value).split(":").map(Number);
+    const shortEdge = Number(normalizeVideoResolution(resolution).replace(/p$/, "")) || 720;
+    const scale = shortEdge / Math.min(width, height);
+    return `${Math.max(2, Math.round((width * scale) / 2) * 2)}x${Math.max(2, Math.round((height * scale) / 2) * 2)}`;
+}
+
+function videoAspectRatio(value: string) {
+    if (!value || value === "auto") return "16:9";
+    const ratios = ["1:1", "2:3", "3:2", "3:4", "4:3", "16:9", "9:16", "21:9", "9:21"];
+    if (ratios.includes(value)) return value;
+    const match = value.match(/^(\d+)[:x](\d+)$/);
+    if (!match || !Number(match[1]) || !Number(match[2])) return "16:9";
+    const target = Number(match[1]) / Number(match[2]);
+    const ratio = (item: string) => {
+        const [width, height] = item.split(":").map(Number);
+        return width / height;
+    };
+    return ratios.reduce((best, item) => (Math.abs(ratio(item) - target) < Math.abs(ratio(best) - target) ? item : best));
 }
 
 function normalizeVideoResolution(value: string) {

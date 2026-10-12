@@ -11,6 +11,7 @@ describe("agent account isolation", () => {
             token: "private-agent-token",
             connected: true,
             enabled: true,
+            fragmentBootstrap: true,
             confirmTools: false,
             permissionMode: "full",
             messages: [{ id: "message-1", role: "user", text: "private prompt" }],
@@ -31,6 +32,7 @@ describe("agent account isolation", () => {
         expect(state.token).toBe("");
         expect(state.connected).toBe(false);
         expect(state.enabled).toBe(false);
+        expect(state.fragmentBootstrap).toBe(false);
         expect(state.confirmTools).toBe(true);
         expect(state.permissionMode).toBe("request");
         expect(state.messages).toEqual([]);

@@ -1,18 +1,26 @@
 export type IndexedDbStoreUsage = { name: string; records: number; bytes: number };
 export type IndexedDbDatabaseUsage = { name: string; version: number; bytes: number; stores: IndexedDbStoreUsage[] };
-export type LocalStorageUsage = { usage: number; quota: number; contentBytes: number; databases: IndexedDbDatabaseUsage[] };
+export type LocalStorageUsage = { usage: number; quota: number | null; contentBytes: number; databases: IndexedDbDatabaseUsage[] };
 
 export async function readLocalStorageUsage(): Promise<LocalStorageUsage> {
     if (typeof indexedDB === "undefined") throw new Error("当前浏览器不支持本地存储诊断");
 
-    const estimate = typeof navigator !== "undefined" && navigator.storage?.estimate ? await navigator.storage.estimate() : {};
-    const database = await readDatabaseUsage("infinite-canvas");
+    const [estimate, database] = await Promise.all([readStorageEstimate(), readDatabaseUsage("infinite-canvas")]);
     return {
-        usage: Number(estimate.usage || 0),
-        quota: Number(estimate.quota || 0),
+        usage: estimate?.usage ?? database.bytes,
+        quota: estimate?.quota ?? null,
         contentBytes: database.bytes,
         databases: [database],
     };
+}
+
+async function readStorageEstimate() {
+    if (typeof navigator === "undefined" || !navigator.storage?.estimate) return null;
+    try {
+        return await navigator.storage.estimate();
+    } catch {
+        return null;
+    }
 }
 
 function readDatabaseUsage(name: string) {

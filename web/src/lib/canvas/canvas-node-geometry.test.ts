@@ -6,6 +6,7 @@ import {
     canUngroupSelectedNodes,
     findContainingGroupId,
     findGroupDropTarget,
+    focusViewportForNode,
     snapNodesIntoGroup,
     getGroupWrapRect,
     isHiddenBatchChild,
@@ -17,6 +18,26 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const makeNode = (id: string, groupId?: string, locked = false): CanvasNodeData => ({ id, title: id, type: CanvasNodeType.Text, position: { x: 10, y: 20 }, width: 100, height: 80, metadata: { groupId, locked } });
 const makeGroup = (id: string, locked = false): CanvasNodeData => ({ ...makeNode(id, undefined, locked), type: CanvasNodeType.Group });
+
+test("focus viewport centers an unscaled small node without overlays", () => {
+    const node = makeNode("focus");
+    const viewport = focusViewportForNode(node, { width: 1000, height: 800 });
+    expect(viewport.k).toBe(1);
+    expect(viewport.x + (node.position.x + node.width / 2) * viewport.k).toBe(500);
+    expect(viewport.y + (node.position.y + node.height / 2) * viewport.k).toBe(400);
+});
+
+test("focus leaves room for fixed-size toolbar and prompt panel above the bottom dock", () => {
+    const node = { ...makeNode("focus"), width: 900, height: 1100 };
+    const size = { width: 1200, height: 900 };
+    const frame = { above: 58, below: 240, bottomInset: 82 };
+    const viewport = focusViewportForNode(node, size, frame);
+    const top = viewport.y + node.position.y * viewport.k;
+    expect(top - frame.above).toBeGreaterThanOrEqual(0);
+    expect(top + node.height * viewport.k + frame.below).toBeLessThanOrEqual(size.height - frame.bottomInset);
+    expect(viewport.x + (node.position.x + node.width / 2) * viewport.k).toBe(size.width / 2);
+    expect(viewport.k).toBeLessThan(focusViewportForNode(node, size).k);
+});
 
 test("connection culling keeps crossing and backwards curves with offscreen endpoints", () => {
     const view = { left: 0, top: 0, right: 500, bottom: 500 };

@@ -1,7 +1,8 @@
-import { memo, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
 import { App, Empty, Input, Popconfirm, Select, Tag } from "antd";
-import { Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
-import { motion } from "motion/react";
+import { Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, LayoutGrid, ListChecks, Music2, Plus, Rows3, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
@@ -145,6 +146,8 @@ function nodePreviewText(node: CanvasNodeData) {
     return getNodeDefinition(node.type)?.title || node.type;
 }
 
+type NodeHoverPreview = { nodeId: string; left: number; top: number; width: number; height: number };
+
 export function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, theme }: { nodes: CanvasNodeData[]; selectedNodeIds: Set<string>; onFocusNode: (nodeId: string) => void; onPreviewNode: (nodeId: string) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
     const [keyword, setKeyword] = useState("");
@@ -152,11 +155,89 @@ export function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewN
     const [selectMode, setSelectMode] = useState(false);
     const [checked, setChecked] = useState<Set<string>>(new Set());
     const [exporting, setExporting] = useState(false);
+    const nodeViewMode = useCanvasSidePanelStore((state) => state.nodeViewMode);
+    const setNodeViewMode = useCanvasSidePanelStore((state) => state.setNodeViewMode);
+    const panelOpen = useCanvasSidePanelStore((state) => state.panelOpen);
+    const [preview, setPreview] = useState<NodeHoverPreview | null>(null);
+    const reducedMotion = useReducedMotion();
+    const panelRef = useRef<HTMLDivElement>(null);
+    const previewTimerRef = useRef<number | null>(null);
+    const focusTimerRef = useRef<number | null>(null);
+
+    const cancelPreviewTimer = useCallback(() => {
+        if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
+        previewTimerRef.current = null;
+    }, []);
+    const clearPreview = useCallback(() => {
+        cancelPreviewTimer();
+        setPreview(null);
+    }, [cancelPreviewTimer]);
+    const cancelFocusTimer = useCallback(() => {
+        if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current);
+        focusTimerRef.current = null;
+    }, []);
+
+    useEffect(() => {
+        clearPreview();
+        cancelFocusTimer();
+        return () => {
+            cancelPreviewTimer();
+            cancelFocusTimer();
+        };
+    }, [panelOpen, keyword, typeFilter, nodeViewMode, selectMode, clearPreview, cancelPreviewTimer, cancelFocusTimer]);
+
+    useEffect(() => {
+        window.addEventListener("resize", clearPreview);
+        return () => window.removeEventListener("resize", clearPreview);
+    }, [clearPreview]);
+
+    const showPreview = (node: CanvasNodeData) => {
+        cancelPreviewTimer();
+        if (selectMode || !panelOpen || !node.metadata?.content || ![CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio, CanvasNodeType.Text].includes(node.type as CanvasNodeType)) {
+            setPreview(null);
+            return;
+        }
+        const rect = panelRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const width = Math.min(480, window.innerWidth - rect.right - 24);
+        if (width < 160 || window.innerHeight < 240) {
+            setPreview(null);
+            return;
+        }
+        const height = Math.min(560, window.innerHeight - 32);
+        const position = { nodeId: node.id, left: rect.right + 12, top: Math.max(16, (window.innerHeight - height) / 2), width, height };
+        previewTimerRef.current = window.setTimeout(() => {
+            previewTimerRef.current = null;
+            setPreview(position);
+        }, 160);
+    };
+    const hidePreview = () => {
+        cancelPreviewTimer();
+        previewTimerRef.current = window.setTimeout(() => {
+            previewTimerRef.current = null;
+            setPreview(null);
+        }, 120);
+    };
+    const activateNode = (node: CanvasNodeData) => {
+        cancelFocusTimer();
+        clearPreview();
+        if (selectMode) {
+            toggleChecked(node.id);
+        } else if (preview?.nodeId === node.id) {
+            focusTimerRef.current = window.setTimeout(() => {
+                focusTimerRef.current = null;
+                onFocusNode(node.id);
+            }, 180);
+        } else {
+            onFocusNode(node.id);
+        }
+    };
 
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
         return nodes.filter((node) => (typeFilter === "all" || node.type === typeFilter) && (!query || [node.title, node.metadata?.content, node.metadata?.prompt].filter(Boolean).join(" ").toLowerCase().includes(query)));
     }, [nodes, keyword, typeFilter]);
+    const previewNode = panelOpen && !selectMode ? filtered.find((node) => node.id === preview?.nodeId) : undefined;
 
     const exitSelect = () => {
         setSelectMode(false);
@@ -190,50 +271,74 @@ export function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewN
     };
 
     return (
-        <div className="flex h-full flex-col">
+        <div ref={panelRef} className="flex h-full flex-col" onMouseLeave={hidePreview} onKeyDown={(event) => { if (event.key === "Escape") clearPreview(); }}>
             <div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
-                <span className="text-xs font-medium opacity-60">图层 / 节点</span>
-                {filtered.length ? <span className="text-xs opacity-35">{filtered.length}</span> : null}
+                <span className="min-w-0 truncate text-xs font-medium opacity-60">图层 / 节点</span>
+                {filtered.length ? <span className="shrink-0 text-xs opacity-35">{filtered.length}</span> : null}
                 <button
                     type="button"
                     onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
-                    className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium opacity-70 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+                    className="ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-1 text-xs font-medium opacity-70 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
                     style={selectMode ? { color: theme.toolbar.activeText, opacity: 1 } : undefined}
                 >
                     <ListChecks className="size-3.5" />
                     {selectMode ? "取消" : "选择"}
                 </button>
-                {selectMode ? null : <Select size="small" variant="borderless" className="w-20" value={typeFilter} onChange={setTypeFilter} options={NODE_FILTER_OPTIONS} />}
+                <button
+                    type="button"
+                    onClick={() => setNodeViewMode(nodeViewMode === "grid" ? "list" : "grid")}
+                    className="grid size-7 shrink-0 place-items-center rounded-md opacity-70 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+                    title={nodeViewMode === "grid" ? "切换为列表" : "切换为网格"}
+                    aria-label={nodeViewMode === "grid" ? "切换为列表" : "切换为网格"}
+                    aria-pressed={nodeViewMode === "grid"}
+                >
+                    {nodeViewMode === "grid" ? <Rows3 className="size-3.5" /> : <LayoutGrid className="size-3.5" />}
+                </button>
             </div>
-            <div className="px-3 pb-2.5">
-                <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索节点" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+            <div className="flex items-center gap-1 px-3 pb-2.5">
+                <Input size="small" className="min-w-0 flex-1" allowClear prefix={<Search className="size-3.5" style={{ color: theme.node.faint }} />} placeholder="搜索节点" aria-label="搜索节点" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+                {selectMode ? null : <Select size="small" variant="borderless" className="w-20 shrink-0" aria-label="筛选节点类型" value={typeFilter} onChange={setTypeFilter} options={NODE_FILTER_OPTIONS} />}
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" onScroll={clearPreview}>
                 {filtered.length ? (
-                    <div className="space-y-1.5">
+                    <div className={nodeViewMode === "grid" ? "grid gap-2 px-1 [grid-template-columns:repeat(auto-fill,minmax(88px,1fr))]" : "space-y-1.5"}>
                         {filtered.map((node) => {
                             const Icon = NODE_TYPE_ICON[node.type] || FileText;
                             const isImage = node.type === CanvasNodeType.Image && node.metadata?.content;
                             const isChecked = checked.has(node.id);
                             const active = selectMode ? isChecked : selectedNodeIds.has(node.id);
                             return (
-                                <div key={node.id} className={cn("group flex w-full items-center rounded-lg transition", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")} style={active ? { background: theme.toolbar.activeBg } : undefined}>
-                                    <button type="button" onClick={() => (selectMode ? toggleChecked(node.id) : onFocusNode(node.id))} className="flex min-w-0 flex-1 items-center gap-3 px-2 py-2 text-left" title={selectMode ? undefined : "定位到节点"}>
-                                        {selectMode ? <CheckMark checked={isChecked} theme={theme} /> : null}
-                                        <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-md">
+                                <div
+                                    key={node.id}
+                                    className={cn("group relative flex min-w-0 rounded-lg transition", nodeViewMode === "grid" ? "flex-col p-1" : "w-full items-center", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")}
+                                    style={active ? { background: theme.toolbar.activeBg } : undefined}
+                                    onMouseEnter={() => showPreview(node)}
+                                    onMouseLeave={hidePreview}
+                                >
+                                    <button
+                                        type="button"
+                                        onClick={() => activateNode(node)}
+                                        onFocus={() => showPreview(node)}
+                                        onBlur={hidePreview}
+                                        className={cn("flex min-w-0 flex-1 text-left", nodeViewMode === "grid" ? "w-full flex-col" : "items-center gap-3 px-2 py-2")}
+                                        title={selectMode ? undefined : "定位到节点"}
+                                        aria-pressed={active}
+                                    >
+                                        {selectMode ? <span className={nodeViewMode === "grid" ? "absolute left-2 top-2 z-10" : undefined}><CheckMark checked={isChecked} theme={theme} /></span> : null}
+                                        <span className={cn("grid shrink-0 place-items-center overflow-hidden rounded-md", nodeViewMode === "grid" ? "aspect-square w-full" : "size-10")}>
                                             {isImage ? <DeferredImage src={node.metadata!.thumbnailUrl || node.metadata!.content!} alt={node.title} className="size-full object-cover" fetchPriority="low" /> : <Icon className="size-5 opacity-60" />}
                                         </span>
-                                        <span className="min-w-0 flex-1 space-y-0.5">
-                                            <span className="block truncate text-sm font-medium leading-snug">{node.title || getNodeDefinition(node.type)?.title || "未命名节点"}</span>
-                                            <span className="block truncate text-xs leading-snug opacity-50">{nodePreviewText(node)}</span>
+                                        <span className={cn("min-w-0", nodeViewMode === "grid" ? "mt-1 w-full pr-7" : "flex-1 space-y-0.5")}>
+                                            <span className={cn("block truncate font-medium leading-snug", nodeViewMode === "grid" ? "text-xs" : "text-sm")}>{node.title || getNodeDefinition(node.type)?.title || "未命名节点"}</span>
+                                            {nodeViewMode === "list" ? <span className="block truncate text-xs leading-snug opacity-50">{nodePreviewText(node)}</span> : null}
                                         </span>
-                                        {node.metadata?.status && node.metadata.status !== "idle" ? <span className="size-1.5 shrink-0 rounded-full" style={{ background: STATUS_COLOR[node.metadata.status] || "transparent" }} /> : null}
+                                        {node.metadata?.status && node.metadata.status !== "idle" ? <span className={cn("size-1.5 shrink-0 rounded-full", nodeViewMode === "grid" && "absolute right-2 top-2")} style={{ background: STATUS_COLOR[node.metadata.status] || "transparent" }} /> : null}
                                     </button>
                                     {selectMode || !isImage ? null : (
                                         <button
                                             type="button"
-                                            onClick={() => onPreviewNode(node.id)}
-                                            className="mr-1.5 grid size-7 shrink-0 place-items-center rounded-md opacity-55 transition hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+                                            onClick={() => { cancelFocusTimer(); clearPreview(); onPreviewNode(node.id); }}
+                                            className={cn("grid size-7 shrink-0 place-items-center rounded-md opacity-55 transition hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10", nodeViewMode === "grid" ? "absolute bottom-0 right-0" : "mr-1.5")}
                                             aria-label="放大预览"
                                             title="放大预览"
                                         >
@@ -265,6 +370,38 @@ export function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewN
                         导出选中
                     </button>
                 </div>
+            ) : null}
+            {typeof document !== "undefined" ? createPortal(
+                <AnimatePresence>
+                    {preview && previewNode ? (
+                        <motion.div
+                            key={previewNode.id}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: reducedMotion ? 0 : 0.12 }}
+                            className="fixed z-[70] flex flex-col gap-3 overflow-hidden rounded-lg border p-3"
+                            style={{ left: preview.left, top: preview.top, width: preview.width, maxHeight: preview.height, background: theme.node.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                            onMouseEnter={cancelPreviewTimer}
+                            onMouseLeave={hidePreview}
+                            onFocusCapture={cancelPreviewTimer}
+                            onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hidePreview(); }}
+                            data-canvas-no-zoom
+                            aria-label={`${previewNode.title || "节点"}详情预览`}
+                        >
+                            <div className="min-w-0">
+                                <div className="truncate text-sm font-medium">{previewNode.title || "未命名节点"}</div>
+                                <div className="mt-0.5 text-xs" style={{ color: theme.node.muted }}>{getNodeDefinition(previewNode.type)?.title || previewNode.type}</div>
+                            </div>
+                            {previewNode.type === CanvasNodeType.Image ? <DeferredImage src={previewNode.metadata!.thumbnailUrl || previewNode.metadata!.content!} alt={previewNode.title} className="w-full min-h-0 object-contain" style={{ maxHeight: preview.height - 150 }} fetchPriority="low" /> : null}
+                            {previewNode.type === CanvasNodeType.Video ? <video src={previewNode.metadata!.content} controls playsInline preload="metadata" className="w-full min-h-0 object-contain" style={{ maxHeight: preview.height - 150 }} aria-label={previewNode.title || "视频预览"} /> : null}
+                            {previewNode.type === CanvasNodeType.Audio ? <audio src={previewNode.metadata!.content} controls preload="metadata" className="w-full" aria-label={previewNode.title || "音频预览"} /> : null}
+                            {previewNode.type === CanvasNodeType.Text ? <div className="min-h-0 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed">{previewNode.metadata!.content}</div> : null}
+                            {previewNode.type !== CanvasNodeType.Text && previewNode.metadata?.prompt ? <div className="max-h-20 shrink-0 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed" style={{ color: theme.node.muted }}>{previewNode.metadata.prompt}</div> : null}
+                        </motion.div>
+                    ) : null}
+                </AnimatePresence>,
+                document.body,
             ) : null}
         </div>
     );

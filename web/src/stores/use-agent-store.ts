@@ -39,6 +39,7 @@ type AgentStore = {
     connected: boolean;
     enabled: boolean;
     silentConnect: boolean;
+    fragmentBootstrap: boolean;
     prompt: string;
     attachments: AgentAttachment[];
     sending: boolean;
@@ -85,6 +86,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     connected: false,
     enabled: false,
     silentConnect: false,
+    fragmentBootstrap: false,
     prompt: "",
     attachments: [],
     sending: false,
@@ -131,14 +133,14 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         localStorage.setItem("canvas-agent-url", endpoint);
         localStorage.setItem("canvas-agent-token", token);
         // 只设 enabled=true，由 LocalAgentPanel 的 useEffect 统一负责开 SSE
-        set({ url: endpoint, token, enabled: true, silentConnect: silent, activity: "连接中", connectError: "" });
+        set({ url: endpoint, token, enabled: true, silentConnect: silent, fragmentBootstrap: false, activity: "连接中", connectError: "" });
     },
     disconnectAgent: (patch = {}) => {
         agentSource?.close();
         agentSource = null;
         if (connectTimer) clearTimeout(connectTimer);
         connectTimer = null;
-        set({ enabled: false, connected: false, silentConnect: false, activity: "离线", ...patch });
+        set({ enabled: false, connected: false, silentConnect: false, fragmentBootstrap: false, activity: "离线", ...patch });
     },
     addMessage: (item) => set((state) => ({ messages: [...state.messages.slice(-120), item] })),
     addEventLog: (item) => set((state) => ({ eventLogs: [...state.eventLogs.slice(-160), item] })),
@@ -154,6 +156,7 @@ export function resetAgentSessionState() {
         connected: false,
         enabled: false,
         silentConnect: false,
+        fragmentBootstrap: false,
         prompt: "",
         attachments: [],
         sending: false,

@@ -60,6 +60,7 @@ export type UserGenerationPreferences = {
   count: string;
   canvasImageCount: string;
   snapDimensionToStep: boolean;
+  autoFocusOnSelect: boolean;
 };
 
 export function normalizeUserSystemPrompt(value: unknown) {
@@ -212,6 +213,7 @@ export function normalizeUserGenerationPreferences(
       source.snapDimensionToStep,
       "尺寸对齐偏好",
     ),
+    autoFocusOnSelect: booleanPreference(source.autoFocusOnSelect ?? false, "节点自动居中偏好"),
   };
 }
 

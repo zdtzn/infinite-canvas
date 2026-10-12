@@ -240,7 +240,7 @@ function isDragonImageHost(baseUrl: string) {
 
 export function supportsGeminiImageSize(model: string) {
     const value = model.toLowerCase().split("::").at(-1)?.trim() || "";
-    return value.includes("gemini-3") || value.includes("3.1") || value.includes("3-pro");
+    return /^gemini-3(?:[.-]|$)/.test(value);
 }
 
 export function validateImageRequest(capabilities: ImageModelCapabilities, request: { resolution: string; imageQuality?: string; imageOutputFormat?: string; size: string; background: string; referenceCount: number; count?: number }) {

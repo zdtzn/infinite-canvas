@@ -1,4 +1,4 @@
-import { App, Button, Form, Input, Modal, Progress, Select, Tabs, Tooltip } from "antd";
+import { App, Button, Form, Input, Modal, Progress, Select, Switch, Tabs, Tooltip } from "antd";
 import { ArrowDown, ArrowUp, Cloud, Pencil, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -16,18 +16,7 @@ import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
 import { ImperialModePreferences } from "@/features/cultivation/imperial-mode-preferences";
 import { useUserStore } from "@/stores/use-user-store";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import {
-    createModelChannel,
-    modelOptionsFromChannels,
-    normalizeModelOptionValue,
-    selectableModelsByCapability,
-    useConfigStore,
-    type AiConfig,
-    type ApiCallFormat,
-    type ConfigTabKey,
-    type ModelCapability,
-    type ModelChannel,
-} from "@/stores/use-config-store";
+import { createModelChannel, modelOptionsFromChannels, pickPlatformModel, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -284,6 +273,31 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                             onBlur={(event) => updateConfig("canvasImageCount", normalizeImageCount(event.target.value))}
                                         />
                                     </Form.Item>
+                                    <Form.Item label="默认图片分辨率" extra="新建生图和配置节点使用，具体模型会按支持的分辨率调整。" className="mb-4">
+                                        <Select
+                                            value={config.quality}
+                                            options={[
+                                                { value: "low", label: "1K" },
+                                                { value: "medium", label: "2K" },
+                                                { value: "high", label: "4K" },
+                                            ]}
+                                            onChange={(value) => updateConfig("quality", value)}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label="默认视频分辨率" extra="新建视频和配置节点使用，单个节点仍可单独覆盖。" className="mb-4">
+                                        <Select
+                                            value={config.vquality.replace(/p$/i, "")}
+                                            options={[
+                                                { value: "480", label: "480p" },
+                                                { value: "720", label: "720p" },
+                                                { value: "1080", label: "1080p" },
+                                            ]}
+                                            onChange={(value) => updateConfig("vquality", value)}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label="选中节点时自动居中" className="mb-4">
+                                        <Switch checked={config.autoFocusOnSelect} onChange={(value) => updateConfig("autoFocusOnSelect", value)} />
+                                    </Form.Item>
                                     <Form.Item label="默认音频声音" className="mb-4">
                                         <Select value={config.audioVoice} options={audioVoiceOptions} onChange={(value) => updateConfig("audioVoice", value)} />
                                     </Form.Item>
@@ -416,10 +430,10 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
     };
     return {
         ...next,
-        imageModel: pickDefaultModel(next, "image", config.imageModel),
-        videoModel: pickDefaultModel(next, "video", config.videoModel),
-        textModel: pickDefaultModel(next, "text", config.textModel),
-        audioModel: pickDefaultModel(next, "audio", config.audioModel),
+        imageModel: pickPlatformModel(next, "image", config.imageModel),
+        videoModel: pickPlatformModel(next, "video", config.videoModel),
+        textModel: pickPlatformModel(next, "text", config.textModel),
+        audioModel: pickPlatformModel(next, "audio", config.audioModel),
     };
 }
 
@@ -430,12 +444,6 @@ function nextChannelSortOrder(channels: ModelChannel[]) {
             return Math.max(highest, Number.isInteger(sortOrder) && sortOrder >= 0 ? sortOrder : index);
         }, -1) + 1
     );
-}
-
-function pickDefaultModel(config: AiConfig, capability: ModelCapability, current: string) {
-    const options = selectableModelsByCapability(config, capability);
-    const normalized = normalizeModelOptionValue(current, config.channels);
-    return options.includes(normalized) ? normalized : options[0] || "";
 }
 
 function normalizeImageCount(value: string) {

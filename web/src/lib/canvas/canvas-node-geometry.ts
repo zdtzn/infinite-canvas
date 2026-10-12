@@ -1,4 +1,18 @@
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ViewportTransform } from "@/types/canvas";
+
+export type FocusFrame = { above?: number; below?: number; bottomInset?: number };
+
+// 浮层使用屏幕像素，节点尺寸使用画布坐标；缩放时分别计算所需空间。
+export function focusViewportForNode(node: Pick<CanvasNodeData, "position" | "width" | "height">, size: { width: number; height: number }, frame: FocusFrame = {}): ViewportTransform {
+    const above = Math.max(0, frame.above ?? 0);
+    const below = Math.max(0, frame.below ?? 0);
+    const usableHeight = Math.max(0, size.height - (frame.bottomInset ?? 0));
+    const verticalRoom = usableHeight * 0.92 - above - below;
+    const k = Math.min(Math.max(Math.min((size.width * 0.6) / node.width, (size.height * 0.6) / node.height, verticalRoom / node.height), 0.05), 1);
+    const slack = usableHeight - above - node.height * k - below;
+    const top = slack * (below > 0 && slack > 0 ? 0.75 : 0.5) + above;
+    return { x: size.width / 2 - (node.position.x + node.width / 2) * k, y: top - node.position.y * k, k };
+}
 
 export function translateDraggedNodes(nodes: CanvasNodeData[], initial: ReadonlyMap<string, { x: number; y: number }>, dx: number, dy: number) {
     return nodes.map((node) => {

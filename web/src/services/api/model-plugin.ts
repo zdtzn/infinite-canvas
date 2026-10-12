@@ -183,7 +183,7 @@ export const PLUGIN_VARIABLES: PluginVariable[] = [
     {
         name: "params",
         type: "object",
-        desc: "生成参数：生图 {size,resolution,quality,outputFormat,count}（size 为实际像素尺寸，quality 为模型质量参数，outputFormat 为 png/jpeg/webp）、视频 {seconds,size,resolution,ratio,generateAudio,watermark}、音频 {voice,format,speed,instructions}",
+        desc: "生成参数：生图 {size,ratio,resolution,quality,outputFormat,count}（size 为实际像素尺寸，ratio 为比例，resolution 为 low/medium/high 分辨率档位，quality 为模型质量参数，outputFormat 为 png/jpeg/webp）、视频 {seconds,size,resolution,ratio,generateAudio,watermark}、音频 {voice,format,speed,instructions}",
     },
     { name: "model", type: "string", desc: "模型名称（不含渠道前缀）" },
     { name: "baseUrl", type: "string", desc: "渠道接口地址（原样，未拼 /v1）" },
@@ -224,7 +224,7 @@ export const PLUGIN_TEMPLATES: Record<ModelCapability, PluginTemplate[]> = {
         {
             label: "OpenAI 规范",
             script: `// 生图 / 改图：两者接口不同，用 images 是否为空来区分。
-// 可用：prompt、images(dataURL[])、params{size,resolution,quality,outputFormat,count}、model、baseUrl、apiKey
+// 可用：prompt、images(dataURL[])、params{size,ratio,resolution,quality,outputFormat,count}、model、baseUrl、apiKey
 const imageMime = params.outputFormat === "jpeg" ? "image/jpeg" : params.outputFormat === "webp" ? "image/webp" : "image/png";
 if (images.length === 0) {
   // 文生图：/images/generations（JSON）
@@ -245,8 +245,9 @@ form.set("n", String(params.count));
 form.set("response_format", "b64_json");
 if (params.quality) form.set("quality", params.quality);
 if (params.outputFormat) form.set("output_format", params.outputFormat);
+if (params.size) form.set("size", params.size);
 for (const dataUrl of images) {
-  form.append("image", await (await fetch(dataUrl)).blob(), "ref.png");
+  form.append(images.length > 1 ? "image[]" : "image", await (await fetch(dataUrl)).blob(), "ref.png");
 }
 const edited = await request({
   method: "post",
@@ -259,17 +260,19 @@ return (edited.data || []).map((item) => item.b64_json ? \`data:\${imageMime};ba
         {
             label: "Gemini 规范",
             script: `// Gemini 文生图 / 图生图：都走 generateContent，参考图放进 parts 的 inline_data。
-// 可用：prompt、images(dataURL[])、model、baseUrl、apiKey
+// 可用：prompt、images(dataURL[])、params{ratio,resolution}、model、baseUrl、apiKey
 const parts = [{ text: prompt }];
 for (const dataUrl of images) {
   const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/);
   if (match) parts.push({ inline_data: { mime_type: match[1], data: match[2] } });
 }
+const imageSize = { low: "1K", medium: "2K", high: "4K" }[params.resolution];
+const imageConfig = { ...(/^\\d+:\\d+$/.test(params.ratio || "") ? { aspectRatio: params.ratio } : {}), ...(imageSize ? { imageSize } : {}) };
 const data = await request({
   method: "post",
   url: \`\${baseUrl}/v1beta/models/\${model}:generateContent\`,
   headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-  data: { contents: [{ role: "user", parts }], generationConfig: { responseModalities: ["IMAGE"] } },
+  data: { contents: [{ role: "user", parts }], generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...(Object.keys(imageConfig).length ? { imageConfig } : {}) } },
 });
 return (data.candidates || [])
   .flatMap((c) => c.content?.parts || [])
@@ -292,13 +295,16 @@ form.set("model", model);
 form.set("prompt", prompt);
 form.set("seconds", String(params.seconds));
 if (params.size) form.set("size", params.size);
+if (params.ratio) form.set("ratio", params.ratio);
 form.set("resolution_name", params.resolution);
 form.set("mode", params.mode);
 form.set("generate_audio", String(params.generateAudio));
 form.set("watermark", String(params.watermark));
 for (const [index, dataUrl] of images.entries()) {
   const field = params.mode === "frames" ? (index === 0 ? "first_frame" : "last_frame") : "image[]";
-  form.append(field, await (await fetch(dataUrl)).blob(), "ref.png");
+  const file = await (await fetch(dataUrl)).blob();
+  form.append(field, file, "ref.png");
+  form.append("images", file, "ref.png");
 }
 for (const file of videos) form.append("video[]", file);
 for (const file of audios) form.append("audio[]", file);

@@ -290,7 +290,7 @@ function isSadaiImage2Model(baseUrl: string, model: string) {
 }
 
 function supportsGeminiImageSize(model: string) {
-  return model.includes("gemini-3") || model.includes("3.1") || model.includes("3-pro");
+  return /^gemini-3(?:[.-]|$)/.test(model);
 }
 
 function isLegacyGptImageModel(model: string) {
