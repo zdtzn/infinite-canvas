@@ -17,7 +17,8 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     const { isDouEmperor, isImperialMode } = useImperialMode();
     const { pathname } = useLocation();
     const visualEffectsReady = useDeferredMount(650);
-    const showSplashCursor = visualEffectsReady && !pathname.startsWith("/color-alchemy");
+    // Keep the full-screen fluid simulation out of interactive workspaces.
+    const showSplashCursor = visualEffectsReady && pathname === "/";
 
     useEffect(() => warmupRoutesWhenIdle(pathname), [pathname]);
 
