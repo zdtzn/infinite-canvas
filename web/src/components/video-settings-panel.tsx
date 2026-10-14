@@ -16,6 +16,7 @@ import {
 } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
+import { normalizeVideoResolution, normalizeVideoSize } from "@/lib/video-request-size";
 
 const resolutionOptions = [
     { value: "720", label: "720p" },
@@ -54,7 +55,7 @@ export function VideoSettingsPanel({ config, selectedModel, onConfigChange, them
     }
 
     const seconds = config.videoSeconds || "6";
-    const size = normalizeVideoSizeValue(config.size);
+    const size = normalizeVideoSizeValue(config.size, config.vquality);
     const dimensions = readSizeDimensions(size);
     const resolution = normalizeVideoResolutionValue(config.vquality);
     const updateDimension = (key: "width" | "height", value: number | null) => {
@@ -222,16 +223,12 @@ export function videoSecondsLabel(value: string) {
     return `${value || "6"}s`;
 }
 
-export function normalizeVideoSizeValue(value: string) {
-    if (value === "auto") return "auto";
-    if (/^\d+x\d+$/.test(value || "")) return value;
-    return ["9:16", "2:3", "3:4"].includes(value) ? "720x1280" : "1280x720";
+export function normalizeVideoSizeValue(value: string, resolution = "720") {
+    return normalizeVideoSize(value, resolution) || "auto";
 }
 
 export function normalizeVideoResolutionValue(value: string) {
-    if (value === "480p" || value === "low") return "480";
-    if (value === "720p" || value === "auto" || value === "high" || value === "medium") return "720";
-    return value.replace(/p$/i, "") || "720";
+    return normalizeVideoResolution(value).replace(/p$/i, "");
 }
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {

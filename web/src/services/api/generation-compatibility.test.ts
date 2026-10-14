@@ -109,3 +109,58 @@ test("Gemini image script template receives ratio and resolution independently f
     await requestGeneration(selected, "fixture");
     expect(request.mock.calls[0][0].data.generationConfig).toEqual({ responseModalities: ["TEXT", "IMAGE"], imageConfig: { aspectRatio: "16:9", imageSize: "2K" } });
 });
+
+test("native Gemini generation and editing accept every advertised panoramic ratio", async () => {
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: png.split(",")[1] } }] } }] } });
+    mocks.push(post);
+    const selected = config({ name: "gemini-3.1-flash-image-preview", capability: "image" }, "gemini");
+    for (const size of ["4:1", "1:4", "8:1", "1:8"]) {
+        for (const edit of [false, true]) {
+            await (edit ? requestEdit({ ...selected, size }, "fixture", [reference]) : requestGeneration({ ...selected, size }, "fixture"));
+            expect(post.mock.calls.at(-1)![1].generationConfig.imageConfig.aspectRatio).toBe(size);
+        }
+    }
+});
+
+test("Gemini image templates accept panoramic ratios without applying OpenAI pixel limits", async () => {
+    const request = spyOn(axios, "request").mockResolvedValue({ data: { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: png.split(",")[1] } }] } }] } });
+    mocks.push(request);
+    const selected = config({ name: "gemini-3.1-flash-image-preview", capability: "image", script: PLUGIN_TEMPLATES.image[1].script }, "gemini");
+    for (const size of ["4:1", "1:4", "8:1", "1:8"]) {
+        for (const edit of [false, true]) {
+            await (edit ? requestEdit({ ...selected, size }, "fixture", [reference]) : requestGeneration({ ...selected, size }, "fixture"));
+            expect(request.mock.calls.at(-1)![0].data.generationConfig.imageConfig.aspectRatio).toBe(size);
+        }
+    }
+    const openai = config({ name: "gpt-image-2", capability: "image", imageCapabilities: { mode: "custom", sizes: ["4:1"] } });
+    await expect(requestGeneration({ ...openai, size: "4:1" }, "fixture")).rejects.toThrow("宽高比不能超过 3:1");
+});
+
+test("Gemini templates normalize custom pixels like native calls and keep resolution automatic", async () => {
+    const response = { data: { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: png.split(",")[1] } }] } }] } };
+    const post = spyOn(axios, "post").mockResolvedValue(response);
+    const request = spyOn(axios, "request").mockResolvedValue(response);
+    mocks.push(post, request);
+    for (const script of [undefined, PLUGIN_TEMPLATES.image[1].script]) {
+        const selected = config({ name: "vendor-alias", capability: "image", script, imageCapabilities: { mode: "custom", customSize: true, resolutions: ["auto", "medium"], sizes: ["1:1", "2:3"] } }, "gemini");
+        for (const quality of ["medium", "auto"]) {
+            for (const edit of [false, true]) {
+                const configured = { ...selected, size: "1024x1536", quality };
+                await (edit ? requestEdit(configured, "fixture", [reference]) : requestGeneration(configured, "fixture"));
+                const payload = script ? request.mock.calls.at(-1)![0].data : post.mock.calls.at(-1)![1];
+                expect(payload.generationConfig.imageConfig).toEqual({ aspectRatio: "2:3", ...(quality === "medium" ? { imageSize: "2K" } : {}) });
+            }
+        }
+    }
+});
+
+test("OpenAI scripts retain their raw pixel ratio and calculated size parameters", async () => {
+    const request = spyOn(axios, "request").mockResolvedValue({ data: {} });
+    mocks.push(request);
+    const selected = config({ name: "gpt-image-2", capability: "image", script: `await http.post("/fixture", params); return ["${png}"];` });
+    for (const edit of [false, true]) {
+        const configured = { ...selected, size: "1024x1536" };
+        await (edit ? requestEdit(configured, "fixture", [reference]) : requestGeneration(configured, "fixture"));
+        expect(request.mock.calls.at(-1)![0].data).toMatchObject({ size: "1024x1536", ratio: "1024x1536", resolution: "medium" });
+    }
+});

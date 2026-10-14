@@ -143,7 +143,6 @@ const RESOLUTION_ALIASES: Record<string, string> = {
     "2k": "medium",
     "4k": "high",
 };
-const IMAGE_MAX_RATIO = 3;
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 const GEMINI_IMAGE_SIZE_BY_RESOLUTION: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
 
@@ -206,23 +205,20 @@ function parseRatioValue(value: string) {
     return { width: w, height: h };
 }
 
-function parseImageRatio(value: string) {
-    const ratio = parseRatioValue(value);
-    if (Math.max(ratio.width, ratio.height) / Math.min(ratio.width, ratio.height) > IMAGE_MAX_RATIO) throw new Error("图像宽高比不能超过 3:1，请调整尺寸");
-    return ratio;
-}
-
 function parseImageDimensions(value: string) {
     const match = value.match(/^(\d+)x(\d+)$/i);
     if (!match) return null;
     return { width: Number(match[1]), height: Number(match[2]) };
 }
 
-function resolveGeminiImageConfig(config: ManagedAiConfig) {
-    const value = normalizeImageSizeSelection(config.size);
+function resolveGeminiAspectRatio(size: string) {
+    const value = normalizeImageSizeSelection(size);
     const dimensions = parseImageDimensions(value);
-    const ratio = dimensions ? `${dimensions.width}:${dimensions.height}` : value;
-    const aspectRatio = closestGeminiAspectRatio(ratio);
+    return closestGeminiAspectRatio(dimensions ? `${dimensions.width}:${dimensions.height}` : value);
+}
+
+function resolveGeminiImageConfig(config: ManagedAiConfig) {
+    const aspectRatio = resolveGeminiAspectRatio(config.size);
     const capabilities = deriveImageModelCapabilities(config.model, config.apiFormat, config.baseUrl, config.imageCapabilities);
     const imageSize = capabilities.resolutions.includes(config.quality) ? GEMINI_IMAGE_SIZE_BY_RESOLUTION[config.quality] : undefined;
     const image = { ...(aspectRatio ? { aspectRatio } : {}), ...(imageSize ? { imageSize } : {}) };
@@ -230,7 +226,7 @@ function resolveGeminiImageConfig(config: ManagedAiConfig) {
 }
 
 function closestGeminiAspectRatio(value: string) {
-    const ratio = parseImageRatio(value);
+    const ratio = parseRatioValue(value);
     const target = ratio.width / ratio.height;
     return GEMINI_SUPPORTED_RATIOS.reduce((best, item) => {
         const current = parseRatioValue(item);
@@ -725,7 +721,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         const resolution = effectiveConfig.quality === "auto" ? undefined : normalizeResolution(effectiveConfig.quality);
         const imageQuality = resolveSupportedImageQuality(requestConfig);
         const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size, requestConfig.model);
+        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size, requestConfig.model, requestConfig.apiFormat === "gemini" ? 8 : 3);
         const background = normalizeBackground(effectiveConfig.background);
         try {
             const result = await runModelPlugin({
@@ -734,7 +730,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, prompt),
                 images: [],
-                params: { size: requestSize, ratio: effectiveConfig.size, resolution, quality: imageQuality, outputFormat: imageOutputFormat, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, ratio: requestConfig.apiFormat === "gemini" ? resolveGeminiAspectRatio(effectiveConfig.size) : effectiveConfig.size, resolution, quality: imageQuality, outputFormat: imageOutputFormat, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -803,7 +799,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         const resolution = effectiveConfig.quality === "auto" ? undefined : normalizeResolution(effectiveConfig.quality);
         const imageQuality = resolveSupportedImageQuality(requestConfig);
         const imageOutputFormat = resolveSupportedImageOutputFormat(requestConfig);
-        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size, requestConfig.model);
+        const requestSize = resolveImageRequestSize(resolution, effectiveConfig.size, requestConfig.model, requestConfig.apiFormat === "gemini" ? 8 : 3);
         const background = normalizeBackground(effectiveConfig.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -813,7 +809,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, requestPrompt),
                 images: refs,
-                params: { size: requestSize, ratio: effectiveConfig.size, resolution, quality: imageQuality, outputFormat: imageOutputFormat, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, ratio: requestConfig.apiFormat === "gemini" ? resolveGeminiAspectRatio(effectiveConfig.size) : effectiveConfig.size, resolution, quality: imageQuality, outputFormat: imageOutputFormat, count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));

@@ -4,6 +4,7 @@ import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { CANVAS_NODE_TOOLBAR_ABOVE_THRESHOLD } from "@/lib/canvas/canvas-node-geometry";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { preloadRoute } from "@/lib/route-loaders";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -136,7 +137,7 @@ export function CanvasNodeHoverToolbar({
     const activeNode = node;
     const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
     const nodeTop = viewport.y + node.position.y * viewport.k;
-    const showAbove = nodeTop > 84;
+    const showAbove = nodeTop > CANVAS_NODE_TOOLBAR_ABOVE_THRESHOLD;
     const top = showAbove ? nodeTop - 14 : viewport.y + (node.position.y + node.height) * viewport.k + 14;
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;

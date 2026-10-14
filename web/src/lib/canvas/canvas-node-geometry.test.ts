@@ -39,6 +39,17 @@ test("focus leaves room for fixed-size toolbar and prompt panel above the bottom
     expect(viewport.k).toBeLessThan(focusViewportForNode(node, size).k);
 });
 
+test("focus in a short viewport keeps the toolbar above the open prompt panel", () => {
+    const node = { ...makeNode("focus"), width: 500, height: 500 };
+    const size = { width: 1000, height: 500 };
+    const frame = { above: 58, below: 250, bottomInset: 76 };
+    const viewport = focusViewportForNode(node, size, frame);
+    const top = viewport.y + node.position.y * viewport.k;
+    expect(top).toBeGreaterThan(84);
+    expect(top - frame.above).toBeGreaterThanOrEqual(0);
+    expect(top + node.height * viewport.k + frame.below).toBeLessThanOrEqual(size.height - frame.bottomInset);
+});
+
 test("connection culling keeps crossing and backwards curves with offscreen endpoints", () => {
     const view = { left: 0, top: 0, right: 500, bottom: 500 };
     const from = { ...makeNode("from"), position: { x: -300, y: 100 } };

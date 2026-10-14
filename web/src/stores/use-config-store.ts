@@ -191,6 +191,7 @@ type ConfigStore = {
     config: AiConfig;
     webdav: WebdavSyncConfig;
     snapDimensionToStep: boolean;
+    generationPreferencesRevision: number;
     isConfigOpen: boolean;
     configTab: ConfigTabKey;
     shouldPromptContinue: boolean;
@@ -277,6 +278,7 @@ export const useConfigStore = create<ConfigStore>()(
             config: defaultConfig,
             webdav: defaultWebdavSyncConfig,
             snapDimensionToStep: true,
+            generationPreferencesRevision: 0,
             isConfigOpen: false,
             configTab: "channels",
             shouldPromptContinue: false,
@@ -284,7 +286,7 @@ export const useConfigStore = create<ConfigStore>()(
                 set((state) => {
                     const config = { ...state.config, [key]: value };
                     if (generationPreferenceConfigKeys.has(key)) persistLocalGenerationPreferences(config, state.snapDimensionToStep);
-                    return { config };
+                    return { config, generationPreferencesRevision: state.generationPreferencesRevision + Number(generationPreferenceConfigKeys.has(key) && state.config[key] !== value) };
                 }),
             setPlatformChannels: (channels) =>
                 set((state) => {
@@ -341,7 +343,7 @@ export const useConfigStore = create<ConfigStore>()(
             setSnapDimensionToStep: (snapDimensionToStep) =>
                 set((state) => {
                     persistLocalGenerationPreferences(state.config, snapDimensionToStep);
-                    return { snapDimensionToStep };
+                    return { snapDimensionToStep, generationPreferencesRevision: state.generationPreferencesRevision + Number(state.snapDimensionToStep !== snapDimensionToStep) };
                 }),
             clearSensitiveSession: () =>
                 set((state) => ({

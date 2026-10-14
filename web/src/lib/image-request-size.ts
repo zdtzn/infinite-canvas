@@ -30,17 +30,17 @@ type ImageSizeConstraints = {
     maxPixels: number;
 };
 
-export function resolveImageRequestSize(resolution: string | undefined, size: string, model = "") {
+export function resolveImageRequestSize(resolution: string | undefined, size: string, model = "", maxRatio = MAX_RATIO) {
     const value = normalizeImageSizeSelection(size);
     if (isLegacyGptImageModel(model)) return resolveLegacyGptImageSize(value);
     const constraints = isGptImage2Model(model) ? { minPixels: GPT_IMAGE_2_MIN_PIXELS, maxPixels: GPT_IMAGE_2_MAX_PIXELS } : { minPixels: DEFAULT_MIN_PIXELS, maxPixels: DEFAULT_MAX_PIXELS };
     const dimensions = parseImageDimensions(value);
     if (dimensions) {
-        validateImageSize(dimensions.width, dimensions.height, constraints);
+        validateImageSize(dimensions.width, dimensions.height, constraints, maxRatio);
         return `${dimensions.width}x${dimensions.height}`;
     }
     if (!value.includes(":")) throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
-    return fitImageRatio(normalizeResolution(resolution), value, constraints);
+    return fitImageRatio(normalizeResolution(resolution), value, constraints, maxRatio);
 }
 
 function resolveLegacyGptImageSize(value: string) {
@@ -57,8 +57,8 @@ function resolveLegacyGptImageSize(value: string) {
     return fixedSize;
 }
 
-function fitImageRatio(resolution: string, ratio: string, constraints: ImageSizeConstraints) {
-    const parsedRatio = parseImageRatio(ratio);
+function fitImageRatio(resolution: string, ratio: string, constraints: ImageSizeConstraints, maxRatio: number) {
+    const parsedRatio = parseImageRatio(ratio, maxRatio);
     const divisor = greatestCommonDivisor(parsedRatio.width, parsedRatio.height);
     const ratioWidth = parsedRatio.width / divisor;
     const ratioHeight = parsedRatio.height / divisor;
@@ -71,7 +71,7 @@ function fitImageRatio(resolution: string, ratio: string, constraints: ImageSize
     const scale = Math.min(maxScale, Math.max(minScale, desiredScale));
     const width = ratioWidth * DIMENSION_STEP * scale;
     const height = ratioHeight * DIMENSION_STEP * scale;
-    validateImageSize(width, height, constraints);
+    validateImageSize(width, height, constraints, maxRatio);
     return `${width}x${height}`;
 }
 
@@ -90,21 +90,21 @@ function parseImageDimensions(value: string) {
     return { width: Number(match[1]), height: Number(match[2]) };
 }
 
-function parseImageRatio(value: string) {
+function parseImageRatio(value: string, maxRatio = MAX_RATIO) {
     const match = value.match(/^(\d+)\s*:\s*(\d+)$/);
     if (!match) throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
     const width = Number(match[1]);
     const height = Number(match[2]);
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) throw new Error("图像比例必须是正整数，例如 9:16");
-    if (Math.max(width, height) / Math.min(width, height) > MAX_RATIO) throw new Error("图像宽高比不能超过 3:1，请调整尺寸");
+    if (Math.max(width, height) / Math.min(width, height) > maxRatio) throw new Error(`图像宽高比不能超过 ${maxRatio}:1，请调整尺寸`);
     return { width, height };
 }
 
-function validateImageSize(width: number, height: number, constraints: ImageSizeConstraints) {
+function validateImageSize(width: number, height: number, constraints: ImageSizeConstraints, maxRatio = MAX_RATIO) {
     if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error("图像尺寸必须是正整数，例如 1024x1024");
     if (width % DIMENSION_STEP !== 0 || height % DIMENSION_STEP !== 0) throw new Error("图像尺寸的宽高必须是 16 的倍数，请调整尺寸");
     if (Math.max(width, height) > MAX_EDGE) throw new Error("图像尺寸最长边不能超过 3840px，请调整尺寸");
-    if (Math.max(width, height) / Math.min(width, height) > MAX_RATIO) throw new Error("图像宽高比不能超过 3:1，请调整尺寸");
+    if (Math.max(width, height) / Math.min(width, height) > maxRatio) throw new Error(`图像宽高比不能超过 ${maxRatio}:1，请调整尺寸`);
     const pixels = width * height;
     if (pixels < constraints.minPixels || pixels > constraints.maxPixels) throw new Error(`图像总像素需在 ${constraints.minPixels} 到 ${constraints.maxPixels} 之间，请调整尺寸`);
 }

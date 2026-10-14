@@ -41,10 +41,12 @@ export function AgentPanel() {
     return (
         <motion.div
             className="relative z-[70] flex h-full shrink-0"
+            inert={!panelOpen}
+            aria-hidden={!panelOpen}
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: panelOpen ? width + 1 : 0, opacity: panelOpen ? 1 : 0 }}
             transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
-            style={{ overflow: "clip", pointerEvents: panelClosing ? "none" : undefined }}
+            style={{ overflow: "clip", pointerEvents: !panelOpen || panelClosing ? "none" : undefined }}
         >
             <motion.aside
                 className="relative flex h-full shrink-0 flex-col border-l"

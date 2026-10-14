@@ -7,6 +7,7 @@ import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { archiveDeferredServerJob, cancelServerJob, fetchServerJob, retryServerJob, waitForServerJob, type ServerJob, type ServerJobImage, type ServerJobProgress } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { resolveImageUrl } from "@/services/image-storage";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
@@ -591,9 +592,15 @@ function hydrateRuntime() {
     const version = hydrationVersion;
     const initialSelectionVersion = selectionVersion;
     hydrationPromise = loadPersistedImageGenerationJobs(runtimeStore, ownerUserId)
-        .then((saved) => {
+        .then(async (saved) => {
             if (version !== hydrationVersion || ownerUserId !== runtimeOwnerUserId || !saved) return;
-            const restored = saved.jobs.filter((job) => !jobs.some((item) => item.id === job.id));
+            const restored = await Promise.all(saved.jobs.filter((job) => !jobs.some((item) => item.id === job.id)).map(async (job) => PUBLIC_MODE ? job : {
+                ...job,
+                references: await Promise.all(job.references.map(restoreStoredImage)),
+                snapshot: job.snapshot ? { ...job.snapshot, references: await Promise.all(job.snapshot.references.map(restoreStoredImage)) } : undefined,
+                results: await Promise.all(job.results.map(async (result) => result.image ? { ...result, image: await restoreStoredImage(result.image) } : result)),
+            }));
+            if (version !== hydrationVersion || ownerUserId !== runtimeOwnerUserId) return;
             jobs = [...restored, ...jobs];
             if (initialSelectionVersion === selectionVersion) selectedJobId = saved.selectedJobId;
             trimCompletedJobs();
@@ -609,6 +616,11 @@ function hydrateRuntime() {
             }
         })
         .catch(() => undefined);
+}
+
+async function restoreStoredImage<T extends { dataUrl: string; storageKey?: string; thumbnailKey?: string; thumbnailUrl?: string }>(image: T): Promise<T> {
+    const dataUrl = await resolveImageUrl(image.storageKey, image.dataUrl);
+    return { ...image, dataUrl, thumbnailUrl: await resolveImageUrl(image.thumbnailKey, image.thumbnailUrl || dataUrl) };
 }
 
 async function persistCurrentJob() {

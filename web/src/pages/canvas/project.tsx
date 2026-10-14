@@ -78,7 +78,7 @@ import {
     normalizeConnection,
     snapNodesIntoGroup,
 } from "@/lib/canvas/canvas-node-geometry";
-import { copyInboundConnections } from "@/lib/canvas/canvas-clipboard";
+import { copyInboundConnections, remapCanvasNodeReferences } from "@/lib/canvas/canvas-clipboard";
 import {
     audioExtension,
     assertCanvasVideoTaskOwner,
@@ -1030,9 +1030,9 @@ function InfiniteCanvasPage() {
         const { left: viewLeft, top: viewTop, right: viewRight, bottom: viewBottom } = visibleBounds;
         return nodes.filter(
             (node) =>
-                !node.metadata?.hidden && !isHiddenBatchChild(node, nodes, collapsingBatchIds, nodeById) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom,
+                !node.metadata?.hidden && !isHiddenBatchChild(node, nodes, collapsingBatchIds, nodeById) && (node.id === dialogNodeId || (node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom)),
         );
-    }, [collapsingBatchIds, nodes, nodeById, visibleBounds]);
+    }, [collapsingBatchIds, dialogNodeId, nodes, nodeById, visibleBounds]);
 
     // 工具条跟随「单选节点」:点击/新建/框选/键盘选中任一节点都会显示,不再仅靠精确点中触发。
     // 多选时不显示;拖拽中由下方 isNodeDragging 守卫隐藏。
@@ -1406,8 +1406,9 @@ function InfiniteCanvasPage() {
 
         const pastedNodes = nextNodes.map((node) => {
             const groupId = node.metadata?.groupId;
-            if (!groupId) return node;
-            return { ...node, metadata: { ...node.metadata, groupId: idMap.get(groupId) } };
+            const composerContent = node.metadata?.composerContent;
+            if (!groupId && composerContent === undefined) return node;
+            return { ...node, metadata: { ...node.metadata, groupId: groupId ? idMap.get(groupId) : undefined, composerContent: composerContent === undefined ? undefined : remapCanvasNodeReferences(composerContent, idMap) } };
         });
 
         const nextConnections = copyInboundConnections(clipboard.connections, idMap, new Set(nodesRef.current.map((node) => node.id)));

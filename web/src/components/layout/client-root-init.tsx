@@ -62,7 +62,7 @@ export function ClientRootInit() {
         let active = true;
         const initialConfigState = useConfigStore.getState();
         const initialSystemPrompt = initialConfigState.config.systemPrompt;
-        const initialGenerationPreferences = generationPreferencesFromConfig(initialConfigState.config, initialConfigState.snapDimensionToStep);
+        const initialGenerationPreferencesRevision = initialConfigState.generationPreferencesRevision;
         syncedUserPreferencesUser.current = user.id;
         setUserPreferencesReadyUser("");
 
@@ -74,7 +74,8 @@ export function ClientRootInit() {
                 const currentGenerationPreferences = generationPreferencesFromConfig(currentConfigState.config, currentConfigState.snapDimensionToStep);
                 const ownedBy = readSystemPromptOwner();
                 const systemPromptChangedDuringSync = currentSystemPrompt !== initialSystemPrompt;
-                const generationPreferencesChangedDuringSync = !generationPreferencesEqual(currentGenerationPreferences, initialGenerationPreferences);
+                // Channel hydration also changes default models; only explicit preference edits take priority over the cloud.
+                const generationPreferencesChangedDuringSync = currentConfigState.generationPreferencesRevision !== initialGenerationPreferencesRevision;
                 let syncedSystemPrompt = currentSystemPrompt;
                 let syncedGenerationPreferences = currentGenerationPreferences;
                 let shouldSaveSystemPrompt = systemPromptChangedDuringSync;
