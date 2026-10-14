@@ -1,13 +1,15 @@
 import { expect, test } from "bun:test";
 
 import { generationFailedMessages, generationFailureFeedback, generationFailureKind, generationFailureText } from "./generation-messages";
+import { friendlyErrorMessage } from "@/lib/friendly-error";
 
 test("uses a dedicated system vocabulary for upstream and network failures", () => {
     const feedback = generationFailureFeedback("上游服务返回 503，当前渠道暂时不可用", { seed: "system" });
 
     expect(feedback.kind).toBe("system");
     expect(generationFailedMessages.system.map((item) => item.title)).toContain(feedback.title);
-    expect(feedback.description).toContain("本次生成未完成");
+    expect(feedback.description).toContain("再试");
+    expect(feedback.description).not.toMatch(/系统|上游|自动重新提交/);
 });
 
 test("uses the Dou Emperor vocabulary regardless of the upstream failure type", () => {
@@ -15,7 +17,7 @@ test("uses the Dou Emperor vocabulary regardless of the upstream failure type", 
 
     expect(feedback.kind).toBe("imperial");
     expect(generationFailedMessages.imperial.map((item) => item.title)).toContain(feedback.title);
-    expect(feedback.description).not.toMatch(/仍在|正在/);
+    expect(feedback.description).toContain("确认结果");
 });
 
 test("policy rejection gives actionable feedback even for emperor users", () => {
@@ -33,10 +35,25 @@ test("keeps ordinary prompt and parameter failures in the common vocabulary", ()
     expect(generationFailureText(first)).not.toContain("生成失败");
 });
 
-test("keeps a short support reference without replacing the world-building message", () => {
+test("preserves a support reference for details without exposing it in the default feedback", () => {
     const feedback = generationFailureFeedback("上游暂时不可用（请求编号 1234567890abcdef）", { seed: "support" });
 
     expect(feedback.kind).toBe("system");
     expect(feedback.reference).toBe("请求编号 1234567890ab");
-    expect(generationFailureText(feedback)).toContain("请求编号 1234567890ab");
+    expect(generationFailureText(feedback)).not.toContain("请求编号");
+});
+
+test("already translated failures keep actionable guidance and uncertain results are not called refunded", () => {
+    expect(generationFailureFeedback("提示词或参考图触发了渠道内容限制，请调整内容后重试").description).toContain("调整");
+    expect(generationFailureFeedback("当前渠道不支持这组生成参数，请检查模型、尺寸、质量和参考图设置").description).toContain("尺寸");
+    expect(generationFailureFeedback("身份验证失败，请重新登录或检查渠道 API Key").description).not.toMatch(/凭证|API|认证|登录/);
+    expect(generationFailureFeedback("insufficient quota").description).toContain("额度");
+    expect(generationFailureFeedback(friendlyErrorMessage("insufficient quota")).description).toContain("额度");
+    expect(generationFailureFeedback(friendlyErrorMessage("gateway timeout")).description).toContain("确认结果");
+    expect(generationFailureFeedback(friendlyErrorMessage("", 504)).description).toContain("确认结果");
+    for (const error of ["timeout", "上游渠道等待生成超时（524），请求可能仍在处理并产生费用", "无法连接当前 AI 渠道，请检查渠道地址和网络后重试"]) {
+        const feedback = generationFailureFeedback(error);
+        expect(feedback.description).toContain("确认结果");
+        expect(feedback.description).not.toMatch(/未扣费|已退|自动重新提交/);
+    }
 });

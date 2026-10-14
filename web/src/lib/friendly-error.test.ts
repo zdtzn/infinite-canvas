@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { extractApiErrorMessage, friendlyErrorMessage } from "./friendly-error";
 
 test("turns common upstream failures into actionable Chinese messages", () => {
+    assert.equal(friendlyErrorMessage("Upstream request failed（任务编号 fixture12345）"), "当前渠道或模型暂时不可用，请刷新模型列表或更换渠道后重试（任务编号 fixture12345）");
     assert.equal(friendlyErrorMessage("Invalid request"), "当前渠道不支持这组生成参数，请检查模型、尺寸、质量和参考图设置");
     assert.equal(friendlyErrorMessage("Upstream service temporarily unavailable"), "当前渠道或模型暂时不可用，请刷新模型列表或更换渠道后重试");
     assert.equal(friendlyErrorMessage("request timed out"), "上游生成等待超时，任务记录已保留，可在任务中心重试");

@@ -77,16 +77,24 @@ export function generationFailureFeedback(error: unknown, options: GenerationFai
     const messages = generationFailedMessages[kind];
     const message = messages[messageIndex(messages.length, options.seed)] || messages[0];
     const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-    const description = /policy|safety|moderation|审核|违规|安全策略/i.test(detail)
-        ? "本次生成未完成：内容被服务方拒绝。请调整提示词或参考图后再试。"
-        : /api.?key|401|403|认证|权限|身份验证/i.test(detail)
-          ? "本次生成未完成。请检查模型配置、凭证与使用权限。"
-          : "本次生成未完成，请查看错误详情后再试；系统不会自动重新提交。";
+    const description = /policy|safety|moderation|审核|违规|安全策略|内容限制/i.test(detail)
+        ? "内容未通过审核，请调整提示词或参考图。"
+        : /quota|余额|额度|配额/i.test(detail)
+          ? "可用额度不足，请查看余额或换一个模型。"
+          : /api.?key|401|403|认证|权限|身份验证/i.test(detail)
+            ? "这个模型暂时无法使用，请换一个模型或联系管理员。"
+            : /timeout|timed out|超时|仍在处理|可能仍在|网络|连接|network|connection|failed to fetch/i.test(detail)
+              ? "暂时没能确认结果，请先查看任务进度，避免重复生成。"
+              : /rate limit|too many requests|频繁|限流/i.test(detail)
+                ? "当前请求较多，稍等一会儿再试。"
+                : /invalid.request|bad request|unsupported.parameter|参数|不支持|尺寸/i.test(detail)
+                  ? "请调整尺寸或参考图，也可以换一个模型再试。"
+                  : "可以稍后再试，或换一个模型。";
     return { kind, title: message.title, description, reference: failureSupportReference(error) };
 }
 
 export function generationFailureText(feedback: GenerationFailureFeedback) {
-    return `${feedback.title} ${feedback.description}${feedback.reference ? ` ${feedback.reference}` : ""}`;
+    return `${feedback.title} ${feedback.description}`;
 }
 
 export function GenerationFailureToast({ feedback, supplementary }: { feedback: GenerationFailureFeedback; supplementary?: string }) {
@@ -94,7 +102,6 @@ export function GenerationFailureToast({ feedback, supplementary }: { feedback: 
         <span className="flex max-w-[300px] flex-col text-left leading-5">
             <strong className="font-medium">{feedback.title}</strong>
             <span className="text-xs opacity-80">{feedback.description}</span>
-            {feedback.reference ? <span className="text-xs opacity-60">{feedback.reference}</span> : null}
             {supplementary ? <span className="text-xs opacity-70">{supplementary}</span> : null}
         </span>
     );

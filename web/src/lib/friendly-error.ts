@@ -18,13 +18,16 @@ export function friendlyErrorMessage(value: unknown, status?: number) {
     if (/(?:no|without) available compatible accounts?|no compatible accounts?/i.test(raw)) {
         return withSupportReference("当前渠道暂时没有可用的模型账号，请稍后重试或切换其他渠道");
     }
-    if (/(upstream service temporarily unavailable|service unavailable|bad gateway|gateway timeout|overloaded)/i.test(raw) || [502, 503, 504, 524].includes(status || 0)) {
-        return withSupportReference("当前渠道或模型暂时不可用，请刷新模型列表或更换渠道后重试");
-    }
-    if (/(timeout|timed out|deadline exceeded)/i.test(raw)) {
+    if (/(timeout|timed out|deadline exceeded)/i.test(raw) || status === 504) {
         return withSupportReference("上游生成等待超时，任务记录已保留，可在任务中心重试");
     }
-    if (/(rate limit|too many requests|quota exceeded|insufficient quota|请求过于频繁|访问过于频繁|频率限制|限流)/i.test(raw) || status === 429) {
+    if (/(upstream request failed|upstream service temporarily unavailable|service unavailable|bad gateway|overloaded)/i.test(raw) || [502, 503, 524].includes(status || 0)) {
+        return withSupportReference("当前渠道或模型暂时不可用，请刷新模型列表或更换渠道后重试");
+    }
+    if (/(quota exceeded|insufficient quota|余额不足|额度不足|配额.*(?:不足|耗尽))/i.test(raw)) {
+        return withSupportReference("当前模型可用额度不足，请更换模型或联系管理员");
+    }
+    if (/(rate limit|too many requests|请求过于频繁|访问过于频繁|频率限制|限流)/i.test(raw) || status === 429) {
         return withSupportReference("上游请求过于频繁，请稍后重试");
     }
     if (/(invalid api key|incorrect api key|authentication failed|unauthorized)/i.test(raw)) {
