@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 
 const source = readFileSync(new URL("./auth-gate.tsx", import.meta.url), "utf8");
 const parsed = ts.createSourceFile("auth-gate.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -51,6 +52,7 @@ function runStartup(publicMode = true) {
         setRegistrationEnabled: record("registration"),
         setPasswordResetEnabled: record("password-reset"),
         setError: record("error"),
+        userFacingErrorMessage,
     };
     const compiled = ts.transpileModule(`const run = ${startupEffect};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
     const cleanup = new Function(...Object.keys(bindings), `${compiled}\nreturn run();`)(...Object.values(bindings)) as (() => void) | undefined;
@@ -100,7 +102,7 @@ test("failed or cancelled auth cannot activate a preloaded route", async () => {
     const failed = runStartup();
     failed.rejectAuth(new Error("offline"));
     await settle();
-    expect(failed.events).toContainEqual(["error", "offline"]);
+    expect(failed.events).toContainEqual(["error", "暂时无法连接，请检查网络后再试"]);
     expect(failed.events.some(([name]) => name === "activate")).toBe(false);
     const cancelled = runStartup();
     cancelled.cleanup?.();

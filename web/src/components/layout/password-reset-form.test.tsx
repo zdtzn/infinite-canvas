@@ -14,7 +14,7 @@ test("forgot-password entry is available even when registration is closed, only 
 
 test("reset form presents email, OTP, new password confirmation and an explicit login return", () => {
     const html = renderToStaticMarkup(createElement(PasswordResetForm, { onBack: () => {}, onSuccess: () => {} }));
-    for (const text of ["注册邮箱", "邮箱验证码", "新密码", "确认新密码", "获取验证码", "重置密码", "返回登录", "未绑定邮箱的旧账号请联系管理员"]) expect(html).toContain(text);
+    for (const text of ["注册邮箱", "邮箱验证码", "新密码", "确认新密码", "获取验证码", "重置密码", "返回登录", "未绑定邮箱的账号请联系管理员"]) expect(html).toContain(text);
     expect(html).toContain('autoComplete="one-time-code"');
     expect(html.match(/autoComplete="new-password"/g)).toHaveLength(2);
     expect(html).not.toContain('autoComplete="current-password"');

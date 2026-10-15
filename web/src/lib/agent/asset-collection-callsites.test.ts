@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import { assetSaveMessage, type AssetSyncStatus } from "@/stores/asset-sync-queue";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 
 // Exercise actual collection callbacks with deferred storage/upload I/O; no app mount,
 // network calls, real uploads, or changes to the concurrently developed asset store.
@@ -58,7 +59,7 @@ function fixture() {
     };
     const operation = { ownerId: "a", signal: new AbortController().signal, isCurrent: () => !invalidated };
     const context = {
-        Error, console: { error: () => {} }, assetSaveMessage,
+        Error, console: { error: () => {} }, assetSaveMessage, userFacingErrorMessage,
         addAsset: store.addAsset, useAssetStore: { getState: () => store },
         useUserStore: { getState: () => account, subscribe: (fn: (state: typeof account, previous: typeof account) => void) => { subscribers.add(fn); return () => subscribers.delete(fn); } },
         message: {
@@ -121,7 +122,10 @@ for (const entry of cases) {
             } else {
                 expect(f.notices.filter((notice) => notice.type !== "error")).toHaveLength(0);
                 if (entry.label.startsWith("agent-")) expect(result.error).toBeInstanceOf(Error);
-                else if (outcome === "storage-failure") expect(f.notices).toHaveLength(1);
+                else {
+                    expect(result.error).toBeUndefined();
+                    if (outcome === "storage-failure") expect(f.notices).toEqual([{ type: "error", content: "本机保存失败" }]);
+                }
             }
             expect(f.subscribers.size).toBe(0);
         });
