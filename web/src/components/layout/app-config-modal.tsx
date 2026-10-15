@@ -14,6 +14,7 @@ import { ConfigMembers } from "@/components/layout/config-members";
 import { ConfigLocalStorage } from "@/components/layout/config-local-storage";
 import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
 import { ImperialModePreferences } from "@/features/cultivation/imperial-mode-preferences";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { useUserStore } from "@/stores/use-user-store";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { createModelChannel, modelOptionsFromChannels, pickPlatformModel, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
@@ -154,7 +155,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             await testWebdavConnection(webdav);
             message.success("WebDAV 连接可用");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "WebDAV 连接测试失败");
+            message.error(userFacingErrorMessage(error, "暂时无法连接 WebDAV，请检查地址和账号后再试"));
         } finally {
             setTestingWebdav(false);
         }
@@ -188,8 +189,9 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             updateWebdavConfig("lastSyncedAt", result.syncedAt);
             message.success(`同步完成：${result.projects} 个画布，${result.assets} 个资产，${result.imageLogs + result.videoLogs} 条记录，本次上传 ${result.uploadedFiles} 个文件 ${formatBytes(result.uploadedBytes)}`);
         } catch (error) {
-            setWebdavSyncStatus(error instanceof Error ? error.message : "WebDAV 同步失败");
-            message.error(error instanceof Error ? error.message : "WebDAV 同步失败");
+            const feedback = userFacingErrorMessage(error, "同步未完成，请检查连接后再试");
+            setWebdavSyncStatus(feedback);
+            message.error(feedback);
         } finally {
             setSyncingWebdav(false);
         }

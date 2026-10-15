@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
 import { promptImageCandidates, PromptCover } from "@/components/prompts/prompt-cover";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { assetSaveMessage } from "@/stores/asset-sync-queue";
 import { fetchSourcePrompts, refreshSource, type Prompt } from "@/services/api/prompts";
@@ -25,7 +26,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
             try {
                 setItems(force ? await refreshSourceItems(source.id) : await fetchSourcePrompts(source.id));
             } catch (error) {
-                message.error(error instanceof Error ? error.message : "拉取提示词失败");
+                message.error(userFacingErrorMessage(error, "暂时无法读取提示词，请稍后刷新"));
             } finally {
                 setLoading(false);
             }
@@ -44,7 +45,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
             const status = await useAssetStore.getState().waitForAssetLocalSave(id);
             message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: assetSaveMessage(status) });
         } catch (error) {
-            message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
+            message.error(userFacingErrorMessage(error, "暂时未能收入藏卷阁，请重试"));
         }
     };
 
@@ -62,7 +63,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                             <div className="mt-0.5 text-xs font-normal text-stone-500">共 {items.length} 条</div>
                         </div>
                         <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={loading} onClick={() => void load(true)}>
-                            立即拉取
+                            刷新
                         </Button>
                     </div>
                 }

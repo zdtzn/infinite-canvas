@@ -5,6 +5,7 @@ import { Suspense, useState } from "react";
 
 import { APP_VERSION, DOCS_URL, REPOSITORY_URL } from "@/constant/env";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { changePersonalPassword, downloadAccountExport, logoutAccess, revokeAllServerSessions } from "@/services/server-api";
@@ -103,7 +104,7 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
             window.setTimeout(() => URL.revokeObjectURL(url), 0);
             message.success("账户数据已导出");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "账户数据导出失败");
+            message.error(userFacingErrorMessage(error, "账户数据暂时未能导出，请稍后再试"));
         }
     };
     const accountMenuItems: MenuProps["items"] = PUBLIC_MODE
@@ -227,7 +228,7 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
                         setPasswordOpen(false);
                         message.success("个人密码已更新，其他设备已退出");
                     } catch (error) {
-                        message.error(error instanceof Error ? error.message : "密码更新失败");
+                        message.error(userFacingErrorMessage(error, "暂时无法确认密码是否更新，请稍后重新登录查看"));
                     } finally {
                         setPasswordSaving(false);
                     }

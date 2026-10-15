@@ -98,8 +98,8 @@ export function isActiveVideoTask(log: VideoGenerationLog) {
     return ["queued", "submitting", "polling"].includes(videoTaskPhase(log));
 }
 export function videoTaskLabel(log: VideoGenerationLog) {
-    if (log.phase === "submitting" && log.trackingStopped) return "等待任务编号（已停止查询）";
-    return { queued: log.task ? "等待查询" : "排队中", submitting: "提交中", polling: "生成中", paused: "已停止查询", unknown: "创建结果未确认", succeeded: "已完成", failed: "生成失败", canceled: "已移出队列" }[videoTaskPhase(log)];
+    if (log.phase === "submitting" && log.trackingStopped) return "正在确认结果";
+    return { queued: log.task ? "等待查看" : "排队中", submitting: "提交中", polling: "生成中", paused: "已停止查看", unknown: "结果待确认", succeeded: "已完成", failed: "生成失败", canceled: "已移出队列" }[videoTaskPhase(log)];
 }
 
 export function videoDownloadName(log: VideoGenerationLog) {

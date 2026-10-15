@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useUserStore } from "@/stores/use-user-store";
 import { createDouQiLifeSession, deleteDouQiLifeSave, deleteDouQiLifeSession, fetchDouQiLifeSavePreview, fetchDouQiLifeSaves, fetchDouQiLifeSession, fetchDouQiLifeSessions, renameDouQiLifeSave, restoreDouQiLifeSave, saveDouQiLifeSession, sendDouQiLifeTurn, type DouQiLifeCharacterInput, type DouQiLifeDetail, type DouQiLifeMessage, type DouQiLifeSave, type DouQiLifeSavePreview, type DouQiLifeSession, type DouQiLifeSuggestion } from "@/services/dou-qi-life-api";
 import { readLifePreference, writeLifePreference } from "./dou-qi-life-preferences";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 
 type Phase = "loading" | "error" | "welcome" | "create" | "world";
 type Notice = { error: (text: string) => unknown; info: (text: string) => unknown; success: (text: string) => unknown };
@@ -151,7 +152,7 @@ export function useDouQiLife(userId: string, notice: Notice) {
             setSessions((items) => [result.session, ...items]);
             await loadSession(result.session.id);
         } catch (value) {
-            if (current(token)) { setPhase("create"); notice.error(errorText(value, "角色创建失败")); }
+            if (current(token)) { setPhase("create"); notice.error(userFacingErrorMessage(value, "角色创建失败")); }
         } finally { if (creatingRef.current === token) creatingRef.current = null; if (current(token)) setLoading(false); }
     }
 
@@ -189,7 +190,7 @@ export function useDouQiLife(userId: string, notice: Notice) {
                     if (!currentTurn(turn)) return;
                     turn.terminal = true; failMessage(turn, text);
                     if (!draftRef.current) setDraft(action);
-                    notice.error(text);
+                    notice.error(userFacingErrorMessage(text, "这一步暂未完成，请查看进度后再试"));
                 },
             });
         } catch (value) {
@@ -198,7 +199,7 @@ export function useDouQiLife(userId: string, notice: Notice) {
                 failMessage(turn, text);
                 void reconcileInterruptedTurn(sessionId, turn);
                 if (!draftRef.current) setDraft(action);
-                notice.error(text);
+                notice.error(userFacingErrorMessage(text, "这一步暂未完成，请查看进度后再试"));
                 if (!turn.worldId) setError(text);
             }
         } finally {
@@ -238,7 +239,7 @@ export function useDouQiLife(userId: string, notice: Notice) {
             if (!current(token)) return false;
             setSaves((items) => [result.save, ...items.filter((item) => item.id !== result.save.id)]);
             notice.success("这一刻已留存"); return true;
-        } catch (value) { if (current(token)) notice.error(errorText(value, "存档失败")); return false; }
+        } catch (value) { if (current(token)) notice.error(userFacingErrorMessage(value, "存档失败")); return false; }
         finally { if (current(token)) { savingRef.current = false; setSaving(false); } }
     }
 
@@ -268,7 +269,7 @@ export function useDouQiLife(userId: string, notice: Notice) {
                 stopTurn(); selectedId.current = ""; setActiveSession(null); setMessages([]);
                 if (next[0]) await loadSession(next[0].id); else await initialize();
             }
-        } catch (value) { if (current(token)) notice.error(errorText(value, "人生删除失败")); }
+        } catch (value) { if (current(token)) notice.error(userFacingErrorMessage(value, "人生删除失败")); }
     }
 
     async function removeSave(id: string) {
@@ -277,7 +278,7 @@ export function useDouQiLife(userId: string, notice: Notice) {
         try {
             await deleteDouQiLifeSave(id, userId);
             if (current(token)) { setSaves((items) => items.filter((item) => item.id !== id)); closePreview(); }
-        } catch (value) { if (current(token)) notice.error(errorText(value, "存档删除失败")); }
+        } catch (value) { if (current(token)) notice.error(userFacingErrorMessage(value, "存档删除失败")); }
     }
 
     async function openPreview(id: string) {
@@ -303,7 +304,7 @@ export function useDouQiLife(userId: string, notice: Notice) {
             setSaves((items) => items.map((item) => item.id === id ? result.save : item));
             if (request === previewToken.current) setPreview((value) => value?.save.id === id ? { ...value, save: result.save } : value);
             notice.success("存档名称已更新"); return true;
-        } catch (value) { if (current(token)) notice.error(errorText(value, "存档改名失败")); return false; }
+        } catch (value) { if (current(token)) notice.error(userFacingErrorMessage(value, "存档改名失败")); return false; }
     }
 
     const visible = owner.current === userId;

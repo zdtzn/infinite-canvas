@@ -4,6 +4,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { fetchServerResource } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { assertMediaDuration, captureVideoFrame, extractMediaAudio, MEDIA_LIMITS, readLimitedMedia, validateTrim } from "@/lib/canvas/canvas-media-tools";
 
 export type CanvasMediaToolsDialogProps = {
@@ -164,7 +165,10 @@ export function CanvasMediaToolsDialog({ node, open, onClose, onResult }: Canvas
         >
             <div className="flex flex-col gap-4">
                 <p className="m-0 opacity-65">生成新素材，保留原文件。输入上限 200 MiB / 10 分钟，单次处理最多 2 分钟。</p>
-                {error && <Alert type="error" title={error} showIcon />}
+                {error && <>
+                    <Alert type={error === "已取消" ? "info" : "error"} title={userFacingErrorMessage(error, "媒体处理未完成，请检查文件后再试")} showIcon />
+                    {error !== "已取消" && <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">查看详情</summary><p className="mt-2 break-words">{error}</p></details>}
+                </>}
                 {loading && <Spin description="正在读取媒体…" />}
                 {source &&
                     (isVideo ? (

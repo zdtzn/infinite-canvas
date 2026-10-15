@@ -2,6 +2,7 @@ import { Alert, Button, Form, Input } from "antd";
 import { ArrowRight, KeyRound, Mail, ShieldCheck, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { requestRegistrationCode } from "@/services/server-api";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { LoginRealmBackground, RealmWelcomeText } from "@/components/auth/login-realm";
 import { PasswordResetForm } from "./password-reset-form";
 
@@ -26,7 +27,7 @@ export default function LoginFormView({ configured, registrationEnabled, passwor
         setMailError("");
         setMailNotice("");
         try { const result = await requestRegistrationCode(email); setRemaining(result.retryAfter); setMailNotice(result.message); }
-        catch (reason) { setMailError(reason instanceof Error ? reason.message : "验证码发送失败"); }
+        catch (reason) { setMailError(userFacingErrorMessage(reason, "验证码暂时未能发送，请稍后再试")); }
         finally { setSending(false); }
     };
     return (
@@ -79,18 +80,18 @@ export default function LoginFormView({ configured, registrationEnabled, passwor
                             {!register && !configured ? <Form.Item label="设置访问口令" name="accessCode" rules={[{ required: true, min: 8, message: "口令至少 8 位" }]}>
                                 <Input.Password className="login-realm-input" prefix={<KeyRound className="size-4 text-[#777984]" />} autoComplete={configured ? "current-password" : "new-password"} placeholder="至少 8 位" />
                             </Form.Item> : null}
-                            <Form.Item label={register ? "设置密码" : configured ? "个人密码（兼容旧账号）" : "设置个人密码"} name="personalCode" rules={[{ required: true, min: register ? 8 : configured ? 6 : 10, message: `个人密码至少 ${register ? 8 : configured ? 6 : 10} 位` }]}>
+                            <Form.Item label={register ? "设置密码" : configured ? "个人密码" : "设置个人密码"} name="personalCode" rules={[{ required: true, min: register ? 8 : configured ? 6 : 10, message: `个人密码至少 ${register ? 8 : configured ? 6 : 10} 位` }]}>
                                 <Input.Password
                                     className="login-realm-input"
                                     prefix={<ShieldCheck className="size-4 text-[#777984]" />}
                                     autoComplete={register || !configured ? "new-password" : "current-password"}
                                     maxLength={128}
-                                    placeholder={register ? "至少 8 位" : configured ? "用于进入你的个人账号；新密码至少 8 位" : "管理员个人密码至少 10 位"}
+                                    placeholder={register ? "至少 8 位" : configured ? "请输入个人密码" : "管理员个人密码至少 10 位"}
                                 />
                             </Form.Item>
                             {register ? <Form.Item label="确认密码" name="confirmPassword" dependencies={["personalCode"]} rules={[{ required: true, message: "请再次输入密码" }, ({ getFieldValue }) => ({ validator(_, value) { return !value || value === getFieldValue("personalCode") ? Promise.resolve() : Promise.reject(new Error("两次密码不一致")); } })]}><Input.Password className="login-realm-input" autoComplete="new-password" maxLength={128} /></Form.Item> : null}
                             <Button className="login-realm-submit mt-1 !h-12" type="primary" htmlType="submit" block size="large" loading={submitting} icon={submitting ? undefined : <ArrowRight className="size-4" />}>
-                                {submitting ? "正在叩问天地……" : register ? "完成注册" : configured ? "进入画界" : "完成初始化"}
+                                {submitting ? "正在叩问天地……" : register ? "完成注册" : configured ? "进入画界" : "开始使用"}
                             </Button>
                             {configured && passwordResetEnabled && !register ? <Button type="link" block onClick={() => { setResetNotice(""); setResetPassword(true); }}>忘记密码？</Button> : null}
                             {configured && registrationEnabled ? <Button type="link" block onClick={() => { setRegister((value) => !value); setEmail(""); setMailError(""); setMailNotice(""); }}>{register ? "已有账号？返回登录" : "首次使用？邮箱注册"}</Button> : null}

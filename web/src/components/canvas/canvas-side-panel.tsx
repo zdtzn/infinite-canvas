@@ -8,6 +8,7 @@ import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { cn } from "@/lib/utils";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { DeferredImage } from "@/components/ui/deferred-image";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
@@ -507,7 +508,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
             else message.warning("仅支持图片或视频文件");
         } catch (error) {
             console.error(error);
-            message.error(error instanceof Error ? error.message : "添加失败，请重试");
+            message.error(userFacingErrorMessage(error, "素材未能添加，请再试一次"));
         } finally {
             unsubscribe();
             hide();

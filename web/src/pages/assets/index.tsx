@@ -8,6 +8,7 @@ import { App, Button, Drawer, Empty, Form, Image, Input, Modal, Pagination, Sele
 import { useCopyText } from "@/hooks/use-copy-text";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { assetCardImageUrl, assetNeedsThumbnail, assetOriginalImageUrl } from "@/lib/asset-image";
 import { createThumbnailFromImageElement, deleteStoredImages, fitImageWithinEdge, uploadImage } from "@/services/image-storage";
 import { fetchServerAssetLibrary, type ServerAssetLibrary } from "@/services/server-api";
@@ -307,7 +308,7 @@ export default function AssetsPage() {
             setRemoteRefresh((value) => value + 1);
             setIsAssetOpen(false);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "资产保存失败，请重试");
+            message.error(userFacingErrorMessage(error, "素材未能保存，请再试一次"));
         } finally {
             setSavingAsset(false);
         }
@@ -343,7 +344,7 @@ export default function AssetsPage() {
             if ((useUserStore.getState().user?.id || "") !== owner) return;
             saveAs(blob, filename);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "文件下载失败，请重试");
+            message.error(userFacingErrorMessage(error, "文件未能下载，请再试一次"));
         }
     };
 
@@ -361,7 +362,7 @@ export default function AssetsPage() {
             await exportAssets(items, userId, assertCurrent, (count) => setExportProgress(`打包 ${count}/${items.length}`));
             message.success(`已导出 ${items.length} 个资产`);
         } catch (error) {
-            message.error(error instanceof Error ? `导出失败：${error.message}` : "导出失败，请重试");
+            message.error(userFacingErrorMessage(error, "素材未能导出，请再试一次"));
         } finally {
             current = false; unsubscribe(); exportingRef.current = false; setExportProgress(null);
         }
@@ -386,7 +387,7 @@ export default function AssetsPage() {
             message[status === "failed" ? "warning" : "success"](`已导入 ${ids.length} 项，${assetSaveMessage(status)}`);
             setRemoteRefresh(value => value + 1);
         } catch (error) {
-            message.error(error instanceof Error ? `导入失败：${error.message}` : "导入失败，请选择有效的资产压缩包");
+            message.error(userFacingErrorMessage(error, "素材导入失败，请选择有效的素材压缩包"));
         } finally {
             if (assetInputRef.current) assetInputRef.current.value = "";
         }
@@ -402,7 +403,7 @@ export default function AssetsPage() {
             message.success("资产已删除");
             setDeletingAsset(null);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "删除失败，素材已保留，请重试");
+            message.error(userFacingErrorMessage(error, "删除失败，素材已保留，请再试一次"));
         } finally { setDeleteBusy(false); }
     };
 

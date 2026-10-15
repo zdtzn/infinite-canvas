@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Maximize, Minus, MoveHorizontal, Pipette, Plus, ScanSearch, Trash2 } from "lucide-react";
 import { Segmented, Tooltip } from "antd";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 
 import { analyzedColorFromRgb } from "./color-engine";
 import { createColorPreviewWorkerClient, type ColorPreviewWorkerClient } from "./color-preview-worker-client";
@@ -495,7 +496,15 @@ export function ColorPreviewStage({
                     正在更新预览…
                 </div>
             ) : null}
-            {error ? <div className="absolute left-1/2 top-4 -translate-x-1/2 rounded-md border border-red-300/20 bg-red-950/70 px-3 py-2 text-xs text-red-100 backdrop-blur-md">{error}</div> : null}
+            {error ? (
+                <div className="absolute left-1/2 top-4 max-w-[calc(100%_-_2rem)] -translate-x-1/2 rounded-md border border-white/15 bg-black/70 px-3 py-2 text-xs text-white/80 backdrop-blur-md">
+                    <p role="status">{userFacingErrorMessage(error, "暂时无法预览调色结果，请重新选择图片或滤镜")}</p>
+                    <details>
+                        <summary className="min-h-11 cursor-pointer py-3">查看详情</summary>
+                        <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words">{error}</p>
+                    </details>
+                </div>
+            ) : null}
         </div>
     );
 }

@@ -4,6 +4,7 @@ import { ChevronRight, Copy, Download, Group, Image as ImageIcon, LoaderCircle, 
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { formatCanvasGenerationElapsed } from "@/lib/canvas/canvas-generation-time";
 import { IMAGE_RECONNECT_NOTICE, imageGenerationProgressLabel } from "@/lib/image-generation-progress";
 import { canvasImageDisplaySource, canvasImageLoadingAttributes } from "@/lib/canvas/canvas-image-loading";
@@ -604,7 +605,7 @@ function ErrorContent({ node, theme, onRetry, onDelete, isDouEmperor }: Pick<Nod
                     <span>{feedback.description}</span>
                 </div>
             ) : (
-                <div className="text-xs leading-5 text-red-300">{node.metadata?.errorDetails || "未能完成此项创作"}</div>
+                <div className="text-xs leading-5" style={{ color: theme.node.muted }}>{userFacingErrorMessage(node.metadata?.errorDetails, "未能完成这次创作，请稍后再试")}</div>
             )}
             <div className="flex items-center gap-2">
             <button

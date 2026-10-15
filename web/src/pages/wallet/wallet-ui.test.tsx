@@ -204,27 +204,31 @@ test("refund wording includes canceled tasks without inventing an unavailable re
     assert.doesNotMatch(walletLedgerLabels.refund, /失败|取消/);
 });
 
-test("record sources preserve package names and disclose full long task identifiers", () => {
+test("record sources show purpose first and keep identifiers in details", () => {
     assert.deepEqual(walletRecordSource({ ...record, packageId: "juling" }, packages), { label: "聚灵卷" });
     assert.deepEqual(walletRecordSource({ ...record, kind: "admin_grant" }, packages), { label: "管理员发放" });
-    assert.deepEqual(walletRecordSource(record, packages), { label: "任务 12345678…9abc", fullId: record.sourceId });
-    assert.deepEqual(walletRecordSource({ ...record, sourceId: "short-job" }, packages), { label: "任务 short-job", fullId: undefined });
+    assert.deepEqual(walletRecordSource(record, packages), { label: "图片生成", fullId: record.sourceId });
+    assert.deepEqual(walletRecordSource({ ...record, sourceId: "short-job" }, packages), { label: "图片生成", fullId: "short-job" });
+    assert.deepEqual(walletRecordSource({ ...record, packageId: "removed-package" }, packages), { label: "灵卷补充" });
 });
 
 test("long source disclosure uses native keyboard-operable details and selectable full text", () => {
     const html = renderToStaticMarkup(createElement(WalletRecordSource, { item: record, packages }));
     assert.match(html, /<details class="wallet-source-disclosure">/);
     assert.match(html, /<summary>/);
-    assert.match(html, /任务 12345678…9abc/);
-    assert.match(html, /查看完整任务编号/);
+    assert.match(html, /图片生成/);
+    assert.match(html, /查看详情/);
+    assert.doesNotMatch(html.match(/<summary>[\s\S]*?<\/summary>/)?.[0] || "", /12345678|任务编号/);
     assert.match(html, /<code>12345678-abcd-4321-1234-123456789abc<\/code>/);
     assert.doesNotMatch(html, /<details[^>]* open/);
 });
 
-test("short sources do not add a redundant disclosure control", () => {
+test("short task identifiers also stay in closed details", () => {
     const html = renderToStaticMarkup(createElement(WalletRecordSource, { item: { ...record, sourceId: "short-job" }, packages }));
-    assert.match(html, /任务 short-job/);
-    assert.doesNotMatch(html, /<details/);
+    assert.match(html, /图片生成/);
+    assert.match(html, /<code>short-job<\/code>/);
+    assert.doesNotMatch(html.match(/<summary>[\s\S]*?<\/summary>/)?.[0] || "", /short-job/);
+    assert.doesNotMatch(html, /<details[^>]* open/);
 });
 
 test("pagination placeholders never carry another account's wallet data", () => {
@@ -405,7 +409,7 @@ test("the actual page keeps packages and records visible after a background refr
         assert.match(html, /聚灵卷/);
         assert.match(html, /万象卷/);
         assert.match(html, /生图占用/);
-        assert.match(html, /任务 12345678…9abc/);
+        assert.match(html, /图片生成/);
         assert.match(html, /wallet-balance"><strong>39<\/strong>/);
         assert.doesNotMatch(html, /wallet-package-loading/);
     } finally {

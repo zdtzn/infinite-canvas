@@ -1,5 +1,16 @@
 const MAX_ERROR_LENGTH = 300;
 
+export function userFacingErrorMessage(value: unknown, fallback = "操作未完成，请稍后再试") {
+    const message = extractApiErrorMessage(value)
+        .replace(/[（(](?:请求|任务)编号\s*[A-Za-z0-9_-]+[）)]/g, "")
+        .replace(/(?:请求|任务)编号\s*[A-Za-z0-9_-]+/g, "")
+        .replace(/[（(](?:HTTP\s*)?[45]\d{2}[）)]/gi, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!/[\u3400-\u9fff]/.test(message) || /(?:\bHTTP\s*\d{3}|上游服务返回\s*\d{3}|^请求失败$|\bHTML\b|\b(?:Type|Reference|Syntax|Range)Error\b|\bSQLITE_\w+|Unexpected token|\bat\s+\S+\s*\(|^[{\[])/i.test(message)) return fallback;
+    return message.slice(0, MAX_ERROR_LENGTH);
+}
+
 export function friendlyErrorMessage(value: unknown, status?: number) {
     const raw = extractApiErrorMessage(value).replace(/\s+/g, " ").trim().slice(0, MAX_ERROR_LENGTH);
     const normalized = raw.toLowerCase();

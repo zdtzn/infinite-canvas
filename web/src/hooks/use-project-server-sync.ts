@@ -2,6 +2,7 @@ import { App, Button } from "antd";
 import { createElement, useEffect } from "react";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { deleteServerProject, fetchServerProjects, saveServerProject } from "@/services/server-api";
 import { normalizeCanvasProject, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 
@@ -40,7 +41,7 @@ export function useProjectServerSync(userId?: string) {
         const ownsCurrentStore = () => active && useCanvasStore.getState().ownerUserId === userId;
         const showSaveError = (error: unknown) => {
             if (!active) return;
-            message.error(`云端保存失败：${error instanceof Error ? error.message : "请检查网络后重试"}`);
+            message.error(userFacingErrorMessage(error, "画布暂时未能同步，请检查网络"));
         };
 
         const enqueueProjectOperation = (projectId: string, operation: () => Promise<void>) => {
@@ -95,8 +96,8 @@ export function useProjectServerSync(userId?: string) {
             notification.warning({
                 key,
                 duration: 0,
-                message: "检测到画布版本冲突",
-                description: remoteAligned ? `本地修改已保存为“${copy.title}”，原画布已对齐云端版本。` : `本地修改已保存为“${copy.title}”，云端版本将在网络恢复后重新同步。`,
+                message: "画布在其他地方有了更新",
+                description: remoteAligned ? `你的修改已另存为“${copy.title}”，可选择继续编辑副本或查看最新画布。` : `你的修改已另存为“${copy.title}”，网络恢复后会更新原画布。`,
                 actions: createElement(
                     "div",
                     { className: "flex flex-wrap gap-2" },
@@ -135,7 +136,7 @@ export function useProjectServerSync(userId?: string) {
                 const saved = await saveServerProject(copy as unknown as Record<string, unknown>, 0, userId);
                 if (ownsCurrentStore()) useCanvasStore.getState().setProjectServerRevision(copyId, saved.revision);
             } catch (copyError) {
-                if (active) message.error(`冲突副本保存失败：${copyError instanceof Error ? copyError.message : "请稍后重试"}`);
+                if (active) message.error(userFacingErrorMessage(copyError, "画布副本暂时未能同步，请先导出保存"));
                 return;
             }
 

@@ -9,6 +9,7 @@ import { ImagePromptOptimizer } from "@/components/prompts/image-prompt-optimize
 import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { DeferredImage } from "@/components/ui/deferred-image";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { friendlyErrorMessage, userFacingErrorMessage } from "@/lib/friendly-error";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imageGenerationQualityLabel, imageOutputFormatLabel, imageResolutionLabel, imageSizeLabel } from "@/lib/image-setting-labels";
 import { modelOptionLabel, normalizeImageSizeSelection, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -255,7 +256,7 @@ export default function ImagePage() {
             setReferences((value) => limitImageReferenceAdditions(value, nextReferences, activeImageCapabilities.maxReferences).items as ReferenceImage[]);
             if (successMessage) message.success(successMessage.replace("{count}", String(nextReferences.length)));
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "参考图上传失败");
+            message.error(userFacingErrorMessage(error, "参考图上传失败，请稍后再试"));
         }
     };
 
@@ -300,7 +301,7 @@ export default function ImagePage() {
             setPreviewReference(null);
             message.success("参考图已替换");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "参考图替换失败");
+            message.error(userFacingErrorMessage(error, "参考图替换失败，请稍后再试"));
         }
     };
 
@@ -464,7 +465,7 @@ export default function ImagePage() {
             const { saveAs } = await import("file-saver");
             saveAs(blob, `image-${index + 1}.${imageFileExtension(blob.type)}`);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "下载图片失败");
+            message.error(userFacingErrorMessage(error, "下载图片失败，请稍后再试"));
         }
     };
 
@@ -620,7 +621,7 @@ export default function ImagePage() {
             else if (action === "color-alchemy") await sendResultToColorAlchemy(image, index);
             else repeatOriginalGeneration();
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "继续创作失败，请重试");
+            message.error(userFacingErrorMessage(error, "暂时无法继续创作，请稍后再试"));
         }
     };
 
@@ -659,7 +660,7 @@ export default function ImagePage() {
         } catch (error) {
             console.error("Failed to save generated image as an asset", error);
             if (!operation.isCurrent()) return;
-            message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
+            message.error(userFacingErrorMessage(error, "入藏卷阁失败，请稍后再试"));
         } finally {
             savingAssetIdsRef.current.delete(image.id);
             setSavingAssetIds((ids) => ids.filter((id) => id !== image.id));
@@ -1722,10 +1723,11 @@ function LogPanel({
                     <div className="col-span-full flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed border-rose-300 px-6 text-center dark:border-rose-900/70">
                         <Archive className="mb-3 size-7 text-rose-400" />
                         <div className="text-sm font-medium">太古遗迹暂时无法载入</div>
-                        <div className="mt-1 max-w-lg text-xs leading-5 text-stone-500">{error}</div>
+                        <div className="mt-1 max-w-lg text-sm leading-5 text-stone-500">{userFacingErrorMessage(error, "生成记录暂时无法载入，请稍后再试")}</div>
                         <Button className="mt-4" size="small" icon={<RefreshCw className="size-3.5" />} onClick={onRetry}>
                             重新载入
                         </Button>
+                        <details className="mt-2 w-full max-w-lg text-left text-xs text-stone-500"><summary className="min-h-11 cursor-pointer py-3 text-center">查看详情</summary><p className="max-h-32 overflow-y-auto break-words whitespace-pre-wrap leading-5">{friendlyErrorMessage(error)}</p></details>
                     </div>
                 ) : !logs.length ? (
                     <div className="col-span-full flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700">

@@ -11,7 +11,7 @@ export function WalletRecordSource({ item, packages }: { item: WalletLedgerItem;
             <summary>
                 <span>{source.label}</span>
                 <ChevronDown size={14} aria-hidden="true" />
-                <span className="sr-only">，查看完整任务编号</span>
+                <span className="sr-only">，查看详情</span>
             </summary>
             <div className="wallet-source-full">
                 <span>完整任务编号</span>

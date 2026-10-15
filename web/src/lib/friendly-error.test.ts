@@ -1,7 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { extractApiErrorMessage, friendlyErrorMessage } from "./friendly-error";
+import { extractApiErrorMessage, friendlyErrorMessage, userFacingErrorMessage } from "./friendly-error";
+
+test("user-facing errors keep useful guidance and leave support references to details", () => {
+    assert.equal(userFacingErrorMessage(new Error("验证码已过期，请重新获取（请求编号 fixture12345）")), "验证码已过期，请重新获取");
+    assert.equal(userFacingErrorMessage("余额不足，请先充值"), "余额不足，请先充值");
+    assert.equal(userFacingErrorMessage("请先查看生成进度，原任务仍可能生成和计费（任务编号 fixture12345）"), "请先查看生成进度，原任务仍可能生成和计费");
+    assert.equal(userFacingErrorMessage({ error: { message: "文件过大，请选择较小的文件" } }), "文件过大，请选择较小的文件");
+    assert.equal(userFacingErrorMessage("生成等待超时（524），仍可能产生费用，请先确认结果"), "生成等待超时，仍可能产生费用，请先确认结果");
+});
+
+test("user-facing errors use context instead of exposing implementation failures", () => {
+    for (const error of ["Upstream request failed", "Failed to fetch", "读取失败：HTTP 502", "上游服务返回 524", "请求失败（502）", "保存失败：SQLITE_BUSY database is locked", "读取失败：TypeError: Cannot read properties of undefined", "<html><body>Bad Gateway</body></html>", '{"code":"UNKNOWN","reason":"内部异常"}', null]) {
+        assert.equal(userFacingErrorMessage(error, "暂时无法读取作品，请稍后再试"), "暂时无法读取作品，请稍后再试");
+    }
+});
 
 test("turns common upstream failures into actionable Chinese messages", () => {
     assert.equal(friendlyErrorMessage("Upstream request failed（任务编号 fixture12345）"), "当前渠道或模型暂时不可用，请刷新模型列表或更换渠道后重试（任务编号 fixture12345）");

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
 import { promptImageCandidates, promptOriginalCandidates, PromptCover } from "@/components/prompts/prompt-cover";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 
 const DOWNLOAD_TIMEOUT_MS = 8_000;
 
@@ -82,7 +83,7 @@ export function PromptDetailDialog({
         try {
             await downloadPromptCover(prompt, controller.signal);
         } catch (error) {
-            if (!controller.signal.aborted) message.error(error instanceof Error ? error.message : "原图下载失败");
+            if (!controller.signal.aborted) message.error(userFacingErrorMessage(error, "暂时无法下载原图，请稍后再试"));
         } finally {
             if (downloadSequenceRef.current === sequence) {
                 downloadAbortRef.current = null;

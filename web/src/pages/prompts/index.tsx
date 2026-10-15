@@ -9,6 +9,7 @@ import { usePromptList } from "@/components/prompts/use-prompt-list";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { lazyRoute } from "@/lib/lazy-route";
 import { cn } from "@/lib/utils";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { assetSaveMessage } from "@/stores/asset-sync-queue";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
@@ -43,7 +44,7 @@ export default function PromptsPage() {
             const status = await useAssetStore.getState().waitForAssetLocalSave(id);
             message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: assetSaveMessage(status) });
         } catch (error) {
-            message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
+            message.error(userFacingErrorMessage(error, "暂时未能收入藏卷阁，请重试"));
         }
     };
 

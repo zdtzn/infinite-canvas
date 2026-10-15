@@ -3,6 +3,7 @@ import { Database, HardDrive, Layers3, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { readLocalStorageUsage, type LocalStorageUsage } from "@/services/local-storage-usage";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 
 const storeLabels: Record<string, string> = {
     app_state: "应用状态",
@@ -25,7 +26,7 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
         try {
             setUsage(await readLocalStorageUsage());
         } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "读取本地存储失败");
+            setError(userFacingErrorMessage(reason, "暂时无法读取空间占用，请稍后刷新"));
         } finally {
             setLoading(false);
         }
@@ -46,7 +47,7 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
                             <Database className="size-4" />
                             当前浏览器存储
                         </div>
-                        <div className="mt-1 text-xs text-stone-500">只读查看本机缓存和画布资源占用，不会修改或删除任何数据。</div>
+                        <div className="mt-1 text-xs text-stone-500">查看作品和临时文件在这台设备上占用的空间。</div>
                     </div>
                     <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void refresh()}>
                         刷新
@@ -57,14 +58,14 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
                 {usage ? (
                     <>
                         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                            <StorageMetric icon={<Database className="size-4" />} label="数据库内容" value={formatStorageBytes(usage.contentBytes)} hint="画布、资源和缓存" />
+                            <StorageMetric icon={<Database className="size-4" />} label="本机内容" value={formatStorageBytes(usage.contentBytes)} hint="画布、素材和临时文件" />
                             <StorageMetric icon={<HardDrive className="size-4" />} label="站点已用" value={formatStorageBytes(usage.usage)} hint="浏览器估算值" />
-                            <StorageMetric icon={<Layers3 className="size-4" />} label="可用配额" value={formatStorageBytes(usage.quota)} hint={usage.quota ? "浏览器分配上限" : "浏览器未提供配额"} />
+                            <StorageMetric icon={<Layers3 className="size-4" />} label="浏览器容量" value={formatStorageBytes(usage.quota)} hint={usage.quota ? "当前设备允许使用的总空间" : "暂时无法估算容量"} />
                         </div>
                         {usage.quota ? (
                             <div className="mt-4">
                                 <div className="mb-1 flex justify-between text-xs text-stone-500">
-                                    <span>配额使用率</span>
+                                    <span>空间使用率</span>
                                     <span className="tabular-nums">{percent.toFixed(2)}%</span>
                                 </div>
                                 <Progress percent={percent} showInfo={false} />
@@ -77,8 +78,12 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
                 <section key={database.name} className="overflow-hidden rounded-lg border border-stone-200 dark:border-stone-800">
                     <div className="flex items-center justify-between gap-3 border-b border-stone-200 px-4 py-3 dark:border-stone-800">
                         <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold">主数据库</div>
-                            <div className="mt-0.5 truncate font-mono text-[11px] text-stone-500">{database.name} · v{database.version}</div>
+                            <div className="truncate text-sm font-semibold">内容明细</div>
+                            <details className="mt-1 text-xs text-stone-500">
+                                <summary className="min-h-11 cursor-pointer py-3">查看存储详情</summary>
+                                <p className="break-all font-mono">{database.name} · v{database.version}</p>
+                                <p className="mt-1 break-all font-mono">{database.stores.map((store) => store.name).join(" · ")}</p>
+                            </details>
                         </div>
                         <div className="shrink-0 text-sm font-medium tabular-nums">{formatStorageBytes(database.bytes)}</div>
                     </div>
@@ -86,8 +91,7 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
                         {database.stores.map((store) => (
                             <div key={store.name} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-3 text-sm">
                                 <div className="min-w-0">
-                                    <div className="truncate font-medium">{storeLabels[store.name] || store.name}</div>
-                                    <div className="mt-0.5 truncate font-mono text-[11px] text-stone-500">{store.name}</div>
+                                    <div className="truncate font-medium">{storeLabels[store.name] || "其他内容"}</div>
                                 </div>
                                 <div className="text-right text-xs text-stone-500 tabular-nums">{store.records} 条</div>
                                 <div className="w-20 text-right font-medium tabular-nums">{formatStorageBytes(store.bytes)}</div>

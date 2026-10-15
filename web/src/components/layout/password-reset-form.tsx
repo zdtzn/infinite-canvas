@@ -3,6 +3,7 @@ import { KeyRound, Mail } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { confirmPasswordReset, requestPasswordResetCode, type PasswordResetSubmission } from "@/services/password-reset-api";
 import { ServerRequestError } from "@/services/server-api";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { passwordResetCooldownDeadline, passwordResetCooldownSeconds, passwordResetPasswordIssue } from "./password-reset-form-helpers";
 
 type ResetForm = PasswordResetSubmission & { confirmPassword: string };
@@ -55,7 +56,7 @@ export function PasswordResetForm({ onBack, onSuccess }: { onBack: () => void; o
         } catch (reason) {
             if (!active.current) return;
             if (reason instanceof ServerRequestError && reason.status === 429) startCooldown(60);
-            setError(reason instanceof Error ? reason.message : "暂时无法请求验证码，请稍后重试");
+            setError(userFacingErrorMessage(reason, "验证码暂时未能发送，请稍后再试"));
         } finally {
             busy.current = false;
             if (active.current) setSending(false);
@@ -72,14 +73,14 @@ export function PasswordResetForm({ onBack, onSuccess }: { onBack: () => void; o
             form.resetFields();
             onSuccess(result.message);
         } catch (reason) {
-            if (active.current) setError(reason instanceof Error ? reason.message : "密码重置失败，请稍后重试");
+            if (active.current) setError(userFacingErrorMessage(reason, "密码暂时未能重置，请稍后再试"));
         } finally {
             busy.current = false;
             if (active.current) setSubmitting(false);
         }
     };
     return <>
-        <p className="mb-5 text-sm leading-6 text-[#9f9eaa]">使用注册时验证的邮箱找回密码。验证码 10 分钟内有效；未绑定邮箱的旧账号请联系管理员。</p>
+        <p className="mb-5 text-sm leading-6 text-[#9f9eaa]">使用注册时验证的邮箱找回密码。验证码 10 分钟内有效；未绑定邮箱的账号请联系管理员。</p>
         {error ? <Alert className="login-realm-alert mb-4" type="error" showIcon title={error} /> : null}
         {notice ? <Alert className="login-realm-alert mb-4" type="info" showIcon title={notice} /> : null}
         <Form<ResetForm> form={form} disabled={sending || submitting} className="login-realm-form" layout="vertical" onFinish={submit} requiredMark={false}>

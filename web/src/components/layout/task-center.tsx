@@ -5,7 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
-import { friendlyErrorMessage } from "@/lib/friendly-error";
+import { friendlyErrorMessage, userFacingErrorMessage } from "@/lib/friendly-error";
+import { generationFailureFeedback } from "@/features/cultivation/generation-messages";
 import { formatDuration } from "@/lib/image-utils";
 import { preloadRoute } from "@/lib/route-loaders";
 import { cancelServerJob, fetchServerJobs, retryServerJob, type ServerJob } from "@/services/server-api";
@@ -66,7 +67,7 @@ export function TaskCenter() {
             const items = (await fetchServerJobs(expectedUserId)).items;
             if (useUserStore.getState().user?.id === expectedUserId) setJobs(items);
         } catch (error) {
-            if (!silent) message.error(error instanceof Error ? error.message : "生成进度加载失败");
+            if (!silent) message.error(userFacingErrorMessage(error, "暂时无法读取生成进度，请稍后再试"));
         }
     };
 
@@ -122,7 +123,7 @@ export function TaskCenter() {
             }
             await refresh(false);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "操作失败");
+            message.error(userFacingErrorMessage(error, "暂时无法确认操作结果，请刷新进度后再试"));
         } finally {
             setLoadingId("");
         }
@@ -146,7 +147,7 @@ export function TaskCenter() {
         try {
             videoTasks.resume(job.id);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "恢复视频查询失败");
+            message.error(userFacingErrorMessage(error, "暂时无法查看视频进度，请稍后再试"));
         }
     };
     const sections = [
@@ -200,7 +201,7 @@ export function TaskCenter() {
                         </section>
                     ))}
                     {!sections.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无进行中的生成" /> : null}
-                    {actionableJobs.length + actionableVideos.length ? <p className="text-xs leading-5 text-stone-400">失败任务仅保留最近需要处理的项目，完整生成记录可在各工作台的“太古遗迹”中查看。</p> : null}
+                    {actionableJobs.length + actionableVideos.length ? <p className="text-xs leading-5 text-stone-400">完整记录可在各工作台的“太古遗迹”中查看。</p> : null}
                 </div>
             </Drawer>
         </>
@@ -237,7 +238,7 @@ function TaskItem({ job, loading, onOpen, onAction, onDismiss }: { job: ServerJo
                 )
             ) : null}
             <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="truncate text-xs text-stone-400">{job.size || job.quality || "参数已提交"}</span>
+                <span className="truncate text-xs text-stone-400">{job.size || job.quality || "默认设置"}</span>
                 <div className="flex shrink-0 items-center gap-1">
                     {active ? (
                         <Tooltip title="取消生成">
@@ -256,7 +257,15 @@ function TaskItem({ job, loading, onOpen, onAction, onDismiss }: { job: ServerJo
                     ) : null}
                 </div>
             </div>
-            {job.error ? <div className="mt-2 line-clamp-2 text-xs leading-5 text-red-500">{friendlyErrorMessage(job.error)}</div> : null}
+            {job.error ? (
+                <div className="mt-2 text-xs leading-5 text-stone-500">
+                    <p role="status">{generationFailureFeedback(job.error).description}</p>
+                    <details>
+                        <summary className="min-h-11 cursor-pointer py-3">查看详情</summary>
+                        <p className="max-h-32 overflow-y-auto break-words whitespace-pre-wrap">{friendlyErrorMessage(job.error)}</p>
+                    </details>
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -285,10 +294,17 @@ function jobStatusLabel(job: ServerJob) {
     return "已取消";
 }
 
-function VideoTaskItem({ job, onOpen, onStop, onResume, onDismiss }: { job: VideoGenerationLog; onOpen: () => void; onStop: () => void; onResume: () => void; onDismiss: () => void }) {
+export function VideoTaskItem({ job, onOpen, onStop, onResume, onDismiss }: { job: VideoGenerationLog; onOpen: () => void; onStop: () => void; onResume: () => void; onDismiss: () => void }) {
     const phase = videoTaskPhase(job);
     const active = isActiveVideoTask(job);
     const resumable = phase === "paused" || phase === "canceled";
+    const description = phase === "unknown"
+        ? "暂时没能确认生成结果，重新生成可能再次计费，请先确认原任务结果。"
+        : (phase === "paused" && job.task) || (job.trackingStopped && phase === "submitting")
+            ? "视频仍可能继续生成并计费，请稍后查看原任务进度。"
+            : phase === "paused"
+                ? "视频进度暂未更新，请继续查看原任务。"
+                : generationFailureFeedback(job.error || "").description;
     return (
         <div className="py-3">
             <div className="flex items-start justify-between gap-3">
@@ -305,15 +321,15 @@ function VideoTaskItem({ job, onOpen, onStop, onResume, onDismiss }: { job: Vide
             </div>
             <div className="mt-2 flex flex-wrap justify-end gap-1">
                 {active && !job.trackingStopped ? (
-                    <Tooltip title="停止查询不会取消上游生成，上游仍可能生成和计费">
+                    <Tooltip title="停止查看进度后，视频仍可能继续生成并计费">
                         <Button size="small" type="text" onClick={onStop}>
-                            {job.task || phase === "submitting" ? "停止查询" : "移出队列"}
+                            {job.task || phase === "submitting" ? "停止查看" : "移出队列"}
                         </Button>
                     </Tooltip>
                 ) : null}
                 {resumable ? (
                     <Button size="small" type="text" onClick={onResume}>
-                        {job.task ? "继续查询原任务" : "继续排队"}
+                        {job.task ? "继续查看" : "继续排队"}
                     </Button>
                 ) : null}
                 <Button size="small" type="text" onClick={onOpen}>
@@ -321,7 +337,15 @@ function VideoTaskItem({ job, onOpen, onStop, onResume, onDismiss }: { job: Vide
                 </Button>
                 {!active && phase !== "succeeded" ? <Button aria-label="暂时隐藏视频任务" type="text" size="small" icon={<X className="size-3.5" />} onClick={onDismiss} /> : null}
             </div>
-            {job.error ? <div className="mt-2 line-clamp-3 text-xs leading-5 text-stone-500">{friendlyErrorMessage(job.error)}</div> : null}
+            {job.error ? (
+                <div className="mt-2 text-xs leading-5 text-stone-500">
+                    <p role="status">{description}</p>
+                    <details>
+                        <summary className="min-h-11 cursor-pointer py-3">查看详情</summary>
+                        <p className="max-h-32 overflow-y-auto break-words whitespace-pre-wrap">{friendlyErrorMessage(job.error)}</p>
+                    </details>
+                </div>
+            ) : null}
         </div>
     );
 }

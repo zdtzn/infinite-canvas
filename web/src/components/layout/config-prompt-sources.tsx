@@ -4,6 +4,7 @@ import { Eye, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Suspense, useState } from "react";
 
 import { lazyRoute } from "@/lib/lazy-route";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { PromptSourceContentModal } from "./prompt-source-content-modal";
 import { fetchPromptSourceStatuses, refreshAllSources, refreshSource } from "@/services/api/prompts";
 import { deleteServerPromptSource, saveServerPromptSource } from "@/services/server-api";
@@ -92,10 +93,10 @@ export function ConfigPromptSources() {
         try {
             const count = await refreshSource(source.id);
             await invalidatePromptQueries();
-            message.success(`「${source.name}」已拉取 ${count} 条`);
+            message.success(`「${source.name}」已更新，共 ${count} 条`);
         } catch (error) {
             await queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY });
-            message.error(error instanceof Error ? `${error.message}，已保留旧缓存` : "更新失败，已保留旧缓存");
+            message.error(`${userFacingErrorMessage(error, "暂时无法更新")}，仍可查看已有提示词`);
         } finally {
             setRefreshingId("");
         }
@@ -107,9 +108,9 @@ export function ConfigPromptSources() {
             const count = await refreshAllSources();
             updateSchedule("lastFetchedAt", new Date().toISOString());
             await invalidatePromptQueries();
-            message.success(`全部来源已拉取，共 ${count} 条`);
+            message.success(`全部来源已更新，共 ${count} 条`);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "拉取失败");
+            message.error(userFacingErrorMessage(error, "暂时无法更新提示词，请稍后再试"));
         } finally {
             setRefreshingAll(false);
         }
@@ -119,7 +120,7 @@ export function ConfigPromptSources() {
         <div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs text-stone-500">
-                    {PUBLIC_MODE ? (user?.admin ? "管理员可新增、编辑和删除共享来源；脚本仅配置你信任的公开数据源。" : "提示词来源由管理员统一配置，资源由本站代理缓存。") : "资源由浏览器按来源拉取和缓存，单个来源异常不会拖垮整个图库。"}
+                    {PUBLIC_MODE ? (user?.admin ? "管理员可新增、编辑和删除共享来源；脚本仅配置你信任的公开数据源。" : "选择你喜欢的来源，开启后可在功法阁查看。") : "开启你喜欢的来源，也可以添加自己的提示词来源。"}
                 </div>
                 {canManageSources ? <Button type="primary" icon={<Plus className="size-4" />} onClick={handleAdd}>新增来源</Button> : null}
             </div>
@@ -137,7 +138,7 @@ export function ConfigPromptSources() {
                                         <span className="max-w-80 truncate">{source.githubUrl || "无来源地址"}</span>
                                         <span className="tabular-nums">{status?.count ?? 0} 条</span>
                                         {status?.lastError ? <Tag color="error" className="m-0 text-[10px]" title={status.lastError}>失败</Tag> : status?.lastSuccessAt ? <Tag color="success" className="m-0 text-[10px]">正常</Tag> : <Tag className="m-0 text-[10px]">未同步</Tag>}
-                                        <span>{status?.lastSuccessAt ? `上次成功 ${formatTime(status.lastSuccessAt)}` : "尚未拉取"}</span>
+                                        <span>{status?.lastSuccessAt ? `上次更新 ${formatTime(status.lastSuccessAt)}` : "尚未更新"}</span>
                                     </div>
                                 </div>
                             </div>
@@ -146,7 +147,7 @@ export function ConfigPromptSources() {
                                     查看内容
                                 </Button>
                                 <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={refreshingId === source.id} onClick={() => void handleRefreshOne(source)}>
-                                    立即拉取
+                                    刷新
                                 </Button>
                                 {canManageSources && (!PUBLIC_MODE || !isBuiltInPromptSource(source)) ? <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingId(source.id)}>编辑脚本</Button> : null}
                                 {canManageSources && (!PUBLIC_MODE || !isBuiltInPromptSource(source)) ? <Button size="small" danger icon={<Trash2 className="size-3.5" />} aria-label="删除来源" onClick={() => void handleDelete(source)} /> : null}
@@ -157,18 +158,18 @@ export function ConfigPromptSources() {
             </div>
 
             <section className="mt-5 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
-                <div className="mb-3 text-sm font-semibold">定时拉取</div>
+                <div className="mb-3 text-sm font-semibold">自动更新</div>
                 <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2">
-                        <span className="text-xs text-stone-500">拉取周期</span>
+                        <span className="text-xs text-stone-500">更新间隔</span>
                         <Select size="small" className="w-36" value={schedule.intervalMinutes} options={PROMPT_SOURCE_INTERVAL_OPTIONS} onChange={(value) => updateSchedule("intervalMinutes", value)} />
                     </div>
                     <Button size="small" type="primary" icon={<RefreshCw className="size-3.5" />} loading={refreshingAll} onClick={() => void handleRefreshAll()}>
-                        全部立即拉取
+                        刷新全部
                     </Button>
-                    <span className="text-xs text-stone-500">{schedule.lastFetchedAt ? `上次拉取 ${formatTime(schedule.lastFetchedAt)}` : "尚未定时拉取"}</span>
+                    <span className="text-xs text-stone-500">{schedule.lastFetchedAt ? `上次更新 ${formatTime(schedule.lastFetchedAt)}` : "尚未自动更新"}</span>
                 </div>
-                <div className="mt-2 text-xs text-stone-400">开启周期后，页面打开期间会按周期自动拉取所有启用的来源。</div>
+                <div className="mt-2 text-xs text-stone-400">网站打开时，会按所选间隔刷新已开启的来源。</div>
             </section>
 
             {canManageSources && editingSource && (!PUBLIC_MODE || !isBuiltInPromptSource(editingSource)) ? (

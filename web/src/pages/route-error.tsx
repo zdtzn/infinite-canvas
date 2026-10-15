@@ -16,8 +16,13 @@ export default function RouteErrorPage() {
                     <AlertTriangle className="size-5" />
                 </span>
                 <h1 className="mt-5 text-2xl font-semibold">页面暂时无法显示</h1>
-                <p className="mt-2 text-sm leading-6 text-stone-500 dark:text-stone-400">{chunkFailure ? "网站刚刚更新，当前页面资源已经失效。请重新加载后继续。" : "本次操作没有完成。你的服务端项目和资产不会因此被删除。"}</p>
-                {detail ? <p className="mt-3 break-words rounded-md bg-stone-100 px-3 py-2 text-left text-xs leading-5 text-stone-500 dark:bg-stone-900 dark:text-stone-400">{detail}</p> : null}
+                <p className="mt-2 text-sm leading-6 text-stone-500 dark:text-stone-400" role="alert">{chunkFailure ? "页面需要更新，请重新加载后继续。" : "请重新加载页面，或返回首页继续。"}</p>
+                {detail ? (
+                    <details className="mt-3 text-left text-xs leading-5 text-stone-500 dark:text-stone-400">
+                        <summary className="min-h-11 cursor-pointer py-3 text-center">查看详情</summary>
+                        <p className="max-h-40 overflow-y-auto break-words rounded-md bg-stone-100 px-3 py-2 dark:bg-stone-900">{detail}</p>
+                    </details>
+                ) : null}
                 <div className="mt-6 flex justify-center gap-3">
                     <Button type="primary" icon={<RefreshCw className="size-4" />} onClick={() => window.location.reload()}>
                         重新加载

@@ -5,6 +5,7 @@ import dayjs from "dayjs";
 import { Bot, History, MessageSquare, PanelRightClose, PlugZap, Plus, Terminal } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { readAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 import { imageMetadata } from "@/lib/canvas/canvas-node-factory";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
@@ -528,7 +529,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             addEventLog(decision === "decline" ? "已拒绝权限" : "已批准权限", approval.reason || approval.method, approval);
         } catch (error) {
             addEventLog("权限审批失败", error);
-            message.error(error instanceof Error ? error.message : "权限审批失败");
+            message.error(userFacingErrorMessage(error, "暂时无法确认授权，请稍后再试"));
         }
     };
 
@@ -648,7 +649,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         pendingToolRef.current = null;
         const request = fetchAgentJson(endpoint, token, "/agent/codex/threads/reset", { method: "POST" }).catch((error) => {
             addEventLog("新建对话失败", error);
-            message.error(error instanceof Error ? error.message : "新建对话失败");
+            message.error(userFacingErrorMessage(error, "新建对话失败，请稍后再试"));
             throw error;
         });
         resetThreadRef.current = request;
@@ -670,7 +671,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             setAgentState({ activeThreadId: data.thread?.id || threadId, messages: mergeHistoryAttachments(normalizeHistoryMessages(data.messages || []), [...storedMessages, ...localMessages]), tokenUsage: null, activeTab: "chat", activity: "已恢复会话" });
         } catch (error) {
             addEventLog("恢复对话失败", error);
-            message.error(error instanceof Error ? error.message : "恢复对话失败");
+            message.error(userFacingErrorMessage(error, "暂时无法恢复对话，请稍后再试"));
         } finally {
             setAgentState({ loadingThreads: false });
         }
@@ -693,7 +694,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             message.success(`已删除 ${threadIds.length} 条记录`);
         } catch (error) {
             addEventLog("删除对话失败", error);
-            message.error(error instanceof Error ? error.message : "删除对话失败");
+            message.error(userFacingErrorMessage(error, "删除对话失败，请稍后再试"));
         } finally {
             setAgentState({ loadingThreads: false });
         }

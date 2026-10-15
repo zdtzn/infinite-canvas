@@ -161,7 +161,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                     {automaticResolution ? (
                         <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
                             <span>自动</span>
-                            <span className="min-w-0 truncate">当前模型由上游自动决定输出分辨率</span>
+                            <span className="min-w-0 truncate">当前模型自动决定图片分辨率</span>
                         </div>
                     ) : (
                         <div className="grid grid-cols-3 gap-2">
@@ -191,7 +191,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                     ) : (
                         <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
                             <span>自动</span>
-                            <span className="min-w-0 truncate">{isUuAsyncModel ? "当前 UU 渠道由模型自动控制" : "当前模型未开放独立质量参数"}</span>
+                            <span className="min-w-0 truncate">{isUuAsyncModel ? "当前模型自动决定图片质量" : "当前模型不支持单独调整质量"}</span>
                         </div>
                     )}
                 </div>
@@ -209,16 +209,16 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                     ) : (
                         <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
                             <span>自动</span>
-                            <span className="min-w-0 truncate">{isUuAsyncModel ? "当前 UU 渠道未开放输出格式参数" : "当前模型由接口决定输出格式"}</span>
+                            <span className="min-w-0 truncate">当前模型自动决定图片格式</span>
                         </div>
                     )}
                 </div>
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <div className="space-y-0.5">
-                            <SettingTitle color={theme.node.muted}>实际请求尺寸</SettingTitle>
+                            <SettingTitle color={theme.node.muted}>图片尺寸</SettingTitle>
                             <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                                {isSadaiModel ? "生图分组按比例与分辨率档位映射；默认分组可能由上游决定" : automaticResolution ? "构图比例仍会生效，像素尺寸由模型决定" : customSizeActive ? "自定义尺寸会覆盖比例和分辨率" : "按比例和分辨率精确换算"}
+                                {isSadaiModel ? "按所选比例和分辨率生成，最终像素由模型决定" : automaticResolution ? "构图比例仍会生效，像素尺寸由模型决定" : customSizeActive ? "自定义尺寸会覆盖比例和分辨率" : "按比例和分辨率精确换算"}
                             </div>
                         </div>
                         {capabilities.customSize ? (
@@ -234,7 +234,7 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                     </div>
                     {isSadaiModel ? (
                         <div className="flex h-9 items-center rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
-                            按 {activeSize} · {imageResolutionLabel(resolution)} 请求，最终像素由 SADAI 返回
+                            {activeSize} · {imageResolutionLabel(resolution)}，最终像素由模型决定
                         </div>
                     ) : automaticResolution ? (
                         <div className="flex h-9 items-center rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>

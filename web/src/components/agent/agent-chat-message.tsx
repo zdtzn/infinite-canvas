@@ -5,6 +5,7 @@ import { Streamdown, type LinkSafetyModalProps } from "streamdown";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { useAgentStore, type AgentPendingApproval } from "@/stores/use-agent-store";
 import { revealAgentLocalFile } from "./agent-api";
 import "./streamdown.css";
@@ -40,7 +41,7 @@ function AgentLinkModal({ isOpen, onClose, onConfirm, url }: LinkSafetyModalProp
             message.success("已在文件管理器中定位");
             onClose();
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "无法打开本地文件");
+            message.error(userFacingErrorMessage(error, "暂时无法打开本地文件，请检查文件是否仍在原位置"));
         } finally {
             setOpening(false);
         }
@@ -105,7 +106,7 @@ export type AgentChatMessageItem = {
 export function AgentChatMessage({ item, theme, onRejectTool, onApproveTool }: { item: AgentChatMessageItem; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onRejectTool?: (id: string) => void; onApproveTool?: (id: string) => void }) {
     const isUser = item.role === "user";
     const isSystem = item.role === "system";
-    const color = item.role === "error" ? "#dc2626" : item.role === "tool" ? "#2563eb" : theme.node.text;
+    const color = item.role === "error" ? theme.node.muted : item.role === "tool" ? "#2563eb" : theme.node.text;
     if (isSystem) {
         return (
             <div className="flex justify-center text-xs">
@@ -128,6 +129,14 @@ export function AgentChatMessage({ item, theme, onRejectTool, onApproveTool }: {
             >
                 {isUser ? (
                     <div className="whitespace-pre-wrap break-words">{item.text}</div>
+                ) : item.role === "error" ? (
+                    <div>
+                        <p role="status">{userFacingErrorMessage(item.text, "助手暂时未能完成操作，请检查连接后再试")}</p>
+                        <details className="mt-1 text-xs">
+                            <summary className="min-h-11 cursor-pointer py-3">查看详情</summary>
+                            <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words">{item.text}</p>
+                        </details>
+                    </div>
                 ) : (
                     <Streamdown {...streamdownProps} animated={streamdownAnimation} isAnimating={!!item.streamId}>{item.text}</Streamdown>
                 )}

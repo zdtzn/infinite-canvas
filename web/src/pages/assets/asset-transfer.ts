@@ -50,7 +50,7 @@ export async function exportAssets(assets: Asset[], userId: string, assertCurren
 export async function readAssetPackage(file: File) {
     const zip = await readZip(file);
     const assetFile = zip.get("assets.json");
-    if (!assetFile) throw new Error("missing assets.json");
+    if (!assetFile) throw new Error("这不是有效的素材压缩包，请重新导出后再导入");
     const data = JSON.parse(await assetFile.text()) as AssetExportFile;
     await Promise.all(
         data.files.map(async (item) => {

@@ -40,8 +40,7 @@ export function walletUnitPrice(pack: WalletPackage) {
 }
 
 export function walletRecordSource(item: WalletLedgerItem, packages: WalletPackage[]) {
-    if (item.packageId) return { label: packages.find((pack) => pack.id === item.packageId)?.name || item.packageId };
+    if (item.packageId) return { label: packages.find((pack) => pack.id === item.packageId)?.name || "灵卷补充" };
     if (item.kind === "admin_grant") return { label: "管理员发放" };
-    const shortId = item.sourceId.length > 16 ? `${item.sourceId.slice(0, 8)}…${item.sourceId.slice(-4)}` : item.sourceId;
-    return { label: `任务 ${shortId}`, fullId: item.sourceId.length > 16 ? item.sourceId : undefined };
+    return { label: "图片生成", fullId: item.sourceId || undefined };
 }

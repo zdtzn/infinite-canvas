@@ -25,6 +25,7 @@ import { prepareColorAlchemyForUser, useColorAlchemyStore } from "@/features/col
 import type { AnalyzedColor, ColorAlchemySource, ColorExportFormat, ColorPreset, ColorSettings } from "@/features/color-alchemy/types";
 import { deleteColorAlchemyDocument, fetchColorAlchemyDocuments, saveColorAlchemyDocument, type ColorAlchemyDocumentTombstone } from "@/services/color-alchemy-api";
 import { lazyRoute } from "@/lib/lazy-route";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
 import { createColorOperationLifetime } from "./operation-lifetime";
 import "@/features/color-alchemy/color-alchemy.css";
@@ -161,7 +162,7 @@ export default function ColorAlchemyPage() {
                 applyDeletedDocuments(deleted, removeDocuments, syncedVersionsRef, deletedDocumentIdsRef);
             })
             .catch((error) => {
-                if (!cancelled && operation.isCurrent()) message.warning(`灵彩草稿暂未同步：${error instanceof Error ? error.message : "请稍后重试"}`);
+                if (!cancelled && operation.isCurrent()) message.warning(`灵彩草稿暂未同步：${userFacingErrorMessage(error, "请检查网络后再试")}`);
             })
             .finally(() => {
                 if (!cancelled && operation.isCurrent()) setCloudReadyUserId(userId);
@@ -296,7 +297,7 @@ export default function ColorAlchemyPage() {
             openSource({ key: image.storageKey, title: stripExtension(file.name) || "灵彩图片", url: image.url, storageKey: image.storageKey, width: image.width, height: image.height, mimeType: image.mimeType });
         } catch (error) {
             URL.revokeObjectURL(previewUrl);
-            if (operation.isCurrent()) message.error(error instanceof Error ? error.message : "图片添加失败");
+            if (operation.isCurrent()) message.error(userFacingErrorMessage(error, "图片暂时未能添加，请重试"));
         } finally {
             if (operation.isCurrent()) setUploading(false);
         }
@@ -372,7 +373,7 @@ export default function ColorAlchemyPage() {
             message.success("参考图片色彩已解析");
         } catch (error) {
             URL.revokeObjectURL(previewUrl);
-            if (operation.isCurrent()) message.error(error instanceof Error ? error.message : "参考图片分析失败");
+            if (operation.isCurrent()) message.error(userFacingErrorMessage(error, "暂时无法分析参考图片，请稍后再试"));
         } finally {
             if (operation.isCurrent()) setReferenceLoading(false);
         }
@@ -414,7 +415,7 @@ export default function ColorAlchemyPage() {
             if (!operation.isCurrent()) return;
             message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: `${compressed ? "作品已压缩。" : ""}${assetSaveMessage(status)}` });
         } catch (error) {
-            if (operation.isCurrent()) message.error(error instanceof Error ? error.message : "保存失败，请重试");
+            if (operation.isCurrent()) message.error(userFacingErrorMessage(error, "调色结果暂时未能保存，请重试"));
         } finally {
             if (operation.isCurrent()) setSaving(false);
         }
@@ -441,7 +442,7 @@ export default function ColorAlchemyPage() {
         } catch (error) {
             if (!operation.isCurrent()) return;
             if (error instanceof DOMException && error.name === "AbortError") message.info("已取消导出");
-            else message.error(error instanceof Error ? error.message : "导出失败，请重试");
+            else message.error(userFacingErrorMessage(error, "调色结果暂时未能导出，请重试"));
         } finally {
             operation.signal.removeEventListener("abort", abort);
             if (exportAbortRef.current === controller) exportAbortRef.current = null;
@@ -481,7 +482,7 @@ export default function ColorAlchemyPage() {
             message.success(compressed ? "已压缩并生成新的灵彩节点，原图保持不变" : "已生成新的灵彩节点，原图保持不变");
             navigate(document.source.origin.route || `/canvas/${project.id}`);
         } catch (error) {
-            if (operation.isCurrent()) message.error(error instanceof Error ? error.message : "返回画布失败");
+            if (operation.isCurrent()) message.error(userFacingErrorMessage(error, "暂时无法返回画布，请稍后再试"));
         } finally {
             if (operation.isCurrent()) setReturning(false);
         }
@@ -506,7 +507,7 @@ export default function ColorAlchemyPage() {
             if (!operation.isCurrent()) return;
             deletedDocumentIdsRef.current.delete(id);
             mergeDocuments([discarded]);
-            message.warning(`草稿尚未删除，已恢复到列表：${error instanceof Error ? error.message : "请稍后重试"}`);
+            message.warning(`草稿尚未删除，已恢复到列表：${userFacingErrorMessage(error, "请稍后重试")}`);
         }
     };
 

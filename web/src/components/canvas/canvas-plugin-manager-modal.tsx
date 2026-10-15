@@ -3,6 +3,7 @@ import { App, Button, Input, Modal, Popconfirm, Switch, Tabs } from "antd";
 import { AlertTriangle, Download, Puzzle, RefreshCw, Trash2 } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { installPluginFromUrl, setPluginEnabled, uninstallPlugin, updatePlugin } from "@/lib/canvas/plugin-loader";
 import { fetchOfficialPlugins, hasUpgrade, type OfficialPluginEntry } from "@/lib/canvas/plugin-registry";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -50,7 +51,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
             message.success(`已安装插件 ${plugin.name}`);
             setUrl("");
         } catch (error) {
-            message.error(`安装失败：${error instanceof Error ? error.message : String(error)}`);
+            message.error(userFacingErrorMessage(error, "插件未能安装，请检查插件地址后再试"));
         } finally {
             setInstalling(false);
         }
@@ -62,7 +63,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
             const plugin = await installPluginFromUrl(entry.url, { official: true });
             message.success(`已安装 ${plugin.name}`);
         } catch (error) {
-            message.error(`安装失败：${error instanceof Error ? error.message : String(error)}`);
+            message.error(userFacingErrorMessage(error, "插件未能安装，请稍后再试"));
         } finally {
             setBusyId(null);
         }
@@ -74,7 +75,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
             await action();
             message.success(successText);
         } catch (error) {
-            message.error(`${error instanceof Error ? error.message : String(error)}`);
+            message.error(userFacingErrorMessage(error, "插件操作未完成，请稍后再试"));
         } finally {
             setBusyId(null);
         }
@@ -149,7 +150,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
         <div className="space-y-2">
             <div className="flex items-center justify-between">
                 <div className="text-xs" style={{ color: theme.node.muted }}>
-                    本项目官方插件,来自仓库注册表
+                    官方推荐插件
                 </div>
                 <Button type="text" size="small" icon={<RefreshCw className={`size-4 ${loadingOfficial ? "animate-spin" : ""}`} />} onClick={loadOfficial} disabled={loadingOfficial}>
                     刷新
@@ -157,7 +158,8 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
             </div>
             {officialError ? (
                 <div className="rounded-lg border px-3 py-2 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
-                    加载失败：{officialError}
+                    <p>{userFacingErrorMessage(officialError, "暂时无法加载插件列表，请稍后刷新")}</p>
+                    <details className="mt-2"><summary className="cursor-pointer">查看详情</summary><p className="mt-2 break-words">{officialError}</p></details>
                 </div>
             ) : loadingOfficial && official.length === 0 ? (
                 emptyHint("正在获取官方插件…")

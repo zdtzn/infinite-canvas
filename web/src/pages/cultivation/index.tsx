@@ -10,6 +10,7 @@ import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationRealmHero } from "@/features/cultivation/realm-hero";
 import { cultivationCapabilityLabel, cultivationProgressPercent, cultivationStageLabel } from "@/features/cultivation/utils";
 import { cn } from "@/lib/utils";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { lazyRoute } from "@/lib/lazy-route";
 import type { CultivationProfile } from "@/services/server-api";
 import { uploadProfileAvatar } from "@/services/server-api";
@@ -77,7 +78,7 @@ export default function CultivationPage() {
             void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
             message.success("头像已更新");
         } catch (reason) {
-            message.error(reason instanceof Error ? reason.message : "头像上传失败");
+            message.error(userFacingErrorMessage(reason, "头像暂时未能上传，请稍后再试"));
         } finally {
             setAvatarUploading(false);
         }
@@ -193,7 +194,10 @@ export default function CultivationPage() {
                             </div>
                             <div className="min-w-0">
                                 <div className="truncate text-sm font-semibold text-[#edede6]">{data.displayName}</div>
-                                <div className="mt-0.5 text-xs text-[#edede6]/50">UID {data.userId.slice(0, 8)}</div>
+                                <details className="mt-0.5 text-xs text-[#edede6]/50">
+                                    <summary className="min-h-11 cursor-pointer py-3">账号详情</summary>
+                                    <p className="break-all">账号编号 {data.userId}</p>
+                                </details>
                             </div>
                         </div>
 

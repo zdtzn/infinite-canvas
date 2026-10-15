@@ -3,6 +3,7 @@ import { App } from "antd";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { planChannelImport } from "@/lib/channel-import";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { useProjectServerSync } from "@/hooks/use-project-server-sync";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 import { ensurePromptIndexReady } from "@/services/api/prompts";
@@ -138,7 +139,7 @@ export function ClientRootInit() {
                 syncedUserPreferencesUser.current = "";
                 userPreferencesReady.current = "";
                 setUserPreferencesReadyUser("");
-                message.error(error instanceof Error ? error.message : "用户偏好同步失败");
+                message.error(userFacingErrorMessage(error, "暂时无法读取个人设置，请稍后再试"));
             });
 
         return () => {
@@ -162,7 +163,7 @@ export function ClientRootInit() {
                     writeSystemPromptOwner(userId);
                 })
                 .catch((error) => {
-                    if (userPreferencesReady.current === userId) message.error(error instanceof Error ? error.message : "系统提示词保存失败");
+                    if (userPreferencesReady.current === userId) message.error(userFacingErrorMessage(error, "提示词暂时未能保存，请稍后再试"));
                 });
         }, 700);
         return () => {
@@ -191,7 +192,7 @@ export function ClientRootInit() {
                     if (generationPreferencesEqual(currentPreferences, value)) replaceGenerationPreferences(persisted);
                 })
                 .catch((error) => {
-                    if (userPreferencesReady.current === userId) message.error(error instanceof Error ? error.message : "生成偏好保存失败");
+                    if (userPreferencesReady.current === userId) message.error(userFacingErrorMessage(error, "生成设置暂时未能保存，请稍后再试"));
                 });
         }, 700);
         return () => {
@@ -227,7 +228,7 @@ export function ClientRootInit() {
             } catch (error) {
                 if (!active) return;
                 syncedPromptSourceUser.current = "";
-                message.error(error instanceof Error ? error.message : "提示词来源同步失败");
+                message.error(userFacingErrorMessage(error, "暂时无法读取提示词来源，请稍后刷新"));
             }
         })();
 
@@ -257,7 +258,7 @@ export function ClientRootInit() {
                 }
             } catch (error) {
                 if (active && attempts < 3) retryTimer = setTimeout(() => void sync(), attempts === 1 ? 1500 : 5000);
-                if (active && attempts === 3) message.error(error instanceof Error ? error.message : "个人资产同步失败，可在藏卷阁重试");
+                if (active && attempts === 3) message.error(userFacingErrorMessage(error, "暂时无法更新藏卷阁，请稍后在藏卷阁重试"));
             } finally {
                 loading = false;
                 if (active) void useAssetStore.getState().flushAssetSync();
@@ -276,11 +277,11 @@ export function ClientRootInit() {
     useEffect(() => {
         const handleAssetSyncError = (event: Event) => {
             const detail = (event as CustomEvent<{ message?: string }>).detail;
-            message.error(detail?.message || "个人资产同步失败");
+            message.error(userFacingErrorMessage(detail?.message, "藏卷阁暂时未能同步，请稍后再试"));
         };
         const handleHistorySyncError = (event: Event) => {
             const detail = (event as CustomEvent<{ message?: string }>).detail;
-            message.error(detail?.message || "生成记录同步失败");
+            message.error(userFacingErrorMessage(detail?.message, "生成记录暂时未能同步，请稍后再试"));
         };
         window.addEventListener("canvas:asset-sync-error", handleAssetSyncError);
         window.addEventListener("canvas:generation-history-sync-error", handleHistorySyncError);
@@ -321,7 +322,7 @@ export function ClientRootInit() {
             } catch (error) {
                 if (!active) return;
                 syncedChannelUser.current = "";
-                message.error(error instanceof Error ? error.message : "平台渠道同步失败");
+                message.error(userFacingErrorMessage(error, "暂时无法读取模型列表，请稍后再试"));
             }
         })();
 

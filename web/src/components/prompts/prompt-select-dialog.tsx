@@ -4,6 +4,7 @@ import { App, Empty, Input, Modal, Select, Spin, Tag } from "antd";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { cn } from "@/lib/utils";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
 import { PromptCard } from "./prompt-card";
@@ -31,7 +32,7 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
     };
 
     useEffect(() => {
-        if (query.isError) message.error(query.error instanceof Error ? query.error.message : "获取提示词失败");
+        if (query.isError) message.error(userFacingErrorMessage(query.error, "暂时无法读取提示词，请稍后再试"));
     }, [message, query.error, query.isError]);
 
     useEffect(() => {

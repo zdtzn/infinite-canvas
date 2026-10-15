@@ -5,6 +5,7 @@ import { Brush, Eraser, Redo2, RotateCcw, Undo2, WandSparkles, X, ZoomIn, ZoomOu
 
 import { useImageEditorViewport } from "@/components/canvas/use-image-editor-viewport";
 import { readImageMeta } from "@/lib/image-utils";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 
 export type CanvasImageMaskEditPayload = {
     prompt: string;
@@ -307,7 +308,7 @@ export function CanvasNodeMaskEditDialog({
                                 setError("");
                             }}
                         />
-                        {error ? <div className="text-xs font-medium text-[#ef4444]">{error}</div> : null}
+                        {error ? <div role="status" className="text-xs text-muted-foreground">{userFacingErrorMessage(error, "暂时无法处理涂抹区域，请重新涂抹后再试")}</div> : null}
                     </div>
 
                     <div className="mt-auto flex items-center justify-between gap-2">

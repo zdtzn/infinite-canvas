@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { LoaderCircle, Search, X } from "lucide-react";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 
 import { filmLutCategoryLabel, loadFilmLutCatalog, staticFilmLutUrl, type FilmLutEntry } from "./film-lut";
 
@@ -82,7 +83,13 @@ export function FilmLutLibrary({ activeLutId, onApplyLut }: { activeLutId: strin
                     正在展开胶片滤镜
                 </div>
             ) : error ? (
-                <div className="rounded-md border border-red-300/20 bg-red-950/25 px-3 py-4 text-xs text-red-100">{error}</div>
+                <div className="rounded-md border border-white/10 bg-white/5 px-3 py-4 text-xs text-white/70">
+                    <p role="status">{userFacingErrorMessage(error, "暂时无法读取胶片滤镜，请重新打开滤镜列表")}</p>
+                    <details>
+                        <summary className="min-h-11 cursor-pointer py-3">查看详情</summary>
+                        <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words">{error}</p>
+                    </details>
+                </div>
             ) : visible.length ? (
                 <>
                     <div className="grid grid-cols-2 gap-2">

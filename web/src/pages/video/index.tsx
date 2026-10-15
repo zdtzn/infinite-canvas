@@ -1,6 +1,6 @@
 import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, Eye, FolderPlus, LoaderCircle, Music2, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Tooltip } from "antd";
 import { nanoid } from "nanoid";
 import { videoTaskOwner, videoTasks, useVideoTaskStore } from "@/stores/use-video-task-store";
 import { isActiveVideoTask, videoAssetFromLog, videoDownloadName, videoTaskLabel, videoTaskPhase, type GeneratedVideo, type VideoGenerationLog as GenerationLog } from "@/services/video-task-model";
@@ -11,6 +11,8 @@ import { AssetSyncStatus } from "@/components/assets/asset-sync-status";
 import { ModelPicker } from "@/components/model-picker";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { friendlyErrorMessage, userFacingErrorMessage } from "@/lib/friendly-error";
+import { generationFailureFeedback } from "@/features/cultivation/generation-messages";
 import { videoImageLabel } from "@/lib/video-reference-mode";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
@@ -183,7 +185,7 @@ export default function VideoPage() {
             setResultView("results");
         } catch (error) {
             const detail = error instanceof Error ? error.message : "加入队列失败";
-            message.error(detail);
+            message.error(userFacingErrorMessage(detail, "暂时无法开始生成，请稍后再试"));
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: detail });
         }
     };
@@ -231,7 +233,7 @@ export default function VideoPage() {
             setResultView("results");
             message.info("已按原任务的提示词、参数和参考素材加入队列");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "重试失败");
+            message.error(userFacingErrorMessage(error, "暂时无法重新生成，请稍后再试"));
         }
     };
 
@@ -242,7 +244,7 @@ export default function VideoPage() {
             if (log.ownerUserId !== videoTaskOwner()) return;
             saveAs(log.video.url, videoDownloadName(log));
         } catch {
-            message.error("下载组件加载失败，请刷新后重试");
+            message.error("暂时无法下载，请刷新后再试");
         }
     };
 
@@ -257,7 +259,7 @@ export default function VideoPage() {
         try {
             videoTasks.resume(log.id);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "恢复查询失败");
+            message.error(userFacingErrorMessage(error, "暂时无法查看进度，请稍后再试"));
         }
     };
 
@@ -294,7 +296,7 @@ export default function VideoPage() {
             setDeleteConfirmOpen(false);
             message.success("已移除选中的视频记录");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "记录删除失败");
+            message.error(userFacingErrorMessage(error, "记录暂时无法删除，请稍后再试"));
         } finally {
             setDeletingLogs(false);
         }
@@ -585,9 +587,9 @@ export default function VideoPage() {
                         </div>
                         {taskError ? (
                             <p role="alert" className="mb-3 text-sm text-amber-600 dark:text-amber-400">
-                                {taskError}{" "}
+                                {userFacingErrorMessage(taskError, "生成记录暂时无法载入，请稍后再试")}{" "}
                                 <Button size="small" type="text" onClick={() => void videoTasks.refresh()}>
-                                    重新同步
+                                    重新载入
                                 </Button>
                             </p>
                         ) : null}
@@ -699,7 +701,7 @@ export default function VideoPage() {
             >
                 <div className="space-y-2">
                     <p>确定从太古遗迹移除选中的 {selectedLogIds.length} 条记录吗？</p>
-                    <p className="text-sm text-stone-500 dark:text-stone-400">进行中的任务请先停止查询或移出队列。停止查询和删除记录不会取消上游生成，仍可能计费。</p>
+                    <p className="text-sm text-stone-500 dark:text-stone-400">进行中的任务请先停止查看或移出队列。停止查看和删除记录后，视频仍可能继续生成并计费。</p>
                     <p className="text-sm text-stone-500 dark:text-stone-400">已入藏卷阁的作品不会受到影响。</p>
                 </div>
             </Modal>
@@ -748,35 +750,36 @@ function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedV
     );
 }
 
-function PendingVideoCard({ log, onResume, onStop }: { log: GenerationLog; onResume: () => void; onStop: () => void }) {
+export function PendingVideoCard({ log, onResume, onStop }: { log: GenerationLog; onResume: () => void; onStop: () => void }) {
     const active = isActiveVideoTask(log);
     const resumable = ["paused", "canceled"].includes(videoTaskPhase(log));
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
-        <div className="relative min-h-48 overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
-            <div className="flex min-h-48 flex-col items-center justify-center gap-2 px-4 py-5 text-sm text-stone-500 dark:text-stone-400">
+        <div className="relative min-h-48 overflow-hidden rounded-lg border border-dashed" style={{ background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.muted }}>
+            <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-4 py-5 text-sm">
                 {active && !log.trackingStopped ? <LoaderCircle className="size-6 animate-spin" /> : null}
-                <span className="max-w-lg text-center">{log.error || videoTaskLabel(log)}</span>
-                {resumable ? <Button onClick={onResume}>{log.task ? "继续查询原任务" : "继续排队"}</Button> : null}
-                {active && !log.trackingStopped ? <Button onClick={onStop}>{log.task || log.phase === "submitting" ? "停止查询" : "移出队列"}</Button> : null}
-                {active || log.task ? <span className="max-w-lg text-center text-xs">停止查询不会取消上游生成，上游仍可能继续生成和计费。</span> : null}
+                <span className="max-w-lg text-center" role="status">{videoTaskLabel(log)}</span>
+                {resumable ? <Button onClick={onResume}>{log.task ? "继续查看" : "继续排队"}</Button> : null}
+                {active && !log.trackingStopped ? <Button onClick={onStop}>{log.task || log.phase === "submitting" ? "停止查看" : "移出队列"}</Button> : null}
+                {active || log.task ? <span className="max-w-lg text-center text-xs">停止查看进度后，视频仍可能继续生成并计费。</span> : null}
+                {log.error ? <details className="w-full max-w-lg text-xs"><summary className="min-h-11 cursor-pointer py-3 text-center">查看详情</summary><p className="max-h-32 overflow-y-auto break-words whitespace-pre-wrap leading-5">{friendlyErrorMessage(log.error)}</p></details> : null}
             </div>
         </div>
     );
 }
 
-function FailedVideoCard({ error, uncertain, onRetry }: { error: string; uncertain?: boolean; onRetry: () => void }) {
+export function FailedVideoCard({ error, uncertain, onRetry }: { error: string; uncertain?: boolean; onRetry: () => void }) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const description = uncertain ? "暂时没能确认结果，请先确认原任务的结果。重新生成可能再次计费。" : generationFailureFeedback(error).description;
     return (
-        <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
-            <div className="flex aspect-video flex-col items-center justify-center gap-3 p-5 text-center">
-                <div className="text-sm font-medium text-red-600 dark:text-red-300">{uncertain ? "创建结果未确认" : "生成失败"}</div>
-                <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
-                    {error}
-                </Typography.Paragraph>
-            </div>
-            <div className="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
-                <Button size="small" danger onClick={onRetry}>
-                    {uncertain ? "按原参数重新生成（可能再次计费）" : "按原参数重新生成"}
+        <div className="flex min-h-60 flex-col overflow-hidden rounded-lg border" style={{ background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}>
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-8 text-center">
+                <VideoIcon className="size-7" style={{ color: theme.node.faint }} aria-hidden="true" />
+                <div className="max-w-sm" role="status"><h3 className="text-base font-medium">{uncertain ? "还没能确认生成结果" : "这个视频没能生成"}</h3><p className="mt-2 text-sm leading-6" style={{ color: theme.node.muted }}>{description}</p></div>
+                <Button className="!min-h-11 !min-w-32" onClick={onRetry}>
+                    {uncertain ? "重新生成" : "再试一次"}
                 </Button>
+                {error ? <details className="w-full max-w-sm text-left text-xs" style={{ color: theme.node.muted }}><summary className="min-h-11 cursor-pointer select-none py-3 text-center">查看详情</summary><p className="max-h-32 overflow-y-auto break-words whitespace-pre-wrap leading-5 select-text">{friendlyErrorMessage(error)}</p></details> : null}
             </div>
         </div>
     );

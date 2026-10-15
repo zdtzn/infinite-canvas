@@ -10,6 +10,7 @@ import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 
 import { lazyRoute } from "@/lib/lazy-route";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { preloadRoute } from "@/lib/route-loaders";
 
 const loadLoginForm = () => import("./login-form");
@@ -68,7 +69,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     clearSession();
                 }
             })
-            .catch((reason) => active && setError(reason instanceof Error ? reason.message : "无法连接服务端"))
+            .catch((reason) => active && setError(userFacingErrorMessage(reason, "暂时无法连接，请检查网络后再试")))
             .finally(() => active && setLoading(false));
         return () => {
             active = false;
@@ -98,7 +99,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             setTransitionMessage("");
             setSession({ id: result.user.userId, username: result.user.displayName, displayName: result.user.displayName, avatarUrl: result.user.avatarUrl || "", admin: result.user.admin, realmId: result.user.realmId });
         } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "登录失败");
+            setError(userFacingErrorMessage(reason, "暂时无法登录，请稍后再试"));
         } finally {
             setSubmitting(false);
         }

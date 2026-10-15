@@ -66,7 +66,7 @@ test("image settings expose only parameters the selected provider can honor", ()
             showTitle: false,
         } as Parameters<typeof ImageSettingsPanel>[0]),
     );
-    assert.match(geminiHtml, /当前模型由上游自动决定输出分辨率/);
+    assert.match(geminiHtml, /当前模型自动决定图片分辨率/);
     assert.match(geminiHtml, /max="4"/);
     assert.doesNotMatch(geminiHtml, />4K<\/button>/);
     assert.match(geminiHtml, />1:8<\/span>/);
@@ -84,7 +84,7 @@ test("image settings expose only parameters the selected provider can honor", ()
             showTitle: false,
         } as Parameters<typeof ImageSettingsPanel>[0]),
     );
-    assert.match(uuHtml, /当前 UU 渠道由模型自动控制/);
+    assert.match(uuHtml, /当前模型自动决定图片质量/);
     assert.match(uuHtml, />4K<\/button>/);
     assert.doesNotMatch(uuHtml, /16倍数对齐/);
 
@@ -102,7 +102,7 @@ test("image settings expose only parameters the selected provider can honor", ()
     assert.match(sadaiHtml, />2:3<\/span>/);
     assert.match(sadaiHtml, />3:2<\/span>/);
     assert.match(sadaiHtml, />3:4<\/span>/);
-    assert.match(sadaiHtml, /默认分组可能由上游决定/);
+    assert.match(sadaiHtml, /最终像素由模型决定/);
 });
 
 test("GPT Image 2 settings show flexible ratios and their constrained request dimensions", () => {

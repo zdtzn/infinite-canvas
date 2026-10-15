@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 
 import { fetchAnnouncements, markAllAnnouncementsRead, markAnnouncementRead, type AnnouncementType, type SystemAnnouncement } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import "./announcements.css";
 
 type AnnouncementView = "timeline" | "unread";
@@ -38,7 +39,7 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
     const readMutation = useMutation({
         mutationFn: markAnnouncementRead,
         onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["announcements"] }),
-        onError: (error) => message.error(error instanceof Error ? error.message : "标记已读失败"),
+        onError: (error) => message.error(userFacingErrorMessage(error, "暂时未能标记已读，请稍后再试")),
     });
     const readAllMutation = useMutation({
         mutationFn: markAllAnnouncementsRead,
@@ -46,7 +47,7 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
             void queryClient.invalidateQueries({ queryKey: ["announcements"] });
             message.success(count ? `已将 ${count} 条公告标为已读` : "当前没有未读公告");
         },
-        onError: (error) => message.error(error instanceof Error ? error.message : "全部标记已读失败"),
+        onError: (error) => message.error(userFacingErrorMessage(error, "暂时未能标记已读，请稍后再试")),
     });
 
     useEffect(() => {
@@ -117,7 +118,7 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
 
                 <div className="announcements-scroll">
                     {query.isLoading ? <AnnouncementSkeleton /> : null}
-                    {query.isError ? <Result status="warning" title="公告暂时无法加载" subTitle={query.error instanceof Error ? query.error.message : "请稍后重试"} extra={<Button onClick={() => query.refetch()}>重新加载</Button>} /> : null}
+                    {query.isError ? <Result status="warning" title="公告暂时无法加载" subTitle={userFacingErrorMessage(query.error, "请稍后重新加载")} extra={<Button onClick={() => query.refetch()}>重新加载</Button>} /> : null}
                     {!query.isLoading && !query.isError && !items.length ? (
                         <div className="announcements-empty">
                             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={view === "unread" ? "没有未读公告" : "暂时没有公告"} />

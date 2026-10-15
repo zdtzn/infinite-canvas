@@ -4,6 +4,7 @@ import { memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import { nanoid } from "nanoid";
 
 import { cn } from "@/lib/utils";
+import { friendlyErrorMessage, userFacingErrorMessage } from "@/lib/friendly-error";
 import { lazyRoute } from "@/lib/lazy-route";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { cancelChatMessage, createChatConversation, createChatMemory, deleteChatConversation, deleteChatMemory, fetchChatConversation, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, updateChatMemory, uploadChatImage, type ChatAttachment, type ChatCanvasContext, type ChatConversation, type ChatMemory, type ChatMessage } from "@/services/chat-api";
@@ -141,7 +142,7 @@ export default function ChatPage() {
             .catch((error) => {
                 if (canceled) return;
                 setPresetReadyUser(userId);
-                message.error(error instanceof Error ? error.message : "问道角色加载失败");
+                message.error(userFacingErrorMessage(error, "问道角色加载失败"));
             });
         return () => {
             canceled = true;
@@ -159,7 +160,7 @@ export default function ChatPage() {
                 if (!canceled) setMemories(response.items);
             })
             .catch((error) => {
-                if (!canceled) message.error(error instanceof Error ? error.message : "长期记忆加载失败");
+                if (!canceled) message.error(userFacingErrorMessage(error, "长期记忆加载失败"));
             });
         return () => {
             canceled = true;
@@ -180,7 +181,7 @@ export default function ChatPage() {
                     return next;
                 });
             })
-            .catch((error) => !canceled && message.error(error instanceof Error ? error.message : "问道记录加载失败"))
+            .catch((error) => !canceled && message.error(userFacingErrorMessage(error, "问道记录加载失败")))
             .finally(() => !canceled && setLoading(false));
         return () => {
             canceled = true;
@@ -206,7 +207,7 @@ export default function ChatPage() {
                 });
                 setConversations((current) => upsertConversation(current, detail.conversation));
             })
-            .catch((error) => !canceled && message.error(error instanceof Error ? error.message : "对话加载失败"))
+            .catch((error) => !canceled && message.error(userFacingErrorMessage(error, "对话加载失败")))
             .finally(() => !canceled && setDetailLoading(false));
         return () => {
             canceled = true;
@@ -300,7 +301,7 @@ export default function ChatPage() {
                 if (runtime.pending && runtime.conversationId === pending.conversationId) {
                     runtime.setRuntime({ status: pending.started ? "streaming" : "starting" });
                 }
-                message.error(error instanceof Error ? error.message : "停止回答失败；回答仍会继续");
+                message.error("暂时无法停止，回答仍会继续");
                 return false;
             } finally {
                 pending.cancelRequest = undefined;
@@ -372,7 +373,7 @@ export default function ChatPage() {
             if (latestRuntime.pending && latestRuntime.conversationId === conversationId) {
                 latestRuntime.setRuntime({ status: restoreStatus });
             }
-            message.error(error instanceof Error ? `停止回答失败；回答仍会继续：${error.message}` : "停止回答失败；回答仍会继续");
+            message.error("暂时无法停止，回答仍会继续");
         }
     }
 
@@ -404,7 +405,7 @@ export default function ChatPage() {
             setDraft("");
             setAttachments([]);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "新建问道失败");
+            message.error(userFacingErrorMessage(error, "新建问道失败"));
         } finally {
             setCreating(false);
         }
@@ -469,7 +470,7 @@ export default function ChatPage() {
             setAttachments([]);
             message.success(response.skippedAttachmentCount ? `会话已导入，${response.skippedAttachmentCount} 张图片未恢复` : "会话已导入");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "会话文件导入失败");
+            message.error(userFacingErrorMessage(error, "会话文件导入失败"));
         } finally {
             setImporting(false);
         }
@@ -503,7 +504,7 @@ export default function ChatPage() {
                 setAttachments([]);
             }
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "删除失败");
+            message.error(userFacingErrorMessage(error, "删除失败"));
         }
     }
 
@@ -524,7 +525,7 @@ export default function ChatPage() {
             }
             setAttachments((current) => [...current, ...uploaded]);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "图片上传失败");
+            message.error(userFacingErrorMessage(error, "图片上传失败"));
         } finally {
             setUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = "";
@@ -626,7 +627,7 @@ export default function ChatPage() {
                             return [...current, createOptimisticAssistantMessage(pending, pending.stopped ? "本次回答已停止" : errorMessage)];
                         });
                     }
-                    if (!pending.stopped) message.error(errorMessage);
+                    if (!pending.stopped) message.error(userFacingErrorMessage(errorMessage, "这次回答暂未完成，请查看对话后再试"));
                 },
             });
         } catch (error) {
@@ -642,7 +643,7 @@ export default function ChatPage() {
                     return [...current, createOptimisticAssistantMessage(pending, aborted ? "本次回答已停止" : errorMessage)];
                 });
             }
-            if (!aborted) message.error(errorMessage);
+            if (!aborted) message.error(userFacingErrorMessage(errorMessage, "这次回答暂未完成，请查看对话后再试"));
         } finally {
             setSending(false);
             abortRef.current = null;
@@ -662,7 +663,7 @@ export default function ChatPage() {
             const conversationId = await ensureConversation();
             await runChatTurn({ conversationId, content, attachments, canvasContext: canvasContext || undefined, editUserMessageId: editingMessageId || undefined, showOptimisticUser: !editingMessageId });
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "问道台暂未回应");
+            message.error(userFacingErrorMessage(error, "问道台暂未回应"));
         } finally {
             sendStartingRef.current = false;
         }
@@ -733,7 +734,7 @@ export default function ChatPage() {
             if (activeConversationIdRef.current === item.conversationId) setMessages(response.messages);
             if (editingMessageId && (editingMessageId === item.id || !response.messages.some((message) => message.id === editingMessageId))) cancelEdit();
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "消息删除失败");
+            message.error(userFacingErrorMessage(error, "消息删除失败"));
         }
     }
 
@@ -760,7 +761,7 @@ export default function ChatPage() {
                 setConversations((current) => upsertConversation(current, response.conversation));
                 setPresetDefault(nextPresetId);
             } catch (error) {
-                message.error(error instanceof Error ? error.message : "问道角色切换失败");
+                message.error(userFacingErrorMessage(error, "问道角色切换失败"));
             }
             return;
         }
@@ -785,7 +786,7 @@ export default function ChatPage() {
                     await saveServerUserPreferences({ chatPresetId: nextPresetId }, expectedUserId);
                 } catch (error) {
                     if (isActive() && useUserStore.getState().user?.id === expectedUserId) {
-                        message.error(error instanceof Error ? error.message : "问道角色保存失败");
+                        message.error(userFacingErrorMessage(error, "问道角色保存失败"));
                     }
                 }
             });
@@ -802,7 +803,7 @@ export default function ChatPage() {
             setPersonaDraft(savedPersona);
             message.success(savedPersona ? "用户身份已保存" : "用户身份已清除");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "用户身份保存失败");
+            message.error(userFacingErrorMessage(error, "用户身份保存失败"));
         } finally {
             setPersonaSaving(false);
         }
@@ -825,7 +826,7 @@ export default function ChatPage() {
             setMemoryDraft("");
             setEditingMemoryId("");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "记忆保存失败");
+            message.error(userFacingErrorMessage(error, "记忆保存失败"));
         } finally {
             setMemorySaving(false);
         }
@@ -843,7 +844,7 @@ export default function ChatPage() {
             setMemories((current) => [response.memory, ...current]);
             message.success("已加入长期记忆");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "保存长期记忆失败");
+            message.error(userFacingErrorMessage(error, "保存长期记忆失败"));
         }
     }
 
@@ -856,7 +857,7 @@ export default function ChatPage() {
                 setMemoryDraft("");
             }
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "记忆删除失败");
+            message.error(userFacingErrorMessage(error, "记忆删除失败"));
         }
     }
 
@@ -1290,7 +1291,7 @@ function createOptimisticAssistantMessage(pending: PendingChatTurn, error: strin
     };
 }
 
-const ChatBubble = memo(function ChatBubble({ item, isLatest, onAction }: { item: ChatMessage; isLatest: boolean; onAction: (action: ChatMessageAction, item: ChatMessage) => void }) {
+export const ChatBubble = memo(function ChatBubble({ item, isLatest, onAction }: { item: ChatMessage; isLatest: boolean; onAction: (action: ChatMessageAction, item: ChatMessage) => void }) {
     const isUser = item.role === "user";
     const copyText = useCopyText();
     const markdownContent = item.content;
@@ -1328,10 +1329,11 @@ const ChatBubble = memo(function ChatBubble({ item, isLatest, onAction }: { item
                     <Suspense fallback={<div className="whitespace-pre-wrap break-words">{markdownContent}</div>}>
                         <ChatMarkdown className="agent-streamdown chat-prose" content={markdownContent} />
                     </Suspense>
-                ) : (
-                    <div className="whitespace-pre-wrap break-words">{item.status === "failed" ? item.error || "未返回内容" : "未返回内容"}</div>
-                )}
-                {item.status === "failed" ? <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">{item.error || "本次问道未能完成"}</div> : null}
+                ) : item.status !== "failed" ? (
+                    <div className="whitespace-pre-wrap break-words">未返回内容</div>
+                ) : null}
+                {item.status === "failed" ? <div role="status" className="mt-2 text-sm text-stone-500 dark:text-stone-300">{userFacingErrorMessage(item.error, "这次回答暂未完成，可以再试一次。")}</div> : null}
+                {item.status === "failed" && item.error ? <details className="mt-1 text-xs text-stone-500 dark:text-stone-400"><summary className="min-h-11 cursor-pointer py-3">查看详情</summary><p className="max-h-32 overflow-y-auto break-words whitespace-pre-wrap leading-5">{friendlyErrorMessage(item.error)}</p></details> : null}
                 {copyValue || menuItems.length ? (
                     <div className={cn("mt-3 flex items-center gap-1", isUser ? "justify-end" : "justify-start")}>
                         {copyValue ? (

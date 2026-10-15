@@ -1,5 +1,6 @@
 import { Check, CircleAlert, CloudUpload, RefreshCw } from "lucide-react";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -25,11 +26,11 @@ export function AssetSyncStatus({ assetId, className = "" }: { assetId?: string;
     else if (assetId && entries.length) label = failed ? "云端同步失败，本机已保留" : "本机已保存，等待云端同步";
     else if (entries.length) label = [pending ? `${pending} 项等待同步` : "", failed ? `${failed} 项同步失败` : ""].filter(Boolean).join("，");
     else if (!serverHydrated && !assetId) label = "云端素材尚未加载";
-    if (storageError) label = storageError;
+    if (storageError) label = userFacingErrorMessage(storageError, "本机素材暂时无法保存或读取，请重试，暂勿关闭页面或清除浏览器数据");
     const Icon = failed || storageError ? CircleAlert : entries.length || !serverHydrated ? CloudUpload : Check;
 
     return (
-        <span className={`inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground ${className}`} role="status" aria-live="polite" title={error}>
+        <span className={`inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground ${className}`} role="status" aria-live="polite" title={error ? userFacingErrorMessage(error, "云端同步尚未完成，请重试") : undefined}>
             <Icon size={14} aria-hidden="true" />
             <span>{label}</span>
             {(entries.length > 0 || storageError || !serverHydrated) && (

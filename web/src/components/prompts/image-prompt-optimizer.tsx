@@ -4,6 +4,7 @@ import { Alert, App, Button, Input, Modal, Spin, Tooltip } from "antd";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { optimizeImagePrompt, type ImagePromptOptimizationContext } from "@/services/api/prompt-optimizer";
 
 type ImagePromptOptimizerProps = {
@@ -39,7 +40,7 @@ export function ImagePromptOptimizer({ prompt, context, onAdopt, compact = false
         const value = sourcePrompt.trim();
         if (!value || controllerRef.current) return;
         if (!PUBLIC_MODE) {
-            message.warning("提示词优化需在 Bun 完整模式下使用");
+            message.warning("当前环境暂不支持提示词优化，可直接继续创作");
             return;
         }
 
@@ -58,7 +59,7 @@ export function ImagePromptOptimizer({ prompt, context, onAdopt, compact = false
             if (requestSequence.current === sequence) setOptimized(result.optimized);
         } catch (requestError) {
             if (controller.signal.aborted || requestSequence.current !== sequence) return;
-            setError(requestError instanceof Error ? requestError.message : "提示词优化暂不可用");
+            setError(userFacingErrorMessage(requestError, "暂时无法优化提示词，可稍后再试"));
         } finally {
             if (requestSequence.current === sequence) {
                 controllerRef.current = null;
@@ -101,7 +102,7 @@ export function ImagePromptOptimizer({ prompt, context, onAdopt, compact = false
 
     return (
         <>
-            <Tooltip title={PUBLIC_MODE ? "免费优化提示词，原提示词不会自动替换" : "需在 Bun 完整模式下使用"}>
+            <Tooltip title={PUBLIC_MODE ? "免费优化提示词，确认后可采用优化稿" : "当前环境暂不支持提示词优化"}>
                 <span className={compact ? "inline-flex shrink-0" : "inline-flex"}>{trigger}</span>
             </Tooltip>
             <Modal title="优化提示词" open={open} onCancel={close} footer={null} width={920} centered destroyOnHidden>

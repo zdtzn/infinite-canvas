@@ -12,6 +12,7 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { useImperialLoadingText } from "@/features/cultivation/imperial-mode";
 import { readCreativeImageTransfer } from "@/lib/creative-image-transfer";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useUserStore } from "@/stores/use-user-store";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
@@ -50,7 +51,7 @@ export default function CanvasPage() {
             const { readZip } = await import("@/lib/zip");
             const zip = await readZip(file);
             const projectFile = zip.get("projects.json");
-            if (!projectFile) throw new Error("missing projects.json");
+            if (!projectFile) throw new Error("这不是有效的画布压缩包，请重新导出后再导入");
             const data = JSON.parse(await projectFile.text()) as CanvasExportFile;
             await Promise.all(
                 data.projects.flatMap((project) =>
@@ -65,7 +66,7 @@ export default function CanvasPage() {
             data.projects.forEach((item) => importProject(item.project));
             message.success(`已导入 ${data.projects.length} 个画布`);
         } catch (error) {
-            message.error(error instanceof Error ? `导入失败：${error.message}` : "导入失败，请选择有效的画布压缩包");
+            message.error(userFacingErrorMessage(error, "画布导入失败，请选择有效的画布压缩包"));
         } finally {
             if (inputRef.current) inputRef.current.value = "";
         }

@@ -15,7 +15,7 @@ import { deleteStoredMedia, uploadMediaFile } from "@/services/file-storage";
 import { applyCameraPrompt, normalizeCameraSettings } from "@/lib/canvas/canvas-camera";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { friendlyErrorMessage } from "@/lib/friendly-error";
+import { friendlyErrorMessage, userFacingErrorMessage } from "@/lib/friendly-error";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { collectMovableCanvasNodeIds } from "@/lib/canvas/canvas-interaction";
 import { canvasGroupShortcut } from "@/lib/canvas/canvas-shortcuts";
@@ -619,12 +619,12 @@ function InfiniteCanvasPage() {
                 const { job } = await pending;
                 if (!isCurrentGeneration(request.controller)) return false;
                 if (job.status === "succeeded" || job.status === "failed") return false;
-                if (job.status !== "canceled") throw new Error("服务端尚未取消任务，请稍后重试");
+                if (job.status !== "canceled") throw new Error("任务尚未停止，请稍后再试");
                 setGenerationNodes(request.controller, (current) => current.map((node) => node.id === request.targetNodeId && node.metadata?.jobId === job.id && node.metadata.status === NODE_STATUS_LOADING
                     ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node));
                 return true;
             } catch (error) {
-                if (isCurrentGeneration(request.controller)) message.error(`取消失败：${friendlyErrorMessage(error)}，任务仍可恢复，请重试停止。`);
+                if (isCurrentGeneration(request.controller)) message.error("暂时没能确认任务已停止，请查看任务进度后再试。");
                 return false;
             } finally {
                 request.canceling = undefined;
@@ -1574,12 +1574,12 @@ function InfiniteCanvasPage() {
             }
             const response = await branchServerProject(projectId, source as unknown as Record<string, unknown>, source.serverRevision);
             const branch = normalizeCanvasProject({ ...response.project, serverRevision: response.revision });
-            if (!branch) throw new Error("服务器返回的分支数据无效");
+            if (!branch) throw new Error("画布分支未能创建，请稍后再试");
             insertProject(branch);
             message.success("已创建画布分支");
             navigate(`/canvas/${branch.id}`);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "创建画布分支失败");
+            message.error(userFacingErrorMessage(error, "画布分支未能创建，请稍后再试"));
         } finally {
             hide();
         }
@@ -1671,7 +1671,7 @@ function InfiniteCanvasPage() {
                         message.success(`已恢复“${restored.title}”`);
                     } catch (error) {
                         if (!isCurrent()) return;
-                        message.error(error instanceof Error ? error.message : "快照恢复失败");
+                        message.error(userFacingErrorMessage(error, "快照未能恢复，请再试一次"));
                         setProjectLoaded(true);
                     }
                 },
@@ -2170,7 +2170,7 @@ function InfiniteCanvasPage() {
             if (!imageType) return;
             const blob = await imageItem.getType(imageType);
             const file = new File([blob], "clipboard-image.png", { type: imageType });
-            void createImageFileNode(file, getCanvasCenter()).catch((error) => message.warning(`剪切板图片添加失败：${error instanceof Error ? error.message : "请检查图片格式或大小"}`));
+            void createImageFileNode(file, getCanvasCenter()).catch((error) => message.warning(userFacingErrorMessage(error, "剪贴板图片未能添加，请检查图片格式或大小")));
             message.success("已从剪切板添加图片");
             return;
         }
@@ -2442,7 +2442,7 @@ function InfiniteCanvasPage() {
                     `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.mimeType || node.metadata.content)}`,
                 );
             } catch {
-                message.error("下载组件加载失败，请刷新后重试");
+                message.error("暂时无法下载，请刷新后再试");
             }
         },
         [message],
@@ -2492,7 +2492,7 @@ function InfiniteCanvasPage() {
                 const status = await useAssetStore.getState().waitForAssetLocalSave(id);
                 message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: assetSaveMessage(status) });
             } catch (error) {
-                message.error(error instanceof Error ? `入藏卷阁失败：${error.message}` : "入藏卷阁失败，请重试");
+                message.error(userFacingErrorMessage(error, "素材未能入藏，请再试一次"));
             }
         },
         [addAsset, message],
@@ -2568,8 +2568,7 @@ function InfiniteCanvasPage() {
                 setDialogNodeId(childId);
                 message.success({ key: messageKey, content: "裁剪图片已保存" });
             } catch (error) {
-                const detail = error instanceof Error ? error.message : "未知错误";
-                message.error({ key: messageKey, content: `裁剪图片失败：${detail}`, duration: 4 });
+                message.error({ key: messageKey, content: userFacingErrorMessage(error, "图片未能裁剪，请再试一次"), duration: 4 });
             }
         },
         [message],
@@ -2658,13 +2657,12 @@ function InfiniteCanvasPage() {
                             };
                         }),
                     );
-                    message.success({ key: messageKey, content: `已切分为 ${childNodes.length} 个子节点` });
+                    message.success({ key: messageKey, content: `已切分为 ${childNodes.length} 张图片` });
                 } finally {
                     historyPausedRef.current = false;
                 }
             } catch (error) {
-                const detail = error instanceof Error ? error.message : "未知错误";
-                message.error({ key: messageKey, content: `切分图片失败：${detail}`, duration: 4 });
+                message.error({ key: messageKey, content: userFacingErrorMessage(error, "图片未能切分，请再试一次"), duration: 4 });
             }
         },
         [message],
@@ -2789,8 +2787,7 @@ function InfiniteCanvasPage() {
                 setDialogNodeId(childId);
                 message.success({ key: messageKey, content: "放大图片已保存" });
             } catch (error) {
-                const detail = error instanceof Error ? error.message : "未知错误";
-                message.error({ key: messageKey, content: `放大图片失败：${detail}`, duration: 4 });
+                message.error({ key: messageKey, content: userFacingErrorMessage(error, "图片未能放大，请再试一次"), duration: 4 });
             }
         },
         [message],
@@ -3047,7 +3044,7 @@ function InfiniteCanvasPage() {
                             if (await persistPendingImageUpload(file, target.nodeId, pending)) setDialogNodeId(target.nodeId);
                         }
                     } catch (error) {
-                        message.warning(`${file.name} 添加失败：${error instanceof Error ? error.message : "请检查格式或文件大小"}`);
+                        message.warning(`${file.name}：${userFacingErrorMessage(error, "未能添加，请检查格式或文件大小")}`);
                     }
                     if (files.length > 1) await createMediaFileNodes(files.slice(1), adjacentPosition);
                 } else {
@@ -3520,7 +3517,7 @@ function InfiniteCanvasPage() {
                 if (!isCurrentGeneration(runController) || isGenerationCanceled(error)) return;
                 const errorDetails = friendlyErrorMessage(error);
                 if (mode === "image") message.error({ content: <GenerationFailureToast feedback={generationFailureFeedback(errorDetails, { isDouEmperor })} />, duration: 2 });
-                else message.error(errorDetails);
+                else message.error(userFacingErrorMessage(errorDetails, "未能完成这次创作，请稍后再试"));
                 setGenerationNodes(runController, (prev) =>
                     prev.map((node) => (node.id === nodeId || pendingChildIds.includes(node.id) ? (node.id === nodeId && !markSourceStatus ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } }) : node)),
                 );
@@ -3786,7 +3783,7 @@ function InfiniteCanvasPage() {
         consumedImageTransferRef.current = transfer.id;
         void insertAssistantImage({ id: transfer.id, prompt: transfer.prompt || transfer.title, dataUrl: transfer.dataUrl, storageKey: transfer.storageKey })
             .then(() => message.success("已将丹青台图片加入当前画布"))
-            .catch((error) => message.error(error instanceof Error ? `图片加入画布失败：${error.message}` : "图片加入画布失败"))
+            .catch((error) => message.error(userFacingErrorMessage(error, "图片未能加入画布，请再试一次")))
             .finally(() => navigate(`${location.pathname}${location.search}`, { replace: true, state: null }));
     }, [insertAssistantImage, location.pathname, location.search, location.state, message, navigate, projectLoaded, toolUserId]);
 

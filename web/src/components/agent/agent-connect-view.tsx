@@ -4,6 +4,7 @@ import copyToClipboard from "copy-to-clipboard";
 import { CheckCircle2, Copy, KeyRound, Link2, LoaderCircle, PlugZap, RefreshCw, RotateCcw } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { AgentApiError, fetchAgentDiagnostics, resetAgentOrigin, type AgentDiagnostics } from "./agent-api";
 
 const AGENT_CONNECT_STEPS = [
@@ -68,7 +69,7 @@ export function AgentConnectView({
                         : error.code === "NETWORK_ERROR" ? "Agent 未启动或地址不可访问"
                             : error.message
                 : error instanceof Error ? error.message : "无法完成连接检查";
-            message.error(detail);
+            message.error(userFacingErrorMessage(detail, "暂时无法检查连接，请确认本地助手已启动"));
         } finally {
             setDiagnosing(false);
         }
@@ -79,7 +80,7 @@ export function AgentConnectView({
             await testConnection();
             message.success("当前网页已重新授权");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "重新授权失败");
+            message.error(userFacingErrorMessage(error, "暂时无法重新授权，请检查本地助手连接"));
         }
     };
     const codexPluginReminder = (
@@ -192,7 +193,11 @@ export function AgentConnectView({
                         </label>
                         {connectError ? (
                             <div className="rounded-md border px-2.5 py-2 text-xs leading-5" style={{ borderColor: "rgba(220,38,38,.35)", color: "#dc2626" }}>
-                                {connectError}
+                                {userFacingErrorMessage(connectError, "暂时无法连接，请确认本地助手已启动，地址和连接口令正确")}
+                                <details className="mt-1 text-xs">
+                                    <summary className="min-h-11 cursor-pointer py-3">查看详情</summary>
+                                    <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words">{connectError}</p>
+                                </details>
                             </div>
                         ) : null}
                         {diagnostics ? (

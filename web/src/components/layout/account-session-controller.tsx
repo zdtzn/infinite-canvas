@@ -68,7 +68,7 @@ export function AccountSessionController({ children }: { children: ReactNode }) 
                 <p className="text-sm text-stone-600 dark:text-stone-300">正在准备创作空间……</p>
                 {preparationError ? (
                     <button type="button" className="mt-3 text-xs text-[#b44735] hover:underline dark:text-[#d8b36d]" onClick={() => setRetryVersion((value) => value + 1)}>
-                        初始化未完成，点击重试
+                        暂时无法打开创作空间，点击重试
                     </button>
                 ) : null}
             </div>
