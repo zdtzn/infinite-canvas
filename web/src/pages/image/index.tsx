@@ -1194,7 +1194,16 @@ export default function ImagePage() {
                                     {running && generationJob && !previewLog && resultView === "results" ? <GenerationElapsed startedAt={generationJob.startedAt} /> : null}
                                 </div>
                                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 sm:justify-end">
-                                    {resultView === "results" && generationJobs.length > 0 && (generationJobs.length > 1 || !generationJob || previewLog) ? (
+                                    {resultView === "results" && !previewLog && generationJob ? (
+                                        running ? (
+                                            <Button size="small" type="text" disabled={generationJob.results.filter((result) => result.status === "pending").every((result) => result.cancelRequested)} onClick={() => cancelGeneration()}>取消本组</Button>
+                                        ) : (
+                                            <Tooltip title="仅移除当前任务，图片和太古遗迹记录会保留">
+                                                <Button size="small" type="text" onClick={() => removeGenerationTasks(generationJob.id)}>移除任务</Button>
+                                            </Tooltip>
+                                        )
+                                    ) : null}
+                                    {resultView === "results" && generationJobs.length > 0 ? (
                                         <Popover
                                             trigger="click"
                                             placement="bottomRight"
@@ -1299,18 +1308,6 @@ export default function ImagePage() {
                                     </Tooltip>
                                 </div>
                             </div>
-                            {resultView === "results" && !previewLog && generationJob ? (
-                                <div className="mb-4 flex min-w-0 items-center gap-3 text-xs text-muted-foreground">
-                                    <span className="min-w-0 flex-1 truncate" title={generationJob.prompt}>{generationJob.prompt}</span>
-                                    {running ? (
-                                        <Button size="small" type="text" disabled={generationJob.results.filter((result) => result.status === "pending").every((result) => result.cancelRequested)} onClick={() => cancelGeneration()}>取消本组</Button>
-                                    ) : (
-                                        <Tooltip title="仅移除当前任务，图片和太古遗迹记录会保留">
-                                            <Button size="small" type="text" onClick={() => removeGenerationTasks(generationJob.id)}>移除任务</Button>
-                                        </Tooltip>
-                                    )}
-                                </div>
-                            ) : null}
                             {resultView === "history" ? (
                                 <div>
                                     <HistoryFilters
