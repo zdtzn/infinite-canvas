@@ -17,7 +17,7 @@ function savedJob(job: ServerJob): ServerJob {
     return { ...job, result: { ...job.result!, recoveryPending: false, images: job.result!.images.map((image) => ({ ...image, persisted: true, dataUrl: `/api/job-files/${job.id}/${image.id}.png`, bytes: 42 })) } };
 }
 
-async function withTransport(run: (delays: number[], timeouts: number[]) => Promise<void>) {
+async function withTransport(run: (delays: number[], timeouts: number[]) => Promise<void>, timeScale = 1) {
     const previousWindow = globalThis.window;
     const previousFetch = globalThis.fetch;
     const previousUser = useUserStore.getState().user;
@@ -28,9 +28,9 @@ async function withTransport(run: (delays: number[], timeouts: number[]) => Prom
             if (ms !== undefined) timeouts.push(ms);
             if (ms === 1_200 || ms === 3_000) {
                 delays.push(ms);
-                return setTimeout(fn as () => void, 1);
+                return setTimeout(fn as () => void, timeScale === 1 ? 1 : ms / timeScale);
             }
-            return setTimeout(fn as () => void, ms);
+            return setTimeout(fn as () => void, ms === undefined ? ms : ms / timeScale);
         },
         clearTimeout, dispatchEvent: () => true,
     } as unknown as Window & typeof globalThis;
@@ -61,6 +61,46 @@ test("nonrelay recovery allows 75 seconds to save the existing image without sub
     expect(timeouts).toEqual([75_000]);
     expect(job.result!.images[0].persisted).toBe(false);
 }));
+
+test("a 120-second background save survives the 75-second client deadline without paid resubmission", () => withTransport(async (_delays, timeouts) => {
+    const job = temporaryJob("recover-long-background");
+    const permanent = savedJob(job);
+    const pending = Promise.withResolvers<ServerJob>();
+    const timedOut = Promise.withResolvers<void>();
+    const requests: string[] = [];
+    let current = job;
+    let callbacks = 0;
+    // Only timers are scaled by 1,000; production polling/recovery functions run unchanged.
+    const background = setTimeout(() => { current = permanent; pending.resolve(permanent); }, 120);
+    globalThis.fetch = (async (url, init) => {
+        const method = init?.method || "GET";
+        requests.push(`${method} ${url}`);
+        if (method === "GET") return Response.json({ job: current });
+        expect(String(url)).toBe("/api/jobs/recover-long-background/recover");
+        return new Response(new ReadableStream({ start(controller) {
+            const abort = () => { timedOut.resolve(); controller.error(new DOMException("Aborted", "AbortError")); };
+            init?.signal?.addEventListener("abort", abort, { once: true });
+            void pending.promise.then((saved) => {
+                init?.signal?.removeEventListener("abort", abort);
+                if (init?.signal?.aborted) return;
+                controller.enqueue(new TextEncoder().encode(JSON.stringify({ job: saved, recoveryPending: false })));
+                controller.close();
+            });
+        } }), { headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    try {
+        const images = completedServerImages(job, "owner", { onJobArchived: () => callbacks++ });
+        expect(images[0].dataUrl).toBe(job.result!.images[0].dataUrl);
+        await timedOut.promise;
+        expect(current.result!.images[0].persisted).toBe(false);
+        expect(callbacks).toBe(0);
+        expect(await images[0].archiveResult).toEqual({ job: permanent });
+        await Promise.resolve();
+        expect(callbacks).toBe(1);
+        expect(timeouts.filter((timeout) => timeout === 75_000)).toHaveLength(2);
+        expect(requests).toEqual(["POST /api/jobs/recover-long-background/recover", "GET /api/jobs/recover-long-background", "POST /api/jobs/recover-long-background/recover"]);
+    } finally { clearTimeout(background); }
+}, 1_000));
 
 test("202 stays pending until the original image is actually saved", () => withTransport(async (delays) => {
     const job = temporaryJob("recover-pending");

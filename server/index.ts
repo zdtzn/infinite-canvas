@@ -3291,7 +3291,7 @@ async function performJobImageRecovery(jobId: string): Promise<ImageRecoveryResu
         try {
             if (usesRelay && !RESULT_IMAGE_RELAY_SERVER_DOWNLOAD) throw new Error("等待浏览器完成结果归档");
             return await persistJobImage(job.input.userId, job.id, url.toString(), image.durationMs, new AbortController().signal, {
-                downloadTimeoutMs: usesRelay ? RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS : useSadaiUrlResult ? 60_000 : RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
+                downloadTimeoutMs: usesRelay ? RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS : useSadaiUrlResult ? 180_000 : RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
                 downloadAttempts: 1,
             });
         } catch (error) {

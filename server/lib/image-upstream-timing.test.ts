@@ -11,6 +11,7 @@ import { createDeferredImageResult, hasDeferredImageResults, isRecoverableImageD
 import { resolvePlatformChannel } from "./platform-channels";
 import { isRelayEligibleResultUrl } from "./result-image-relay";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./upstream-error";
+import { KeyedSerialExecutor } from "./keyed-serial-executor";
 
 // Execute the production request and reader functions without starting the server,
 // reading its database/environment, or making any external request.
@@ -209,6 +210,7 @@ test("SADAI 2.5 rejects private or non-HTTPS results before downloading without 
 });
 
 const recoveryExecutable = new Bun.Transpiler({ loader: "ts" }).transformSync([
+    extract("function recoverJobImages(", "async function performJobImageRecovery("),
     extract("async function performJobImageRecovery(", "function hasServerRecoverableDeferredImages("),
     extract("function hasServerRecoverableDeferredImages(", "function storedImageReferenceBytes("),
 ].join("\n"));
@@ -228,6 +230,7 @@ function recoveryHarness(baseUrl: string | null = "https://api.sadai.top/v1", mo
         state: { auth: { adminUserId: "fixture-admin" }, channels: baseUrl ? { "fixture-admin:fixture-channel": { baseUrl } } : {} },
         RESULT_IMAGE_RELAY_CONFIG: options.relay ? {} : undefined, RESULT_IMAGE_RELAY_SERVER_DOWNLOAD: true,
         RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS: 8_000, RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS: 30_000,
+        imageRecoveryRuns: new Map(), jobImageMutationExecutor: new KeyedSerialExecutor(),
         imageQueue: { get: (id: string) => id === job.id ? job : undefined, touch: async () => { calls.touch++; } },
         persistJobImage: async (_user: string, _job: string, value: string, _duration: number, _signal: AbortSignal, downloadOptions: { downloadTimeoutMs: number; downloadAttempts: number }) => {
             downloads.push({ url: value, options: downloadOptions });
@@ -237,14 +240,14 @@ function recoveryHarness(baseUrl: string | null = "https://api.sadai.top/v1", mo
         cultivation: { settleGeneration: () => { calls.settle++; }, refundGeneration: () => { calls.refund++; } },
         console: { info: () => {} },
     };
-    const recover = vm.runInNewContext(`${recoveryExecutable}\nperformJobImageRecovery;`, context);
-    return { job, archived, url, downloads, calls, run: () => recover(job.id) };
+    const recovery = vm.runInNewContext(`${recoveryExecutable}\n({ perform: performJobImageRecovery, recover: recoverJobImages });`, context);
+    return { job, archived, url, downloads, calls, run: () => recovery.perform(job.id), recover: () => recovery.recover(job.id) };
 }
 
-test("only official SADAI 2.5 background downloads get sixty seconds and still attempt each GET once", async () => {
+test("only official SADAI 2.5 background downloads get 180 seconds and still attempt each GET once", async () => {
     for (const [baseUrl, model, relay, timeout] of [
-        ["https://api.sadai.top/v1", "gpt-image-2.5-flare", false, 60_000],
-        ["https://verysadai.com/v1", "gpt-image-2.5-sunburst", false, 60_000],
+        ["https://api.sadai.top/v1", "gpt-image-2.5-flare", false, 180_000],
+        ["https://verysadai.com/v1", "gpt-image-2.5-sunburst", false, 180_000],
         ["https://api.sadai.top/v1", "gpt-image-2", false, 8_000],
         ["https://api.uuapi.com/v1", "gpt-image-2.5-flare", false, 8_000],
         ["https://proxy.example.com/v1", "gpt-image-2.5-flare", false, 8_000],
@@ -257,6 +260,25 @@ test("only official SADAI 2.5 background downloads get sixty seconds and still a
         expect(h.downloads).toEqual([{ url: h.url, options: { downloadTimeoutMs: timeout, downloadAttempts: 1 } }]);
         expect(h.calls).toEqual({ touch: 1, generate: 0, settle: 0, refund: 0 });
     }
+});
+
+test("repeated recovery requests join the unfinished background download without regenerating", async () => {
+    const pending = Promise.withResolvers<unknown>();
+    const h = recoveryHarness(undefined, undefined, { persist: () => pending.promise });
+    const first = h.recover();
+    const retried = h.recover();
+    expect(retried).toBe(first);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.downloads).toEqual([{ url: h.url, options: { downloadTimeoutMs: 180_000, downloadAttempts: 1 } }]);
+    expect(h.job.result.images[0].persisted).toBe(false);
+    expect(h.calls.generate).toBe(0);
+    pending.resolve(h.archived);
+    expect(await first).toEqual({ recovered: 1, remaining: 0 });
+    expect(await retried).toEqual({ recovered: 1, remaining: 0 });
+    expect(h.downloads).toHaveLength(1);
+    expect(h.job.result.images[0]).toMatchObject({ id: "fixture-image", persisted: true });
+    expect(h.calls).toEqual({ touch: 1, generate: 0, settle: 0, refund: 0 });
 });
 
 test("a pending SADAI background download keeps the completed URL result visible and preserves its ID after saving", async () => {
