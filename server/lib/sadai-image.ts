@@ -1,4 +1,6 @@
 const SADAI_IMAGE_API_HOST = "api.sadai.top";
+const SADAI_STANDARD_API_ORIGINS = new Set(["https://verysadai.com", "https://sadai.cc", "https://sadai.top"]);
+const SADAI_IMAGE_25_MODELS = new Set(["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]);
 const SADAI_ASPECT_RATIOS = new Set(["1:1", "5:4", "9:16", "21:9", "16:9", "3:2", "4:3", "4:5", "3:4", "2:3"]);
 
 const SADAI_RESOLUTION_MAP: Record<string, string> = {
@@ -27,6 +29,18 @@ type SadaiImageRequestOptionsInput = {
     generationQuality?: string;
     references: string[];
 };
+
+export function sadaiImageBaseUrl(baseUrl: string, model: string) {
+    if (!SADAI_IMAGE_25_MODELS.has(model.trim().toLowerCase())) return baseUrl;
+    try {
+        const { origin } = new URL(baseUrl);
+        if (!SADAI_STANDARD_API_ORIGINS.has(origin) || !["", "/", "/v1", "/v1/"].some((path) => baseUrl === `${origin}${path}`)) return baseUrl;
+        // SADAI documents separate text and image endpoints: https://sadai.cc/docs?view=guide#image2
+        return `https://${SADAI_IMAGE_API_HOST}/v1`;
+    } catch {
+        return baseUrl;
+    }
+}
 
 export function isSadaiImage2Channel(baseUrl: string, model: string) {
     try {

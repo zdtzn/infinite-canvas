@@ -1,6 +1,44 @@
 import { expect, test } from "bun:test";
 
-import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./sadai-image";
+import { buildSadaiImageRequestOptions, isSadaiImage2Channel, sadaiImageBaseUrl } from "./sadai-image";
+
+test("routes documented SADAI 2.5 models from standard API entries to the dedicated image endpoint", () => {
+    for (const origin of ["https://verysadai.com", "https://sadai.cc", "https://sadai.top"]) {
+        for (const path of ["", "/", "/v1", "/v1/"]) {
+            for (const model of ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]) {
+                expect(sadaiImageBaseUrl(`${origin}${path}`, model)).toBe("https://api.sadai.top/v1");
+            }
+        }
+    }
+});
+
+test("preserves SADAI legacy adapters, other models, proxies and customized API entries", () => {
+    for (const model of ["gpt-image-2", "gpt-image-1.5", "gpt-image-2.5", "gpt-image-2.5-flare-custom", "gpt-5.4"]) {
+        expect(sadaiImageBaseUrl("https://verysadai.com/v1", model)).toBe("https://verysadai.com/v1");
+    }
+    for (const baseUrl of [
+        "https://api.sadai.top/v1",
+        "https://proxy.example.com/v1",
+        "https://verysadai.com.proxy.example.com/v1",
+        "https://verysadai.com./v1",
+        "http://verysadai.com/v1",
+        "https://verysadai.com:443/v1",
+        "https://verysadai.com:8443/v1",
+        "https://user@verysadai.com/v1",
+        "https://user:password@verysadai.com/v1",
+        "https://verysadai.com/v1?route=custom",
+        "https://verysadai.com/v1?",
+        "https://verysadai.com/v1#custom",
+        "https://verysadai.com/v1#",
+        "https://verysadai.com/custom/v1",
+        "https://verysadai.com/v1/images/generations",
+        "https://verysadai.com/v1//",
+        "https://verysadai.com/custom/../v1",
+        "invalid URL",
+    ]) {
+        expect(sadaiImageBaseUrl(baseUrl, "gpt-image-2.5-flare")).toBe(baseUrl);
+    }
+});
 
 test("uses the SADAI Image2 adapter only for the documented API host", () => {
     expect(isSadaiImage2Channel("https://api.sadai.top/v1", "gpt-image-2")).toBe(true);

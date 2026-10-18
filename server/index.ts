@@ -69,7 +69,7 @@ import {
     resolvePromptOptimizationTarget,
 } from "./lib/prompt-optimizer";
 import { isValidProjectPayload } from "./lib/project-payload";
-import { buildSadaiImageRequestOptions, isSadaiImage2Channel } from "./lib/sadai-image";
+import { buildSadaiImageRequestOptions, isSadaiImage2Channel, sadaiImageBaseUrl } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { isUuImage25Channel, supportsUuAsyncRequest, uuAsyncCapabilityKey, uuTaskPollDelay } from "./lib/uu-image-async";
@@ -3546,7 +3546,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
     };
     // Compatible gateways do not consistently honor idempotency keys. Never replay a paid synchronous generation automatically.
     const retryPaidRequest = false;
-    const imageBaseUrl = dragonImageBaseUrl(channel.baseUrl, input.model);
+    const imageBaseUrl = sadaiImageBaseUrl(dragonImageBaseUrl(channel.baseUrl, input.model), input.model);
     const size = resolveOpenAiImageSize(input.size, input.quality, input.model, channel.baseUrl);
     const prompt = dragonPromptWithSize(input.prompt, input.size, size, input.model, channel.baseUrl);
     const requestOptions = buildOpenAiImageRequestOptions({
@@ -3582,84 +3582,104 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         );
         return outputs.flat();
     }
-    let response: Response;
-    if (isSadaiImage2Channel(channel.baseUrl, input.model) && !input.mask) {
-        response = await upstreamFetch(
-            buildUpstreamUrl(imageBaseUrl, "openai", input.references.length ? "/images/edits" : "/images/generations"),
-            {
-                method: "POST",
-                headers: { ...headers, "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    model: input.model,
-                    prompt,
-                    ...buildSadaiImageRequestOptions({
-                        count: input.count,
-                        size: input.size,
-                        outputResolution: input.quality,
-                        generationQuality: input.imageQuality,
-                        references: input.references,
+    let headersReceivedAt: number | undefined;
+    let responseStatus: number | null = null;
+    let responseType = "unknown";
+    let responseBytes = 0;
+    let stage = "waiting_headers";
+    let outcome = "failed";
+    try {
+        let response: Response;
+        if (isSadaiImage2Channel(channel.baseUrl, input.model) && !input.mask) {
+            response = await upstreamFetch(
+                buildUpstreamUrl(imageBaseUrl, "openai", input.references.length ? "/images/edits" : "/images/generations"),
+                {
+                    method: "POST",
+                    headers: { ...headers, "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        model: input.model,
+                        prompt,
+                        ...buildSadaiImageRequestOptions({
+                            count: input.count,
+                            size: input.size,
+                            outputResolution: input.quality,
+                            generationQuality: input.imageQuality,
+                            references: input.references,
+                        }),
                     }),
-                }),
-                signal,
-            },
-            retryPaidRequest,
-        );
-    } else if (usesJsonReferenceGeneration(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))) {
-        response = await upstreamFetch(
-            buildUpstreamUrl(imageBaseUrl, "openai", "/images/generations"),
-            {
-                method: "POST",
-                headers: { ...headers, "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    model: input.model,
-                    prompt,
-                    image: input.references,
-                    ...requestOptions,
-                }),
-                signal,
-            },
-            retryPaidRequest,
-        );
-    } else if (input.references.length) {
-        const form = new FormData();
-        form.set("model", input.model);
-        form.set("prompt", prompt);
-        Object.entries(requestOptions).forEach(([key, value]) => form.set(key, String(value)));
-        input.references.forEach((dataUrl, index) => {
-            const image = dataUrlBlob(dataUrl);
-            form.append(imageEditReferenceField(input.references.length), image, `reference-${index + 1}${imageExtension(image.type)}`);
-        });
-        if (input.mask) {
-            const mask = dataUrlBlob(input.mask);
-            form.set("mask", mask, `mask${imageExtension(mask.type)}`);
+                    signal,
+                },
+                retryPaidRequest,
+            );
+        } else if (usesJsonReferenceGeneration(channel.baseUrl, input.model, input.references.length, Boolean(input.mask))) {
+            response = await upstreamFetch(
+                buildUpstreamUrl(imageBaseUrl, "openai", "/images/generations"),
+                {
+                    method: "POST",
+                    headers: { ...headers, "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        model: input.model,
+                        prompt,
+                        image: input.references,
+                        ...requestOptions,
+                    }),
+                    signal,
+                },
+                retryPaidRequest,
+            );
+        } else if (input.references.length) {
+            const form = new FormData();
+            form.set("model", input.model);
+            form.set("prompt", prompt);
+            Object.entries(requestOptions).forEach(([key, value]) => form.set(key, String(value)));
+            input.references.forEach((dataUrl, index) => {
+                const image = dataUrlBlob(dataUrl);
+                form.append(imageEditReferenceField(input.references.length), image, `reference-${index + 1}${imageExtension(image.type)}`);
+            });
+            if (input.mask) {
+                const mask = dataUrlBlob(input.mask);
+                form.set("mask", mask, `mask${imageExtension(mask.type)}`);
+            }
+            response = await upstreamFetch(buildUpstreamUrl(imageBaseUrl, "openai", "/images/edits"), { method: "POST", headers, body: form, signal }, retryPaidRequest);
+        } else {
+            response = await upstreamFetch(
+                buildUpstreamUrl(imageBaseUrl, "openai", "/images/generations"),
+                {
+                    method: "POST",
+                    headers: { ...headers, "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        model: input.model,
+                        prompt,
+                        ...requestOptions,
+                    }),
+                    signal,
+                },
+                retryPaidRequest,
+            );
         }
-        response = await upstreamFetch(buildUpstreamUrl(imageBaseUrl, "openai", "/images/edits"), { method: "POST", headers, body: form, signal }, retryPaidRequest);
-    } else {
-        response = await upstreamFetch(
-            buildUpstreamUrl(imageBaseUrl, "openai", "/images/generations"),
-            {
-                method: "POST",
-                headers: { ...headers, "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    model: input.model,
-                    prompt,
-                    ...requestOptions,
-                }),
-                signal,
-            },
-            retryPaidRequest,
-        );
+        headersReceivedAt = Date.now();
+        responseStatus = response.status;
+        const mime = (response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+        responseType = !mime ? "unknown" : mime === "application/json" || mime.endsWith("+json") ? "json" : mime === "text/event-stream" ? "event-stream" : ["text/html", "application/xhtml+xml"].includes(mime) ? "html" : "other";
+        stage = "reading_body";
+        const payload = await parseUpstreamJson(response, {
+            maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES,
+            tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试",
+            onProgress: (bytes) => { responseBytes = bytes; },
+        });
+        const data = imageResponseItems(payload);
+        const mimeType = imageOutputFormatMimeType(input.imageOutputFormat);
+        const images = data.map((item) => imageResponseItemValue(item, mimeType)).filter(Boolean);
+        stage = "completed";
+        outcome = "succeeded";
+        return images;
+    } finally {
+        const finishedAt = Date.now();
+        console.info(JSON.stringify({ event: "image_upstream_timing", jobId: upstreamRequestId, channelId: input.channelId, model: input.model,
+            outcome: signal.aborted ? "canceled" : outcome, stage, status: responseStatus, responseType, responseBytes,
+            responseHeadersMs: headersReceivedAt === undefined ? null : headersReceivedAt - requestStartedAt,
+            responseBodyMs: headersReceivedAt === undefined ? null : finishedAt - headersReceivedAt, totalMs: finishedAt - requestStartedAt }));
     }
-    const headersReceivedAt = Date.now();
-    const payload = await parseUpstreamJson(response, {
-        maxBytes: MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES,
-        tooLargeMessage: "上游内嵌图片响应过大，请将单次生成张数调低后重试",
-    });
-    console.info(JSON.stringify({ event: "image_upstream_timing", jobId: upstreamRequestId, channelId: input.channelId, model: input.model,
-        responseHeadersMs: headersReceivedAt - requestStartedAt, responseBodyMs: Date.now() - headersReceivedAt }));
-    const data = imageResponseItems(payload);
-    const mimeType = imageOutputFormatMimeType(input.imageOutputFormat);
-    return data.map((item) => imageResponseItemValue(item, mimeType)).filter(Boolean);
 }
 
 async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal, upstreamRequestId: string) {
@@ -4280,10 +4300,10 @@ async function fetchAllowedRedirects(url: string, init: RequestInit) {
     throw new HttpError(502, "上游接口重定向次数过多");
 }
 
-async function parseUpstreamJson(response: Response, options: { maxBytes?: number; tooLargeMessage?: string } = {}): Promise<any> {
+async function parseUpstreamJson(response: Response, options: { maxBytes?: number; tooLargeMessage?: string; onProgress?: (bytes: number) => void } = {}): Promise<any> {
     const maxBytes = options.maxBytes || MAX_UPSTREAM_JSON_BYTES;
     const tooLargeMessage = options.tooLargeMessage || "上游 JSON 响应过大";
-    const text = new TextDecoder().decode(await readResponseBytes(response, maxBytes, tooLargeMessage));
+    const text = new TextDecoder().decode(await readResponseBytes(response, maxBytes, tooLargeMessage, options.onProgress));
     let payload: any = {};
     try {
         payload = text ? JSON.parse(text) : {};
@@ -4537,16 +4557,16 @@ async function readRequestBytes(request: Request, maxBytes: number, message: str
     return readStreamBytes(request.body, maxBytes, message);
 }
 
-async function readResponseBytes(response: Response, maxBytes: number, message: string) {
+async function readResponseBytes(response: Response, maxBytes: number, message: string, onProgress?: (bytes: number) => void) {
     const length = Number(response.headers.get("content-length") || 0);
     if (Number.isFinite(length) && length > maxBytes) {
         await response.body?.cancel();
         throw new HttpError(413, message);
     }
-    return readStreamBytes(response.body, maxBytes, message);
+    return readStreamBytes(response.body, maxBytes, message, onProgress);
 }
 
-async function readStreamBytes(stream: ReadableStream<Uint8Array> | null, maxBytes: number, message: string) {
+async function readStreamBytes(stream: ReadableStream<Uint8Array> | null, maxBytes: number, message: string, onProgress?: (bytes: number) => void) {
     if (!stream) return new Uint8Array();
     const reader = stream.getReader();
     const chunks: Uint8Array[] = [];
@@ -4556,6 +4576,7 @@ async function readStreamBytes(stream: ReadableStream<Uint8Array> | null, maxByt
             const next = await reader.read();
             if (next.done) break;
             total += next.value.byteLength;
+            onProgress?.(total);
             if (total > maxBytes) {
                 await reader.cancel(message);
                 throw new HttpError(413, message);
