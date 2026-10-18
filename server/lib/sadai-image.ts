@@ -42,6 +42,11 @@ export function sadaiImageBaseUrl(baseUrl: string, model: string) {
     }
 }
 
+export function isSadaiImage25Channel(baseUrl: string, model: string) {
+    return SADAI_IMAGE_25_MODELS.has(model.trim().toLowerCase()) &&
+        (sadaiImageBaseUrl(baseUrl, model) !== baseUrl || ["", "/", "/v1", "/v1/"].some((path) => baseUrl === `https://${SADAI_IMAGE_API_HOST}${path}`));
+}
+
 export function isSadaiImage2Channel(baseUrl: string, model: string) {
     try {
         return new URL(baseUrl).hostname.toLowerCase() === SADAI_IMAGE_API_HOST && model.trim().toLowerCase() === "gpt-image-2";

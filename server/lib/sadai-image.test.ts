@@ -1,6 +1,27 @@
 import { expect, test } from "bun:test";
 
-import { buildSadaiImageRequestOptions, isSadaiImage2Channel, sadaiImageBaseUrl } from "./sadai-image";
+import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, sadaiImageBaseUrl } from "./sadai-image";
+
+test("recognizes only SADAI 2.5 models on official standard HTTPS entries for URL delivery", () => {
+    for (const origin of ["https://verysadai.com", "https://sadai.cc", "https://sadai.top", "https://api.sadai.top"]) {
+        for (const path of ["", "/", "/v1", "/v1/"]) {
+            for (const model of ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]) {
+                expect(isSadaiImage25Channel(`${origin}${path}`, model)).toBe(true);
+            }
+        }
+    }
+    for (const model of ["gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare-custom"]) {
+        expect(isSadaiImage25Channel("https://api.sadai.top/v1", model)).toBe(false);
+    }
+    for (const baseUrl of [
+        "https://proxy.example.com/v1", "https://verysadai.com/custom/v1", "https://api.sadai.top/custom/v1",
+        "http://api.sadai.top/v1", "https://api.sadai.top:443/v1", "https://user@api.sadai.top/v1",
+        "https://api.sadai.top/v1?route=custom", "https://api.sadai.top/v1#custom", "https://api.sadai.top./v1",
+        "https://api.sadai.top.proxy.example.com/v1", "invalid URL",
+    ]) {
+        expect(isSadaiImage25Channel(baseUrl, "gpt-image-2.5-flare")).toBe(false);
+    }
+});
 
 test("routes documented SADAI 2.5 models from standard API entries to the dedicated image endpoint", () => {
     for (const origin of ["https://verysadai.com", "https://sadai.cc", "https://sadai.top"]) {

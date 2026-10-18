@@ -494,10 +494,16 @@ export async function recoverServerJobResult(id: string, expectedUserId?: string
 }
 
 const serverJobArchiveRuns = new Map<string, Promise<{ job: ServerJob; image: ServerJobImage; archived: boolean }>>();
+const serverJobRecoveryRuns = new Map<string, Promise<ServerJob>>();
 const SERVER_JOB_ARCHIVE_RETRY_DELAYS_MS = [1_200, 3_000];
 
 export async function archiveDeferredServerJob(job: ServerJob, expectedUserId?: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     let current = job;
+    if (current.result?.images.some((image) => image.persisted === false && !image.recoveryUrl)) {
+        current = await recoverDeferredServerJob(current, expectedUserId ?? useUserStore.getState().user?.id ?? "", signal);
+        signal?.throwIfAborted();
+    }
     const images = current.result?.images || [];
     for (const source of images) {
         for (let attempt = 0; attempt <= SERVER_JOB_ARCHIVE_RETRY_DELAYS_MS.length; attempt += 1) {
@@ -517,6 +523,60 @@ export async function archiveDeferredServerJob(job: ServerJob, expectedUserId?: 
         }
     }
     return current;
+}
+
+function recoverDeferredServerJob(job: ServerJob, expectedUserId: string, signal?: AbortSignal) {
+    const assertOwner = () => {
+        if ((useUserStore.getState().user?.id || "") !== expectedUserId) throw new DOMException("Aborted", "AbortError");
+    };
+    assertOwner();
+    const key = JSON.stringify([expectedUserId, job.id]);
+    let pending = serverJobRecoveryRuns.get(key);
+    if (!pending) {
+        const imageIds = job.result!.images.filter((image) => image.persisted === false && !image.recoveryUrl).map((image) => image.id);
+        const recovered = (current: ServerJob) => imageIds.every((id) => current.result?.images.some((image) => image.id === id && image.persisted !== false));
+        pending = (async () => {
+            let current = job;
+            for (let attempt = 0; ; attempt += 1) {
+                try {
+                    assertOwner();
+                    if (attempt) current = (await fetchServerJob(job.id, expectedUserId)).job;
+                    assertOwner();
+                    if (recovered(current)) return current;
+                    // Restore this result only. Never retry the paid generation.
+                    current = (await serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(job.id)}/recover`, {
+                        method: "POST", timeoutMs: 75_000, expectedUserId,
+                    })).job;
+                    assertOwner();
+                    if (recovered(current)) return current;
+                    throw new Error("图片尚未保存，请稍后重试保存");
+                } catch (error) {
+                    if (error instanceof DOMException && error.name === "AbortError") throw error;
+                    const delay = SERVER_JOB_ARCHIVE_RETRY_DELAYS_MS[attempt];
+                    if (delay === undefined) throw error;
+                    await abortableSleep(delay);
+                }
+            }
+        })().finally(() => {
+            if (serverJobRecoveryRuns.get(key) === pending) serverJobRecoveryRuns.delete(key);
+        });
+        serverJobRecoveryRuns.set(key, pending);
+    }
+    const recovery = pending;
+    if (!signal) return recovery.then((value) => { assertOwner(); return value; });
+    // A canceled consumer stops waiting without canceling another consumer's save.
+    return new Promise<ServerJob>((resolve, reject) => {
+        const abort = () => reject(new DOMException("Aborted", "AbortError"));
+        signal.addEventListener("abort", abort, { once: true });
+        recovery.then(
+            (value) => {
+                signal.removeEventListener("abort", abort);
+                try { signal.throwIfAborted(); assertOwner(); resolve(value); } catch (error) { reject(error); }
+            },
+            (error) => { signal.removeEventListener("abort", abort); reject(error); },
+        );
+        if (signal.aborted) abort();
+    });
 }
 
 export function archiveServerJobImage(jobId: string, image: ServerJobImage, expectedUserId?: string, signal?: AbortSignal) {

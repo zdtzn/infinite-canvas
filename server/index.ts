@@ -69,7 +69,7 @@ import {
     resolvePromptOptimizationTarget,
 } from "./lib/prompt-optimizer";
 import { isValidProjectPayload } from "./lib/project-payload";
-import { buildSadaiImageRequestOptions, isSadaiImage2Channel, sadaiImageBaseUrl } from "./lib/sadai-image";
+import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, sadaiImageBaseUrl } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { isUuImage25Channel, supportsUuAsyncRequest, uuAsyncCapabilityKey, uuTaskPollDelay } from "./lib/uu-image-async";
@@ -3282,6 +3282,7 @@ async function performJobImageRecovery(jobId: string): Promise<ImageRecoveryResu
     if (!hasServerRecoverableDeferredImages(job.result.images)) {
         return { recovered: 0, remaining: remainingBeforeRecovery, lastError: "等待浏览器完成结果归档" };
     }
+    const useSadaiUrlResult = job.input.apiFormat === "openai" && isSadaiImage25Channel(resolvePlatformChannel(state, job.input.channelId)?.baseUrl || "", job.input.model);
     let lastError = "";
     const outcome = await recoverDeferredImageResults(job.result.images, async (image) => {
         const url = assertAllowedUpstreamUrl(image.dataUrl);
@@ -3290,7 +3291,7 @@ async function performJobImageRecovery(jobId: string): Promise<ImageRecoveryResu
         try {
             if (usesRelay && !RESULT_IMAGE_RELAY_SERVER_DOWNLOAD) throw new Error("等待浏览器完成结果归档");
             return await persistJobImage(job.input.userId, job.id, url.toString(), image.durationMs, new AbortController().signal, {
-                downloadTimeoutMs: usesRelay ? RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS : RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
+                downloadTimeoutMs: usesRelay ? RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS : useSadaiUrlResult ? 60_000 : RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
                 downloadAttempts: 1,
             });
         } catch (error) {
@@ -3435,14 +3436,16 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         imageJobPhases.set(job.id, "persisting");
         const images: ImageJobImage[] = [];
         const uuDimensions = useUuAsync && isUuAsyncGptImage2Channel(channel.baseUrl, input.model) ? resolveUuAsyncImageSize(input.size, input.quality) : undefined;
+        const useSadaiUrlResult = input.apiFormat === "openai" && isSadaiImage25Channel(channel.baseUrl, input.model);
         for (const raw of rawImages) {
             if (signal.aborted || job.status === "canceled") throw abortError(signal);
             const durationMs = Date.now() - startedAt;
-            if (isRelayEligibleResultUrl(raw)) {
+            if (isRelayEligibleResultUrl(raw) || (useSadaiUrlResult && /^https?:\/\//i.test(raw))) {
+                const url = assertAllowedUpstreamUrl(raw);
                 images.push(
                     createDeferredImageResult({
                         id: randomUUID(),
-                        url: new URL(raw).toString(),
+                        url: url.toString(),
                         durationMs,
                         ...(uuDimensions || {}),
                         ...(input.upstream?.expiresAt ? { expiresAt: input.upstream.expiresAt } : {}),
@@ -3555,7 +3558,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         outputFormat: input.imageOutputFormat,
         size,
         background: input.background,
-        responseFormat: isDragonGptImageModel(channel.baseUrl, input.model) ? null : isUuImage25Channel(channel.baseUrl, input.model) ? "url" : undefined,
+        responseFormat: isDragonGptImageModel(channel.baseUrl, input.model) ? null : isUuImage25Channel(channel.baseUrl, input.model) || isSadaiImage25Channel(channel.baseUrl, input.model) ? "url" : undefined,
     });
     if (isDragonChatImageModel(channel.baseUrl, input.model)) {
         const outputs = await Promise.all(
