@@ -1,5 +1,5 @@
 # Build the Vite frontend with the committed Bun lockfile.
-FROM oven/bun:1.3.13 AS web-build
+FROM oven/bun:1.3.14 AS web-build
 
 WORKDIR /app/web
 COPY web/package.json web/bun.lock ./
@@ -9,13 +9,13 @@ COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
 RUN bun run build
 
-FROM oven/bun:1.3.13 AS server-deps
+FROM oven/bun:1.3.14 AS server-deps
 WORKDIR /app/server
 COPY server/package.json server/bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 # Run the static frontend and Bun monolith as an unprivileged user.
-FROM oven/bun:1.3.13
+FROM oven/bun:1.3.14
 
 WORKDIR /app
 ARG APP_COMMIT=unknown

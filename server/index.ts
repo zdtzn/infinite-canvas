@@ -80,6 +80,7 @@ import { staticCacheControl } from "./lib/static-cache-policy";
 import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstreamUrl, isLoopbackSetupRequest, isSameApplicationOrigin, normalizePublicBaseUrl, resolveAllowedRedirect, type ProviderProtocol } from "./lib/url-policy";
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
+import { createPromptThumbnail, promptThumbnailOptions } from "./lib/prompt-thumbnail";
 import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
 import { normalizePromptIndexItems, normalizePromptSourceIndexItems, normalizeStoredPromptIndexTaxonomy, promptIndexStatuses, queryPromptCovers, queryPromptIndex, recordPromptIndexError, replacePromptIndex } from "./lib/prompt-index";
 import { PROMPT_TAXONOMY_REVISION } from "./lib/prompt-taxonomy";
@@ -4322,15 +4323,15 @@ async function parseUpstreamJson(response: Response, options: { maxBytes?: numbe
 async function proxyPromptAsset(request: Request, url: URL, requestId: string) {
     const target = promptProxyTarget(url.pathname, url.search);
     if (!target) throw new HttpError(404, "不支持的提示词资源地址");
+    const thumbnail = promptProxyLane(url.pathname) === "thumbnail" ? promptThumbnailOptions(url.searchParams) : null;
     const cacheKey = createHash("sha256").update(target).digest("hex");
     const cachePath = join(PROMPT_CACHE_ROOT, cacheKey);
-    if (isFreshPromptCache(cachePath)) return promptCachedResponse(cachePath, requestId);
-    try {
-        const semaphore = promptProxyLane(url.pathname) === "thumbnail" ? promptThumbnailProxySemaphore : promptAssetProxySemaphore;
-        const result = await promptDownloads.run(cacheKey, request.signal, (signal) => semaphore.run(signal, async () => {
+    const load = (signal: AbortSignal) => {
+        const semaphore = thumbnail ? promptThumbnailProxySemaphore : promptAssetProxySemaphore;
+        return promptDownloads.run(cacheKey, signal, (signal) => semaphore.run(signal, async () => {
             if (isFreshPromptCache(cachePath)) return null;
             const response = await upstreamFetch(
-                target,
+                thumbnail?.source || target,
                 {
                     headers: { "User-Agent": "InfiniteCanvas/1.0" },
                     signal,
@@ -4339,13 +4340,23 @@ async function proxyPromptAsset(request: Request, url: URL, requestId: string) {
                 PROMPT_PROXY_TIMEOUT_MS,
             );
             if (!response.ok) throw new HttpError(response.status, `提示词资源加载失败：${response.status}`);
-            const bytes = await readResponseBytes(response, MAX_PROMPT_PROXY_BYTES, "提示词资源过大");
-            const contentType = promptAssetContentType(response.headers.get("content-type"), bytes);
+            const original = await readResponseBytes(response, MAX_PROMPT_PROXY_BYTES, "提示词资源过大");
+            const bytes = thumbnail ? await createPromptThumbnail(original, thumbnail.width, thumbnail.height) : original;
+            const contentType = thumbnail ? "image/webp" : promptAssetContentType(response.headers.get("content-type"), bytes);
             assertDiskCapacity(bytes.byteLength);
             await Promise.all([Bun.write(cachePath, bytes), Bun.write(`${cachePath}.meta.json`, JSON.stringify({ contentType, cachedAt: Date.now() }))]);
             await promptCacheMaintenance.prune();
             return { bytes, contentType };
         }));
+    };
+    if (isFreshPromptCache(cachePath)) return promptCachedResponse(cachePath, requestId);
+    if (thumbnail && existsSync(cachePath)) {
+        // Show an existing cover immediately; coalesce its refresh independently of the viewer.
+        void load(new AbortController().signal).catch(() => undefined);
+        return promptCachedResponse(cachePath, requestId, true);
+    }
+    try {
+        const result = await load(request.signal);
         return result ? new Response(result.bytes, { headers: promptCacheHeaders(result.contentType, requestId) }) : promptCachedResponse(cachePath, requestId);
     } catch (error) {
         if (existsSync(cachePath)) return promptCachedResponse(cachePath, requestId, true);
