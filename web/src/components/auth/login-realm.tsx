@@ -54,21 +54,23 @@ export function selectLoginTransitionMessage(seed: string) {
 
 export function LoginRealmBackground({ children }: { children: ReactNode }) {
     return (
-        <main className="login-realm relative min-h-dvh overflow-x-hidden overflow-y-auto bg-[#090b10] text-[#edede6]">
-            <img
-                src="/images/ref/login-moon-realm.webp"
-                alt=""
-                aria-hidden="true"
-                width={2048}
-                height={2048}
-                loading="eager"
-                decoding="async"
-                fetchPriority="high"
-                className="login-realm-background-image absolute inset-0 h-full min-h-dvh w-full object-cover"
-            />
-            <div className="login-realm-background-shade absolute inset-0" aria-hidden="true" />
-            <div className="login-realm-rule-lines absolute inset-0" aria-hidden="true" />
-            <div className="relative z-10 min-h-dvh">{children}</div>
+        <main className="login-realm relative h-screen overflow-x-hidden overflow-y-auto bg-[#090b10] text-[#edede6] supports-[height:100dvh]:h-dvh">
+            <div className="relative min-h-dvh">
+                <img
+                    src="/images/ref/login-moon-realm.webp"
+                    alt=""
+                    aria-hidden="true"
+                    width={2048}
+                    height={2048}
+                    loading="eager"
+                    decoding="async"
+                    fetchPriority="high"
+                    className="login-realm-background-image absolute inset-0 h-full min-h-dvh w-full object-cover"
+                />
+                <div className="login-realm-background-shade absolute inset-0" aria-hidden="true" />
+                <div className="login-realm-rule-lines absolute inset-0" aria-hidden="true" />
+                <div className="relative z-10 min-h-dvh">{children}</div>
+            </div>
         </main>
     );
 }
