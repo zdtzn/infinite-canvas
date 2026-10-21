@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 
 import { parseEvolinkGptImage2CommercialMarkdown, parseJamezBondosAwesomeGpt4oImagesMarkdown, runPromptSource } from "./prompt-source-runtime";
 
-test("extracts an image whose multiline alt text contains escaped brackets", async () => {
+let previousWindow: PropertyDescriptor | undefined;
+beforeEach(() => {
+    previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://canvas.example" } } });
+});
+afterEach(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+});
+
+test("extracts an image whose multiline alt text contains escaped brackets", async () => {
     const markdown = "![\\[CORE TASK\\]\nTransform the product...](../data/images/case78.jpg)";
     const [prompt] = await runPromptSource(`
 const markdown = ${JSON.stringify(markdown)};
@@ -16,7 +25,6 @@ return [makePrompt({ id: "case-78", title: "Case 78", prompt: "Prompt", coverUrl
 });
 
 test("ignores badge images and uses HTML content images", async () => {
-    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://canvas.example" } } });
     const markdown = `
 ![Language-EN](https://img.shields.io/badge/Language-EN-blue)
 ![Featured](https://img.shields.io/badge/Featured-gold)
@@ -35,7 +43,6 @@ return [makePrompt({ id: "html-image", title: "HTML image", prompt: "Prompt", co
 });
 
 test("parses the attributed Chinese GPT-4o gallery with stable GitHub images", () => {
-    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://canvas.example" } } });
     const markdown = `
 ### 案例 100：实物与手绘涂鸦创意广告 (by [@azed_ai](https://x.com/azed_ai))
 
@@ -63,7 +70,6 @@ test("parses the attributed Chinese GPT-4o gallery with stable GitHub images", (
 });
 
 test("parses unique EvoLink GPT Image 2 commercial cases with attribution and stable output images", () => {
-    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://canvas.example" } } });
     const markdown = `
 ### Case 13: [花卉精华产品大片](https://x.com/creator/status/123) (by [@creator](https://x.com/creator))
 
@@ -87,7 +93,6 @@ Using the uploaded image, create a premium floral skincare advertisement.
 });
 
 test("skips EvoLink cases already present in existing prompt sources", () => {
-    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://canvas.example" } } });
     const markdown = `
 ### Case 112: [Duplicate case](https://x.com/creator/status/112) (by [@creator](https://x.com/creator))
 
@@ -104,7 +109,6 @@ Duplicate prompt.
 });
 
 test("repairs EvoLink's malformed two-level relative image path", () => {
-    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://canvas.example" } } });
     const markdown = `
 ### Case 11: [Miniature Brand Universe Shoe](https://x.com/creator/status/171) (by [@creator](https://x.com/creator))
 
