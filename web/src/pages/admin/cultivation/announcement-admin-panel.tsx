@@ -106,7 +106,7 @@ export function AnnouncementAdminPanel() {
         if (values.status === "published" && editing?.status !== "published") {
             modal.confirm({
                 title: editing ? "发布这条公告？" : "立即发布公告？",
-                content: "发布后所有用户都能看到，顶部公告入口也会显示未读提醒。",
+                content: "发布后，用户登录时会自动看到未读公告，确认“我知道了”后不再提醒，也可以稍后在顶部公告入口阅读。",
                 okText: "确认发布",
                 cancelText: "继续编辑",
                 onOk: save,

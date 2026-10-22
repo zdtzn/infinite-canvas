@@ -1009,6 +1009,7 @@ function listAnnouncements(url: URL, session: SessionPayload) {
             page,
             pageSize,
             unreadOnly: url.searchParams.get("unreadOnly") === "true",
+            sort: url.searchParams.get("sort") === "newest" ? "newest" : undefined,
         }),
     );
 }

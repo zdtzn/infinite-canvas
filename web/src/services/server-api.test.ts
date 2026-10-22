@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { serverRequest, ServerRequestError, ServerTransportError, waitForServerJob, type ServerJobProgress } from "./server-api";
+import { fetchAnnouncements, markAnnouncementRead, serverRequest, ServerRequestError, ServerTransportError, waitForServerJob, type ServerJobProgress } from "./server-api";
+import { useUserStore } from "@/stores/use-user-store";
 
 async function withTransport(run: () => Promise<void>) {
     const previousWindow = globalThis.window;
@@ -17,6 +18,31 @@ async function withTransport(run: () => Promise<void>) {
         globalThis.window = previousWindow;
     }
 }
+
+test("announcement requests keep the captured account and request newest ordering only when selected", () =>
+    withTransport(async () => {
+        const previousUser = useUserStore.getState().user;
+        const calls: Array<{ url: string; method: string; owner: string | null }> = [];
+        globalThis.fetch = (async (url, init) => {
+            calls.push({ url: String(url), method: init?.method || "GET", owner: new Headers(init?.headers).get("X-Expected-User-Id") });
+            return Response.json({ items: [], unreadCount: 0 });
+        }) as typeof fetch;
+        try {
+            useUserStore.setState({ user: { id: "bob", username: "Bob", displayName: "Bob", avatarUrl: "" } });
+            await fetchAnnouncements({ pageSize: 1, unreadOnly: true, sort: "newest" }, "alice");
+            await markAnnouncementRead("notice/one", "alice");
+            await fetchAnnouncements();
+            await markAnnouncementRead("notice-two");
+            assert.deepEqual(calls, [
+                { url: "/api/announcements?page=1&pageSize=1&unreadOnly=true&sort=newest", method: "GET", owner: "alice" },
+                { url: "/api/announcements/notice%2Fone/read", method: "POST", owner: "alice" },
+                { url: "/api/announcements?page=1&pageSize=20", method: "GET", owner: "bob" },
+                { url: "/api/announcements/notice-two/read", method: "POST", owner: "bob" },
+            ]);
+        } finally {
+            useUserStore.setState({ user: previousUser });
+        }
+    }));
 
 test("server deadline includes response body, not just headers", () =>
     withTransport(async () => {

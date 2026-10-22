@@ -24,6 +24,44 @@ afterEach(() => {
 });
 
 describe("announcement service", () => {
+  test("newest sorting lets a fresh normal announcement precede an older pinned one without changing the center's default order", () => {
+    const { store, service, setNow } = setup();
+    try {
+      const pinned = service.create("admin", { title: "旧置顶公告", content: "需要保留的旧通知", type: "notice", status: "published", pinned: true });
+      setNow(200);
+      const latest = service.create("admin", { title: "最新普通公告", content: "应首先自动提醒的新通知", type: "update", status: "published", pinned: false });
+      expect(service.listPublished("alice", { pageSize: 1 }).items.map(item => item.id)).toEqual([pinned.id]);
+      const newest = service.listPublished("alice", { pageSize: 1, unreadOnly: true, sort: "newest" });
+      expect(newest.items.map(item => item.id)).toEqual([latest.id]);
+      expect(newest.total).toBe(2);
+      expect(newest.unreadCount).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("read receipts survive reopening while a subsequently published announcement is unread", () => {
+    const { dataDir, store, service } = setup();
+    let readId: string;
+    try {
+      readId = service.create("admin", { title: "已经阅读公告", content: "这条公告阅读后不再提醒", type: "notice", status: "published", pinned: false }).id;
+      service.markRead("alice", readId);
+    } finally {
+      store.close();
+    }
+    const reopened = openAppDatabase({ dataDir });
+    try {
+      const resumed = createAnnouncementService(reopened.raw!, { now: () => 500 });
+      expect(resumed.listPublished("alice", { unreadOnly: true }).items).toEqual([]);
+      expect(resumed.listPublished("bob", { unreadOnly: true }).items.map(item => item.id)).toEqual([readId!]);
+      const fresh = resumed.create("admin", { title: "重开后新公告", content: "新发布的公告应重新提醒", type: "update", status: "published", pinned: false });
+      expect(resumed.listPublished("alice", { unreadOnly: true }).items.map(item => item.id)).toEqual([fresh.id]);
+      expect(resumed.listPublished("alice").items.find(item => item.id === readId)?.isRead).toBe(true);
+    } finally {
+      reopened.close();
+    }
+  });
+
   test("publishes, pins and isolates read state by user", () => {
     const { store, service, setNow } = setup();
     try {
@@ -182,6 +220,7 @@ function setup() {
     .run();
   let timestamp = 100;
   return {
+    dataDir,
     store,
     service: createAnnouncementService(store.raw!, { now: () => timestamp }),
     setNow: (value: number) => {

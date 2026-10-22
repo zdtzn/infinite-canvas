@@ -685,16 +685,17 @@ export async function fetchCultivationLog<T>(kind: "ledger" | "usage" | "audit-l
     return serverRequest<PagedResponse<T>>(`/api/admin/cultivation/${kind}?page=${page}&pageSize=${pageSize}${user}`);
 }
 
-export async function fetchAnnouncements(options: { page?: number; pageSize?: number; unreadOnly?: boolean } = {}) {
+export async function fetchAnnouncements(options: { page?: number; pageSize?: number; unreadOnly?: boolean; sort?: "newest" } = {}, expectedUserId = useUserStore.getState().user?.id || "") {
     const params = new URLSearchParams();
     params.set("page", String(options.page || 1));
     params.set("pageSize", String(options.pageSize || 20));
     if (options.unreadOnly) params.set("unreadOnly", "true");
-    return serverRequest<AnnouncementPage>(`/api/announcements?${params.toString()}`, { timeoutMs: 12_000 });
+    if (options.sort === "newest") params.set("sort", "newest");
+    return serverRequest<AnnouncementPage>(`/api/announcements?${params.toString()}`, { timeoutMs: 12_000, expectedUserId });
 }
 
-export async function markAnnouncementRead(id: string) {
-    return serverRequest<{ id: string; readAt: number }>(`/api/announcements/${encodeURIComponent(id)}/read`, { method: "POST" });
+export async function markAnnouncementRead(id: string, expectedUserId = useUserStore.getState().user?.id || "") {
+    return serverRequest<{ id: string; readAt: number }>(`/api/announcements/${encodeURIComponent(id)}/read`, { method: "POST", expectedUserId });
 }
 
 export async function markAllAnnouncementsRead() {

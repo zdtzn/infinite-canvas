@@ -1,11 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
 import { Tooltip } from "antd";
 import { Bell } from "lucide-react";
 import { Suspense, useRef, useState } from "react";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { useUnreadAnnouncements } from "@/hooks/use-unread-announcements";
 import { lazyRoute } from "@/lib/lazy-route";
-import { fetchAnnouncements } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 
 const loadAnnouncementCenter = () => import("@/pages/announcements").then(({ AnnouncementCenterDialog: Component }) => ({ default: Component }));
@@ -17,14 +16,7 @@ export function AnnouncementBell() {
     const [hasOpened, setHasOpened] = useState(false);
     const triggerRef = useRef<HTMLButtonElement>(null);
     const userId = useUserStore((state) => state.user?.id);
-    const { data } = useQuery({
-        queryKey: ["announcements", "summary", userId],
-        queryFn: () => fetchAnnouncements({ page: 1, pageSize: 1 }),
-        enabled: PUBLIC_MODE && Boolean(userId),
-        staleTime: 30_000,
-        refetchInterval: 60_000,
-        refetchOnWindowFocus: true,
-    });
+    const { data } = useUnreadAnnouncements(undefined, false);
     if (!PUBLIC_MODE || !userId) return null;
     const unreadCount = data?.unreadCount || 0;
     const label = unreadCount ? `系统公告，${unreadCount} 条未读` : "系统公告";

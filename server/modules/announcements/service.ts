@@ -50,7 +50,7 @@ export function createAnnouncementService(
 
   function listPublished(
     userId: string,
-    options: { page?: number; pageSize?: number; unreadOnly?: boolean } = {},
+    options: { page?: number; pageSize?: number; unreadOnly?: boolean; sort?: "newest" } = {},
   ) {
     const timestamp = now();
     const { page, pageSize, offset } = pagination(
@@ -78,7 +78,7 @@ export function createAnnouncementService(
          LEFT JOIN announcement_reads r
            ON r.announcement_id = a.id AND r.user_id = ?
          WHERE a.status = 'published' AND a.published_at IS NOT NULL AND a.published_at <= ?${unreadClause}
-         ORDER BY a.pinned DESC, a.published_at DESC, a.created_at DESC
+         ORDER BY ${options.sort === "newest" ? "" : "a.pinned DESC, "}a.published_at DESC, a.created_at DESC
          LIMIT ? OFFSET ?`,
       )
       .all(...params, pageSize, offset) as AnnouncementRow[];

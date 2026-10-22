@@ -12,6 +12,7 @@ import { lazyRoute } from "@/lib/lazy-route";
 import { useThemeStore } from "@/stores/use-theme-store";
 
 const ClientRootInit = lazyRoute(() => import("@/components/layout/client-root-init").then(({ ClientRootInit: Component }) => ({ default: Component })));
+const AnnouncementAutoPrompt = lazyRoute(() => import("@/components/layout/announcement-auto-prompt").then(({ AnnouncementAutoPrompt: Component }) => ({ default: Component })));
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -50,6 +51,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
                             <ImperialModeProvider>
                                 <Suspense fallback={null}>
                                     <ClientRootInit />
+                                </Suspense>
+                                <Suspense fallback={null}>
+                                    <AnnouncementAutoPrompt />
                                 </Suspense>
                                 {children}
                             </ImperialModeProvider>

@@ -37,7 +37,7 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
         staleTime: 20_000,
     });
     const readMutation = useMutation({
-        mutationFn: markAnnouncementRead,
+        mutationFn: (id: string) => markAnnouncementRead(id, userId),
         onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["announcements"] }),
         onError: (error) => message.error(userFacingErrorMessage(error, "暂时未能标记已读，请稍后再试")),
     });
