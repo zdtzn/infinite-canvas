@@ -46,6 +46,7 @@ import { KeyedSerialExecutor } from "./lib/keyed-serial-executor";
 import { buildDragonChatImageRequest, dragonChatImageUrls, dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel } from "./lib/dragon-image";
 import { JobQueue, type QueueJob } from "./lib/job-queue";
 import { isAllowedMediaMimeType, resolveMediaMimeType } from "./lib/media-mime";
+import { loadPlatformImageDefault, normalizePlatformImageDefaultTarget, platformImageDefaultAvailable, savePlatformImageDefault } from "./lib/model-defaults";
 import { createMediaTaskStore, type MediaTaskKind } from "./lib/media-task-store";
 import {
     listPlatformChannels,
@@ -509,6 +510,8 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/cultivation/login-logs" && request.method === "GET") return adminCultivationLoginLogs(url, session);
         if (url.pathname === "/api/admin/cultivation/breakthroughs" && request.method === "GET") return adminCultivationBreakthroughs(url, session);
         if (url.pathname === "/api/channels" && request.method === "GET") return listChannels(session);
+        if (url.pathname === "/api/model-defaults" && request.method === "GET") return modelDefaults();
+        if (url.pathname === "/api/admin/model-defaults/image" && request.method === "PUT") return updateImageModelDefault(request, session);
         if (url.pathname === "/api/preferences" && request.method === "GET") return userPreferences(session);
         if (url.pathname === "/api/preferences" && request.method === "PUT") return updateUserPreferences(request, session);
         if (url.pathname === "/api/channels/order" && request.method === "PUT") return reorderChannels(request, session);
@@ -1192,6 +1195,29 @@ function listChannels(session: SessionPayload) {
     return json({
         items: listPlatformChannels(state).map(platformChannelPublicRecord),
     });
+}
+
+function modelDefaults() {
+    return json({ image: loadPlatformImageDefault(appDatabase, state) }, 200, { "Cache-Control": "no-store" });
+}
+
+async function updateImageModelDefault(request: Request, session: SessionPayload) {
+    requireAdmin(session);
+    const body = await readJson<unknown>(request, 4 * 1024);
+    let target: { channelId: string; model: string };
+    try {
+        target = normalizePlatformImageDefaultTarget(body);
+    } catch (error) {
+        throw new HttpError(400, error instanceof Error ? error.message : "默认生图模型配置无效");
+    }
+    assertPlatformModelAllowed(target.channelId, target.model, "image");
+    if (!platformImageDefaultAvailable(state, target)) throw new HttpError(403, "请选择后台已开放的生图模型");
+    try {
+        return json({ image: savePlatformImageDefault(appDatabase, target) }, 200, { "Cache-Control": "no-store" });
+    } catch (error) {
+        if (error instanceof RangeError) throw new HttpError(409, error.message);
+        throw error;
+    }
 }
 
 async function saveChannel(request: Request, session: SessionPayload, id: string) {

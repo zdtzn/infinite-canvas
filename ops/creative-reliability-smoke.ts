@@ -16,6 +16,11 @@ const password = "SmokePassword8391!";
 state.auth.accessCodeHash = await hashAccessCode("SmokeAccess8391!");
 state.auth.adminUserId = "admin";
 for (const id of ["admin", "other"]) state.users[id] = { userId: id, displayName: `Smoke-${id}`, createdAt: Date.now(), admin: id === "admin", loginHash: await hashAccessCode(password) };
+state.channels["admin:shared"] = {
+    id: "shared", userId: "admin", name: "Fixture shared", baseUrl: "https://fixture.example", apiFormat: "openai", apiKey: { iv: "fixture", tag: "fixture", data: "fixture" }, updatedAt: 1,
+    models: [{ name: "image-a", capability: "image" }, { name: "image-b", capability: "image" }, { name: "image-c", capability: "image" }, { name: "text-a", capability: "text" }],
+};
+state.channels["other:private"] = { ...state.channels["admin:shared"], id: "private", userId: "other" };
 state.projects.admin = { poster: { project: { id: "poster", title: "测试海报", nodes: [{ metadata: { storageKey: "image:kept" } }] }, updatedAt: Date.now(), revision: 1 } };
 for (const [key, userId, recent] of [["image:kept", "admin", false], ["image:unused", "admin", false], ["image:recent", "admin", true], ["image:foreign", "other", false]] as const) {
     const asset = { key, userId, mimeType: "image/png", bytes: 8, createdAt: recent ? Date.now() : Date.now() - 48 * 3_600_000 };
@@ -43,6 +48,7 @@ const child = Bun.spawn([process.execPath, "run", resolve(import.meta.dir, "../s
 });
 const post = (path: string, body: unknown, cookie = "", origin = base) => fetch(base + path, { method: "POST", headers: { "Content-Type": "application/json", Origin: origin, Cookie: cookie }, body: JSON.stringify(body) });
 const get = (path: string, cookie = "") => fetch(base + path, { headers: { Cookie: cookie } });
+const put = (path: string, body: unknown, cookie = "", origin = base) => fetch(base + path, { method: "PUT", headers: { "Content-Type": "application/json", Origin: origin, Cookie: cookie }, body: JSON.stringify(body) });
 try {
     let ready = false;
     for (let i = 0; i < 80; i++) {
@@ -57,6 +63,33 @@ try {
     const login = await post("/api/auth/login", { displayName: "Smoke-admin", personalCode: password });
     assert.equal(login.status, 200, await login.clone().text());
     const cookie = login.headers.getSetCookie().map(value => value.split(";")[0]).join("; ");
+    assert.equal((await get("/api/model-defaults")).status, 401);
+    const memberLogin = await post("/api/auth/login", { displayName: "Smoke-other", personalCode: password });
+    assert.equal(memberLogin.status, 200);
+    const memberCookie = memberLogin.headers.getSetCookie().map(value => value.split(";")[0]).join("; ");
+    const defaultPath = "/api/admin/model-defaults/image";
+    const firstTarget = { channelId: "shared", model: "image-a" };
+    const secondTarget = { channelId: "shared", model: "image-b" };
+    assert.deepEqual(await (await get("/api/model-defaults", memberCookie)).json(), { image: null });
+    assert.equal((await put(defaultPath, firstTarget, memberCookie)).status, 403);
+    assert.equal((await put(defaultPath, firstTarget, cookie, "https://untrusted.example")).status, 403);
+    for (const input of [null, [], { ...firstTarget, model: 12 }, { ...firstTarget, channelId: {} }, { ...firstTarget, model: "x".repeat(201) }, { ...firstTarget, channelId: "__proto__" }]) assert.equal((await put(defaultPath, input, cookie)).status, 400);
+    for (const input of [{ ...firstTarget, channelId: "missing" }, { ...firstTarget, channelId: "private" }, { ...firstTarget, model: "text-a" }]) assert.equal((await put(defaultPath, input, cookie)).status, 403);
+    const selected = await put(defaultPath, firstTarget, cookie);
+    assert.equal(selected.status, 200, await selected.clone().text());
+    assert.deepEqual(await selected.json(), { image: { ...firstTarget, revision: 1 } });
+    assert.deepEqual(await (await get("/api/model-defaults", memberCookie)).json(), { image: { ...firstTarget, revision: 1 } });
+    assert.equal((await get("/api/model-defaults", memberCookie)).headers.get("Cache-Control"), "no-store");
+    assert.deepEqual(await (await put(defaultPath, firstTarget, cookie)).json(), { image: { ...firstTarget, revision: 1 } });
+    const parallel = await Promise.all([put(defaultPath, secondTarget, cookie), put(defaultPath, { ...secondTarget, model: "image-c" }, cookie)]);
+    const changed = await Promise.all(parallel.map(response => response.json()));
+    assert.deepEqual(changed.map(value => value.image.revision).sort(), [2, 3]);
+    assert.equal((await (await get("/api/model-defaults", memberCookie)).json()).image.revision, 3);
+    const removed = await fetch(base + "/api/channels/shared", { method: "DELETE", headers: { Origin: base, Cookie: cookie } });
+    assert.equal(removed.status, 204);
+    assert.deepEqual(await (await get("/api/model-defaults", memberCookie)).json(), { image: null });
+    assert.equal((db.loadSetting("app.default-image-model") as { revision: number }).revision, 3);
+    console.log("PASS: shared image default authentication, administrator-only writes, CSRF, validation, capability/channel isolation, cross-user visibility, monotonic revisions and deleted-channel invalidation");
     const overview = await (await get("/api/storage", cookie)).json();
     assert.equal(overview.usedBytes, 24);
     assert.equal(overview.reclaimableBytes, 8);

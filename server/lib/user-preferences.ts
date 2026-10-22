@@ -41,6 +41,7 @@ export type UserCanvasImageToolbarPreference = {
 
 export type UserGenerationPreferences = {
   imageModel: string;
+  imageModelDefaultRevision: number;
   videoModel: string;
   audioModel: string;
   audioVoice: string;
@@ -151,6 +152,7 @@ export function normalizeUserGenerationPreferences(
   const source = value as Record<string, unknown>;
   return {
     imageModel: boundedPreferenceString(source.imageModel, "默认生图模型", 300),
+    imageModelDefaultRevision: modelDefaultRevision(source.imageModelDefaultRevision),
     videoModel: boundedPreferenceString(source.videoModel, "默认视频模型", 300),
     audioModel: boundedPreferenceString(source.audioModel, "默认音频模型", 300),
     audioVoice: boundedPreferenceString(source.audioVoice, "默认音色", 80),
@@ -261,6 +263,12 @@ function booleanPreferenceString(value: unknown, label: string) {
 
 function booleanPreference(value: unknown, label: string) {
   if (typeof value !== "boolean") throw new Error(`${label}无效`);
+  return value;
+}
+
+function modelDefaultRevision(value: unknown) {
+  if (value === undefined) return 0;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error("默认生图模型同步标记无效");
   return value;
 }
 

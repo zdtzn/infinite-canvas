@@ -33,6 +33,7 @@ mock.module("@/stores/use-asset-store", () => ({ useAssetStore: Object.assign((s
 mock.module("@/stores/use-prompt-source-store", () => ({ isBuiltInPromptSource: noop, usePromptSourceStore: (select: (value: unknown) => unknown) => select({ sources: [], hydrated: false, setSharedSources: noop }) }));
 mock.module("@/hooks/use-project-server-sync", () => ({ useProjectServerSync: noop }));
 mock.module("@/hooks/use-prompt-source-scheduler", () => ({ usePromptSourceScheduler: noop }));
+mock.module("@/hooks/use-platform-model-defaults", () => ({ usePlatformModelDefaults: noop }));
 mock.module("@/services/api/prompts", () => ({ ensurePromptIndexReady: noop }));
 mock.module("@/services/server-api", () => ({
     fetchServerChannels: () => channels, fetchServerUserPreferences: () => preferences,

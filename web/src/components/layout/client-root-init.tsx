@@ -6,6 +6,7 @@ import { planChannelImport } from "@/lib/channel-import";
 import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { useProjectServerSync } from "@/hooks/use-project-server-sync";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
+import { usePlatformModelDefaults } from "@/hooks/use-platform-model-defaults";
 import { ensurePromptIndexReady } from "@/services/api/prompts";
 import { fetchServerChannels, fetchServerPromptSources, fetchServerUserPreferences, saveServerChannel, saveServerPromptSource, saveServerUserPreferences, type ServerChannel } from "@/services/server-api";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -44,6 +45,7 @@ export function ClientRootInit() {
     const generationPreferencesSignature = JSON.stringify(generationPreferencesFromConfig(config, snapDimensionToStep));
 
     usePromptSourceScheduler();
+    usePlatformModelDefaults();
     useProjectServerSync(user?.id);
 
     useEffect(() => {

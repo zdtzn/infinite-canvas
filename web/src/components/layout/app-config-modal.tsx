@@ -1,6 +1,6 @@
 import { App, Button, Form, Input, Modal, Progress, Select, Switch, Tabs, Tooltip } from "antd";
 import { ArrowDown, ArrowUp, Cloud, Pencil, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
@@ -8,7 +8,7 @@ import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { PromptOptimizerAdminSetting } from "@/components/layout/prompt-optimizer-admin-setting";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
-import { deleteServerChannel, reorderServerChannels, saveServerChannel } from "@/services/server-api";
+import { deleteServerChannel, reorderServerChannels, saveServerChannel, saveServerDefaultImageModel } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { ConfigMembers } from "@/components/layout/config-members";
 import { ConfigLocalStorage } from "@/components/layout/config-local-storage";
@@ -17,7 +17,7 @@ import { ImperialModePreferences } from "@/features/cultivation/imperial-mode-pr
 import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { useUserStore } from "@/stores/use-user-store";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, modelOptionsFromChannels, pickPlatformModel, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, decodeChannelModel, encodeChannelModel, modelOptionLabel, modelOptionsFromChannels, pickPlatformModel, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -62,11 +62,16 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [activeTab, setActiveTab] = useState<ConfigTabKey>(initialTab);
     const [editingChannelId, setEditingChannelId] = useState("");
     const [reorderingChannels, setReorderingChannels] = useState(false);
+    const [savingDefaultImageModel, setSavingDefaultImageModel] = useState(false);
+    const defaultImageSave = useRef<object | null>(null);
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
+    const platformImageDefault = useConfigStore((state) => state.platformImageDefault);
+    const platformImageDefaultLoaded = useConfigStore((state) => state.platformImageDefaultLoaded);
+    const setPlatformImageDefault = useConfigStore((state) => state.setPlatformImageDefault);
     const user = useUserStore((state) => state.user);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -77,10 +82,40 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const canManageChannels = !PUBLIC_MODE || Boolean(user?.admin);
     const webdavReady = Boolean(webdav.url.trim());
     const editingChannel = canManageChannels ? config.channels.find((channel) => channel.id === editingChannelId) || null : null;
+    const platformImageModel = platformImageDefault ? encodeChannelModel(platformImageDefault.channelId, platformImageDefault.model) : "";
     useEffect(() => setActiveTab(initialTab === "channels" && !canManageChannels ? "preferences" : initialTab), [canManageChannels, initialTab]);
     useEffect(() => {
         if (!canManageChannels) setEditingChannelId("");
     }, [canManageChannels]);
+    useEffect(() => {
+        defaultImageSave.current = null;
+        setSavingDefaultImageModel(false);
+        return () => { defaultImageSave.current = null; };
+    }, [user?.id, user?.admin]);
+
+    const saveDefaultImageModel = async (value: string) => {
+        if (!user?.id || !user.admin || !platformImageDefaultLoaded || defaultImageSave.current) return;
+        const target = decodeChannelModel(value);
+        if (!target) return;
+        const ownerId = user.id;
+        const request = {};
+        defaultImageSave.current = request;
+        setSavingDefaultImageModel(true);
+        const isCurrentRequest = () => defaultImageSave.current === request && useUserStore.getState().user?.id === ownerId && Boolean(useUserStore.getState().user?.admin);
+        try {
+            const saved = await saveServerDefaultImageModel(target, ownerId);
+            if (!isCurrentRequest()) return;
+            setPlatformImageDefault(saved.image);
+            message.success("全站默认生图模型已更新");
+        } catch (error) {
+            if (isCurrentRequest()) message.error(userFacingErrorMessage(error, "默认生图模型暂时未能保存，请稍后再试"));
+        } finally {
+            if (defaultImageSave.current === request) {
+                defaultImageSave.current = null;
+                setSavingDefaultImageModel(false);
+            }
+        }
+    };
 
     const saveConfig = (nextConfig: AiConfig) => {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
@@ -258,8 +293,16 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 <div className="mb-2 text-sm font-semibold">默认模型</div>
                                 <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                                     {modelGroups.map((group) => (
-                                        <Form.Item key={group.modelKey} label={group.defaultLabel} className="mb-0">
-                                            <ModelPicker config={config} value={config[group.modelKey]} onChange={(model) => updateConfig(group.modelKey, model)} capability={group.capability} fullWidth />
+                                        <Form.Item key={group.modelKey} label={group.defaultLabel} extra={PUBLIC_MODE && group.capability === "image" ? (user?.admin ? "修改后对所有用户生效，仍可在丹青台自行切换。" : "由管理员统一设置，仍可在丹青台自行切换。") : undefined} className="mb-0">
+                                            {PUBLIC_MODE && group.capability === "image" ? (
+                                                user?.admin ? (
+                                                    <ModelPicker config={config} value={platformImageModel} onChange={(model) => void saveDefaultImageModel(model)} capability="image" fullWidth disabled={!platformImageDefaultLoaded || savingDefaultImageModel} placeholder={platformImageDefaultLoaded ? "选择全站默认生图模型" : "正在读取默认模型…"} />
+                                                ) : (
+                                                    <div className="flex min-h-8 items-center text-sm">{!platformImageDefaultLoaded ? "正在读取默认模型…" : platformImageModel ? modelOptionLabel(config, platformImageModel) : "暂未设置"}</div>
+                                                )
+                                            ) : (
+                                                <ModelPicker config={config} value={config[group.modelKey]} onChange={(model) => updateConfig(group.modelKey, model)} capability={group.capability} fullWidth />
+                                            )}
                                         </Form.Item>
                                     ))}
                                 </div>
@@ -387,7 +430,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             />
             {showDoneButton ? (
                 <div className="mt-4 flex justify-end">
-                    <Button type="primary" onClick={finishConfig}>
+                    <Button type="primary" onClick={finishConfig} disabled={savingDefaultImageModel}>
                         完成
                     </Button>
                 </div>

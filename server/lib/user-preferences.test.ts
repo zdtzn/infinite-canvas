@@ -103,6 +103,7 @@ describe("user preferences", () => {
     expect(preference).toEqual({
       videoMode: "",
       imageModel: "uu::gpt-image-2",
+      imageModelDefaultRevision: 0,
       videoModel: "video::seedance",
       audioModel: "audio::tts",
       audioVoice: "alloy",
@@ -124,6 +125,10 @@ describe("user preferences", () => {
       autoFocusOnSelect: true,
     });
     expect(readStoredUserGenerationPreferences(preference)).toEqual(preference);
+    expect(normalizeUserGenerationPreferences({ ...preference, imageModelDefaultRevision: 7 }).imageModelDefaultRevision).toBe(7);
+    for (const imageModelDefaultRevision of [-1, 1.5, "7", null, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => normalizeUserGenerationPreferences({ ...preference, imageModelDefaultRevision })).toThrow("默认生图模型同步标记");
+    }
     expect(normalizeUserGenerationPreferences({ ...preference, autoFocusOnSelect: undefined }).autoFocusOnSelect).toBe(false);
     expect(() => normalizeUserGenerationPreferences({ ...preference, autoFocusOnSelect: "true" })).toThrow("节点自动居中偏好");
     expect(normalizeUserGenerationPreferences({ ...preference, videoMode: "frames" }).videoMode).toBe("frames");

@@ -27,6 +27,8 @@ export type ModelChannel = {
     models: ChannelModel[];
 };
 
+export type PlatformImageDefault = { channelId: string; model: string; revision: number };
+
 export type AiConfig = {
     channelMode: "remote" | "local";
     baseUrl: string;
@@ -35,6 +37,7 @@ export type AiConfig = {
     channels: ModelChannel[];
     model: string;
     imageModel: string;
+    imageModelDefaultRevision: number;
     videoModel: string;
     textModel: string;
     audioModel: string;
@@ -73,6 +76,7 @@ export type WebdavSyncConfig = {
 
 export type GenerationPreferences = {
     imageModel: string;
+    imageModelDefaultRevision: number;
     videoModel: string;
     audioModel: string;
     audioVoice: string;
@@ -129,6 +133,7 @@ export const defaultConfig: AiConfig = {
     ],
     model: "default::gpt-image-2",
     imageModel: "default::gpt-image-2",
+    imageModelDefaultRevision: 0,
     videoModel: "default::grok-imagine-video",
     textModel: "default::gpt-5.5",
     audioModel: "default::gpt-4o-mini-tts",
@@ -189,6 +194,8 @@ export const defaultGenerationPreferences: GenerationPreferences = generationPre
 
 type ConfigStore = {
     config: AiConfig;
+    platformImageDefault: PlatformImageDefault | null;
+    platformImageDefaultLoaded: boolean;
     webdav: WebdavSyncConfig;
     snapDimensionToStep: boolean;
     generationPreferencesRevision: number;
@@ -197,6 +204,7 @@ type ConfigStore = {
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
     setPlatformChannels: (channels: ModelChannel[]) => void;
+    setPlatformImageDefault: (setting: PlatformImageDefault | null) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
     prepareAccountPreferences: (userId: string) => void;
     replaceGenerationPreferences: (preferences: GenerationPreferences) => void;
@@ -276,6 +284,8 @@ export const useConfigStore = create<ConfigStore>()(
     persist(
         (set, get) => ({
             config: defaultConfig,
+            platformImageDefault: null,
+            platformImageDefaultLoaded: false,
             webdav: defaultWebdavSyncConfig,
             snapDimensionToStep: true,
             generationPreferencesRevision: 0,
@@ -290,9 +300,17 @@ export const useConfigStore = create<ConfigStore>()(
                 }),
             setPlatformChannels: (channels) =>
                 set((state) => {
-                    const config = applyPlatformChannels(state.config, channels);
+                    const config = applyPlatformImageDefault(applyPlatformChannels(state.config, channels), state.platformImageDefault);
                     persistLocalGenerationPreferences(config, state.snapDimensionToStep);
                     return { config };
+                }),
+            setPlatformImageDefault: (setting) =>
+                set((state) => {
+                    if (setting && state.platformImageDefault && setting.revision < state.platformImageDefault.revision) return state;
+                    const config = applyPlatformImageDefault(state.config, setting);
+                    if (config !== state.config) persistLocalGenerationPreferences(config, state.snapDimensionToStep);
+                    if (state.platformImageDefaultLoaded && JSON.stringify(setting) === JSON.stringify(state.platformImageDefault) && config === state.config) return state;
+                    return { platformImageDefault: setting, platformImageDefaultLoaded: true, config };
                 }),
             updateWebdavConfig: (key, value) =>
                 set((state) => {
@@ -328,7 +346,7 @@ export const useConfigStore = create<ConfigStore>()(
                 }
                 writeStorageItem(storage, CONFIG_PREFERENCE_OWNER_KEY, nextUserId);
                 set({
-                    config: applyGenerationPreferences({ ...current.config, systemPrompt: "" }, generationPreferences || defaultGenerationPreferences),
+                    config: applyPlatformImageDefault(applyGenerationPreferences({ ...current.config, systemPrompt: "" }, generationPreferences || defaultGenerationPreferences), current.platformImageDefault),
                     webdav: webdav || defaultWebdavSyncConfig,
                     snapDimensionToStep: generationPreferences?.snapDimensionToStep ?? defaultGenerationPreferences.snapDimensionToStep,
                 });
@@ -336,8 +354,8 @@ export const useConfigStore = create<ConfigStore>()(
             replaceGenerationPreferences: (preferences) =>
                 set((state) => {
                     const normalized = normalizeGenerationPreferences(preferences);
-                    const config = applyGenerationPreferences(state.config, normalized);
-                    writeLocalGenerationPreferences(preferenceStorage(), activeConfigPreferenceUserId, normalized);
+                    const config = applyPlatformImageDefault(applyGenerationPreferences(state.config, normalized), state.platformImageDefault);
+                    persistLocalGenerationPreferences(config, normalized.snapDimensionToStep);
                     return { config, snapDimensionToStep: normalized.snapDimensionToStep };
                 }),
             setSnapDimensionToStep: (snapDimensionToStep) =>
@@ -437,6 +455,7 @@ export function generationPreferencesFromConfig(config: AiConfig, snapDimensionT
     const preferred = (current: string, initial: string) => (initialDefaults && current === initial ? "" : current);
     return normalizeGenerationPreferences({
         imageModel: preferred(config.imageModel, defaultConfig.imageModel),
+        imageModelDefaultRevision: config.imageModelDefaultRevision,
         videoModel: preferred(config.videoModel, defaultConfig.videoModel),
         audioModel: preferred(config.audioModel, defaultConfig.audioModel),
         audioVoice: config.audioVoice,
@@ -464,6 +483,7 @@ export function normalizeGenerationPreferences(value: unknown): GenerationPrefer
     const source = value && typeof value === "object" && !Array.isArray(value) ? (value as Partial<GenerationPreferences>) : {};
     return {
         imageModel: optionalPreferenceString(source.imageModel, defaultConfig.imageModel, 300),
+        imageModelDefaultRevision: Number.isSafeInteger(source.imageModelDefaultRevision) && Number(source.imageModelDefaultRevision) >= 0 ? Number(source.imageModelDefaultRevision) : 0,
         videoModel: optionalPreferenceString(source.videoModel, defaultConfig.videoModel, 300),
         audioModel: optionalPreferenceString(source.audioModel, defaultConfig.audioModel, 300),
         audioVoice: preferenceString(source.audioVoice, defaultConfig.audioVoice, 80),
@@ -494,6 +514,7 @@ export function applyGenerationPreferences(config: AiConfig, value: GenerationPr
         ...config,
         model: imageModel || config.model,
         imageModel,
+        imageModelDefaultRevision: preferences.imageModelDefaultRevision,
         videoModel: pickPlatformModel(config, "video", preferences.videoModel),
         audioModel: pickPlatformModel(config, "audio", preferences.audioModel),
         audioVoice: preferences.audioVoice,
@@ -514,6 +535,12 @@ export function applyGenerationPreferences(config: AiConfig, value: GenerationPr
         canvasImageCount: preferences.canvasImageCount,
         autoFocusOnSelect: preferences.autoFocusOnSelect,
     };
+}
+
+function applyPlatformImageDefault(config: AiConfig, setting: PlatformImageDefault | null): AiConfig {
+    if (!setting || config.imageModelDefaultRevision >= setting.revision) return config;
+    const model = encodeChannelModel(setting.channelId, setting.model);
+    return { ...config, model, imageModel: model, imageModelDefaultRevision: setting.revision };
 }
 
 export function generationPreferencesEqual(left: GenerationPreferences, right: GenerationPreferences) {

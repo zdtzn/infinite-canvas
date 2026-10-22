@@ -3,7 +3,7 @@ import { createInFlightReads } from "@/lib/in-flight";
 
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import type { Asset } from "@/stores/use-asset-store";
-import type { ApiCallFormat, GenerationPreferences, ModelChannel } from "@/stores/use-config-store";
+import type { ApiCallFormat, GenerationPreferences, ModelChannel, PlatformImageDefault } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
@@ -251,6 +251,14 @@ export async function saveServerUserPreferences(preferences: Partial<ServerUserP
 
 export async function fetchServerChannels() {
     return serverRequest<{ items: ServerChannel[] }>("/api/channels", { timeoutMs: 12_000 });
+}
+
+export async function fetchServerModelDefaults(expectedUserId = useUserStore.getState().user?.id || "") {
+    return serverRequest<{ image: PlatformImageDefault | null }>("/api/model-defaults", { timeoutMs: 12_000, expectedUserId });
+}
+
+export async function saveServerDefaultImageModel(target: Pick<PlatformImageDefault, "channelId" | "model">, expectedUserId = useUserStore.getState().user?.id || "") {
+    return serverRequest<{ image: PlatformImageDefault | null }>("/api/admin/model-defaults/image", { method: "PUT", body: target, timeoutMs: 12_000, expectedUserId });
 }
 
 export async function saveServerChannel(channel: ModelChannel) {
