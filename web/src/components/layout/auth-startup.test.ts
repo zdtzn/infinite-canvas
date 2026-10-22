@@ -126,9 +126,11 @@ test("protected children still wait for loading and session checks", () => {
     expect(loaders).toContain('if (!options.fromWarmup && routeKey === "/chat")');
 });
 
-test("version release UI is a separate lazy module with an immediate version label", () => {
+test("version release UI is a separate lazy module opened from the account menu", () => {
     const actions = readFileSync(new URL("./user-status-actions.tsx", import.meta.url), "utf8");
+    const compact = actions.replace(/\s+/g, "");
     expect(actions).not.toMatch(/import\s+\{\s*VersionReleaseModal\s*\}\s+from/);
     expect(actions).toContain('lazyRoute(() => import("@/components/layout/version-release-modal")');
-    expect(actions.replace(/\s+/g, "")).toMatch(/<Suspensefallback=\{<span[^>]*>\{APP_VERSION\}<\/span>\}><VersionReleaseModalstyle=\{versionStyle\}\/>/);
+    expect(compact).toContain("label:`版本${APP_VERSION}`");
+    expect(compact).toContain("{versionOpen?<VersionReleaseModaltrigger={false}openonOpenChange={setVersionOpen}/>:null}");
 });
