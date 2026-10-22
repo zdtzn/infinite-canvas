@@ -466,8 +466,8 @@ export async function submitImageJob(
     return serverRequest<{ job: ServerJob }>("/api/jobs/images", { method: "POST", body: input, headers: { "Idempotency-Key": idempotencyKey }, timeoutMs: 60_000, expectedUserId });
 }
 
-export async function fetchServerJobs(expectedUserId?: string) {
-    return serverRequest<{ items: ServerJob[] }>("/api/jobs", { timeoutMs: 12_000, expectedUserId });
+export async function fetchServerJobs(expectedUserId?: string, signal?: AbortSignal) {
+    return serverRequest<{ items: ServerJob[] }>("/api/jobs", { timeoutMs: 12_000, expectedUserId, signal });
 }
 
 export async function fetchServerJob(id: string, expectedUserId?: string, signal?: AbortSignal) {

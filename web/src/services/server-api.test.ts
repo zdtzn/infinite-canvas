@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fetchAnnouncements, markAnnouncementRead, serverRequest, ServerRequestError, ServerTransportError, waitForServerJob, type ServerJobProgress } from "./server-api";
+import { fetchAnnouncements, fetchServerJobs, markAnnouncementRead, serverRequest, ServerRequestError, ServerTransportError, waitForServerJob, type ServerJobProgress } from "./server-api";
 import { useUserStore } from "@/stores/use-user-store";
 
 async function withTransport(run: () => Promise<void>) {
@@ -42,6 +42,27 @@ test("announcement requests keep the captured account and request newest orderin
         } finally {
             useUserStore.setState({ user: previousUser });
         }
+    }));
+
+test("task discovery is an account-scoped read and can be canceled without canceling generation", () =>
+    withTransport(async () => {
+        const calls: string[] = [];
+        const controller = new AbortController();
+        let started!: () => void;
+        const ready = new Promise<void>((resolve) => { started = resolve; });
+        globalThis.fetch = (async (url, init) => {
+            calls.push(`${init?.method || "GET"} ${url}`);
+            assert.equal(new Headers(init?.headers).get("X-Expected-User-Id"), "original-owner");
+            started();
+            return new Promise<Response>((_resolve, reject) => {
+                init!.signal!.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+            });
+        }) as typeof fetch;
+        const request = fetchServerJobs("original-owner", controller.signal);
+        await ready;
+        controller.abort();
+        await assert.rejects(request, { name: "AbortError" });
+        assert.deepEqual(calls, ["GET /api/jobs"]);
     }));
 
 test("server deadline includes response body, not just headers", () =>

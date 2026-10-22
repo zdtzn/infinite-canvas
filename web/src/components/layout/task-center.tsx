@@ -1,7 +1,9 @@
-import { App, Badge, Button, Drawer, Empty, Progress, Tag, Tooltip } from "antd";
+import { App, Badge, Button, Drawer, Empty, Image, Progress, Tag, Tooltip } from "antd";
 import { Ban, CheckCircle2, CircleAlert, ListTodo, RotateCcw, X } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { recentImageResults } from "./task-results";
 import { useNavigate } from "react-router-dom";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -22,14 +24,43 @@ const MAX_ACTIONABLE_FAILURES = 3;
 const statusColors: Record<ServerJob["status"], string> = { queued: "default", running: "processing", succeeded: "success", failed: "error", canceled: "default" };
 
 export function TaskCenter() {
+    const userId = useUserStore((state) => state.user?.id || "");
+    return <TaskCenterSession key={userId} userId={userId} />;
+}
+
+function TaskCenterSession({ userId }: { userId: string }) {
     const { message } = App.useApp();
     const navigate = useNavigate();
     const [open, setOpen] = useState(false);
-    const [jobs, setJobs] = useState<ServerJob[]>([]);
+    const [expandedJobId, setExpandedJobId] = useState("");
+    const lifetime = useRef({ active: false });
+    useEffect(() => {
+        const session = { active: true };
+        lifetime.current = session;
+        return () => { session.active = false; };
+    }, []);
+    const taskQuery = useQuery({
+        queryKey: ["image-tasks", userId],
+        queryFn: ({ signal }) => fetchServerJobs(userId, signal),
+        enabled: PUBLIC_MODE && Boolean(userId),
+        staleTime: 0,
+        refetchOnWindowFocus: "always",
+        refetchOnReconnect: "always",
+        refetchInterval: (query) => query.state.data?.items.some((job) => isActiveJob(job) || job.result?.recoveryPending) ? 3000 : open ? 15000 : 30000,
+        refetchIntervalInBackground: false,
+    });
+    const jobs = taskQuery.data?.items || [];
+    const refresh = () => taskQuery.refetch({ cancelRefetch: false });
+    useEffect(() => {
+        if (!PUBLIC_MODE || !userId) return;
+        const onFocus = () => { void taskQuery.refetch({ cancelRefetch: false }); };
+        window.addEventListener("focus", onFocus);
+        if (open) onFocus();
+        return () => window.removeEventListener("focus", onFocus);
+    }, [open, userId, taskQuery.refetch]);
     const [dismissedJobIds, setDismissedJobIds] = useState<string[]>([]);
     const [loadingId, setLoadingId] = useState("");
     const retryKeys = useRef(new Map<string, string>());
-    const userId = useUserStore((state) => state.user?.id || "");
     const activeJobs = useMemo(() => jobs.filter(isActiveJob).sort(sortJobs), [jobs]);
     const storedVideos = useVideoTaskStore((state) => state.logs);
     const videoOwner = useVideoTaskStore((state) => state.ownerId);
@@ -45,13 +76,7 @@ export function TaskCenter() {
     useEffect(() => {
         if (open) void videoTasks.refresh();
     }, [open, userId]);
-    const recentSuccessJobs = useMemo(() => {
-        const now = Date.now();
-        return jobs
-            .filter((job) => job.status === "succeeded" && now - (job.finishedAt || job.createdAt) <= RECENT_SUCCESS_MS)
-            .sort(sortJobs)
-            .slice(0, 2);
-    }, [jobs, open]);
+    const recentSuccessJobs = useMemo(() => recentImageResults(jobs), [jobs]);
     const actionableJobs = useMemo(() => {
         const now = Date.now();
         return jobs
@@ -60,57 +85,11 @@ export function TaskCenter() {
             .slice(0, MAX_ACTIONABLE_FAILURES);
     }, [dismissedJobIds, jobs, open]);
 
-    const refresh = async (silent = true) => {
-        const expectedUserId = userId;
-        if (!expectedUserId) return;
-        try {
-            const items = (await fetchServerJobs(expectedUserId)).items;
-            if (useUserStore.getState().user?.id === expectedUserId) setJobs(items);
-        } catch (error) {
-            if (!silent) message.error(userFacingErrorMessage(error, "暂时无法读取生成进度，请稍后再试"));
-        }
-    };
-
-    useEffect(() => {
-        if (!PUBLIC_MODE) return;
-        if (!userId) {
-            setJobs([]);
-            return;
-        }
-        let disposed = false;
-        let timer: number | undefined;
-        const delay = activeJobs.length ? 3000 : open ? 15000 : 30000;
-        const schedule = () => {
-            if (disposed || document.hidden) return;
-            timer = window.setTimeout(() => void poll(), delay);
-        };
-        const poll = async () => {
-            if (disposed || document.hidden) return;
-            await refresh();
-            schedule();
-        };
-        const handleVisibilityChange = () => {
-            if (timer) window.clearTimeout(timer);
-            timer = undefined;
-            if (!document.hidden) void poll();
-        };
-        document.addEventListener("visibilitychange", handleVisibilityChange);
-        if (!document.hidden) {
-            if (open) void poll();
-            else timer = window.setTimeout(() => void poll(), 1_000);
-        }
-        return () => {
-            disposed = true;
-            if (timer) window.clearTimeout(timer);
-            document.removeEventListener("visibilitychange", handleVisibilityChange);
-        };
-    }, [userId, activeJobs.length, open]);
-
-    useEffect(() => setDismissedJobIds([]), [userId]);
-
     const act = async (job: ServerJob, action: "cancel" | "retry") => {
         const expectedUserId = userId;
         if (!expectedUserId) return;
+        const session = lifetime.current;
+        const isCurrent = () => session.active && useUserStore.getState().user?.id === expectedUserId;
         setLoadingId(job.id);
         try {
             if (action === "cancel") await cancelServerJob(job.id, expectedUserId);
@@ -118,18 +97,23 @@ export function TaskCenter() {
                 const retryKey = retryKeys.current.get(job.id) || nanoid();
                 retryKeys.current.set(job.id, retryKey);
                 await retryServerJob(job.id, expectedUserId, retryKey);
+                if (!isCurrent()) return;
                 retryKeys.current.delete(job.id);
                 setDismissedJobIds((ids) => (ids.includes(job.id) ? ids : [...ids, job.id]));
             }
-            await refresh(false);
+            if (isCurrent()) await refresh();
         } catch (error) {
-            message.error(userFacingErrorMessage(error, "暂时无法确认操作结果，请刷新进度后再试"));
+            if (isCurrent()) message.error(userFacingErrorMessage(error, "暂时无法确认操作结果，请刷新进度后再试"));
         } finally {
-            setLoadingId("");
+            if (isCurrent()) setLoadingId("");
         }
     };
 
     const openJob = (job: ServerJob) => {
+        if (job.status === "succeeded") {
+            setExpandedJobId((current) => current === job.id ? "" : job.id);
+            return;
+        }
         const route = job.source?.route;
         if (route && route !== "/product-lab" && route !== "/product-lab-batch") {
             void preloadRoute(route);
@@ -153,20 +137,26 @@ export function TaskCenter() {
     const sections = [
         { key: "active", title: "进行中", icon: <ListTodo className="size-4" />, jobs: activeJobs, videos: activeVideos },
         { key: "actionable", title: "需要处理", icon: <CircleAlert className="size-4" />, jobs: actionableJobs, videos: actionableVideos },
-        { key: "completed", title: "刚刚完成", icon: <CheckCircle2 className="size-4" />, jobs: recentSuccessJobs, videos: completedVideos },
+        { key: "completed", title: "最近完成", icon: <CheckCircle2 className="size-4" />, jobs: recentSuccessJobs, videos: completedVideos },
     ].filter((section) => section.jobs.length + section.videos.length);
 
     return (
         <>
-            <Tooltip title="生成进度">
+            <Tooltip title="任务与结果">
                 <Badge count={activeCount} size="small" offset={[-1, 2]}>
-                    <button type="button" className="inline-flex size-7 items-center justify-center text-stone-600 transition hover:text-stone-950 dark:text-stone-300 dark:hover:text-white" onClick={() => setOpen(true)} aria-label="生成进度">
+                    <button type="button" className="inline-flex size-7 items-center justify-center text-stone-600 transition hover:text-stone-950 dark:text-stone-300 dark:hover:text-white" onClick={() => setOpen(true)} aria-label="任务与结果">
                         <ListTodo className="size-4" />
                     </button>
                 </Badge>
             </Tooltip>
-            <Drawer open={open} width="min(400px, 100vw)" title="生成进度" onClose={() => setOpen(false)} styles={{ body: { padding: 16 } }}>
+            <Drawer open={open} width="min(400px, 100vw)" title="任务与结果" onClose={() => setOpen(false)} styles={{ body: { padding: 16 } }}>
                 <div className="space-y-5">
+                    {PUBLIC_MODE ? <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs leading-5 text-muted-foreground">已提交的生图可离开后回来查看；最近 20 条完成结果保留在这里。</p>
+                        <Button size="small" type="text" loading={taskQuery.isFetching} onClick={() => void refresh()}>刷新</Button>
+                    </div> : null}
+                    {PUBLIC_MODE && taskQuery.isError ? <p role="alert" className="text-sm text-muted-foreground">暂时无法更新任务，请检查网络后点击刷新。已有记录仍保留。</p> : null}
+                    {PUBLIC_MODE && taskQuery.isPending ? <p role="status" className="text-sm text-muted-foreground">正在找回任务……</p> : null}
                     {sections.map((section) => (
                         <section key={section.key} aria-label={section.title}>
                             <div className="mb-2 flex items-center justify-between gap-3 text-sm font-medium">
@@ -192,6 +182,7 @@ export function TaskCenter() {
                                         key={job.id}
                                         job={job}
                                         loading={loadingId === job.id}
+                                        expanded={expandedJobId === job.id}
                                         onOpen={() => openJob(job)}
                                         onAction={(action) => void act(job, action)}
                                         onDismiss={() => setDismissedJobIds((ids) => (ids.includes(job.id) ? ids : [...ids, job.id]))}
@@ -200,15 +191,15 @@ export function TaskCenter() {
                             </div>
                         </section>
                     ))}
-                    {!sections.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无进行中的生成" /> : null}
-                    {actionableJobs.length + actionableVideos.length ? <p className="text-xs leading-5 text-stone-400">完整记录可在各工作台的“太古遗迹”中查看。</p> : null}
+                    {!sections.length && !(PUBLIC_MODE && (taskQuery.isPending || taskQuery.isError)) ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无生成任务" /> : null}
+                    {sections.length ? <p className="text-xs leading-5 text-stone-400">完整记录可在各工作台的“太古遗迹”中查看。</p> : null}
                 </div>
             </Drawer>
         </>
     );
 }
 
-function TaskItem({ job, loading, onOpen, onAction, onDismiss }: { job: ServerJob; loading: boolean; onOpen: () => void; onAction: (action: "cancel" | "retry") => void; onDismiss: () => void }) {
+function TaskItem({ job, loading, expanded, onOpen, onAction, onDismiss }: { job: ServerJob; loading: boolean; expanded: boolean; onOpen: () => void; onAction: (action: "cancel" | "retry") => void; onDismiss: () => void }) {
     const active = isActiveJob(job);
     const progress = taskProgressProps(job.status);
     const duration = (job.finishedAt || Date.now()) - (job.startedAt || job.createdAt);
@@ -218,6 +209,7 @@ function TaskItem({ job, loading, onOpen, onAction, onDismiss }: { job: ServerJo
             <div className="flex items-start justify-between gap-3">
                 <button type="button" className="min-w-0 flex-1 text-left" onClick={onOpen}>
                     <div className="truncate text-sm font-medium">{jobWorkspaceLabel(job)}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{new Date(job.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
                     <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500">
                         <span className="max-w-full truncate">{job.model || "默认模型"}</span>
                         <span>{job.count} 张</span>
@@ -240,6 +232,7 @@ function TaskItem({ job, loading, onOpen, onAction, onDismiss }: { job: ServerJo
             <div className="mt-2 flex items-center justify-between gap-3">
                 <span className="truncate text-xs text-stone-400">{job.size || job.quality || "默认设置"}</span>
                 <div className="flex shrink-0 items-center gap-1">
+                    {job.status === "succeeded" ? <Button size="small" type="text" aria-expanded={expanded} onClick={onOpen}>{expanded ? "收起结果" : "查看结果"}</Button> : null}
                     {active ? (
                         <Tooltip title="取消生成">
                             <Button aria-label="取消生成" type="text" danger size="small" icon={<Ban className="size-3.5" />} loading={loading} onClick={() => onAction("cancel")} />
@@ -257,6 +250,17 @@ function TaskItem({ job, loading, onOpen, onAction, onDismiss }: { job: ServerJo
                     ) : null}
                 </div>
             </div>
+            {expanded && job.status === "succeeded" ? <div className="mt-3 space-y-3" aria-label="已生成的图片">
+                {job.result?.recoveryPending ? <p role="status" className="text-xs text-muted-foreground">图片已生成，正在保存。可先预览，请勿重复生成。</p> : null}
+                {job.result?.images.length ? <Image.PreviewGroup>
+                    {job.result.images.map((image, index) => <div key={image.id} className="space-y-1">
+                        <Image src={image.persisted === false ? image.recoveryUrl || image.dataUrl : image.dataUrl} alt={`生成结果 ${index + 1}`} width="100%" style={{ maxHeight: 280, objectFit: "contain" }} loading="lazy" />
+                        <a className="inline-flex min-h-10 items-center text-sm text-primary hover:underline" href={image.persisted === false ? image.recoveryUrl || image.dataUrl : image.dataUrl} target="_blank" rel="noopener noreferrer" download={image.persisted === false ? undefined : `生成结果-${index + 1}.${image.mimeType === "image/jpeg" ? "jpg" : image.mimeType === "image/webp" ? "webp" : "png"}`}>
+                            {image.persisted === false ? "查看原图" : "下载图片"}
+                        </a>
+                    </div>)}
+                </Image.PreviewGroup> : <p className="text-xs text-muted-foreground">暂未读取到图片，请刷新任务后再查看。</p>}
+            </div> : null}
             {job.error ? (
                 <div className="mt-2 text-xs leading-5 text-stone-500">
                     <p role="status">{generationFailureFeedback(job.error).description}</p>

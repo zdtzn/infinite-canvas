@@ -1173,7 +1173,7 @@ export default function ImagePage() {
                             >
                                 {generateButtonLabel}
                             </Button>
-                            {activeJobCount ? <p className="mt-2 text-center text-xs text-muted-foreground">{activeJobCount} 组任务进行中 · 可继续提交，超出并发上限自动排队</p> : null}
+                            {activeJobCount ? <p className="mt-2 text-center text-xs text-muted-foreground">{activeJobCount} 组任务进行中 · 可继续提交，超出并发上限自动排队{PUBLIC_MODE ? "；已提交的任务可离开后从右上角“任务与结果”找回" : ""}</p> : null}
                             {generationBlockReason ? (
                                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
                             ) : cultivationProfile ? (
