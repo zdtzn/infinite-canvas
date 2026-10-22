@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useUnreadAnnouncements } from "@/hooks/use-unread-announcements";
-import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { markAnnouncementRead } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -42,8 +41,8 @@ export function AnnouncementPromptSession({ userId }: { userId: string }) {
             if (!isCurrentSession()) return;
             setHidden((current) => new Set(current).add(itemKey));
             await queryClient.invalidateQueries({ queryKey: ["announcements"] });
-        } catch (reason) {
-            if (isCurrentSession()) setError(userFacingErrorMessage(reason, "暂时未能确认已读，请稍后重试"));
+        } catch {
+            if (isCurrentSession()) setError("阅读记录暂时未能保存");
         } finally {
             pending.current = false;
             if (isCurrentSession()) setConfirming(false);

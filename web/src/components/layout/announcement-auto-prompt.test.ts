@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import * as React from "react";
 import ts from "typescript";
 
-import { userFacingErrorMessage } from "@/lib/friendly-error";
 import type { SystemAnnouncement } from "@/services/server-api";
 
 function realFunction(path: string, name: string, bindings: Record<string, unknown>) {
@@ -31,7 +30,7 @@ function session() {
     let rejectRead!: (reason: Error) => void;
     const ack = new Promise<void>((resolve, reject) => { resolveRead = resolve; rejectRead = reject; });
     const Component = realFunction("./announcement-auto-prompt.tsx", "AnnouncementPromptSession", {
-        React, Modal: "announcement-modal", theme: { useToken: () => ({ token: {} }) }, userFacingErrorMessage,
+        React, Modal: "announcement-modal", theme: { useToken: () => ({ token: {} }) },
         useQueryClient: () => ({ invalidateQueries: async () => { invalidations++; } }),
         useUnreadAnnouncements: () => ({ data: { items: [item] } }),
         useUserStore: { getState: () => ({ user: { id: userId } }) },
@@ -71,12 +70,14 @@ function session() {
 test("acknowledgement failure leaves the announcement open and retryable", async () => {
     const view = session();
     view.render().onOk();
-    view.rejectRead(new Error("连接暂不可用"));
+    view.rejectRead(new Error("当前渠道或模型暂时不可用"));
     await settle();
     const modal = view.render();
     expect(modal.open).toBe(true);
     expect(modal.confirmLoading).toBe(false);
     expect(JSON.stringify(modal.children)).toContain("请再次点击");
+    expect(JSON.stringify(modal.children)).toContain("阅读记录暂时未能保存");
+    expect(JSON.stringify(modal.children)).not.toMatch(/渠道|模型/);
     expect(view.invalidations).toBe(0);
 });
 
