@@ -675,6 +675,10 @@ html:not(.dark) .canvas-cinematic-wash {
         --sidebar-accent-foreground: #f6ead0;
         --sidebar-border: rgb(148 163 184 / 18%);
         --sidebar-ring: rgb(218 188 119 / 72%);
+        --cta-glow: rgb(234 215 166 / 30%);
+        --cta-glow-strong: rgb(234 215 166 / 52%);
+        --cta-glow-ring: rgb(240 217 160 / 55%);
+        --cta-glow-ring-strong: rgb(240 217 160 / 88%);
         color-scheme: dark;
     }
 
@@ -1705,14 +1709,14 @@ html:not(.dark) .canvas-cinematic-wash {
         0%,
         100% {
             box-shadow:
-                0 6px 24px rgb(216 64 42 / 38%),
-                0 0 0 1px rgb(238 80 56 / 50%);
+                0 6px 24px var(--cta-glow, rgb(216 64 42 / 38%)),
+                0 0 0 1px var(--cta-glow-ring, rgb(238 80 56 / 50%));
         }
 
         50% {
             box-shadow:
-                0 8px 40px rgb(216 64 42 / 62%),
-                0 0 0 1.5px rgb(238 80 56 / 85%);
+                0 8px 40px var(--cta-glow-strong, rgb(216 64 42 / 62%)),
+                0 0 0 1.5px var(--cta-glow-ring-strong, rgb(238 80 56 / 85%));
         }
     }
 

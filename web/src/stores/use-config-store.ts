@@ -743,7 +743,9 @@ export function modelOptionName(value: string) {
 export function modelOptionLabel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     if (!decoded) return value;
-    const channel = config.channels.find((item) => item.id === decoded.channelId);
+    const owners = config.channels.filter((item) => item.models.some((model) => model.name === decoded.model));
+    if (owners.length < 2) return decoded.model;
+    const channel = owners.find((item) => item.id === decoded.channelId);
     return channel ? `${decoded.model}（${channel.name}）` : decoded.model;
 }
 

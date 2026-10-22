@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { BookOpen, CircleUserRound, Crown, Download, Keyboard, LogOut, Moon, MoreHorizontal, Puzzle, ShieldCheck, Sun } from "lucide-react";
+import { BookOpen, CircleUserRound, Crown, Download, Info, Keyboard, LogOut, Moon, MoreHorizontal, Puzzle, ShieldCheck, Sun } from "lucide-react";
 import { App, Dropdown, Input, Modal, type MenuProps } from "antd";
 import { Suspense, useState } from "react";
 
@@ -81,6 +81,7 @@ export function WorkspaceMenuAction({ variant = "default", onOpenShortcuts, onOp
 export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
     const { modal, message } = App.useApp();
     const [passwordOpen, setPasswordOpen] = useState(false);
+    const [versionOpen, setVersionOpen] = useState(false);
     const [passwordSaving, setPasswordSaving] = useState(false);
     const [currentPassword, setCurrentPassword] = useState("");
     const [newPassword, setNewPassword] = useState("");
@@ -145,6 +146,12 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
                   onClick: () => void exportAccount(),
               },
               {
+                  key: "version",
+                  icon: <Info className="size-4" />,
+                  label: `版本 ${APP_VERSION}`,
+                  onClick: () => setVersionOpen(true),
+              },
+              {
                   key: "logout",
                   icon: <LogOut className="size-4" />,
                   danger: true,
@@ -191,16 +198,8 @@ export function UserStatusActions({ showTaskCenter = true, showWorkspaceMenu = t
                         </button>
                     </Dropdown>
                 ) : null}
-                <Suspense
-                    fallback={
-                        <span className="shrink-0 text-xs font-medium text-stone-500 dark:text-stone-400" style={versionStyle}>
-                            {APP_VERSION}
-                        </span>
-                    }
-                >
-                    <VersionReleaseModal style={versionStyle} />
-                </Suspense>
             </div>
+            <Suspense fallback={null}>{versionOpen ? <VersionReleaseModal trigger={false} open onOpenChange={setVersionOpen} /> : null}</Suspense>
             <Modal
                 title="修改个人密码"
                 open={passwordOpen}

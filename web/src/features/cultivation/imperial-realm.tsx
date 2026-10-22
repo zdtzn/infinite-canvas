@@ -55,12 +55,12 @@ export default function ImperialRealm({ preview = false }: { preview?: boolean }
                             onFocus={() => void preloadRoute("/canvas")}
                             onTouchStart={() => void preloadRoute("/canvas")}
                             radius={8}
-                            tint="#d8402a"
+                            tint="#ead7a6"
                             tintOpacity={0.96}
                             blur={4}
-                            textColor="#fff7ee"
-                            lineColor="#ffe7b3"
-                            baseColor="#8f2a20"
+                            textColor="#111a29"
+                            lineColor="#fff6dc"
+                            baseColor="#8a6f33"
                             intensity={1.15}
                             shineSize={9}
                             shineFade={38}

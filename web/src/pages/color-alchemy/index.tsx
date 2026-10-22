@@ -826,7 +826,7 @@ function EmptyColorAlchemy({
                 <h1 className="text-2xl font-semibold text-[#f2eee5]">选择一张图片，开始灵彩</h1>
                 <p className="mt-2 text-sm text-white/40">从本地、藏卷阁或画布载入。</p>
                 <div className="mt-7 flex flex-wrap justify-center gap-2">
-                    <button type="button" className="flex h-10 items-center gap-2 rounded bg-[#d7b46a] px-4 text-sm font-semibold text-[#18140d] transition hover:bg-[#e2c37d]" disabled={uploading} onClick={onUpload}>
+                    <button type="button" className="flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90" disabled={uploading} onClick={onUpload}>
                         <ImagePlus className="size-4" />
                         {uploading ? "正在载入" : "选择图片"}
                     </button>

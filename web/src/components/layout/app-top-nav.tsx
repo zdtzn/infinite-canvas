@@ -130,7 +130,7 @@ export function AppTopNav() {
                                         )}
                                         aria-label="打开更多导航"
                                     >
-                                        {secondaryActive && activeToolSlug ? navigationSceneNames[activeToolSlug] : "更多"}
+                                        更多
                                         <ChevronDown className="size-3.5" />
                                     </button>
                                 </Dropdown>

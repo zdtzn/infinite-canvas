@@ -144,7 +144,7 @@ export default function CanvasPage() {
                         <button
                             type="button"
                             onClick={createAndEnter}
-                            className="shj-cta-glow mt-8 inline-flex items-center gap-2 rounded-md bg-[#d8402a] px-7 py-3.5 text-sm font-medium tracking-[0.2em] text-[#fff7ee] transition-colors duration-300 hover:bg-[#ee5038]"
+                            className="shj-cta-glow mt-8 inline-flex items-center gap-2 rounded-md bg-primary px-7 py-3.5 text-sm font-medium tracking-[0.2em] text-primary-foreground transition-colors duration-300 hover:bg-primary/90"
                         >
                             <Plus className="size-4" />
                             开辟洞天

@@ -165,7 +165,7 @@ export function PromptCover({
             ref={imageRef}
             src={currentSrc}
             alt={alt}
-            className={className}
+            className={`${className}${activeStatus.loaded ? "" : " animate-pulse bg-stone-200 dark:bg-stone-800"}`}
             loading={loading}
             fetchPriority={fetchPriority}
             decoding="async"

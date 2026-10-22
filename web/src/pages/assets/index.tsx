@@ -459,7 +459,7 @@ export default function AssetsPage() {
                                 <Upload className="size-4 text-[#8a8a96] transition-colors duration-200" aria-hidden />
                                 导入资产
                             </button>
-                            <button type="button" onClick={openCreate} className="inline-flex items-center rounded-md bg-[#d8402a] px-5 py-2.5 text-sm font-medium tracking-[0.1em] text-[#fff7ee] transition-colors duration-300 hover:bg-[#ee5038]">
+                            <button type="button" onClick={openCreate} className="inline-flex items-center rounded-md bg-primary px-5 py-2.5 text-sm font-medium tracking-[0.1em] text-primary-foreground transition-colors duration-300 hover:bg-primary/90">
                                 新增资产
                             </button>
                         </div>
@@ -532,7 +532,7 @@ export default function AssetsPage() {
                                 <button
                                     type="button"
                                     onClick={openCreate}
-                                    className="shj-cta-glow inline-flex items-center rounded-md bg-[#d8402a] px-6 py-3 text-sm font-medium tracking-[0.15em] text-[#fff7ee] transition-colors duration-300 hover:bg-[#ee5038]"
+                                    className="shj-cta-glow inline-flex items-center rounded-md bg-primary px-6 py-3 text-sm font-medium tracking-[0.15em] text-primary-foreground transition-colors duration-300 hover:bg-primary/90"
                                 >
                                     收入第一卷
                                 </button>
@@ -814,7 +814,7 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | nu
                             <video src={asset.data.url} controls className="mt-2 aspect-video w-full rounded-lg bg-black" />
                         ) : (
                             <Typography.Text className="mt-2 block">
-                                {asset.data.width}x{asset.data.height} · {formatBytes(asset.data.bytes)} · {asset.data.mimeType}
+                                {asset.data.width}x{asset.data.height} · {formatBytes(asset.data.bytes)} · {formatMimeLabel(asset.data.mimeType)}
                             </Typography.Text>
                         )}
                     </div>
@@ -846,7 +846,14 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | nu
 
 function assetSummary(asset: Asset) {
     if (asset.kind === "text") return asset.data.content;
-    return `${asset.data.width}x${asset.data.height} · ${formatBytes(asset.data.bytes)} · ${asset.data.mimeType}`;
+    return `${asset.data.width}x${asset.data.height} · ${formatBytes(asset.data.bytes)} · ${formatMimeLabel(asset.data.mimeType)}`;
+}
+
+const MIME_SUBTYPE_LABELS: Record<string, string> = { jpeg: "JPG", "svg+xml": "SVG", quicktime: "MOV", "x-icon": "ICO" };
+
+function formatMimeLabel(mimeType: string) {
+    const subtype = mimeType.split("/")[1] || "";
+    return (MIME_SUBTYPE_LABELS[subtype] || subtype || "文件").toUpperCase();
 }
 
 function assetSearchText(asset: Asset) {
