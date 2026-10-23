@@ -15,8 +15,8 @@ export type AnnouncementTextStyle = {
 export type AnnouncementStyle = { title: AnnouncementTextStyle; body: AnnouncementTextStyle };
 
 export const DEFAULT_ANNOUNCEMENT_STYLE: AnnouncementStyle = {
-  title: { font: "kai", color: "#67421b", size: 30, weight: 700, letterSpacing: 0.1, lineHeight: 1.5 },
-  body: { font: "song", color: "#332418", size: 18, weight: 600, letterSpacing: 0.06, lineHeight: 2 },
+  title: { font: "kai", color: "#65446e", size: 30, weight: 700, letterSpacing: 0.1, lineHeight: 1.5 },
+  body: { font: "song", color: "#382d4d", size: 18, weight: 600, letterSpacing: 0.06, lineHeight: 2 },
 };
 export const ANNOUNCEMENT_STYLE_LIMITS = {
   title: { size: [20, 48], letterSpacing: [0, 0.3], lineHeight: [1.2, 2.4] },

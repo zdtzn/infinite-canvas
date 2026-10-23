@@ -4,8 +4,13 @@
     --notice-paper: #eee8f4;
     --notice-ink: #382d4d;
     --notice-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
-    max-width: calc(100vw - 24px);
+    --notice-scene: url("./assets/lunar/notice-world.webp");
+    --notice-scene-mobile: url("./assets/lunar/notice-world-mobile.webp");
 }
+.announcement-center-modal { max-width: calc(100vw - 24px); }
+.announcements-dialog, .announcement-preview { container: announcement-surface / inline-size; }
+.announcement-preview { background: linear-gradient(rgb(18 14 35 / 0.1), rgb(18 14 35 / 0.2)), var(--notice-scene) center / cover no-repeat, var(--notice-night); }
+.announcement-preview.is-mobile { background-image: linear-gradient(rgb(18 14 35 / 0.15), rgb(18 14 35 / 0.25)), var(--notice-scene-mobile); }
 
 .announcement-center-modal .ant-modal-container {
     overflow: hidden;
@@ -36,7 +41,7 @@
     flex-direction: column;
     overflow: hidden;
     color: #e6daef;
-    background: linear-gradient(rgb(18 14 35 / 0.1), rgb(18 14 35 / 0.2)), url("./assets/lunar/notice-world.webp") center / cover no-repeat, var(--notice-night);
+    background: linear-gradient(rgb(18 14 35 / 0.1), rgb(18 14 35 / 0.2)), var(--notice-scene) center / cover no-repeat, var(--notice-night);
     animation: announcement-enter 200ms ease-out;
 }
 .announcements-header {
@@ -164,13 +169,12 @@
 @media (max-width: 900px) {
     .announcements-header { padding-left: 24px; }
     .announcements-scroll { padding-inline: 14px; }
-    .announcement-card { padding-inline: 52px; }
 }
 @media (max-width: 600px) {
     .announcement-center-modal { width: calc(100% - 24px) !important; margin: 12px auto; padding-bottom: 0; }
     .announcement-center-modal .ant-modal-container { border-radius: 14px; }
     .announcement-center-modal .ant-modal-close { top: 14px; right: 12px; }
-    .announcements-dialog { height: min(86dvh, 740px); background-image: linear-gradient(rgb(18 14 35 / 0.15), rgb(18 14 35 / 0.25)), url("./assets/lunar/notice-world-mobile.webp"); }
+    .announcements-dialog { height: min(86dvh, 740px); background-image: linear-gradient(rgb(18 14 35 / 0.15), rgb(18 14 35 / 0.25)), var(--notice-scene-mobile); }
     .announcements-header { min-height: 142px; align-items: flex-start; flex-direction: column; justify-content: center; gap: 12px; padding: 20px 62px 10px 20px; }
     .announcements-header h2 { font-size: 26px; }
     .announcements-header > div > p { margin-top: 5px; font-size: 12px; }
@@ -181,6 +185,8 @@
     .announcements-toolbar .ant-segmented-group { gap: 4px; }
     .announcements-toolbar .ant-segmented.ant-segmented-block .ant-segmented-item { min-width: 0; flex: 1; }
     .announcements-tab-label { gap: 5px; }
+}
+@container announcement-surface (max-width: 600px) {
     .announcements-scroll { padding: 4px 4px 14px; scrollbar-gutter: auto; }
     .announcements-list { gap: 20px; }
     .announcement-card-meta { gap: 10px; margin-inline: 16px; }
@@ -207,4 +213,8 @@
 }
 @media (prefers-reduced-motion: reduce) {
     .announcement-center-modal *, .announcement-center-modal *::before, .announcement-center-modal *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+}
+
+@container announcement-surface (min-width: 601px) and (max-width: 900px) {
+    .announcement-card { padding-inline: 52px; }
 }

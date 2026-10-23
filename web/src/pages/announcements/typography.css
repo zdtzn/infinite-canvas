@@ -1,6 +1,6 @@
 .announcement-title {
     margin: 0;
-    color: var(--announcement-title-color, #67421b);
+    color: var(--announcement-title-color, #65446e);
     font-family: var(--announcement-title-font, "STKaiti", "KaiTi", serif);
     font-size: var(--announcement-title-size, 30px);
     font-weight: var(--announcement-title-weight, 700);
@@ -10,7 +10,7 @@
     overflow-wrap: anywhere;
 }
 .announcement-content {
-    color: var(--announcement-body-color, #332418);
+    color: var(--announcement-body-color, #382d4d);
     font-family: var(--announcement-body-font, "Songti SC", "SimSun", serif);
     font-size: var(--announcement-body-size, 18px);
     font-weight: var(--announcement-body-weight, 600);
@@ -20,6 +20,11 @@
     overflow-wrap: anywhere;
 }
 @media (max-width: 600px) {
+    .announcement-title { font-size: max(20px, calc(var(--announcement-title-size, 30px) * 0.85)); }
+    .announcement-content { font-size: max(16px, calc(var(--announcement-body-size, 18px) * 0.9)); }
+}
+
+@container announcement-surface (max-width: 600px) {
     .announcement-title { font-size: max(20px, calc(var(--announcement-title-size, 30px) * 0.85)); }
     .announcement-content { font-size: max(16px, calc(var(--announcement-body-size, 18px) * 0.9)); }
 }

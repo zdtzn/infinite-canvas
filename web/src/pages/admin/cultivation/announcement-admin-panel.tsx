@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Drawer, Empty, Form, Input, Select, Switch, Table, Tag, Tooltip } from "antd";
+import { App, Button, Drawer, Empty, Form, Input, Segmented, Select, Switch, Table, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Archive, Bell, Edit3, Plus, RefreshCw } from "lucide-react";
+import { Archive, Bell, Edit3, Plus, RefreshCw, Monitor, Smartphone } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useUserStore } from "@/stores/use-user-store";
 import { AnnouncementCard } from "@/pages/announcements";
-import { normalizeAnnouncementStyle } from "@/lib/announcement-style";
+import { DEFAULT_ANNOUNCEMENT_STYLE, normalizeAnnouncementStyle } from "@/lib/announcement-style";
 import { AnnouncementStyleFields } from "./components/announcement-style-fields";
 import { createAdminAnnouncement, fetchAdminAnnouncements, updateAdminAnnouncement, type AnnouncementInput, type AnnouncementStatus, type AnnouncementType, type SystemAnnouncement } from "@/services/server-api";
 
@@ -35,6 +36,8 @@ export function AnnouncementAdminPanel() {
     const [type, setType] = useState<AnnouncementType | "">("");
     const [status, setStatus] = useState<AnnouncementStatus | "">("");
     const [drawerOpen, setDrawerOpen] = useState(false);
+    const author = useUserStore((state) => state.user);
+    const [previewDevice, setPreviewDevice] = useState<"adaptive" | "mobile">("adaptive");
     const [editing, setEditing] = useState<SystemAnnouncement | null>(null);
     const query = useQuery({
         queryKey: ["admin", "announcements", page, search, type, status],
@@ -181,7 +184,7 @@ export function AnnouncementAdminPanel() {
                 <div>
                     <p className="cultivation-admin-panel-kicker">SYSTEM ANNOUNCEMENTS</p>
                     <h2>公告管理</h2>
-                    <p>编辑、置顶并发布面向全体用户的平台通知。</p>
+                    <p>管理「仙尊告示」，发布前预览月宫卷轴中的文字效果。</p>
                 </div>
                 <Button type="primary" icon={<Plus className="size-4" />} onClick={openCreate}>
                     新建公告
@@ -220,7 +223,7 @@ export function AnnouncementAdminPanel() {
 
             <Drawer
                 title={editing ? "编辑公告" : "新建公告"}
-                width={1180}
+                width={1360}
                 className="announcement-editor-drawer"
                 open={drawerOpen}
                 destroyOnHidden
@@ -273,7 +276,10 @@ export function AnnouncementAdminPanel() {
                     </Form.Item>
                     <div className="announcement-style-heading">
                         <h3>文字样式</h3>
-                        <Button size="small" onClick={() => form.setFieldsValue({ style: normalizeAnnouncementStyle(null) })}>恢复默认样式</Button>
+                        <div className="announcement-style-actions">
+                            <Button size="small" onClick={() => form.setFieldsValue({ style: { title: { color: DEFAULT_ANNOUNCEMENT_STYLE.title.color }, body: { color: DEFAULT_ANNOUNCEMENT_STYLE.body.color } } })}>使用月宫配色</Button>
+                            <Button size="small" onClick={() => form.setFieldsValue({ style: normalizeAnnouncementStyle(null) })}>恢复默认样式</Button>
+                        </div>
                     </div>
                     <p className="announcement-style-hint">仅对这条公告生效。手机字号会适度缩小；字体优先使用设备已有字形。</p>
                     <AnnouncementStyleFields />
@@ -282,15 +288,23 @@ export function AnnouncementAdminPanel() {
                     </Form.Item>
                 </Form>
                 <aside className="announcement-editor-preview" aria-label="公告实时预览">
-                    <h3>实时预览</h3>
-                    <p className="announcement-style-hint">修改后即刻预览，保存后才会对用户生效。</p>
-                    <div className="announcement-preview">
+                    <div className="announcement-preview-toolbar">
+                        <h3>实时预览</h3>
+                        <Segmented aria-label="预览尺寸" value={previewDevice} onChange={(value) => setPreviewDevice(value as "adaptive" | "mobile")} options={[
+                            { value: "adaptive", label: <span><Monitor className="size-4" aria-hidden="true" />自适应</span> },
+                            { value: "mobile", label: <span><Smartphone className="size-4" aria-hidden="true" />手机</span> },
+                        ]} />
+                    </div>
+                    <p className="announcement-style-hint">与「仙尊告示」使用相同卷轴与排版。手机预览最大宽度 390px，窄屏会继续适配。</p>
+                    <div className={`announcement-preview${previewDevice === "mobile" ? " is-mobile" : ""}`}>
+                        <div className="announcements-scroll">
                         <AnnouncementCard item={{
-                            id: "preview", title: values?.title || "公告标题", summary: values?.summary || "", content: values?.content || "在左侧填写正文，在这里查看文字效果。",
+                            id: "preview", title: values?.title || "公告标题", summary: values?.summary || "", content: values?.content || "填写公告正文，在这里查看文字效果。",
                             type: values?.type || "notice", status: values?.status || "draft", pinned: values?.pinned || false,
-                            style: previewStyle(values?.style), authorUserId: editing?.authorUserId || "", authorName: editing?.authorName || "系统管理员",
+                            style: previewStyle(values?.style), authorUserId: editing?.authorUserId || "", authorName: editing?.authorName || author?.displayName || "系统管理员",
                             publishedAt: editing?.publishedAt || null, createdAt: editing?.createdAt || Date.now(), updatedAt: Date.now(), isRead: true,
                         }} reading={false} onRead={() => {}} />
+                        </div>
                     </div>
                 </aside>
                 </div>

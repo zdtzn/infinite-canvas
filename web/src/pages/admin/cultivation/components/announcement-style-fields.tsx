@@ -13,7 +13,7 @@ export function AnnouncementStyleFields() {
                 <div className="announcement-style-grid">
                     <Form.Item name={["style", section, "font"]} label={`${label}字体`}><Select options={fontOptions} /></Form.Item>
                     <Form.Item name={["style", section, "color"]} label={`${label}颜色`} getValueFromEvent={(color) => color.toHexString()}>
-                        <ColorPicker disabledAlpha format="hex" showText presets={[{ label: "宣纸常用色", colors: ["#67421b", "#332418", "#8f3025", "#365e50", "#304e70", "#64416e"] }]} />
+                        <ColorPicker disabledAlpha format="hex" showText presets={[{ label: "月宫卷轴配色", colors: ["#65446e", "#382d4d", "#535082", "#44616b", "#793f59", "#765235"] }]} />
                     </Form.Item>
                     <Form.Item name={["style", section, "size"]} label={`${label}字号（px）`} rules={[{ required: true, message: "请填写字号" }, { type: "number", min: limits.size[0], max: limits.size[1] }]}>
                         <InputNumber min={limits.size[0]} max={limits.size[1]} precision={0} style={{ width: "100%" }} />
