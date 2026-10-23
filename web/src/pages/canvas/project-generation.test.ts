@@ -384,16 +384,21 @@ test("snapshot restore rejects a fresh generation that already entered image pre
     const snapshot = { id: "snapshot", title: "Snapshot", nodes: [original], connections: [], chatSessions: [], backgroundMode: "lines", viewport: { x: 0, y: 0, k: 1 } };
     install([original], [snapshot]);
     const prepared = Promise.withResolvers<any>();
+    let preparationStarted = false;
     Object.assign(c, {
         effectiveConfig: {},
         buildGenerationConfig: () => ({}),
         isAiConfigReady: () => true,
         getNodeDefinition: () => ({ useBuiltinPanel: { mode: "image", writeBackToSelf: true } }),
+        buildNodeGenerationContext: (...args: any[]) => ({ prompt: args[3], referenceImages: [] }),
+        resolveImageModelSettings: () => ({ capabilities: { maxReferences: 1 } }),
+        hydrateNodeGenerationContext: async (context: any) => context,
         requestGeneration: async () => [{ id: "new-image" }],
-        imageSaver: { retain: () => {}, prepare: () => prepared.promise },
+        imageSaver: { retain: () => {}, prepare: () => { preparationStarted = true; return prepared.promise; } },
     });
     const generation = c.handleGenerateNode("same-node", "image", "New prompt");
     await flush();
+    assert.equal(preparationStarted, true);
     c.handleRestoreSnapshot(snapshot);
     await c.confirm.onOk();
     prepared.resolve({ url: "stale-image", storageKey: "", width: 100, height: 100 });
