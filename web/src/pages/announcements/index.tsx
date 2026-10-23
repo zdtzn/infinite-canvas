@@ -59,7 +59,7 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
     const feedItems = useMemo(() => [...pinnedItems, ...timelineItems], [pinnedItems, timelineItems]);
 
     return (
-        <Modal className="announcement-center-modal" title={null} open={open} centered width={1440} footer={null} destroyOnHidden afterClose={onAfterClose} onCancel={onClose}>
+        <Modal className="announcement-center-modal" title={null} open={open} centered width={1040} footer={null} destroyOnHidden afterClose={onAfterClose} onCancel={onClose}>
             <section className="announcements-dialog" aria-label="系统公告">
                 <header className="announcements-header">
                     <div>
