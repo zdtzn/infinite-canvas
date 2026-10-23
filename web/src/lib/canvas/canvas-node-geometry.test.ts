@@ -13,11 +13,38 @@ import {
     isHiddenBatchConnectionEndpoint,
     isConnectionInViewport,
     translateDraggedNodes,
+    normalizeConnection,
 } from "./canvas-node-geometry";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const makeNode = (id: string, groupId?: string, locked = false): CanvasNodeData => ({ id, title: id, type: CanvasNodeType.Text, position: { x: 10, y: 20 }, width: 100, height: 80, metadata: { groupId, locked } });
 const makeGroup = (id: string, locked = false): CanvasNodeData => ({ ...makeNode(id, undefined, locked), type: CanvasNodeType.Group });
+
+test("nonempty groups connect outward to resource and config nodes from either handle direction", () => {
+    const group = makeGroup("group");
+    const member = { ...makeNode("member", group.id), metadata: { groupId: group.id, content: "reference text" } };
+    const target = makeNode("target");
+    const config = { ...makeNode("config"), type: CanvasNodeType.Config };
+    const nodes = [group, member, target, config];
+    for (const node of [target, config]) {
+        const expected = { fromNodeId: group.id, toNodeId: node.id };
+        expect(normalizeConnection(group.id, node.id, nodes, "source")).toEqual(expected);
+        expect(normalizeConnection(node.id, group.id, nodes, "target")).toEqual(expected);
+        expect(normalizeConnection(group.id, node.id, nodes, "target")).toBeNull();
+        expect(normalizeConnection(node.id, group.id, nodes, "source")).toBeNull();
+    }
+});
+
+test("groups cannot target themselves, other groups, empty groups or their only resource member", () => {
+    const group = makeGroup("group");
+    const empty = makeGroup("empty");
+    const member = { ...makeNode("member", group.id), metadata: { groupId: group.id, content: "text" } };
+    const nodes = [group, empty, member];
+    expect(normalizeConnection(group.id, group.id, nodes, "source")).toBeNull();
+    expect(normalizeConnection(group.id, empty.id, nodes, "source")).toBeNull();
+    expect(normalizeConnection(empty.id, member.id, nodes, "source")).toBeNull();
+    expect(normalizeConnection(group.id, member.id, nodes, "source")).toBeNull();
+});
 
 test("focus viewport centers an unscaled small node without overlays", () => {
     const node = makeNode("focus");

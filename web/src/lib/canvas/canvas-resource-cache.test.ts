@@ -59,3 +59,21 @@ test("plugin nodes conservatively invalidate on geometry changes", () => {
     const first = cache([plugin, config], edges);
     expect(cache([{ ...plugin, width: 400 }, config], edges)).not.toBe(first);
 });
+
+test("reference bar has real inputs only and reuses group derivations during dragging", () => {
+    const group = { ...config, id: "group", type: CanvasNodeType.Group };
+    const member = { ...image, metadata: { ...image.metadata, groupId: group.id } };
+    const nodes = [group, member, config];
+    const connections = [{ id: "group-edge", fromNodeId: group.id, toNodeId: config.id }];
+    const cache = createCanvasResourceCache();
+    const first = cache(nodes, connections);
+    expect(first.referencesByNodeId.get(image.id)).toEqual([]);
+    expect(first.mentionReferencesByNodeId.get(image.id)?.[0].nodeId).toBe(image.id);
+    expect(first.referencesByNodeId.get(config.id)?.[0]).toMatchObject({ nodeId: image.id, sourceNodeId: group.id });
+    expect(first.configInputsById.get(config.id)?.[0].type).toBe("group");
+    expect(cache(nodes.map((node) => ({ ...node, position: { x: 100, y: 100 } })), connections)).toBe(first);
+    const movedOut = cache([group, image, config], connections);
+    expect(movedOut).not.toBe(first);
+    expect(movedOut.referencesByNodeId.get(config.id)).toEqual([]);
+    expect(movedOut.configInputsById.get(config.id)).toEqual([]);
+});

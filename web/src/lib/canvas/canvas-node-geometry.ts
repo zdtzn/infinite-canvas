@@ -1,4 +1,5 @@
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ViewportTransform } from "@/types/canvas";
+import { getGroupResourceNodes } from "./canvas-resource-references";
 
 export type FocusFrame = { above?: number; below?: number; bottomInset?: number };
 export const CANVAS_NODE_TOOLBAR_ABOVE_THRESHOLD = 84;
@@ -164,7 +165,11 @@ export function normalizeConnection(firstNodeId: string, secondNodeId: string, n
     const first = nodes.find((node) => node.id === firstNodeId);
     const second = nodes.find((node) => node.id === secondNodeId);
     if (!first || !second || first.id === second.id) return null;
-    if (first.type === CanvasNodeType.Group || second.type === CanvasNodeType.Group) return null;
+    if (first.type === CanvasNodeType.Group || second.type === CanvasNodeType.Group) {
+        const [source, target] = firstHandleType === "source" ? [first, second] : [second, first];
+        if (source.type !== CanvasNodeType.Group || target.type === CanvasNodeType.Group || !getGroupResourceNodes(source.id, nodes).some((member) => member.id !== target.id)) return null;
+        return { fromNodeId: source.id, toNodeId: target.id };
+    }
     if (first.type === CanvasNodeType.Config && second.type === CanvasNodeType.Config) return null;
     if (second.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
     if (first.type === CanvasNodeType.Config && firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id };

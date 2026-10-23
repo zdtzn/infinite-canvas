@@ -71,3 +71,20 @@ test("grid preference persists and still switches when browser storage is blocke
         useCanvasSidePanelStore.setState({ nodeViewMode: previousMode });
     }
 });
+
+test("layer list renders an accessible group toggle ahead of its children", () => {
+    const html = renderToStaticMarkup(createElement(CanvasNodesTab, {
+        nodes: [
+            { id: "child", type: CanvasNodeType.Image, title: "组内图片", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { groupId: "group" } },
+            { id: "group", type: CanvasNodeType.Group, title: "分镜参考", position: { x: 0, y: 0 }, width: 200, height: 200 },
+        ],
+        selectedNodeIds: new Set<string>(),
+        onFocusNode: () => undefined,
+        onPreviewNode: () => undefined,
+        theme: canvasThemes.light,
+    }));
+    expect(html).toContain('aria-label="收起分组：分镜参考"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html.indexOf('data-layer-node-id="group"')).toBeLessThan(html.indexOf('data-layer-node-id="child"'));
+    expect(html).toContain('aria-level="2"');
+});

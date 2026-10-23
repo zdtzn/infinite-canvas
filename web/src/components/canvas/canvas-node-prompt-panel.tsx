@@ -97,8 +97,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                     imageModel: config.model,
                                     aspectRatio: config.size,
                                     resolution: config.quality,
-                                    referenceCount: mentionReferences.length + (hasImageContent ? 1 : 0),
-                                    editMode: hasImageContent || mentionReferences.length > 0,
+                                    referenceCount: mentionReferences.filter((item) => item.kind === "image").length + (hasImageContent && !mentionReferences.some((item) => item.nodeId === node.id) ? 1 : 0),
+                                    editMode: hasImageContent || mentionReferences.some((item) => item.kind === "image"),
                                     source: "canvas",
                                 }}
                                 disabled={isRunning}

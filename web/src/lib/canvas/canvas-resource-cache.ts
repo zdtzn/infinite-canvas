@@ -1,4 +1,4 @@
-import { buildCanvasResourceIndex, buildNodeMentionReferences } from "./canvas-resource-references";
+import { buildCanvasResourceIndex, buildNodeMentionReferences, buildNodeResourceReferences } from "./canvas-resource-references";
 import { buildNodeGenerationInputs, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 import { isBuiltinNodeType } from "./node-registry";
@@ -11,11 +11,13 @@ export function createCanvasResourceCache() {
         const resourceIndex = buildCanvasResourceIndex(nodes, connections);
         const configInputsById = new Map<string, NodeGenerationInput[]>();
         const mentionReferencesByNodeId = new Map<string, ReturnType<typeof buildNodeMentionReferences>>();
+        const referencesByNodeId = new Map<string, ReturnType<typeof buildNodeResourceReferences>>();
         nodes.forEach((node) => {
             if (node.type === CanvasNodeType.Config) configInputsById.set(node.id, buildNodeGenerationInputs(node.id, nodes, connections, resourceIndex));
             mentionReferencesByNodeId.set(node.id, buildNodeMentionReferences(node, nodes, connections, resourceIndex));
+            referencesByNodeId.set(node.id, buildNodeResourceReferences(node, nodes, connections, resourceIndex));
         });
-        return { resourceNodes: nodes, configInputsById, mentionReferencesByNodeId };
+        return { resourceNodes: nodes, configInputsById, mentionReferencesByNodeId, referencesByNodeId };
     }
     return (nodes: CanvasNodeData[], connections: CanvasConnection[], version = 0) => {
         if (

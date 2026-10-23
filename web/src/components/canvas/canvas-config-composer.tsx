@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from "react";
 import { Button, Image } from "antd";
-import { FileText, Image as ImageIcon, Music2, Video, X } from "lucide-react";
+import { FileText, FolderOpen, Image as ImageIcon, Music2, Video, X } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { NodeGenerationInput } from "./canvas-node-generation";
+import { flattenGenerationInputs, type NodeGenerationInput } from "./canvas-node-generation";
 
 type CanvasConfigComposerProps = {
     value: string;
@@ -32,7 +32,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
     const [activeIndex, setActiveIndex] = useState(0);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const tokens = useMemo(() => parseComposerTokens(value), [value]);
-    const referenceById = useMemo(() => new Map(inputs.map((input) => [input.nodeId, input])), [inputs]);
+    const referenceById = useMemo(() => new Map<string, NodeGenerationInput>([...flattenGenerationInputs(inputs), ...inputs].map((input) => [input.nodeId, input])), [inputs]);
     const candidates = useMemo(() => {
         if (!mention) return [];
         const query = (mention.query || "").trim().toLowerCase();
@@ -222,7 +222,7 @@ function MentionMenu({ inputs, allInputs, activeIndex, theme, onSelect }: { inpu
 function ResourcePreview({ input }: { input: NodeGenerationInput }) {
     if (input.type === "image" && input.image) return <img src={input.image.dataUrl} alt="" className="size-9 rounded-md object-cover" />;
     if (input.type === "video" && input.video) return <video src={input.video.url} className="size-9 rounded-md bg-black object-cover" muted preload="metadata" />;
-    const Icon = input.type === "audio" ? Music2 : input.type === "video" ? Video : input.type === "image" ? ImageIcon : FileText;
+    const Icon = input.type === "group" ? FolderOpen : input.type === "audio" ? Music2 : input.type === "video" ? Video : input.type === "image" ? ImageIcon : FileText;
     return (
         <span className="grid size-9 shrink-0 place-items-center rounded-md bg-black/10">
             <Icon className="size-4" />
@@ -358,7 +358,8 @@ function parseComposerTokens(value: string): Token[] {
 }
 
 function resourceLabel(input: NodeGenerationInput, inputs: NodeGenerationInput[]) {
-    const sameTypeInputs = inputs.filter((item) => item.type === input.type);
+    if (input.type === "group") return `${input.title || "分组"} · ${input.children.length} 项参考`;
+    const sameTypeInputs = flattenGenerationInputs(inputs).filter((item) => item.type === input.type);
     const index = Math.max(0, sameTypeInputs.findIndex((item) => item.nodeId === input.nodeId));
     if (input.type === "image") return `图片${index + 1}`;
     if (input.type === "video") return `视频${index + 1}`;

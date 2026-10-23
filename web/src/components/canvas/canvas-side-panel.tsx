@@ -21,6 +21,7 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 import type { InsertAssetPayload } from "./asset-picker-modal";
 import { CanvasPromptList } from "./canvas-prompt-list";
+import { buildCanvasLayerRows } from "./canvas-layer-tree";
 
 const PANEL_MOTION_SECONDS = CANVAS_SIDE_PANEL_MOTION_MS / 1000;
 const PANEL_EASE = [0.22, 1, 0.36, 1] as const;
@@ -155,6 +156,7 @@ export function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewN
     const [typeFilter, setTypeFilter] = useState<string>("all");
     const [selectMode, setSelectMode] = useState(false);
     const [checked, setChecked] = useState<Set<string>>(new Set());
+    const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
     const [exporting, setExporting] = useState(false);
     const nodeViewMode = useCanvasSidePanelStore((state) => state.nodeViewMode);
     const setNodeViewMode = useCanvasSidePanelStore((state) => state.setNodeViewMode);
@@ -238,6 +240,10 @@ export function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewN
         const query = keyword.trim().toLowerCase();
         return nodes.filter((node) => (typeFilter === "all" || node.type === typeFilter) && (!query || [node.title, node.metadata?.content, node.metadata?.prompt].filter(Boolean).join(" ").toLowerCase().includes(query)));
     }, [nodes, keyword, typeFilter]);
+    const filtering = Boolean(keyword.trim()) || typeFilter !== "all";
+    const layerRows = useMemo(() => nodeViewMode === "grid"
+        ? filtered.map((node) => ({ node, depth: 0, hasChildren: false, collapsed: false }))
+        : buildCanvasLayerRows(nodes, filtered, collapsedGroups, filtering), [nodes, filtered, collapsedGroups, filtering, nodeViewMode]);
     const previewNode = panelOpen && !selectMode ? filtered.find((node) => node.id === preview?.nodeId) : undefined;
 
     const exitSelect = () => {
@@ -301,9 +307,9 @@ export function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewN
                 {selectMode ? null : <Select size="small" variant="borderless" className="w-20 shrink-0" aria-label="筛选节点类型" value={typeFilter} onChange={setTypeFilter} options={NODE_FILTER_OPTIONS} />}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" onScroll={clearPreview}>
-                {filtered.length ? (
-                    <div className={nodeViewMode === "grid" ? "grid gap-2 px-1 [grid-template-columns:repeat(auto-fill,minmax(88px,1fr))]" : "space-y-1.5"}>
-                        {filtered.map((node) => {
+                {layerRows.length ? (
+                    <div role="list" aria-label="画布图层" className={nodeViewMode === "grid" ? "grid gap-2 px-1 [grid-template-columns:repeat(auto-fill,minmax(88px,1fr))]" : "space-y-1.5"}>
+                        {layerRows.map(({ node, depth, hasChildren, collapsed }) => {
                             const Icon = NODE_TYPE_ICON[node.type] || FileText;
                             const isImage = node.type === CanvasNodeType.Image && node.metadata?.content;
                             const isChecked = checked.has(node.id);
@@ -311,17 +317,33 @@ export function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewN
                             return (
                                 <div
                                     key={node.id}
+                                    role="listitem"
+                                    aria-level={depth + 1}
+                                    data-layer-node-id={node.id}
                                     className={cn("group relative flex min-w-0 rounded-lg transition", nodeViewMode === "grid" ? "flex-col p-1" : "w-full items-center", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")}
-                                    style={active ? { background: theme.toolbar.activeBg } : undefined}
+                                    style={{ background: active ? theme.toolbar.activeBg : undefined, paddingLeft: depth ? Math.min(depth, 6) * 16 : undefined }}
                                     onMouseEnter={() => showPreview(node)}
                                     onMouseLeave={hidePreview}
                                 >
+                                    {hasChildren ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => { clearPreview(); setCollapsedGroups((prev) => { const next = new Set(prev); next.has(node.id) ? next.delete(node.id) : next.add(node.id); return next; }); }}
+                                            disabled={filtering}
+                                            className="grid size-11 shrink-0 place-items-center rounded-md opacity-60 transition hover:bg-black/5 hover:opacity-100 disabled:opacity-35 dark:hover:bg-white/10"
+                                            aria-expanded={!collapsed}
+                                            aria-label={`${collapsed ? "展开" : "收起"}分组：${node.title || "未命名分组"}`}
+                                            title={filtering ? "筛选时自动展开分组" : undefined}
+                                        >
+                                            <ChevronRight className={cn("size-4 transition-transform motion-reduce:transition-none", !collapsed && "rotate-90")} />
+                                        </button>
+                                    ) : null}
                                     <button
                                         type="button"
                                         onClick={() => activateNode(node)}
                                         onFocus={() => showPreview(node)}
                                         onBlur={hidePreview}
-                                        className={cn("flex min-w-0 flex-1 text-left", nodeViewMode === "grid" ? "w-full flex-col" : "items-center gap-3 px-2 py-2")}
+                                        className={cn("flex min-h-11 min-w-0 flex-1 text-left", nodeViewMode === "grid" ? "w-full flex-col" : "items-center gap-3 py-2 pr-2", nodeViewMode === "list" && !hasChildren && "pl-2")}
                                         title={selectMode ? undefined : "定位到节点"}
                                         aria-pressed={active}
                                     >
@@ -351,7 +373,7 @@ export function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewN
                         })}
                     </div>
                 ) : (
-                    <div className="pt-16 text-center text-sm opacity-40">画布暂无节点</div>
+                    <div className="pt-16 text-center text-sm opacity-40">{filtering ? "没有匹配的节点" : "画布暂无节点"}</div>
                 )}
             </div>
             {selectMode ? (

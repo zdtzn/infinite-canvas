@@ -15,6 +15,7 @@ import { generationFailureFeedback } from "@/features/cultivation/generation-mes
 import { useThemeStore } from "@/stores/use-theme-store";
 import { DeferredImage } from "@/components/ui/deferred-image";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { CanvasNodeReferenceBar } from "./canvas-node-reference-bar";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -35,6 +36,10 @@ type CanvasNodeProps = {
     showPanel: boolean;
     showImageInfo: boolean;
     mentionReferences?: CanvasResourceReference[];
+    referenceResources?: CanvasResourceReference[];
+    isSelectingReferences?: boolean;
+    onDisconnectReference?: (sourceNodeId: string, targetNodeId: string) => void;
+    onStartReferenceSelection?: (nodeId: string) => void;
     pluginHost?: CanvasPluginHost;
     registryVersion?: number;
     renderPanel?: (node: CanvasNodeData) => ReactNode;
@@ -111,6 +116,10 @@ export const CanvasNode = React.memo(function CanvasNode({
     showPanel,
     showImageInfo,
     mentionReferences = [],
+    referenceResources = [],
+    isSelectingReferences = false,
+    onDisconnectReference,
+    onStartReferenceSelection,
     pluginHost,
     renderPanel,
     renderNodeContent,
@@ -339,6 +348,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 contain: "layout style",
             }}
             onMouseEnter={() => {
+                if (isSelectingReferences) return;
                 setHovered(true);
                 onHoverStart(data.id);
             }}
@@ -349,7 +359,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             onPointerDownCapture={(event) => onSelectCapture?.(event, data.id)}
             onContextMenu={(event) => onContextMenu(event, data.id)}
         >
-            {(isSelected || hovered || isEditingTitle) && (
+            {!isSelectingReferences && (isSelected || hovered || isEditingTitle) && (
                 <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     {isEditingTitle ? (
                         <input
@@ -413,6 +423,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 }}
                 onPointerDown={(event) => onPointerDown(event, data.id)}
                 onDoubleClick={(event) => {
+                    if (isSelectingReferences) return;
                     if (isBatchRoot) {
                         event.stopPropagation();
                         onToggleBatch?.(data.id);
@@ -433,11 +444,11 @@ export const CanvasNode = React.memo(function CanvasNode({
                 }}
             >
                 <div
-                    className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${isBatchRoot ? "overflow-visible" : "overflow-hidden"}`}
+                    className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${isBatchRoot ? "overflow-visible" : "overflow-hidden"} ${isSelectingReferences ? "[&_button]:invisible" : ""}`}
                     style={
                         {
                             background: isGroup ? "transparent" : hasImageContent || hasVideoContent || transparentBg ? "transparent" : theme.node.fill,
-                            pointerEvents: contentInteractive ? undefined : "none",
+                            pointerEvents: !isSelectingReferences && contentInteractive ? undefined : "none",
                             "--batch-from-x": `${batchMotion?.x || 0}px`,
                             "--batch-from-y": `${batchMotion?.y || 0}px`,
                             "--batch-from-rotate": `${6 + (batchMotion?.index || 0) * 4}deg`,
@@ -477,7 +488,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 </div>
 
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
-                {imageSaveState(data.metadata) ? (
+                {!isSelectingReferences && imageSaveState(data.metadata) ? (
                     <button
                         type="button"
                         className="absolute inset-x-0 bottom-0 px-2 py-1 text-xs"
@@ -498,19 +509,26 @@ export const CanvasNode = React.memo(function CanvasNode({
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} />
                 ) : null}
 
-                {!data.metadata?.locked ? <ResizeHandle corner="top-left" onPointerDown={handleResizePointerDown} /> : null}
-                {!data.metadata?.locked ? <ResizeHandle corner="top-right" onPointerDown={handleResizePointerDown} /> : null}
-                {!data.metadata?.locked ? <ResizeHandle corner="bottom-left" onPointerDown={handleResizePointerDown} /> : null}
-                {!data.metadata?.locked ? <ResizeHandle corner="bottom-right" onPointerDown={handleResizePointerDown} /> : null}
+                {!data.metadata?.locked && !isSelectingReferences ? <ResizeHandle corner="top-left" onPointerDown={handleResizePointerDown} /> : null}
+                {!data.metadata?.locked && !isSelectingReferences ? <ResizeHandle corner="top-right" onPointerDown={handleResizePointerDown} /> : null}
+                {!data.metadata?.locked && !isSelectingReferences ? <ResizeHandle corner="bottom-left" onPointerDown={handleResizePointerDown} /> : null}
+                {!data.metadata?.locked && !isSelectingReferences ? <ResizeHandle corner="bottom-right" onPointerDown={handleResizePointerDown} /> : null}
             </div>
 
-            {!isGroup ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onPointerDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
-            {!isGroup ? (
-                <ConnectionHandleDot side="right" visible={(definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onPointerDown={(event) => onConnectStart(event, data.id, "source")} />
+            {!isGroup && !isSelectingReferences ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onPointerDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
+            {!isSelectingReferences ? (
+                <ConnectionHandleDot side="right" visible={(isGroup || (definition?.hasSourceHandle ?? true)) && data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onPointerDown={(event) => onConnectStart(event, data.id, "source")} />
             ) : null}
 
-            {showPanel && !isGroup && renderPanel ? (
+            {showPanel && !isGroup && !isSelectingReferences && renderPanel ? (
                 <div data-node-panel className="absolute left-1/2 top-full z-[70] w-[min(600px,calc(100vw-32px))] pt-4" style={{ transform: `translateX(-50%) scale(${1 / scale})`, transformOrigin: "top center" }}>
+                    <CanvasNodeReferenceBar
+                        nodeId={data.id}
+                        references={referenceResources}
+                        currentImage={hasImageContent ? { id: data.id, nodeId: data.id, kind: "image", label: "当前图片", title: data.title || "当前图片", previewUrl: data.metadata?.content, thumbnailUrl: data.metadata?.thumbnailUrl, active: true } : undefined}
+                        onDisconnect={onDisconnectReference}
+                        onStartSelection={onStartReferenceSelection}
+                    />
                     {renderPanel(data)}
                 </div>
             ) : null}
