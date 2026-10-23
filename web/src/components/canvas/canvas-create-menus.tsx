@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { ImageIcon, List, Music2, Settings2, Video, X } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -10,6 +10,32 @@ export type PendingConnectionCreate = {
     connection: ConnectionHandle;
     position: Position;
 };
+
+function useCanvasMenuPosition(position: Position, scale: number) {
+    const menuRef = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+        const menu = menuRef.current;
+        if (!menu) return;
+        const place = () => {
+            menu.style.marginLeft = "0px";
+            menu.style.marginTop = "0px";
+            const dock = document.querySelector<HTMLElement>("[data-canvas-bottom-toolbar]")?.getBoundingClientRect();
+            const zoom = document.querySelector('[aria-label="重置视图"]')?.closest(".canvas-liquid-glass")?.parentElement?.getBoundingClientRect();
+            const top = Math.min(64, window.innerHeight / 4);
+            const bottom = Math.min(window.innerHeight - 12, dock ? dock.top - 12 : Infinity, zoom ? zoom.top - 12 : Infinity);
+            menu.style.maxHeight = `${Math.min(window.innerHeight * 0.7, Math.max(44, bottom - top))}px`;
+            const rect = menu.getBoundingClientRect();
+            const left = Math.max(12, Math.min(rect.left, window.innerWidth - rect.width - 12));
+            const nextTop = Math.max(top, Math.min(rect.top, bottom - rect.height));
+            menu.style.marginLeft = `${(left - rect.left) / scale}px`;
+            menu.style.marginTop = `${(nextTop - rect.top) / scale}px`;
+        };
+        place();
+        window.addEventListener("resize", place);
+        return () => window.removeEventListener("resize", place);
+    }, [position.x, position.y, scale]);
+    return menuRef;
+}
 
 export function ConnectionCreateMenu({
     pending,
@@ -23,8 +49,10 @@ export function ConnectionCreateMenu({
     onClose: () => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const menuRef = useCanvasMenuPosition(pending.position, scale);
     return (
         <div
+            ref={menuRef}
             className="absolute z-[120] max-h-[70vh] w-60 max-w-[calc(100vw-24px)] overflow-y-auto rounded-2xl border p-2 shadow-2xl backdrop-blur thin-scrollbar"
             data-connection-create-menu
             data-canvas-no-zoom
@@ -80,7 +108,7 @@ export function ConnectionCreateOption({ theme, icon, title, description, onClic
 export function NodeCreateMenu({ position, scale = 1, onCreate, onClose }: { position: Position; scale?: number; onCreate: (type: string) => void; onClose: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     useNodeRegistryVersion();
-    const menuRef = useRef<HTMLDivElement>(null);
+    const menuRef = useCanvasMenuPosition(position, scale);
     const definitions = listNodeDefinitions().filter((def) => def.showInCreateMenu !== false);
     // 点击菜单外的空白处自动关闭
     useEffect(() => {

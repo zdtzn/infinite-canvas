@@ -161,7 +161,7 @@ function labelForKind(kind: CanvasResourceKind, index: number) {
 // Reference eligibility, previews and generation must read the same resource contract.
 export function readCanvasNodeResource(node: CanvasNodeData): CanvasNodeResource | null {
     if ((node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.content) {
-        return { kind: node.type, url: node.metadata.content };
+        return { kind: node.type === CanvasNodeType.Image ? "image" : node.type === CanvasNodeType.Video ? "video" : "audio", url: node.metadata.content };
     }
     if (node.type === CanvasNodeType.Text) {
         const text = node.metadata?.content || node.metadata?.prompt;
