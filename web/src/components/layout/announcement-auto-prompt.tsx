@@ -58,7 +58,7 @@ export function AnnouncementPromptSession({ userId }: { userId: string }) {
     return (
         <Modal
             open={Boolean(item && !hidden.has(itemKey))}
-            title="系统公告"
+            title="仙尊告示"
             width={560}
             centered
             destroyOnHidden

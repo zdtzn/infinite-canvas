@@ -19,7 +19,7 @@ export function AnnouncementBell() {
     const { data } = useUnreadAnnouncements(undefined, false);
     if (!PUBLIC_MODE || !userId) return null;
     const unreadCount = data?.unreadCount || 0;
-    const label = unreadCount ? `系统公告，${unreadCount} 条未读` : "系统公告";
+    const label = unreadCount ? `仙尊告示，${unreadCount} 条未读` : "仙尊告示";
 
     return (
         <>

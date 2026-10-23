@@ -59,12 +59,12 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
     const feedItems = useMemo(() => [...pinnedItems, ...timelineItems], [pinnedItems, timelineItems]);
 
     return (
-        <Modal className="announcement-center-modal" title={null} aria-labelledby="announcements-heading" closable={{ "aria-label": "关闭系统公告" }} open={open} centered width={1040} footer={null} destroyOnHidden afterClose={onAfterClose} onCancel={onClose}>
-            <section className="announcements-dialog" aria-label="系统公告">
+        <Modal className="announcement-center-modal" title={null} aria-labelledby="announcements-heading" closable={{ "aria-label": "关闭仙尊告示" }} open={open} centered width={1040} footer={null} destroyOnHidden afterClose={onAfterClose} onCancel={onClose}>
+            <section className="announcements-dialog" aria-label="仙尊告示">
                 <header className="announcements-header">
                     <div className="announcements-motes" aria-hidden="true"><i /><i /><i /><i /><i /></div>
                     <div>
-                        <h2 id="announcements-heading">系统公告</h2>
+                        <h2 id="announcements-heading">仙尊告示</h2>
                         <p>最新平台更新和通知</p>
                     </div>
                     <div className="announcements-header-status" aria-live="polite">
@@ -107,7 +107,7 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
                         ]}
                         onChange={(value) => setView(value as AnnouncementView)}
                     />
-                    <Button type="text" shape="circle" aria-label="刷新系统公告" title="刷新" icon={<RefreshCw className={`size-4 ${query.isFetching ? "animate-spin" : ""}`} />} onClick={() => query.refetch()} />
+                    <Button type="text" shape="circle" aria-label="刷新仙尊告示" title="刷新" icon={<RefreshCw className={`size-4 ${query.isFetching ? "animate-spin" : ""}`} />} onClick={() => query.refetch()} />
                 </div>
 
                 <div className="announcements-scroll">

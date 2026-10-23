@@ -48,7 +48,7 @@ function routeLoadingMeta(pathname: string) {
         "/color-alchemy": { eyebrow: "LING CAI", title: "灵彩", split: true },
         "/video": { eyebrow: "LIU GUANG GE", title: "流光阁", split: true },
         "/assets": { eyebrow: "CANG JUAN GE", title: "藏卷阁", split: false },
-        "/announcements": { eyebrow: "SYSTEM NOTICE", title: "系统公告", split: false },
+        "/announcements": { eyebrow: "SYSTEM NOTICE", title: "仙尊告示", split: false },
         "/prompts": { eyebrow: "GONG FA LOU", title: "功法楼", split: false },
         "/cultivation": { eyebrow: "MING GONG", title: "命宫", split: false },
         "/wallet": { eyebrow: "LING JUAN GE", title: "灵卷阁", split: false },
