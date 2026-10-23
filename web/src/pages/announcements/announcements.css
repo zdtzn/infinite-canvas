@@ -133,10 +133,10 @@
 .announcement-frame-left { left: 0; background-image: url("./assets/lunar/frame-left.webp?inline"); }
 .announcement-frame-right { right: 0; background-image: url("./assets/lunar/frame-right.webp?inline"); }
 
-/* Style variables also respect the administrator's per-announcement typography controls. */
-.announcement-title { margin: 0; color: var(--announcement-title-color, #533960); font-family: var(--announcement-title-font, "STKaiti", "KaiTi", var(--notice-serif)); font-size: var(--announcement-title-size, 30px); font-weight: var(--announcement-title-weight, 700); line-height: var(--announcement-title-height, 1.5); letter-spacing: var(--announcement-title-spacing, 0.1em); text-align: center; overflow-wrap: anywhere; }
+/* Typography is owned by typography.css and per-announcement style variables. */
+
 .announcement-title-ornament { width: min(260px, 85%); height: 1px; margin: 16px auto 22px; background: linear-gradient(90deg, transparent, #ae8a70, #b69acd, #ae8a70, transparent); }
-.announcement-content { color: var(--announcement-body-color, var(--notice-ink)); font-family: var(--announcement-body-font, var(--notice-serif)); font-size: var(--announcement-body-size, 18px); font-weight: var(--announcement-body-weight, 600); line-height: var(--announcement-body-height, 1.95); letter-spacing: var(--announcement-body-spacing, 0.025em); white-space: pre-wrap; overflow-wrap: anywhere; }
+
 .announcement-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 26px; color: #77617e; font-size: 12px; }
 .announcement-publication { display: flex; min-width: 0; flex: 1; flex-wrap: wrap; gap: 12px 28px; }
 .announcement-date, .announcement-author { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
@@ -191,9 +191,9 @@
     .announcement-frame-bottom { height: 39.5px; grid-template-rows: 39.5px; }
     .announcement-frame-top span:nth-child(1), .announcement-frame-top span:nth-child(5) { height: 105px; }
     .announcement-frame-left, .announcement-frame-right { display: none; }
-    .announcement-title { font-size: max(20px, calc(var(--announcement-title-size, 30px) * 0.8)); letter-spacing: var(--announcement-title-spacing, 0.04em); }
+
     .announcement-title-ornament { margin: 12px auto 18px; }
-    .announcement-content { font-size: max(16px, calc(var(--announcement-body-size, 18px) * 0.9)); }
+
     .announcement-footer { flex-wrap: wrap; gap: 10px; margin-top: 22px; }
     .announcement-publication { flex-basis: 100%; gap: 10px 20px; }
     .announcement-footer :is(.announcement-read-action, .announcement-read-status) { margin-left: auto; }

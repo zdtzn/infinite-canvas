@@ -2,6 +2,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Modal, theme } from "antd";
 import { useEffect, useRef, useState } from "react";
 
+import { announcementStyleVariables } from "@/lib/announcement-style";
+import "@/pages/announcements/typography.css";
+
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useUnreadAnnouncements } from "@/hooks/use-unread-announcements";
 import { markAnnouncementRead } from "@/services/server-api";
@@ -22,7 +25,7 @@ export function AnnouncementPromptSession({ userId }: { userId: string }) {
     const active = useRef(true);
     const pending = useRef(false);
     const item = query.data?.items[0];
-    const itemKey = item ? `${item.id}:${item.updatedAt}` : "";
+    const itemKey = item ? `${item.id}:${item.publishedAt}` : "";
 
     useEffect(() => {
         active.current = true;
@@ -80,10 +83,10 @@ export function AnnouncementPromptSession({ userId }: { userId: string }) {
             onCancel={defer}
         >
             {item ? (
-                <article className="space-y-4 break-words">
-                    <h2 className="pr-4 text-lg font-semibold leading-relaxed">{item.title}</h2>
-                    {item.summary ? <p style={{ color: token.colorTextSecondary }}>{item.summary}</p> : null}
-                    <div className="whitespace-pre-wrap leading-7" style={{ overflowWrap: "anywhere" }}>{item.content}</div>
+                <article className="space-y-4 break-words" style={{ ...announcementStyleVariables(item.style), padding: 20, borderRadius: 8, background: "#f6ebd5" }}>
+                    <h2 className="announcement-title">{item.title}</h2>
+                    {item.summary ? <p style={{ color: "#60472e" }}>{item.summary}</p> : null}
+                    <div className="announcement-content">{item.content}</div>
                     {error ? <p role="alert" style={{ color: token.colorError }}>{error}。请再次点击“我知道了”重试。</p> : null}
                 </article>
             ) : null}

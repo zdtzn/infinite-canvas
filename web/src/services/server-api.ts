@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import type { AnnouncementStyle } from "@/lib/announcement-style";
 import { createInFlightReads } from "@/lib/in-flight";
 
 import { friendlyErrorMessage } from "@/lib/friendly-error";
@@ -124,6 +125,7 @@ export type SystemAnnouncement = {
     title: string;
     summary: string;
     content: string;
+    style?: AnnouncementStyle | null;
     type: AnnouncementType;
     status: AnnouncementStatus;
     pinned: boolean;
@@ -135,7 +137,7 @@ export type SystemAnnouncement = {
     isRead?: boolean;
     readAt?: number | null;
 };
-export type AnnouncementInput = Pick<SystemAnnouncement, "title" | "summary" | "content" | "type" | "status" | "pinned">;
+export type AnnouncementInput = Pick<SystemAnnouncement, "title" | "summary" | "content" | "type" | "status" | "pinned" | "style">;
 export type AnnouncementPage = PagedResponse<SystemAnnouncement> & { unreadCount: number };
 export type AdminChannelMetric = {
     userId: string;

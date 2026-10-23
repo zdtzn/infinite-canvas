@@ -1154,6 +1154,11 @@ function runMigrations(database: Database) {
         )
         .run(Date.now());
     })();
+  if (!database.query("SELECT 1 FROM schema_migrations WHERE version = 27").get())
+    database.transaction(() => {
+      database.exec("ALTER TABLE system_announcements ADD COLUMN style_json TEXT NOT NULL DEFAULT '{}'");
+      database.query("INSERT INTO schema_migrations(version, applied_at) VALUES (27, ?)").run(Date.now());
+    })();
 }
 
 function migrateLegacyState(

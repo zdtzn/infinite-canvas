@@ -7,6 +7,8 @@ import { useNavigate } from "react-router-dom";
 import { fetchAnnouncements, markAllAnnouncementsRead, markAnnouncementRead, type AnnouncementType, type SystemAnnouncement } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { userFacingErrorMessage } from "@/lib/friendly-error";
+import { announcementStyleVariables } from "@/lib/announcement-style";
+import "./typography.css";
 import "./announcements.css";
 
 type AnnouncementView = "timeline" | "unread";
@@ -145,11 +147,11 @@ export default function AnnouncementsRoute() {
     return <AnnouncementCenterDialog open onClose={() => navigate("/", { replace: true })} />;
 }
 
-function AnnouncementCard({ item, reading, onRead }: { item: SystemAnnouncement; reading: boolean; onRead: () => void }) {
+export function AnnouncementCard({ item, reading, onRead }: { item: SystemAnnouncement; reading: boolean; onRead: () => void }) {
     const detail = typeDetails[item.type];
     const TypeIcon = detail.icon;
     return (
-        <article className={`announcement-entry ${item.isRead ? "is-read" : "is-unread"}`}>
+        <article className={`announcement-entry ${item.isRead ? "is-read" : "is-unread"}`} style={announcementStyleVariables(item.style)}>
             <div className="announcement-card-meta">
                 <span className={`announcement-kind ${detail.className}`}><TypeIcon className="size-3.5" aria-hidden="true" />{detail.label}</span>
                 {item.pinned ? <span className="announcement-pinned-label"><Pin className="size-3.5" aria-hidden="true" />置顶</span> : null}
