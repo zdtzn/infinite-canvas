@@ -7,6 +7,7 @@ export type ChatPresetOption = {
     hint: string;
     greeting: string;
     tags: readonly string[];
+    avatar?: string;
 };
 
 export const defaultChatPresetId: ChatPresetId = "general";
@@ -67,6 +68,7 @@ export const chatPresetOptions: readonly ChatPresetOption[] = [
         hint: "敏感机敏，话里藏锋，末尾带心情条",
         greeting: "“你既来了，便坐一坐吧。有什么话，慢慢说与我听。”",
         tags: ["角色", "陪聊", "半文半白"],
+        avatar: "/images/avatars/linruolan.webp",
     },
     {
         id: "catgirl",

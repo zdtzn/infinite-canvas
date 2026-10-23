@@ -1134,8 +1134,8 @@ export default function ChatPage() {
             >
                 <div className="space-y-5">
                     <div className="flex items-start gap-3">
-                        <div className="grid size-12 shrink-0 place-items-center rounded-xl border border-amber-300/50 bg-amber-100/60 text-lg font-semibold text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-200">
-                            {activePreset.label.slice(0, 1)}
+                        <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-amber-300/50 bg-amber-100/60 text-lg font-semibold text-amber-700 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-200">
+                            {activePreset.avatar ? <img src={activePreset.avatar} alt="" className="size-full object-cover" /> : activePreset.label.slice(0, 1)}
                         </div>
                         <div className="min-w-0">
                             <div className="flex items-center gap-2 text-base font-semibold">
