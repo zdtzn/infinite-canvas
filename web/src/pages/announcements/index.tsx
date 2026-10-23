@@ -56,15 +56,15 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
     const items = query.data?.items || [];
     const pinnedItems = useMemo(() => items.filter((item) => item.pinned), [items]);
     const timelineItems = useMemo(() => items.filter((item) => !item.pinned), [items]);
+    const feedItems = useMemo(() => [...pinnedItems, ...timelineItems], [pinnedItems, timelineItems]);
 
     return (
-        <Modal className="announcement-center-modal" title={null} open={open} centered width={1040} footer={null} destroyOnHidden afterClose={onAfterClose} onCancel={onClose}>
+        <Modal className="announcement-center-modal" title={null} open={open} centered width={1440} footer={null} destroyOnHidden afterClose={onAfterClose} onCancel={onClose}>
             <section className="announcements-dialog" aria-label="系统公告">
                 <header className="announcements-header">
                     <div>
-                        <p className="announcements-eyebrow">SYSTEM NOTICE</p>
                         <h2>系统公告</h2>
-                        <p>查看平台更新、维护安排与重要通知。</p>
+                        <p>最新平台更新和通知</p>
                     </div>
                     <div className="announcements-header-status" aria-live="polite">
                         <span className={query.data?.unreadCount ? "is-unread" : ""}>
@@ -83,6 +83,7 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
                     <Segmented
                         block
                         value={view}
+                        aria-label="公告分类"
                         options={[
                             {
                                 value: "timeline",
@@ -96,9 +97,9 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
                             {
                                 value: "unread",
                                 label: (
-                                    <span className="announcements-tab-label">
+                                    <span className="announcements-tab-label" aria-label="未读通知">
                                         <Bell className="size-4" />
-                                        未读通知{query.data?.unreadCount ? <b>{query.data.unreadCount}</b> : null}
+                                        通知{query.data?.unreadCount ? <b>{query.data.unreadCount}</b> : null}
                                     </span>
                                 ),
                             },
@@ -118,34 +119,13 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
                     ) : null}
 
                     {!query.isError && items.length ? (
-                        <div className="announcements-feed">
-                            {pinnedItems.length ? (
-                                <section className="announcements-section" aria-labelledby="pinned-announcements-title">
-                                    <h3 id="pinned-announcements-title">
-                                        <Pin className="size-4" />
-                                        置顶公告
-                                    </h3>
-                                    <div className="announcements-list">
-                                        {pinnedItems.map((item) => (
-                                            <AnnouncementCard key={item.id} item={item} reading={readMutation.isPending && readMutation.variables === item.id} onRead={() => readMutation.mutate(item.id)} />
-                                        ))}
-                                    </div>
-                                </section>
-                            ) : null}
-                            {timelineItems.length ? (
-                                <section className="announcements-section" aria-labelledby="timeline-announcements-title">
-                                    <h3 id="timeline-announcements-title">
-                                        <Megaphone className="size-4" />
-                                        {pinnedItems.length ? "更多公告" : "公告时间线"}
-                                    </h3>
-                                    <div className="announcements-list">
-                                        {timelineItems.map((item) => (
-                                            <AnnouncementCard key={item.id} item={item} reading={readMutation.isPending && readMutation.variables === item.id} onRead={() => readMutation.mutate(item.id)} />
-                                        ))}
-                                    </div>
-                                </section>
-                            ) : null}
-                        </div>
+                        <section className="announcements-feed" aria-label={view === "unread" ? "未读通知" : "公告时间线"}>
+                            <div className="announcements-list">
+                                {feedItems.map((item) => (
+                                    <AnnouncementCard key={item.id} item={item} reading={readMutation.isPending && readMutation.variables === item.id} onRead={() => readMutation.mutate(item.id)} />
+                                ))}
+                            </div>
+                        </section>
                     ) : null}
 
                     {(query.data?.total || 0) > 10 ? (
@@ -166,18 +146,29 @@ export default function AnnouncementsRoute() {
 
 function AnnouncementCard({ item, reading, onRead }: { item: SystemAnnouncement; reading: boolean; onRead: () => void }) {
     const detail = typeDetails[item.type];
+    const TypeIcon = detail.icon;
     return (
-        <article className={`announcement-card ${item.isRead ? "is-read" : "is-unread"}`} aria-label={item.title}>
+        <article className={`announcement-entry ${item.isRead ? "is-read" : "is-unread"}`}>
             <div className="announcement-card-meta">
-                <span>{detail.label}</span>
+                <span className={`announcement-kind ${detail.className}`}><TypeIcon className="size-3.5" aria-hidden="true" />{detail.label}</span>
                 {item.pinned ? <span className="announcement-pinned-label"><Pin className="size-3.5" aria-hidden="true" />置顶</span> : null}
                 {!item.isRead ? <span className="announcement-unread-label">未读</span> : null}
             </div>
-            <h3 className="announcement-title">{item.title}</h3>
-            <div className="announcement-content">{item.content}</div>
+            <div className="announcement-card">
+                <h3 className="announcement-title">
+                    <Sparkles className="announcement-title-flourish" aria-hidden="true" />
+                    <span>{item.title}</span>
+                    <Sparkles className="announcement-title-flourish" aria-hidden="true" />
+                </h3>
+                <div className="announcement-content">{item.content}</div>
+            </div>
             <footer className="announcement-footer">
-                <time dateTime={new Date(item.publishedAt || item.createdAt).toISOString()}>{formatAnnouncementDate(item.publishedAt || item.createdAt)} · {item.authorName || "系统管理员"}</time>
-                {item.isRead ? <span>已阅</span> : <Button type="text" size="small" loading={reading} onClick={onRead}>我已阅读</Button>}
+                <div className="announcement-date">
+                    <time dateTime={new Date(item.publishedAt || item.createdAt).toISOString()}>{formatAnnouncementDate(item.publishedAt || item.createdAt)}</time>
+                    <span aria-hidden="true">·</span>
+                    <span>{item.authorName || "系统管理员"}</span>
+                </div>
+                {item.isRead ? <span className="announcement-read-status"><CheckCheck className="size-3.5" aria-hidden="true" />已阅</span> : <Button className="announcement-read-action" type="text" size="small" loading={reading} onClick={onRead}>我已阅读</Button>}
             </footer>
         </article>
     );
