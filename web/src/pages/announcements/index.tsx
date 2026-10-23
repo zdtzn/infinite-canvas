@@ -175,7 +175,6 @@ function AnnouncementCard({ item, reading, onRead }: { item: SystemAnnouncement;
             </div>
             <h3 className="announcement-title">{item.title}</h3>
             <div className="announcement-content">{item.content}</div>
-            <div className="announcement-signature" aria-hidden="true"><span>无限<br />画布</span></div>
             <footer className="announcement-footer">
                 <time dateTime={new Date(item.publishedAt || item.createdAt).toISOString()}>{formatAnnouncementDate(item.publishedAt || item.createdAt)} · {item.authorName || "系统管理员"}</time>
                 {item.isRead ? <span>已阅</span> : <Button type="text" size="small" loading={reading} onClick={onRead}>我已阅读</Button>}

@@ -229,10 +229,14 @@
     --notice-muted: #766957;
     position: relative;
     min-width: 0;
-    padding: clamp(20px, 4vw, 44px);
-    border: 1px solid rgb(180 134 65 / 0.48);
-    border-radius: 8px;
-    background: #faf6ec;
+    padding: 14px 4px 12px;
+    border: clamp(38px, 11vw, 138px) solid transparent;
+    border-radius: 0;
+    background-color: #faf6ec;
+    border-image-source: url("/images/announcement-frame.png");
+    border-image-slice: 34% fill;
+    border-image-width: 1;
+    border-image-repeat: stretch;
     color: var(--notice-ink);
 }
 
@@ -240,8 +244,7 @@
     --notice-gold: #dfbd7e;
     --notice-ink: #ded2ba;
     --notice-muted: #afa28b;
-    border-color: rgb(201 168 106 / 0.5);
-    background: linear-gradient(145deg, #1b2230, #10151d);
+    background-color: #10151d;
 }
 
 .announcement-card-meta {
@@ -286,28 +289,6 @@
     overflow-wrap: anywhere;
 }
 
-.announcement-signature {
-    display: flex;
-    justify-content: flex-end;
-    margin: 24px 8px 20px;
-}
-
-.announcement-signature span {
-    display: inline-block;
-    padding: 5px 7px;
-    border: 2px solid currentColor;
-    border-radius: 3px;
-    color: #ac493a;
-    font-family: "STKaiti", "KaiTi", serif;
-    font-size: 18px;
-    font-weight: 700;
-    line-height: 1.15;
-    letter-spacing: 0.15em;
-    transform: rotate(-8deg);
-}
-
-.dark .announcement-signature span { color: #c45d48; }
-
 .announcement-footer {
     display: flex;
     flex-wrap: wrap;
@@ -321,7 +302,13 @@
 }
 
 .announcement-footer .ant-btn { min-height: 44px; color: var(--notice-gold); }
-.announcement-skeleton { padding: 22px; }
+.announcement-skeleton {
+    border: 1px solid rgb(180 134 65 / 0.2);
+    border-image: none;
+    border-radius: 6px;
+    background: transparent;
+    padding: 22px;
+}
 .announcements-empty { display: grid; min-height: 240px; place-items: center; }
 .announcements-pagination { display: flex; justify-content: center; padding-top: 28px; }
 
@@ -333,7 +320,7 @@
     .announcements-header-status { width: 100%; justify-content: space-between; }
     .announcements-toolbar { padding: 10px 12px; }
     .announcements-scroll { padding: 16px 12px 22px; }
-    .announcement-card { padding: 20px 16px; }
+    .announcement-card { border-width: 38px; padding: 10px 0; }
     .announcement-content { font-size: 15px; line-height: 1.9; }
     .announcement-title { margin-top: 16px; margin-bottom: 20px; padding-bottom: 18px; }
 }
