@@ -214,6 +214,7 @@ function getVideoConfig() {
             size: seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSizeValue(config.size),
             seconds: seedance ? String(normalizeSeedanceDuration(config.videoSeconds)) : config.videoSeconds || "6",
             resolution: seedance ? normalizeSeedanceResolution(config.vquality, modelOptionName(model)) : normalizeVideoResolutionValue(config.vquality),
+            mode: config.videoMode || "",
             generateAudio: seedance ? config.videoGenerateAudio !== "false" : undefined,
             watermark: seedance ? config.videoWatermark === "true" : undefined,
         },
@@ -222,14 +223,19 @@ function getVideoConfig() {
         sizeOptions: seedance ? seedanceRatioOptions : videoSizeOptions,
         secondsOptions: seedance ? seedanceDurationOptions.map(String) : videoSecondOptions,
         resolutionOptions: seedance ? seedanceResolutionOptions : videoResolutionOptions,
+        modeOptions: [{ value: "frames", label: "首尾帧" }, { value: "reference", label: "全能参考" }],
         supportsGenerateAudio: seedance,
         supportsWatermark: seedance,
     };
 }
 
 function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
+    if (input.mode !== undefined && input.mode !== "frames" && input.mode !== "reference") {
+        throw new Error("视频模式 mode 仅支持 frames（首尾帧）或 reference（全能参考）");
+    }
     const configStore = useConfigStore.getState();
     const candidate = { ...configStore.config };
+    if (input.mode !== undefined) candidate.videoMode = input.mode;
     if (typeof input.model === "string" && input.model.trim()) {
         const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
         candidate.videoModel = value;
@@ -258,6 +264,7 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     configStore.updateConfig("size", candidate.size);
     configStore.updateConfig("videoSeconds", candidate.videoSeconds);
     configStore.updateConfig("vquality", candidate.vquality);
+    if (input.mode !== undefined) configStore.updateConfig("videoMode", candidate.videoMode);
     if (seedance) {
         configStore.updateConfig("videoGenerateAudio", candidate.videoGenerateAudio);
         configStore.updateConfig("videoWatermark", candidate.videoWatermark);
@@ -267,6 +274,7 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
         size: candidate.size,
         seconds: candidate.videoSeconds,
         resolution: candidate.vquality,
+        mode: candidate.videoMode || "",
         ...(seedance ? { generateAudio: candidate.videoGenerateAudio !== "false", watermark: candidate.videoWatermark === "true" } : {}),
     };
     const prompt = typeof input.prompt === "string" ? input.prompt : undefined;

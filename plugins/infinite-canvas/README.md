@@ -24,7 +24,7 @@ codex plugin add infinite-canvas@infinite-canvas-local
 
 Windows CMD 将 `$PWD` 替换为 `%cd%`。
 
-插件当前仍通过上游发布的 `@basketikun/canvas-agent` npm 包启动 MCP。该包名是运行依赖，不代表当前仓库地址，不应改写为不存在的 `@zdtzn/canvas-agent`。
+插件通过本仓库 GitHub Release 的 `@zdtzn/canvas-agent` 安装包启动 MCP，默认打开 `https://mingche.click/`。这个包名用于标识 Release 安装包，不表示已发布到 npm。首次使用前先安装包含 npm/npx 的 Node.js；npx 会自动下载安装包及依赖，不需要 npm 账号。
 
 安装后新建一个 Codex 任务，然后输入：
 

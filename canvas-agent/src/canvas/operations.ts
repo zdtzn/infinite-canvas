@@ -112,6 +112,7 @@ function configNodeOp(id: string, input: Record<string, unknown>, x: number, y: 
             count: input.count,
             seconds: input.seconds,
             vquality: input.vquality,
+            videoMode: input.videoMode,
             generateAudio: input.generateAudio,
             watermark: input.watermark,
             audioVoice: input.audioVoice,
@@ -131,15 +132,29 @@ function generationFlowOps(input: Record<string, unknown>, state: CanvasSnapshot
     const textId = `text-${crypto.randomUUID()}`;
     const configId = `config-${crypto.randomUUID()}`;
     const referenceNodeIds = Array.isArray(input.referenceNodeIds) ? input.referenceNodeIds.filter((id): id is string => typeof id === "string") : [];
-    const tokens = [`@[node:${textId}]`, ...referenceNodeIds.map((id) => `@[node:${id}]`)];
+    const mentionedIds = [...prompt.matchAll(/@\[node:([^\]]+)\]/g)].map((match) => match[1]);
+    const reuseReferences = mentionedIds.length > 0 && mentionedIds.every((id) => referenceNodeIds.includes(id))
+        && prompt.replace(/@\[node:[^\]]+\]/g, "").trim() === ""
+        && referenceNodeIds.every((id) => /^[^\]]+$/.test(id) && hasReferenceResource(findNode(state, id), state));
+    const tokens = [...(reuseReferences ? [] : [`@[node:${textId}]`]), ...referenceNodeIds.map((id) => `@[node:${id}]`)];
     return [
-        textNodeOp({ id: textId, text: prompt, title: String(input.title || "提示词") }, x, y),
+        ...(reuseReferences ? [] : [textNodeOp({ id: textId, text: prompt, title: String(input.title || "提示词") }, x, y)]),
         configNodeOp(configId, { ...input, prompt: tokens.join("\n") }, x + 420, y),
-        { type: "connect_nodes", fromNodeId: textId, toNodeId: configId },
+        ...(reuseReferences ? [] : [{ type: "connect_nodes", fromNodeId: textId, toNodeId: configId }]),
         ...referenceNodeIds.map((fromNodeId) => ({ type: "connect_nodes", fromNodeId, toNodeId: configId })),
         { type: "select_nodes", ids: [configId] },
         ...(input.autoRun ? [runGenerationOp(configId, mode, tokens.join("\n"))] : []),
     ];
+}
+
+/** 与前端资源契约一致，只复用有内容的节点或包含有效资源的分组。 */
+function hasReferenceResource(node: CanvasNode | undefined, state: CanvasSnapshot | null, seen = new Set<string>()): boolean {
+    if (!node || seen.has(node.id)) return false;
+    seen.add(node.id);
+    if ((node.type as string) === "group") return (state?.nodes || []).some((member) => member.metadata?.groupId === node.id && hasReferenceResource(member, state, seen));
+    const content = node.metadata?.content || (node.type === "text" ? node.metadata?.prompt : undefined);
+    if (node.type === "text") return typeof content === "string" && Boolean(content.trim());
+    return ["image", "video", "audio"].includes(node.type) && typeof content === "string" && Boolean(content);
 }
 
 /** 创建触发节点生成的画布操作。 */

@@ -571,7 +571,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             return;
         }
         if (!nextToken) {
-            reportError("没有发现本地 Agent，请先在 Codex 使用插件或手动启动 Canvas Agent", true);
+            reportError(discovered?.hasToken ? "Agent 已启动，请填写启动终端输出的 Connect token" : "请先启动 Canvas Agent，并填写终端输出的 Local URL 和 Connect token", true);
             return;
         }
         try {
@@ -609,7 +609,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         navigate(`${pathname}${search}${bootstrap.remainingHash}`, { replace: true });
         autoConnectRef.current = true;
         if (!bootstrap.url || !bootstrap.token) {
-            setAgentState({ url: bootstrap.url, token: bootstrap.token, enabled: false, connected: false, fragmentBootstrap: false, activeTab: "setup", connectError: !bootstrap.url ? "请填写本地 Agent 地址" : "没有发现本地 Agent，请先在 Codex 使用插件或手动启动 Canvas Agent" });
+            setAgentState({ url: bootstrap.url, token: bootstrap.token, enabled: false, connected: false, fragmentBootstrap: false, activeTab: "setup", connectError: !bootstrap.url ? "请填写本地 Agent 地址" : "连接链接缺少 Connect token，请填写 Agent 启动终端输出的连接 Token" });
             useAgentStore.getState().openPanel();
             return;
         }

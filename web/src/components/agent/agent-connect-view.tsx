@@ -3,13 +3,14 @@ import { App, Button, Input, Tooltip } from "antd";
 import copyToClipboard from "copy-to-clipboard";
 import { CheckCircle2, Copy, KeyRound, Link2, LoaderCircle, PlugZap, RefreshCw, RotateCcw } from "lucide-react";
 
+import { CANVAS_AGENT_START_COMMAND } from "@/constant/canvas-agent-release";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { AgentApiError, fetchAgentDiagnostics, resetAgentOrigin, type AgentDiagnostics } from "./agent-api";
 
 const AGENT_CONNECT_STEPS = [
     { title: "方式一：在 Codex 中使用插件", text: "在 Codex app 安装 Infinite Canvas 插件后，通过插件启动画布，插件会自动启动本地 Agent 并带上连接信息。" },
-    { title: "方式二：直接运行 Agent", text: "不使用 Codex 插件时，在终端运行下面命令，再回到网页里连接或手动填入 Local URL 和 Connect token。", command: "npx -y @basketikun/canvas-agent" },
+    { title: "方式二：直接运行 Agent", text: "先安装包含 npm 的 Node.js，再在终端运行下面命令并保持运行。首次启动会下载安装包，随后将终端输出的 Local URL 和 Connect token 填入下方。", command: CANVAS_AGENT_START_COMMAND },
 ];
 const AGENT_PLUGIN_REMOVE_COMMAND = "codex plugin remove infinite-canvas";
 const AGENT_MCP_REMOVE_COMMAND = "codex mcp remove infinite-canvas";
@@ -88,7 +89,7 @@ export function AgentConnectView({
             <div className="font-medium" style={{ color: theme.node.text }}>
                 Codex 插件提醒
             </div>
-            <div className="mt-1">只有安装 Codex 插件或手动添加 MCP 后，工具列表才会进入 Codex 上下文并增加 token 消耗；仅运行 `npx -y @basketikun/canvas-agent` 启动本地 Agent 不会安装 MCP。</div>
+            <div className="mt-1">只有安装 Codex 插件或手动添加 MCP 后，工具列表才会进入 Codex 上下文并增加 token 消耗；直接运行本地 Agent 不会安装 MCP。</div>
             <div className="mt-2 grid gap-1.5">
                 {[
                     ["移除插件", AGENT_PLUGIN_REMOVE_COMMAND],
@@ -154,7 +155,7 @@ export function AgentConnectView({
                                 </span>
                             </div>
                             <div className="mt-1 text-xs leading-5" style={{ color: theme.node.muted }}>
-                                默认自动读取 Local URL 和 Connect token，失败时再手动填写。
+                                首次连接请填写启动终端中的 Local URL 和 Connect token；插件连接链接或已保存的信息可自动带入。
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -188,7 +189,7 @@ export function AgentConnectView({
                                 prefix={<KeyRound className="mr-1 size-4" style={{ color: theme.node.faint }} />}
                                 value={token}
                                 onChange={(event) => onTokenChange(event.target.value)}
-                                placeholder="自动发现，或手动填入 Connect token"
+                                placeholder="填写 Agent 启动终端输出的 Connect token"
                             />
                         </label>
                         {connectError ? (

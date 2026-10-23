@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { promisify } from "node:util";
 
 import { VERSION } from "./config.js";
+import { AGENT_RELEASES_API_URL, agentLaunchCommand, isOlderVersion, selectLatestAgentRelease } from "./distribution.js";
 import { logger } from "./utils/logger.js";
 
 const require = createRequire(import.meta.url);
@@ -27,7 +28,7 @@ export function getVersionStatus(): VersionStatus {
     };
 }
 
-/** 输出当前版本，并在后台检查 npm 最新版本。 */
+/** 输出当前版本，并在后台检查 Agent Release 和 Codex npm 版本。 */
 export function checkVersions() {
     const versions = getVersionStatus();
     const localCodexVersion = versions.localCodex;
@@ -37,24 +38,34 @@ export function checkVersions() {
     if (!localCodexVersion) {
         logger.warn("Local Codex was not found. Install the latest version with: npm install -g @openai/codex@latest");
     } else if (localCodexVersion !== CODEX_VERSION) {
-        logger.warn(`Bundled Codex ${CODEX_VERSION} does not match local Codex ${localCodexVersion}. Keep both current with: npm install -g @openai/codex@latest && npx -y @basketikun/canvas-agent@latest`);
+        logger.warn(`Bundled Codex ${CODEX_VERSION} does not match local Codex ${localCodexVersion}. Keep both current with: npm install -g @openai/codex@latest && ${agentLaunchCommand(VERSION)}`);
     }
     void checkLatestVersions(localCodexVersion);
 }
 
-/** 查询 npm，提醒升级不再维护的旧版本。 */
-async function checkLatestVersions(localCodexVersion: string) {
-    try {
-        const [latestAgent, latestCodex] = await Promise.all([
-            npmVersion("@basketikun/canvas-agent"),
-            npmVersion("@openai/codex"),
-        ]);
-        if (isOlder(VERSION, latestAgent)) logger.warn(`Update available: Canvas Agent ${VERSION} -> ${latestAgent}. Run: npx -y @basketikun/canvas-agent@latest`);
-        if (isOlder(CODEX_VERSION, latestCodex)) logger.warn(`Update available: bundled Codex ${CODEX_VERSION} -> ${latestCodex}. Upgrade Canvas Agent with: npx -y @basketikun/canvas-agent@latest`);
-        if (localCodexVersion && isOlder(localCodexVersion, latestCodex)) logger.warn(`Update available: local Codex ${localCodexVersion} -> ${latestCodex}. Run: npm install -g @openai/codex@latest`);
-    } catch {
-        logger.warn("Unable to check the latest npm versions; startup will continue.");
+/** 分别检查 Agent Release 和 Codex，任何检查失败都不影响启动。 */
+export async function checkLatestVersions(localCodexVersion: string, checks = { agent: fetchLatestAgentRelease, codex: () => npmVersion("@openai/codex") }) {
+    const [agentResult, codexResult] = await Promise.allSettled([checks.agent(), checks.codex()]);
+    const latestAgent = agentResult.status === "fulfilled" ? agentResult.value : undefined;
+    if (agentResult.status === "rejected") logger.warn("Unable to check Canvas Agent releases on GitHub; startup will continue.");
+    if (latestAgent && isOlderVersion(VERSION, latestAgent.version)) logger.warn(`Update available: Canvas Agent ${VERSION} -> ${latestAgent.version}. Run: ${agentLaunchCommand(latestAgent.version)}`);
+    if (codexResult.status === "rejected") {
+        logger.warn("Unable to check the latest Codex npm version; startup will continue.");
+        return;
     }
+    const latestCodex = codexResult.value;
+    if (isOlderVersion(CODEX_VERSION, latestCodex)) logger.warn(`Update available: bundled Codex ${CODEX_VERSION} -> ${latestCodex}. Upgrade Canvas Agent with: ${agentLaunchCommand(latestAgent?.version || VERSION)}`);
+    if (localCodexVersion && isOlderVersion(localCodexVersion, latestCodex)) logger.warn(`Update available: local Codex ${localCodexVersion} -> ${latestCodex}. Run: npm install -g @openai/codex@latest`);
+}
+
+/** GitHub 列表包含站点 Release，只接受独立 Agent 的稳定版下载。 */
+export async function fetchLatestAgentRelease() {
+    const response = await fetch(AGENT_RELEASES_API_URL, {
+        headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "infinite-canvas-agent" },
+        signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`GitHub releases request failed: ${response.status}`);
+    return selectLatestAgentRelease(await response.json());
 }
 
 /** 读取本机命令输出中的语义版本号。 */
@@ -71,14 +82,4 @@ async function npmVersion(name: string) {
     const command = process.platform === "win32" ? "npm.cmd" : "npm";
     const { stdout } = await execFileAsync(command, ["view", name, "version"], { encoding: "utf8", timeout: 10_000 });
     return stdout.trim();
-}
-
-/** 比较仅包含数字段的稳定版语义版本。 */
-function isOlder(current: string, latest: string) {
-    const left = current.split(".").map(Number);
-    const right = latest.split(".").map(Number);
-    for (let index = 0; index < Math.max(left.length, right.length); index++) {
-        if ((left[index] || 0) !== (right[index] || 0)) return (left[index] || 0) < (right[index] || 0);
-    }
-    return false;
 }

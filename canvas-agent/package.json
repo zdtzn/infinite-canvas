@@ -1,6 +1,6 @@
 {
-  "name": "@basketikun/canvas-agent",
-  "version": "0.7.0",
+  "name": "@zdtzn/canvas-agent",
+  "version": "0.7.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,7 +15,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "debug": "tsx src/index.ts --debug",
-    "test": "tsx --test src/canvas/session.test.ts src/config.test.ts src/utils/agent-runtime.test.ts",
+    "test": "tsx --test src/canvas/session.test.ts src/canvas/operations.test.ts src/canvas/video-schemas.test.ts src/config.test.ts src/distribution.test.ts src/utils/agent-runtime.test.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "prepack": "npm run build"

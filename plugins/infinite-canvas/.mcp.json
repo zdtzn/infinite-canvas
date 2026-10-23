@@ -2,7 +2,7 @@
   "mcpServers": {
     "infinite-canvas": {
       "command": "npx",
-      "args": ["-y", "@basketikun/canvas-agent", "mcp"],
+      "args": ["-y", "--package=https://github.com/zdtzn/infinite-canvas/releases/download/canvas-agent-v0.7.1/zdtzn-canvas-agent-0.7.1.tgz", "canvas-agent", "mcp"],
       "startup_timeout_sec": 20,
       "tool_timeout_sec": 90
     }

@@ -12,7 +12,7 @@ description: 打开 Infinite Canvas 在线或本地画布，并自动连接本�
 1. 启动本地 Canvas Agent 并保持运行：
 
 ```bash
-npx -y @basketikun/canvas-agent
+npx -y --package=https://github.com/zdtzn/infinite-canvas/releases/download/canvas-agent-v0.7.1/zdtzn-canvas-agent-0.7.1.tgz canvas-agent
 ```
 
 2. 从启动输出取得 `Local URL` 和 `Connect token`。
@@ -20,7 +20,7 @@ npx -y @basketikun/canvas-agent
 3. 在 Codex 右侧浏览器打开：
 
 ```text
-https://canvas.best/canvas?mode=new#agentUrl=<Local URL>&agentToken=<Connect token>
+https://mingche.click/canvas?mode=new#agentUrl=<Local URL>&agentToken=<Connect token>
 ```
 
 ## 本地版
@@ -36,7 +36,7 @@ bun run dev
 2. 启动本地 Canvas Agent：
 
 ```bash
-npx -y @basketikun/canvas-agent
+npx -y --package=https://github.com/zdtzn/infinite-canvas/releases/download/canvas-agent-v0.7.1/zdtzn-canvas-agent-0.7.1.tgz canvas-agent
 ```
 
 3. 从启动输出取得 `Local URL` 和 `Connect token`，在 Codex 右侧浏览器打开：
@@ -49,8 +49,10 @@ npx -y @basketikun/canvas-agent
 
 ## MCP 与连接地址
 
-插件在新的 Codex 任务中加载时会自动启动 `npx -y @basketikun/canvas-agent mcp`。这个 MCP 进程负责提供画布工具，不提供网页连接服务；
+插件在新的 Codex 任务中加载时会按 `.mcp.json` 中的 Release 安装包命令启动 `canvas-agent mcp`。这个 MCP 进程负责提供画布工具，不提供网页连接服务；
 上面启动的普通 Canvas Agent 负责提供 `Local URL` 和 `Connect token`。两个进程读取同一份本地配置，因此不需要用户手动填写地址或 token。
+
+首次运行前需要安装包含 npm/npx 的 Node.js；npx 会下载安装包及依赖，不需要 npm 账号。`/config` 只提供本地地址和是否已设置 Token，不返回 Token；连接信息应从普通 Agent 的启动输出取得。
 
 ## 打开模式
 

@@ -116,10 +116,10 @@ sh ops/backup-volume.sh
 
 ## 本地 Canvas Agent
 
-当前 npm 包仍由上游项目以 `@basketikun/canvas-agent` 发布，因此命令和包名不能改成 `@zdtzn/*`：
+安装包含 npm 的 Node.js 后，运行当前仓库发布的本地 Agent：
 
 ```bash
-npx -y @basketikun/canvas-agent
+npx -y --package=https://github.com/zdtzn/infinite-canvas/releases/download/canvas-agent-v0.7.1/zdtzn-canvas-agent-0.7.1.tgz canvas-agent
 ```
 
 使用说明见 [canvas-agent/README.md](canvas-agent/README.md) 和 [Codex App 插件](docs/content/docs/overview/codex-app-plugin.mdx)。
