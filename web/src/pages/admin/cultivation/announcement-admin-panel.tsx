@@ -273,7 +273,7 @@ export function AnnouncementAdminPanel() {
                     </Form.Item>
                     <div className="announcement-style-heading">
                         <h3>文字样式</h3>
-                        <Button size="small" onClick={() => form.setFields(Object.entries(normalizeAnnouncementStyle(null)).flatMap(([section, style]) => Object.entries(style).map(([field, value]) => ({ name: ["style", section, field], value, touched: true }))))}>恢复默认样式</Button>
+                        <Button size="small" onClick={() => form.setFieldsValue({ style: normalizeAnnouncementStyle(null) })}>恢复默认样式</Button>
                     </div>
                     <p className="announcement-style-hint">仅对这条公告生效。手机字号会适度缩小；字体优先使用设备已有字形。</p>
                     <AnnouncementStyleFields />
