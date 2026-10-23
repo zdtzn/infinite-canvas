@@ -85,6 +85,7 @@ export const chatPresetOptions: readonly ChatPresetOption[] = [
         hint: "现代中文为主，克制古雅，偶尔使用低频口头语",
         greeting: "太虚古境已为你留座。若有疑惑，先说来听听；此事的关键，往往藏在表象之后。",
         tags: ["角色", "判断", "修炼"],
+        avatar: "/images/avatars/moxuan.webp",
     },
 ] as const;
 
