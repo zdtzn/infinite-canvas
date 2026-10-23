@@ -271,7 +271,8 @@
     min-width: 0;
     padding: 0 clamp(10px, 1.6vw, 22px);
     border: clamp(30px, 3.6vw, 50px) solid transparent;
-    border-image-source: url("/images/announcement-frame.png");
+    /* 随公告样式加载，避免正文出现后再单独下载边框。 */
+    border-image-source: url("./announcement-frame.webp?inline");
     border-image-slice: 34% fill;
     border-image-width: 1;
     border-image-repeat: stretch;
