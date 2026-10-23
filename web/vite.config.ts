@@ -50,6 +50,7 @@ export default defineConfig({
         __APP_VERSION__: JSON.stringify(localVersion),
         __APP_RELEASES__: JSON.stringify(parseChangelog(localChangelog)),
     },
+    server: { fs: { allow: [webDir, resolve(webDir, "../shared")] } },
     build: {
         chunkSizeWarningLimit: 1400,
     },

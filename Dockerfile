@@ -6,6 +6,7 @@ COPY web/package.json web/bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
+COPY shared /app/shared
 COPY web ./
 RUN bun run build
 
@@ -21,6 +22,7 @@ WORKDIR /app
 ARG APP_COMMIT=unknown
 COPY --from=web-build /app/web/dist /app/web
 COPY --from=web-build /app/VERSION /app/VERSION
+COPY shared /app/shared
 COPY server /app/server
 COPY --from=server-deps /app/server/node_modules /app/server/node_modules
 RUN mkdir -p /data && chown -R bun:bun /app /data

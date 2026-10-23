@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { normalizeAnnouncementStyle, type AnnouncementStyle } from "../../../shared/announcement-style";
 
 import type { Database } from "bun:sqlite";
 
@@ -10,6 +11,7 @@ export type Announcement = {
   title: string;
   summary: string;
   content: string;
+  style: AnnouncementStyle;
   type: AnnouncementType;
   status: AnnouncementStatus;
   pinned: boolean;
@@ -26,6 +28,7 @@ export type AnnouncementInput = {
   title?: unknown;
   summary?: unknown;
   content?: unknown;
+  style?: unknown;
   type?: unknown;
   status?: unknown;
   pinned?: unknown;
@@ -166,8 +169,8 @@ export function createAnnouncementService(
         .query(
           `INSERT INTO system_announcements(
              id, title, summary, content, type, status, pinned, author_user_id,
-             published_at, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             published_at, created_at, updated_at, style_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -181,6 +184,7 @@ export function createAnnouncementService(
           publishedAt,
           timestamp,
           timestamp,
+          JSON.stringify(normalized.style),
         );
       writeAudit(
         database,
@@ -228,7 +232,7 @@ export function createAnnouncementService(
         .query(
           `UPDATE system_announcements
            SET title = ?, summary = ?, content = ?, type = ?, status = ?, pinned = ?,
-               published_at = ?, updated_at = ?
+               published_at = ?, updated_at = ?, style_json = ?
            WHERE id = ?`,
         )
         .run(
@@ -240,6 +244,7 @@ export function createAnnouncementService(
           normalized.pinned ? 1 : 0,
           publishedAt,
           timestamp,
+          JSON.stringify(normalized.style),
           id,
         );
       if (resetReads)
@@ -354,6 +359,7 @@ type AnnouncementRow = {
   title: string;
   summary: string;
   content: string;
+  style_json: string;
   type: AnnouncementType;
   status: AnnouncementStatus;
   pinned: number;
@@ -375,6 +381,7 @@ function announcementFromRow(
     title: row.title,
     summary: row.summary,
     content: row.content,
+    style: normalizeAnnouncementStyle(JSON.parse(row.style_json)),
     type: row.type,
     status: row.status,
     pinned: Boolean(row.pinned),
@@ -411,11 +418,17 @@ function normalizeInput(input: AnnouncementInput, fallback?: Announcement) {
       input.status === undefined && fallback
         ? fallback.status
         : requiredStatus(input.status),
+    style: input.style === undefined && fallback ? fallback.style : validatedStyle(input.style),
     pinned:
       input.pinned === undefined
         ? (fallback?.pinned ?? false)
         : requiredBoolean(input.pinned),
   };
+}
+
+function validatedStyle(value: unknown) {
+  try { return normalizeAnnouncementStyle(value); }
+  catch (error) { throw new AnnouncementError(error instanceof Error ? error.message : "公告文字样式无效"); }
 }
 
 function requiredBoolean(value: unknown) {
@@ -516,12 +529,13 @@ function pagination(pageValue: unknown, pageSizeValue: unknown) {
 function auditSnapshot(
   value: Pick<
     Announcement,
-    "title" | "summary" | "content" | "type" | "status" | "pinned"
+    "title" | "summary" | "content" | "type" | "status" | "pinned" | "style"
   >,
   publishedAt: number | null,
 ) {
   return {
     title: value.title,
+    style: value.style,
     type: value.type,
     status: value.status,
     pinned: value.pinned,

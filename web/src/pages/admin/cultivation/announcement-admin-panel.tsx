@@ -4,6 +4,9 @@ import type { ColumnsType } from "antd/es/table";
 import { Archive, Bell, Edit3, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { AnnouncementCard } from "@/pages/announcements";
+import { normalizeAnnouncementStyle } from "@/lib/announcement-style";
+import { AnnouncementStyleFields } from "./components/announcement-style-fields";
 import { createAdminAnnouncement, fetchAdminAnnouncements, updateAdminAnnouncement, type AnnouncementInput, type AnnouncementStatus, type AnnouncementType, type SystemAnnouncement } from "@/services/server-api";
 
 type AnnouncementFormValues = AnnouncementInput;
@@ -25,6 +28,7 @@ export function AnnouncementAdminPanel() {
     const queryClient = useQueryClient();
     const [form] = Form.useForm<AnnouncementFormValues>();
     const selectedStatus = Form.useWatch("status", form);
+    const values = Form.useWatch([], { form, preserve: true }) as Partial<AnnouncementFormValues> | undefined;
     const [page, setPage] = useState(1);
     const [search, setSearch] = useState("");
     const [searchDraft, setSearchDraft] = useState("");
@@ -44,7 +48,7 @@ export function AnnouncementAdminPanel() {
             void queryClient.invalidateQueries({ queryKey: ["announcements"] });
             message.success(item.status === "published" ? "公告已发布" : item.status === "archived" ? "公告已归档" : "公告草稿已保存");
         },
-        onError: (error) => message.error(error instanceof Error ? error.message : "公告保存失败"),
+        onError: (error) => { message.error(error instanceof Error ? error.message : "公告保存失败"); },
     });
     const archiveMutation = useMutation({
         mutationFn: (id: string) => updateAdminAnnouncement(id, { status: "archived" }),
@@ -64,7 +68,7 @@ export function AnnouncementAdminPanel() {
     const openCreate = () => {
         form.resetFields();
         setEditing(null);
-        form.setFieldsValue({ title: "", summary: "", content: "", type: "notice", status: "draft", pinned: false });
+        form.setFieldsValue({ title: "", summary: "", content: "", type: "notice", status: "draft", pinned: false, style: normalizeAnnouncementStyle(null) });
         setDrawerOpen(true);
     };
 
@@ -78,6 +82,7 @@ export function AnnouncementAdminPanel() {
             type: item.type,
             status: item.status,
             pinned: item.pinned,
+            style: normalizeAnnouncementStyle(item.style),
         });
         setDrawerOpen(true);
     };
@@ -215,23 +220,25 @@ export function AnnouncementAdminPanel() {
 
             <Drawer
                 title={editing ? "编辑公告" : "新建公告"}
-                width={580}
+                width={1180}
+                className="announcement-editor-drawer"
                 open={drawerOpen}
                 destroyOnHidden
                 onClose={closeDrawer}
                 footer={
                     <div className="announcement-admin-drawer-footer">
-                        <span>{editing?.status === "published" ? "修改正文后会重新标记为未读" : "可以先保存草稿，再确认发布"}</span>
+                        <span>{editing?.status === "published" ? "仅改样式保留已读；修改标题或正文等内容会重新提醒" : "可以先保存草稿，再确认发布"}</span>
                         <div>
-                            <Button onClick={closeDrawer}>取消</Button>
-                            <Button type="primary" loading={saveMutation.isPending} onClick={() => void submit()}>
+                            <Button disabled={saveMutation.isPending} onClick={closeDrawer}>取消</Button>
+                            <Button type="primary" loading={saveMutation.isPending} onClick={() => void submit().catch(() => { /* Field validation or the mutation already displays the error. */ })}>
                                 {submitLabel}
                             </Button>
                         </div>
                     </div>
                 }
             >
-                <Form form={form} layout="vertical" initialValues={{ type: "notice", status: "draft", pinned: false }}>
+                <div className="announcement-editor-layout">
+                <Form form={form} layout="vertical" initialValues={{ type: "notice", status: "draft", pinned: false, style: normalizeAnnouncementStyle(null) }}>
                     <div className="announcement-admin-form-grid">
                         <Form.Item name="type" label="公告类型" rules={[{ required: true, message: "请选择公告类型" }]}>
                             <Select options={typeOptions} />
@@ -250,7 +257,7 @@ export function AnnouncementAdminPanel() {
                     >
                         <Input maxLength={120} showCount placeholder="例如：无限画布 2.4 功能更新" />
                     </Form.Item>
-                    <Form.Item name="summary" label="简短摘要" extra="用于折叠状态下快速说明重点。">
+                    <Form.Item name="summary" label="简短摘要" extra="用于自动提醒中快速说明重点。">
                         <Input maxLength={240} showCount placeholder="用一句话说明这次公告的核心内容" />
                     </Form.Item>
                     <Form.Item
@@ -260,14 +267,33 @@ export function AnnouncementAdminPanel() {
                             { required: true, message: "请输入公告正文" },
                             { min: 2, message: "正文至少 2 个字符" },
                         ]}
-                        extra="支持自然分段，V1 不解析 HTML 或 Markdown。"
+                        extra="直接输入文字，空行可以分段。"
                     >
-                        <Input.TextArea rows={12} maxLength={8000} showCount placeholder="填写公告正文…" />
+                        <Input.TextArea rows={7} maxLength={8000} showCount placeholder="填写公告正文…" />
                     </Form.Item>
+                    <div className="announcement-style-heading">
+                        <h3>文字样式</h3>
+                        <Button size="small" onClick={() => form.setFields(Object.entries(normalizeAnnouncementStyle(null)).flatMap(([section, style]) => Object.entries(style).map(([field, value]) => ({ name: ["style", section, field], value, touched: true }))))}>恢复默认样式</Button>
+                    </div>
+                    <p className="announcement-style-hint">仅对这条公告生效。手机字号会适度缩小；字体优先使用设备已有字形。</p>
+                    <AnnouncementStyleFields />
                     <Form.Item name="pinned" label="置顶公告" valuePropName="checked" extra="置顶公告会优先出现在系统公告顶部。">
                         <Switch />
                     </Form.Item>
                 </Form>
+                <aside className="announcement-editor-preview" aria-label="公告实时预览">
+                    <h3>实时预览</h3>
+                    <p className="announcement-style-hint">修改后即刻预览，保存后才会对用户生效。</p>
+                    <div className="announcement-preview">
+                        <AnnouncementCard item={{
+                            id: "preview", title: values?.title || "公告标题", summary: values?.summary || "", content: values?.content || "在左侧填写正文，在这里查看文字效果。",
+                            type: values?.type || "notice", status: values?.status || "draft", pinned: values?.pinned || false,
+                            style: previewStyle(values?.style), authorUserId: editing?.authorUserId || "", authorName: editing?.authorName || "系统管理员",
+                            publishedAt: editing?.publishedAt || null, createdAt: editing?.createdAt || Date.now(), updatedAt: Date.now(), isRead: true,
+                        }} reading={false} onRead={() => {}} />
+                    </div>
+                </aside>
+                </div>
             </Drawer>
         </section>
     );
@@ -290,4 +316,9 @@ function AnnouncementStatusTag({ status }: { status: AnnouncementStatus }) {
 
 function formatTimestamp(value: number) {
     return new Date(value).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function previewStyle(style: AnnouncementFormValues["style"]) {
+    try { return normalizeAnnouncementStyle(style); }
+    catch { return normalizeAnnouncementStyle(null); }
 }

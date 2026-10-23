@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { openAppDatabase } from "../../db/database";
 import { AnnouncementError, createAnnouncementService } from "./service";
+import { DEFAULT_ANNOUNCEMENT_STYLE } from "../../../shared/announcement-style";
 
 const directories: string[] = [];
 
@@ -24,6 +25,69 @@ afterEach(() => {
 });
 
 describe("announcement service", () => {
+  test("styles persist across restart and style-only edits preserve read receipts and publication time", () => {
+    const { dataDir, store, service, setNow } = setup();
+    let id: string;
+    const style = { title: { font: "sans", color: "#365E50", size: 36 }, body: { letterSpacing: 0.12, lineHeight: 2.2, weight: 400 } };
+    try {
+      const created = service.create("admin", { title: "样式公告", content: "公告完整正文", type: "notice", status: "published", style });
+      id = created.id;
+      expect(created.style.title.color).toBe("#365e50");
+      service.markRead("alice", id);
+      setNow(200);
+      const updated = service.update("admin", id, { style: { ...created.style, title: { ...created.style.title, size: 40 } } });
+      expect(updated.publishedAt).toBe(100);
+      expect(updated.updatedAt).toBe(200);
+      expect(service.listPublished("alice", { unreadOnly: true }).items).toEqual([]);
+      expect(service.listPublished("bob").items[0].style.title.size).toBe(40);
+      expect(service.update("admin", id, { pinned: true }).style).toEqual(updated.style);
+      const audit = store.raw!.query("SELECT after_json FROM admin_audit_logs WHERE action = 'announcement.update' LIMIT 1").get() as { after_json: string };
+      expect(JSON.parse(audit.after_json).style.title.size).toBe(40);
+    } finally { store.close(); }
+    const reopened = openAppDatabase({ dataDir });
+    try {
+      const resumed = createAnnouncementService(reopened.raw!, { now: () => 500 });
+      const item = resumed.listPublished("alice").items[0];
+      expect(item.isRead).toBe(true);
+      expect(item.style.title).toMatchObject({ font: "sans", size: 40, color: "#365e50" });
+      expect(item.style.body).toMatchObject({ letterSpacing: 0.12, lineHeight: 2.2, weight: 400 });
+      expect(resumed.update("admin", id!, { style: null }).style).toEqual(DEFAULT_ANNOUNCEMENT_STYLE);
+      expect(resumed.listPublished("alice").unreadCount).toBe(0);
+      resumed.update("admin", id!, { content: "修改后的公告正文" });
+      expect(resumed.listPublished("alice").unreadCount).toBe(1);
+    } finally { reopened.close(); }
+  });
+
+  test("rejects unsafe or invalid typography without writing and defaults missing fields", () => {
+    const { store, service } = setup();
+    try {
+      const item = service.create("admin", { title: "默认公告", content: "公告正文", type: "notice", status: "draft" });
+      expect(item.style).toEqual(DEFAULT_ANNOUNCEMENT_STYLE);
+      for (const style of ["bad", [], { title: null }, { body: [] }, { title: { font: "__proto__" } }, { title: { color: "url(https://bad.test)" } }, { title: { size: 49 } }, { body: { size: 10 } }, { body: { size: "18" } }, { body: { lineHeight: Infinity } }, { body: { letterSpacing: -0.01 } }, { body: { weight: 900 } }]) {
+        expect(() => service.update("admin", item.id, { style })).toThrow(AnnouncementError);
+      }
+      expect(service.listAdmin().items[0].style).toEqual(item.style);
+      expect(store.raw!.query("SELECT count(*) AS count FROM admin_audit_logs").get()).toEqual({ count: 1 });
+    } finally { store.close(); }
+  });
+
+  test("upgrades existing announcements without changing their content or read receipts", () => {
+    const { dataDir, store, service } = setup();
+    const item = service.create("admin", { title: "旧版公告", content: "保留原有正文", type: "notice", status: "published" });
+    service.markRead("alice", item.id);
+    store.raw!.exec("DELETE FROM schema_migrations WHERE version = 27; ALTER TABLE system_announcements DROP COLUMN style_json;");
+    store.close();
+    const reopened = openAppDatabase({ dataDir });
+    try {
+      const migrated = createAnnouncementService(reopened.raw!).listPublished("alice").items[0];
+      expect(migrated.id).toBe(item.id);
+      expect(migrated.content).toBe(item.content);
+      expect(migrated.publishedAt).toBe(item.publishedAt);
+      expect(migrated.isRead).toBe(true);
+      expect(migrated.style).toEqual(DEFAULT_ANNOUNCEMENT_STYLE);
+    } finally { reopened.close(); }
+  });
+
   test("newest sorting lets a fresh normal announcement precede an older pinned one without changing the center's default order", () => {
     const { store, service, setNow } = setup();
     try {

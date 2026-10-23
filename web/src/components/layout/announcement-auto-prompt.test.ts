@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import * as React from "react";
 import ts from "typescript";
 
+import { announcementStyleVariables } from "../../lib/announcement-style";
+
 import type { SystemAnnouncement } from "@/services/server-api";
 
 function realFunction(path: string, name: string, bindings: Record<string, unknown>) {
@@ -12,7 +14,7 @@ function realFunction(path: string, name: string, bindings: Record<string, unkno
     return new Function(...Object.keys(bindings), `${compiled}\nreturn ${name};`)(...Object.values(bindings));
 }
 
-const announcement = { id: "notice", title: "更新通知", summary: "", content: "第一段\n第二段", updatedAt: 1 } as SystemAnnouncement;
+const announcement = { id: "notice", title: "更新通知", summary: "", content: "第一段\n第二段", updatedAt: 1, publishedAt: 1 } as SystemAnnouncement;
 const settle = async () => { for (let count = 0; count < 8; count++) await Promise.resolve(); };
 
 // Exercise the real component and callbacks with isolated hook state, without
@@ -30,7 +32,7 @@ function session() {
     let rejectRead!: (reason: Error) => void;
     const ack = new Promise<void>((resolve, reject) => { resolveRead = resolve; rejectRead = reject; });
     const Component = realFunction("./announcement-auto-prompt.tsx", "AnnouncementPromptSession", {
-        React, Modal: "announcement-modal", theme: { useToken: () => ({ token: {} }) },
+        announcementStyleVariables, React, Modal: "announcement-modal", theme: { useToken: () => ({ token: {} }) },
         useQueryClient: () => ({ invalidateQueries: async () => { invalidations++; } }),
         useUnreadAnnouncements: () => ({ data: { items: [item] } }),
         useUserStore: { getState: () => ({ user: { id: userId } }) },
@@ -103,6 +105,8 @@ test("deferring never writes a receipt and a new revision can prompt again", () 
     expect(view.render().open).toBe(false);
     expect(view.reads).toEqual([]);
     view.changeItem({ ...announcement, updatedAt: 2 });
+    expect(view.render().open).toBe(false);
+    view.changeItem({ ...announcement, updatedAt: 3, publishedAt: 3 });
     expect(view.render().open).toBe(true);
     expect(session().render().open).toBe(true);
 });
