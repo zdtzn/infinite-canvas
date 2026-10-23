@@ -2,7 +2,8 @@
     --notice-night: #14110e;
     --notice-gold: #e7bf78;
     --notice-paper: #f6ebd5;
-    --notice-ink: #423225;
+    --notice-ink: #332418;
+    --notice-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
     max-width: calc(100vw - 24px);
 }
 
@@ -213,19 +214,23 @@
 
 .announcement-title {
     margin: 0;
-    color: #765020;
+    color: #67421b;
     font-family: "STKaiti", "KaiTi", "Noto Serif SC", serif;
-    font-size: clamp(23px, 2vw, 28px);
-    font-weight: 600;
+    font-size: clamp(26px, 2.3vw, 32px);
+    font-weight: 700;
     line-height: 1.5;
     letter-spacing: 0.08em;
     text-align: center;
     overflow-wrap: anywhere;
 }
 .announcement-title-ornament { width: min(240px, 85%); height: 44px; margin: 4px auto 14px; background: url("./assets/gold/notice-title.webp?inline") center / contain no-repeat; pointer-events: none; }
-.announcement-content { color: var(--notice-ink); font-size: 16px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
-.announcement-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; padding-top: 12px; border-top: 1px solid rgb(118 80 32 / 0.25); color: #6e563c; font-size: 12px; }
-.announcement-date, .announcement-read-status { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.announcement-content { color: var(--notice-ink); font-family: var(--notice-serif); font-size: 18px; font-weight: 600; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.announcement-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 24px; padding-top: 16px; border-top: 1px solid rgb(118 80 32 / 0.4); color: #60472e; font-size: 12px; }
+.announcement-publication { display: flex; min-width: 0; flex: 1; flex-wrap: wrap; gap: 12px 28px; }
+.announcement-date, .announcement-author { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.announcement-date time { color: #49311e; font-size: 15px; font-weight: 600; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.announcement-author strong { color: #67421b; font-family: "STKaiti", "KaiTi", var(--notice-serif); font-size: 19px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.announcement-read-status { display: inline-flex; align-items: center; gap: 6px; }
 .announcement-read-status { flex: none; min-height: 44px; color: #66502e; }
 .announcement-footer .announcement-read-action { min-height: 44px; flex: none; padding-inline: 12px; border: 1px solid #a97935; border-radius: 6px; color: #61421c; background: rgb(255 250 237 / 0.65); }
 .announcement-footer .announcement-read-action:hover { color: #423225 !important; border-color: #765020 !important; background: #f4d89a !important; }
@@ -279,10 +284,12 @@
     .announcement-card-meta { gap: 10px; margin-inline: 2px; }
     .announcement-card { padding: 24px 20px 100px; outline: 1px solid rgb(169 121 53 / 0.5); outline-offset: -6px; }
     .announcement-frame { display: none; }
-    .announcement-title { font-size: 22px; letter-spacing: 0.04em; }
+    .announcement-title { font-size: 24px; letter-spacing: 0.04em; }
     .announcement-title-ornament { width: 190px; max-width: 90%; height: 35px; margin: 6px auto 12px; }
-    .announcement-content { font-size: 15px; line-height: 1.9; }
-    .announcement-footer { flex-wrap: wrap; gap: 6px 12px; margin-top: 16px; }
+    .announcement-content { font-size: 16px; line-height: 1.9; }
+    .announcement-footer { flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+    .announcement-publication { flex-basis: 100%; gap: 12px 20px; }
+    .announcement-footer :is(.announcement-read-action, .announcement-read-status) { margin-left: auto; }
     .announcement-landscape { bottom: 12px; width: min(240px, 85%); }
     .announcements-motes { display: none; }
 }

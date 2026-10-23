@@ -161,10 +161,15 @@ function AnnouncementCard({ item, reading, onRead }: { item: SystemAnnouncement;
                 <div className="announcement-title-ornament" aria-hidden="true" />
                 <div className="announcement-content">{item.content}</div>
                 <footer className="announcement-footer">
-                    <div className="announcement-date">
-                        <time dateTime={new Date(item.publishedAt || item.createdAt).toISOString()}>{formatAnnouncementDate(item.publishedAt || item.createdAt)}</time>
-                        <span aria-hidden="true">·</span>
-                        <span>{item.authorName || "系统管理员"}</span>
+                    <div className="announcement-publication">
+                        <div className="announcement-date">
+                            <span>发布时间</span>
+                            <time dateTime={new Date(item.publishedAt || item.createdAt).toISOString()}>{formatAnnouncementDate(item.publishedAt || item.createdAt)}</time>
+                        </div>
+                        <div className="announcement-author">
+                            <span>发布者</span>
+                            <strong>{item.authorName || "系统管理员"}</strong>
+                        </div>
                     </div>
                     {item.isRead ? <span className="announcement-read-status"><CheckCheck className="size-3.5" aria-hidden="true" />已阅</span> : <Button className="announcement-read-action" type="text" size="small" loading={reading} onClick={onRead}>我已阅读</Button>}
                 </footer>
