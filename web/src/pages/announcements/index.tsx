@@ -59,17 +59,18 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
     const feedItems = useMemo(() => [...pinnedItems, ...timelineItems], [pinnedItems, timelineItems]);
 
     return (
-        <Modal className="announcement-center-modal" title={null} open={open} centered width={1040} footer={null} destroyOnHidden afterClose={onAfterClose} onCancel={onClose}>
+        <Modal className="announcement-center-modal" title={null} aria-labelledby="announcements-heading" closable={{ "aria-label": "关闭系统公告" }} open={open} centered width={1040} footer={null} destroyOnHidden afterClose={onAfterClose} onCancel={onClose}>
             <section className="announcements-dialog" aria-label="系统公告">
                 <header className="announcements-header">
+                    <div className="announcements-motes" aria-hidden="true"><i /><i /><i /><i /><i /></div>
                     <div>
-                        <h2>系统公告</h2>
+                        <h2 id="announcements-heading">系统公告</h2>
                         <p>最新平台更新和通知</p>
                     </div>
                     <div className="announcements-header-status" aria-live="polite">
                         <span className={query.data?.unreadCount ? "is-unread" : ""}>
                             <Bell className="size-4" aria-hidden="true" />
-                            {query.data?.unreadCount ? `${query.data.unreadCount} 条未读` : "已全部阅览"}
+                            {query.data?.unreadCount ? `${query.data.unreadCount} 条未读` : query.data ? "已全部阅览" : ""}
                         </span>
                         {query.data?.unreadCount ? (
                             <Button icon={<CheckCheck className="size-4" />} loading={readAllMutation.isPending} onClick={() => readAllMutation.mutate()}>
@@ -119,7 +120,7 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
                     ) : null}
 
                     {!query.isError && items.length ? (
-                        <section className="announcements-feed" aria-label={view === "unread" ? "未读通知" : "公告时间线"}>
+                        <section key={view} className="announcements-feed" aria-label={view === "unread" ? "未读通知" : "公告时间线"}>
                             <div className="announcements-list">
                                 {feedItems.map((item) => (
                                     <AnnouncementCard key={item.id} item={item} reading={readMutation.isPending && readMutation.variables === item.id} onRead={() => readMutation.mutate(item.id)} />
@@ -155,22 +156,35 @@ function AnnouncementCard({ item, reading, onRead }: { item: SystemAnnouncement;
                 {!item.isRead ? <span className="announcement-unread-label">未读</span> : null}
             </div>
             <div className="announcement-card">
-                <h3 className="announcement-title">
-                    <Sparkles className="announcement-title-flourish" aria-hidden="true" />
-                    <span>{item.title}</span>
-                    <Sparkles className="announcement-title-flourish" aria-hidden="true" />
-                </h3>
+                <AnnouncementFrame />
+                <h3 className="announcement-title">{item.title}</h3>
+                <div className="announcement-title-ornament" aria-hidden="true" />
                 <div className="announcement-content">{item.content}</div>
+                <footer className="announcement-footer">
+                    <div className="announcement-date">
+                        <time dateTime={new Date(item.publishedAt || item.createdAt).toISOString()}>{formatAnnouncementDate(item.publishedAt || item.createdAt)}</time>
+                        <span aria-hidden="true">·</span>
+                        <span>{item.authorName || "系统管理员"}</span>
+                    </div>
+                    {item.isRead ? <span className="announcement-read-status"><CheckCheck className="size-3.5" aria-hidden="true" />已阅</span> : <Button className="announcement-read-action" type="text" size="small" loading={reading} onClick={onRead}>我已阅读</Button>}
+                </footer>
+                <div className="announcement-landscape" aria-hidden="true" />
             </div>
-            <footer className="announcement-footer">
-                <div className="announcement-date">
-                    <time dateTime={new Date(item.publishedAt || item.createdAt).toISOString()}>{formatAnnouncementDate(item.publishedAt || item.createdAt)}</time>
-                    <span aria-hidden="true">·</span>
-                    <span>{item.authorName || "系统管理员"}</span>
-                </div>
-                {item.isRead ? <span className="announcement-read-status"><CheckCheck className="size-3.5" aria-hidden="true" />已阅</span> : <Button className="announcement-read-action" type="text" size="small" loading={reading} onClick={onRead}>我已阅读</Button>}
-            </footer>
         </article>
+    );
+}
+
+function AnnouncementFrame() {
+    return (
+        <div className="announcement-frame" aria-hidden="true">
+            {(["top", "bottom"] as const).map((edge) => (
+                <div key={edge} className={`announcement-frame-${edge}`}>
+                    {[0, 1, 2, 3, 4].map((piece) => <span key={piece} />)}
+                </div>
+            ))}
+            <div className="announcement-frame-left" />
+            <div className="announcement-frame-right" />
+        </div>
     );
 }
 
