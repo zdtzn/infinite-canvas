@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Empty, Modal, Pagination, Result, Segmented, Skeleton, Tag } from "antd";
-import { Bell, CheckCheck, ChevronDown, Megaphone, Orbit, Pin, RefreshCw, Sparkles, Wrench } from "lucide-react";
+import { App, Button, Empty, Modal, Pagination, Result, Segmented, Skeleton } from "antd";
+import { Bell, CheckCheck, Megaphone, Pin, RefreshCw, Sparkles, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -29,7 +29,6 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
     const userId = useUserStore((state) => state.user?.id);
     const [view, setView] = useState<AnnouncementView>("timeline");
     const [page, setPage] = useState(1);
-    const [expandedId, setExpandedId] = useState<string | null>(null);
     const query = useQuery({
         queryKey: ["announcements", "list", userId, view, page],
         queryFn: () => fetchAnnouncements({ page, pageSize: 10, unreadOnly: view === "unread" }),
@@ -52,18 +51,11 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
 
     useEffect(() => {
         setPage(1);
-        setExpandedId(null);
     }, [view]);
 
     const items = query.data?.items || [];
     const pinnedItems = useMemo(() => items.filter((item) => item.pinned), [items]);
     const timelineItems = useMemo(() => items.filter((item) => !item.pinned), [items]);
-
-    const toggleAnnouncement = (item: SystemAnnouncement) => {
-        const opening = expandedId !== item.id;
-        setExpandedId(opening ? item.id : null);
-        if (opening && !item.isRead) readMutation.mutate(item.id);
-    };
 
     return (
         <Modal className="announcement-center-modal" title={null} open={open} centered width={1040} footer={null} destroyOnHidden afterClose={onAfterClose} onCancel={onClose}>
@@ -135,7 +127,7 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
                                     </h3>
                                     <div className="announcements-list">
                                         {pinnedItems.map((item) => (
-                                            <AnnouncementCard key={item.id} item={item} expanded={expandedId === item.id} onToggle={() => toggleAnnouncement(item)} />
+                                            <AnnouncementCard key={item.id} item={item} reading={readMutation.isPending && readMutation.variables === item.id} onRead={() => readMutation.mutate(item.id)} />
                                         ))}
                                     </div>
                                 </section>
@@ -148,7 +140,7 @@ export function AnnouncementCenterDialog({ open, onClose, onAfterClose }: Announ
                                     </h3>
                                     <div className="announcements-list">
                                         {timelineItems.map((item) => (
-                                            <AnnouncementCard key={item.id} item={item} expanded={expandedId === item.id} onToggle={() => toggleAnnouncement(item)} />
+                                            <AnnouncementCard key={item.id} item={item} reading={readMutation.isPending && readMutation.variables === item.id} onRead={() => readMutation.mutate(item.id)} />
                                         ))}
                                     </div>
                                 </section>
@@ -172,49 +164,22 @@ export default function AnnouncementsRoute() {
     return <AnnouncementCenterDialog open onClose={() => navigate("/", { replace: true })} />;
 }
 
-function AnnouncementCard({ item, expanded, onToggle }: { item: SystemAnnouncement; expanded: boolean; onToggle: () => void }) {
+function AnnouncementCard({ item, reading, onRead }: { item: SystemAnnouncement; reading: boolean; onRead: () => void }) {
     const detail = typeDetails[item.type];
-    const Icon = detail.icon;
-    const summary = item.summary || item.content.split(/\n+/)[0]?.slice(0, 160) || "查看公告详情";
     return (
-        <article className={`announcement-card ${item.isRead ? "is-read" : "is-unread"} ${item.pinned ? "is-pinned" : ""}`}>
-            <button type="button" className="announcement-card-trigger" aria-expanded={expanded} onClick={onToggle}>
-                <span className={`announcement-type-icon ${detail.className}`}>
-                    <Icon className="size-4" aria-hidden="true" />
-                </span>
-                <span className="announcement-card-copy">
-                    <span className="announcement-card-meta">
-                        <Tag bordered={false} className={detail.className}>
-                            {detail.label}
-                        </Tag>
-                        {item.pinned ? (
-                            <span className="announcement-pinned-label">
-                                <Pin className="size-3.5" />
-                                置顶
-                            </span>
-                        ) : null}
-                        {!item.isRead ? <span className="announcement-unread-label">未读</span> : null}
-                    </span>
-                    <strong>{item.title}</strong>
-                    <span className="announcement-summary">{summary}</span>
-                    <span className="announcement-date">
-                        {formatAnnouncementTime(item.publishedAt || item.createdAt)} · {item.authorName || "系统管理员"}
-                    </span>
-                </span>
-                <ChevronDown className={`announcement-card-chevron size-4 ${expanded ? "is-expanded" : ""}`} aria-hidden="true" />
-            </button>
-            {expanded ? (
-                <div className="announcement-card-body">
-                    <div className="announcement-rule-mark" aria-hidden="true">
-                        <Orbit className="size-4" />
-                    </div>
-                    <div className="announcement-content">{item.content}</div>
-                    <footer>
-                        <span>{item.isRead ? "已阅" : "正在同步已读状态"}</span>
-                        <time dateTime={new Date(item.publishedAt || item.createdAt).toISOString()}>{formatAnnouncementDate(item.publishedAt || item.createdAt)}</time>
-                    </footer>
-                </div>
-            ) : null}
+        <article className={`announcement-card ${item.isRead ? "is-read" : "is-unread"}`} aria-label={item.title}>
+            <div className="announcement-card-meta">
+                <span>{detail.label}</span>
+                {item.pinned ? <span className="announcement-pinned-label"><Pin className="size-3.5" aria-hidden="true" />置顶</span> : null}
+                {!item.isRead ? <span className="announcement-unread-label">未读</span> : null}
+            </div>
+            <h3 className="announcement-title">{item.title}</h3>
+            <div className="announcement-content">{item.content}</div>
+            <div className="announcement-signature" aria-hidden="true"><span>无限<br />画布</span></div>
+            <footer className="announcement-footer">
+                <time dateTime={new Date(item.publishedAt || item.createdAt).toISOString()}>{formatAnnouncementDate(item.publishedAt || item.createdAt)} · {item.authorName || "系统管理员"}</time>
+                {item.isRead ? <span>已阅</span> : <Button type="text" size="small" loading={reading} onClick={onRead}>我已阅读</Button>}
+            </footer>
         </article>
     );
 }
@@ -229,15 +194,6 @@ function AnnouncementSkeleton() {
             ))}
         </div>
     );
-}
-
-function formatAnnouncementTime(timestamp: number) {
-    const elapsed = Date.now() - timestamp;
-    if (elapsed >= 0 && elapsed < 60_000) return "刚刚";
-    if (elapsed >= 0 && elapsed < 60 * 60_000) return `${Math.max(1, Math.floor(elapsed / 60_000))} 分钟前`;
-    if (elapsed >= 0 && elapsed < 24 * 60 * 60_000) return `${Math.max(1, Math.floor(elapsed / 3_600_000))} 小时前`;
-    if (elapsed >= 0 && elapsed < 7 * 24 * 60 * 60_000) return `${Math.max(1, Math.floor(elapsed / 86_400_000))} 天前`;
-    return formatAnnouncementDate(timestamp);
 }
 
 function formatAnnouncementDate(timestamp: number) {
