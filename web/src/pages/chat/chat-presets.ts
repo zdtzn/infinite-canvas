@@ -77,6 +77,7 @@ export const chatPresetOptions: readonly ChatPresetOption[] = [
         hint: "每句带喵，适合轻松一点的聊天",
         greeting: "[轻轻摇尾巴] 欢迎回来主人喵，有什么想聊的就告诉我喵。",
         tags: ["角色", "陪聊", "轻松"],
+        avatar: "/images/avatars/catgirl.webp",
     },
     {
         id: "moxuan",
