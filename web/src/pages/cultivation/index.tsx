@@ -140,7 +140,7 @@ export default function CultivationPage() {
                         </Link>
                         <Link
                             to="/canvas"
-                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 hover:text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-cta px-3 text-sm font-medium text-cta-foreground transition-colors hover:bg-cta/90 hover:text-cta-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cta"
                         >
                             <Maximize2 className="size-4" aria-hidden="true" />
                             回到画布
@@ -234,7 +234,7 @@ export default function CultivationPage() {
                                         <p className="mt-2 text-xs text-[#edede6]/70">{nextStageSummary}</p>
                                     </div>
                                 )}
-                                <Link to="/image" className="shj-cta-glow inline-flex items-center gap-2 rounded-md bg-primary px-6 py-3 text-sm font-medium tracking-[0.15em] text-primary-foreground transition-colors duration-300 hover:bg-primary/90">
+                                <Link to="/image" className="shj-cta-glow inline-flex items-center gap-2 rounded-md bg-cta px-6 py-3 text-sm font-medium tracking-[0.15em] text-cta-foreground transition-colors duration-300 hover:bg-cta/90">
                                     <ImagePlus className="size-4" />
                                     继续创作
                                     <ArrowUpRight className="size-4" />
