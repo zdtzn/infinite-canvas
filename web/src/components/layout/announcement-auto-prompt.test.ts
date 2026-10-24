@@ -32,7 +32,7 @@ function session() {
     let rejectRead!: (reason: Error) => void;
     const ack = new Promise<void>((resolve, reject) => { resolveRead = resolve; rejectRead = reject; });
     const Component = realFunction("./announcement-auto-prompt.tsx", "AnnouncementPromptSession", {
-        announcementStyleVariables, React, Modal: "announcement-modal", theme: { useToken: () => ({ token: {} }) },
+        announcementStyleVariables, AnnouncementCard: "announcement-card", React, Modal: "announcement-modal", theme: { useToken: () => ({ token: {} }) },
         useQueryClient: () => ({ invalidateQueries: async () => { invalidations++; } }),
         useUnreadAnnouncements: () => ({ data: { items: [item] } }),
         useUserStore: { getState: () => ({ user: { id: userId } }) },
@@ -68,6 +68,13 @@ function session() {
         get invalidations() { return invalidations; },
     };
 }
+
+test("first-visit prompt uses the same lunar card as the announcement center", () => {
+    const modal = session().render();
+    expect(modal.className).toContain("announcement-auto-modal");
+    expect(JSON.stringify(modal.children)).toContain('"type":"announcement-card"');
+    expect(JSON.stringify(modal.children)).not.toContain("#f6ebd5");
+});
 
 test("acknowledgement failure leaves the announcement open and retryable", async () => {
     const view = session();

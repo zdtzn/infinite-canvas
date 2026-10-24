@@ -2,8 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Modal, theme } from "antd";
 import { useEffect, useRef, useState } from "react";
 
-import { announcementStyleVariables } from "@/lib/announcement-style";
-import "@/pages/announcements/typography.css";
+import { AnnouncementCard } from "@/pages/announcements";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { useUnreadAnnouncements } from "@/hooks/use-unread-announcements";
@@ -60,6 +59,7 @@ export function AnnouncementPromptSession({ userId }: { userId: string }) {
 
     return (
         <Modal
+            className="announcement-center-modal announcement-auto-modal"
             open={Boolean(item && !hidden.has(itemKey))}
             title="仙尊告示"
             width={560}
@@ -83,12 +83,10 @@ export function AnnouncementPromptSession({ userId }: { userId: string }) {
             onCancel={defer}
         >
             {item ? (
-                <article className="space-y-4 break-words" style={{ ...announcementStyleVariables(item.style), padding: 20, borderRadius: 8, background: "#f6ebd5" }}>
-                    <h2 className="announcement-title">{item.title}</h2>
-                    {item.summary ? <p style={{ color: "#60472e" }}>{item.summary}</p> : null}
-                    <div className="announcement-content">{item.content}</div>
-                    {error ? <p role="alert" style={{ color: token.colorError }}>{error}。请再次点击“我知道了”重试。</p> : null}
-                </article>
+                <div className="announcement-preview">
+                    <AnnouncementCard item={item} reading={confirming} onRead={() => void confirm()} />
+                    {error ? <p className="announcement-prompt-error" role="alert" style={{ color: token.colorError }}>{error}。请再次点击“我知道了”重试。</p> : null}
+                </div>
             ) : null}
         </Modal>
     );

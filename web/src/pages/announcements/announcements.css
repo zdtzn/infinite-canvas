@@ -11,6 +11,12 @@
 .announcements-dialog, .announcement-preview { container: announcement-surface / inline-size; }
 .announcement-preview { background: linear-gradient(rgb(18 14 35 / 0.1), rgb(18 14 35 / 0.2)), var(--notice-scene) center / cover no-repeat, var(--notice-night); }
 .announcement-preview.is-mobile { background-image: linear-gradient(rgb(18 14 35 / 0.15), rgb(18 14 35 / 0.25)), var(--notice-scene-mobile); }
+.announcement-auto-modal .ant-modal-header { margin: 0; padding: 22px 70px 18px 24px; background: transparent; }
+.announcement-auto-modal .ant-modal-title { color: #f3dcac; }
+.announcement-auto-modal .announcement-preview { padding: 12px 8px; }
+.announcement-auto-modal .announcement-read-action { display: none; }
+.announcement-auto-modal .ant-modal-footer { margin: 0; padding: 12px 20px; }
+.announcement-prompt-error { margin: 12px 20px; }
 
 .announcement-center-modal .ant-modal-container {
     overflow: hidden;
