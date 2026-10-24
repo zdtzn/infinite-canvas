@@ -1396,18 +1396,20 @@ export default function ImagePage() {
                                     )}
                                 </div>
                             ) : (
-                                <div className="relative flex min-h-56 flex-col items-center justify-center overflow-hidden px-4 py-10 text-center lg:min-h-[calc(100%_-_4rem)]">
+                                <div className="relative flex min-h-56 flex-col items-center justify-center overflow-hidden rounded-lg bg-[#151b1e] px-4 py-10 text-center lg:min-h-[calc(100%_-_4rem)]">
                                     <img
                                         src="/images/ref/danqing-results-celestial.webp"
                                         alt=""
                                         aria-hidden="true"
-                                        className="pointer-events-none absolute bottom-0 right-0 h-52 w-2/3 object-cover object-center opacity-[0.08] [mask-image:radial-gradient(ellipse_at_bottom_right,black,transparent_75%)]"
-                                        loading="lazy"
+                                        className="pointer-events-none absolute inset-0 size-full object-cover object-center"
+                                        loading="eager"
                                         decoding="async"
+                                        fetchPriority="high"
                                     />
-                                    <div className="relative z-10 flex flex-col items-center gap-3 text-muted-foreground">
-                                        <ImagePlus className="size-6 opacity-60" aria-hidden="true" />
-                                        <p className="text-sm font-medium text-foreground">{running ? "正在准备生成结果" : "万象未生"}</p>
+                                    <div className="pointer-events-none absolute inset-0 bg-[#081014]/20" aria-hidden="true" />
+                                    <div className="relative z-10 flex flex-col items-center gap-3 text-[#eee6d8] [text-shadow:0_2px_12px_rgba(0,0,0,0.95)]">
+                                        <ImagePlus className="size-6 text-[#e4c78d]" aria-hidden="true" />
+                                        <p className="text-sm font-medium text-[#fffaf0]">{running ? "正在准备生成结果" : "万象未生"}</p>
                                         <p className="text-xs leading-6">{running ? "结果生成后会保留在这里" : "暂无生成结果，从提示词落下第一笔。"}</p>
                                     </div>
                                 </div>
