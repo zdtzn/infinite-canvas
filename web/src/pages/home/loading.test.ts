@@ -71,18 +71,15 @@ test("home starts the correct hero without an extra lazy module or duplicate CSS
     expect(homeCss).toMatch(/\.shj-hero-image\s*\{[^}]*z-index: -2/s);
 });
 
-test("home scene crosses the seam without a new asset or an animated transition layer", () => {
+test("home fades the original scene without repeating an asset or adding animation", () => {
     const source = readFileSync(new URL("./index.tsx", import.meta.url), "utf8");
     const css = readFileSync(new URL("./home.css", import.meta.url), "utf8");
-    const tail = css.match(/\.home-hero-stage::after\s*\{([^}]+)\}/s)?.[1] || "";
+    const tail = css.match(/\.home-hero-stage > \.imperial-realm::after\s*\{([^}]+)\}/s)?.[1] || "";
     expect(source.match(/className="home-hero-stage"/g)).toHaveLength(1);
     expect(source).toContain('className="home-hero-ink-fade" aria-hidden="true"');
     expect(source).not.toContain('className="shj-scroll-cue"');
-    expect(css).toContain('--home-scene: url("/images/hero-main.webp")');
-    expect(css).toContain('--home-scene: url("/imperial/realm-scene-v2.webp")');
-    expect(css).toContain('--home-scene: url("/imperial/realm-scene-mobile-v2.webp")');
-    expect(css).toContain("--home-scene-fade: clamp(180px, 26svh, 260px)");
-    expect(tail).toContain("opacity: 0.05");
+    expect(css).not.toContain(".home-hero-stage::after");
+    expect(css).not.toMatch(/url\(/);
     expect(tail).toContain("pointer-events: none");
     expect(tail).not.toMatch(/animation|filter|will-change/);
 });

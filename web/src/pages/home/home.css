@@ -10,14 +10,8 @@
 }
 
 .home-page {
-    --home-scene: url("/images/hero-main.webp");
-    --home-scene-fade: clamp(180px, 26svh, 260px);
-    --home-scene-tail: 144px;
+    --home-scene-fade: clamp(280px, 38svh, 420px);
     --home-bridge-overlap: 80px;
-}
-
-.home-page--imperial {
-    --home-scene: url("/imperial/realm-scene-v2.webp");
 }
 
 .home-hero-stage {
@@ -25,21 +19,7 @@
     isolation: isolate;
 }
 
-/* The existing scene leaves a faint, static residue across the section seam. */
-.home-hero-stage::after {
-    content: "";
-    position: absolute;
-    inset: auto 0 calc(-1 * var(--home-scene-tail));
-    z-index: 0;
-    height: calc(var(--home-scene-fade) + var(--home-scene-tail));
-    background-image: radial-gradient(ellipse at 30% 48%, rgb(185 197 208 / 55%), transparent 68%), var(--home-scene);
-    background-size: cover;
-    background-position: center bottom;
-    mask-image: linear-gradient(180deg, transparent, #000 38%, #000 58%, transparent);
-    opacity: 0.05;
-    pointer-events: none;
-}
-
+/* Fade the original scene once; a second cropped scene makes the seam visible. */
 .home-hero-ink-fade,
 .home-hero-stage > .imperial-realm::after {
     content: "";
@@ -47,7 +27,7 @@
     inset: auto 0 0;
     z-index: 0;
     height: var(--home-scene-fade);
-    background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--background) 38%, transparent) 44%, color-mix(in srgb, var(--background) 86%, transparent) 80%, var(--background));
+    background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--background) 12%, transparent) 28%, color-mix(in srgb, var(--background) 42%, transparent) 55%, color-mix(in srgb, var(--background) 76%, transparent) 78%, color-mix(in srgb, var(--background) 95%, transparent) 94%, var(--background));
     pointer-events: none;
 }
 
@@ -95,15 +75,6 @@
     letter-spacing: 0;
 }
 
-.home-cultivation-inner::after {
-    content: "";
-    position: absolute;
-    inset: auto 24px 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgb(212 191 146 / 12%) 30%, rgb(212 191 146 / 12%) 70%, transparent);
-    pointer-events: none;
-}
-
 .home-cultivation-identity {
     min-width: 0;
     flex: 1 1 240px;
@@ -144,11 +115,7 @@
 
 @media (max-width: 640px) {
     .home-page {
-        --home-scene-tail: 120px;
         --home-bridge-overlap: 64px;
-    }
-    .home-page--imperial {
-        --home-scene: url("/imperial/realm-scene-mobile-v2.webp");
     }
     .home-page--imperial .imperial-realm-footer {
         display: none;
