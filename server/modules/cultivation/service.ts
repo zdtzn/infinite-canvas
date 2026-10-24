@@ -27,6 +27,7 @@ type ServiceOptions = { now?: () => Date; timeZone?: string };
 const RETIRED_REALM_CODE = "dou-zun-peak";
 
 type ReservationInput = {
+  kind?: "image" | "proxy";
   jobId: string;
   userId: string;
   channelId: string;
@@ -117,13 +118,17 @@ export function createCultivationService(
       used_count: number;
       successful_images: number;
     } | null) || { reserved_count: 0, used_count: 0, successful_images: 0 };
-    const dailyLimit =
+    const proxyDailyLimit =
       row.daily_limit_override == null
         ? row.daily_limit == null
           ? null
           : Number(row.daily_limit)
         : Number(row.daily_limit_override);
-    const unlimited = Boolean(row.unlimited_quota) || dailyLimit == null;
+    const proxyUnlimited = Boolean(row.unlimited_quota) || proxyDailyLimit == null;
+    const isAdmin = Boolean(row.is_admin);
+    const isEmperor = !isAdmin && row.realm_code === "dou-emperor";
+    const dailyLimit = isEmperor ? null : isAdmin ? proxyDailyLimit : 0;
+    const unlimited = isEmperor || (isAdmin && proxyUnlimited);
     const nextStage = database
       .query(
         "SELECT s.id, s.name FROM realm_stages s JOIN realms r ON r.id = s.realm_id WHERE s.active = 1 AND r.active = 1 AND s.stage_order > ? ORDER BY s.stage_order LIMIT 1",
@@ -174,11 +179,11 @@ export function createCultivationService(
         )
         .all(String(row.stage_id)) as Array<{ capability_key: string }>
     ).map((item) => item.capability_key);
-    const remaining = unlimited
+    const proxyRemaining = proxyUnlimited
       ? null
       : Math.max(
           0,
-          Number(dailyLimit) -
+          Number(proxyDailyLimit) -
             Number(usage.used_count) -
             Number(usage.reserved_count),
         );
@@ -210,13 +215,22 @@ export function createCultivationService(
         : null,
       dailyLimit,
       dailyLimitOverride:
-        row.daily_limit_override == null
+        !isAdmin || row.daily_limit_override == null
           ? null
           : Number(row.daily_limit_override),
       unlimited,
       usedToday: Number(usage.used_count),
       reservedToday: Number(usage.reserved_count),
-      remainingToday: remaining,
+      remainingToday: isEmperor ? null : isAdmin ? proxyRemaining : 0,
+      todaySuccessfulImages: Number(usage.successful_images),
+      proxyQuota: {
+        dailyLimit: proxyDailyLimit,
+        dailyLimitOverride: row.daily_limit_override == null ? null : Number(row.daily_limit_override),
+        unlimited: proxyUnlimited,
+        remainingToday: proxyRemaining,
+        usedToday: Number(usage.used_count),
+        reservedToday: Number(usage.reserved_count),
+      },
       paidImages: walletBalance(userId),
       maxConcurrency: Number(row.max_concurrency),
       capabilities,
@@ -241,7 +255,7 @@ export function createCultivationService(
     return Number(row?.image_balance || 0);
   }
 
-  function adjustWallet(userId: string, delta: number, kind: "admin_grant" | "reserve" | "refund", sourceId: string, packageId: string | null = null, operatorUserId: string | null = null, reason = "") {
+  function adjustWallet(userId: string, delta: number, kind: "registration_grant" | "admin_grant" | "reserve" | "refund", sourceId: string, packageId: string | null = null, operatorUserId: string | null = null, reason = "") {
     database.query("INSERT OR IGNORE INTO wallet_balances(user_id, image_balance, updated_at) VALUES (?, 0, ?)").run(userId, now().getTime());
     const changed = database.query("UPDATE wallet_balances SET image_balance = image_balance + ?, updated_at = ? WHERE user_id = ? AND image_balance + ? >= 0").run(delta, now().getTime(), userId, delta);
     if (!changed.changes) throw new CultivationError("付费生图次数不足", 402, "WALLET_INSUFFICIENT");
@@ -255,6 +269,14 @@ export function createCultivationService(
     const items = database.query("SELECT id, delta, balance_after AS balanceAfter, kind, source_id AS sourceId, package_id AS packageId, created_at AS createdAt FROM wallet_ledger WHERE user_id = ? ORDER BY sequence DESC LIMIT ? OFFSET ?")
       .all(userId, pageSize, (page - 1) * pageSize);
     return { balance: walletBalance(userId), packages: WALLET_PACKAGES, paymentEnabled: false, items, page, pageSize, total };
+  }
+
+  function grantRegistrationImages(userId: string) {
+    return database.transaction(() => {
+      if (!database.query("SELECT 1 FROM wallet_ledger WHERE user_id = ? AND kind = 'registration_grant'").get(userId))
+        adjustWallet(userId, 6, "registration_grant", "registration", null, null, "新注册赠送6次生图额度");
+      return walletBalance(userId);
+    })();
   }
 
   function grantWalletPackage(adminUserId: string, userId: string, packageId: string, sourceId: string, reason: string) {
@@ -311,13 +333,20 @@ export function createCultivationService(
           403,
           "CAPABILITY_REQUIRED",
         );
-      const freeCount = profile.remainingToday === null ? input.count : Math.min(input.count, profile.remainingToday);
+      const quota = input.kind === "proxy" ? profile.proxyQuota : profile;
+      const freeCount = quota.remainingToday === null ? input.count : Math.min(input.count, quota.remainingToday);
       const paidCount = input.count - freeCount;
-      if (paidCount && (!input.allowPaidImages || profile.paidImages < paidCount))
+      if (paidCount && (input.kind === "proxy" || !input.allowPaidImages))
         throw new CultivationError(
-          input.allowPaidImages ? "今日免费次数与灵卷余额不足" : "今日斗气已经耗尽",
+          input.kind === "proxy" ? "今日服务额度已经耗尽" : "生图需要使用灵卷，请确认付费生图",
           429,
           "DAILY_QUOTA_EXHAUSTED",
+        );
+      if (paidCount && profile.paidImages < paidCount)
+        throw new CultivationError(
+          "灵卷余额不足，请先补充灵卷后再生图",
+          402,
+          "WALLET_INSUFFICIENT",
         );
       const date = dateKey(now(), timeZone);
       if (freeCount) database
@@ -1133,6 +1162,7 @@ export function createCultivationService(
     ensureUser,
     getProfile,
     getWallet,
+    grantRegistrationImages,
     grantWalletPackage,
     reserveGeneration,
     settleGeneration,
@@ -1513,8 +1543,8 @@ function profileRow(database: Database, userId: string) {
   return database
     .query(
       `
-        SELECT u.display_name, u.internal_note, u.public_message, c.*, s.realm_id, s.name AS stage_name, s.stage_order, s.required_xp,
-               r.name AS realm_name, r.color, r.icon_key, r.animation_preset, r.daily_limit, r.max_concurrency
+        SELECT u.display_name, u.is_admin, u.internal_note, u.public_message, c.*, s.realm_id, s.name AS stage_name, s.stage_order, s.required_xp,
+               r.code AS realm_code, r.name AS realm_name, r.color, r.icon_key, r.animation_preset, r.daily_limit, r.max_concurrency
         FROM user_cultivation c
         JOIN users u ON u.user_id = c.user_id
         JOIN realm_stages s ON s.id = c.stage_id

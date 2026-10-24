@@ -9,7 +9,7 @@ import { LivingWordmark } from "@/components/home/living-wordmark";
 import { useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { ImperialSeal } from "@/features/cultivation/imperial-seal";
-import { cultivationStageLabel, quotaText } from "@/features/cultivation/utils";
+import { cultivationStageLabel, imageQuotaText } from "@/features/cultivation/utils";
 import { promptImageCandidates, promptOriginalUrl } from "@/components/prompts/prompt-cover";
 import { SpecularButton } from "@/components/ui/specular-button";
 import { fetchHomepagePromptCovers, type PromptCover } from "@/services/api/prompts";
@@ -189,8 +189,8 @@ export default function IndexPage() {
                         <div className="home-cultivation-identity flex items-center gap-4">
                             {isImperialMode ? <ImperialSeal className="size-11" /> : <span className="shj-seal">{cultivation.realmName}</span>}
                             <div className="flex flex-col gap-0.5">
-                                <span className="font-display text-sm tracking-[0.15em] text-foreground">{isImperialMode ? "今日创作" : "今日修行"}</span>
-                                <span className="home-cultivation-description text-xs text-muted-foreground">{quotaText(cultivation.remainingToday, cultivation.unlimited)} · 笔耕不辍,境界自现</span>
+                                <span className="font-display text-sm tracking-[0.15em] text-foreground">{cultivation.dailyLimit === 0 && !cultivation.unlimited ? "创作灵卷" : isImperialMode ? "今日创作" : "今日修行"}</span>
+                                <span className="home-cultivation-description text-xs text-muted-foreground">{imageQuotaText(cultivation)} · 笔耕不辍,境界自现</span>
                             </div>
                         </div>
                         <Link

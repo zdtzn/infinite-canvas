@@ -8,7 +8,7 @@ import { RealmIcon } from "@/features/cultivation/realm-icon";
 import { cultivationProfileQueryKey, cultivationProfileQueryKeyFor, useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialMode } from "@/features/cultivation/imperial-mode";
 import { cultivationRealmHero } from "@/features/cultivation/realm-hero";
-import { cultivationCapabilityLabel, cultivationProgressPercent, cultivationStageLabel } from "@/features/cultivation/utils";
+import { cultivationCapabilityLabel, cultivationProgressPercent, cultivationStageLabel, imageQuotaText } from "@/features/cultivation/utils";
 import { cn } from "@/lib/utils";
 import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { lazyRoute } from "@/lib/lazy-route";
@@ -96,7 +96,8 @@ export default function CultivationPage() {
     const finalStage = !data.nextStageName;
     const stageLabel = cultivationStageLabel(data.realmName, data.stageName);
     const avatarUrl = data.avatarUrl || user?.avatarUrl || "";
-    const remainingQuota = data.unlimited ? null : Math.max(0, data.remainingToday || 0);
+    const walletOnly = data.dailyLimit === 0 && !data.unlimited;
+    const todaySuccessfulImages = data.todaySuccessfulImages ?? data.usedToday;
     const quotaConsumed = Math.max(0, data.usedToday + data.reservedToday);
     const quotaPercent = data.unlimited || !data.dailyLimit ? 0 : Math.max(0, Math.min(100, Math.round((quotaConsumed / data.dailyLimit) * 100)));
     const cultivationPercent = cultivationProgressPercent(data.currentXp, data.requiredXp, false);
@@ -267,16 +268,16 @@ export default function CultivationPage() {
                                     <div className="min-w-0 border-t border-[rgb(237_237_230/0.09)] pt-6 sm:border-l sm:border-t-0 sm:pl-8 sm:pt-0">
                                         <span className="font-display text-sm tracking-[0.1em] text-[#edede6]">今日创作</span>
                                         <div className="mt-3 flex items-baseline gap-1.5">
-                                            <span className="font-display text-3xl leading-none text-[#edede6]">{data.usedToday.toLocaleString()}</span>
-                                            <span className="text-sm text-[#c9c4b9]">次</span>
+                                            <span className="font-display text-3xl leading-none text-[#edede6]">{todaySuccessfulImages.toLocaleString()}</span>
+                                            <span className="text-sm text-[#c9c4b9]">张</span>
                                         </div>
                                         <p className="mt-2 text-sm text-[#8a8a96]">今日创作持续累计</p>
                                     </div>
                                 ) : (
                                     <MetricBlock
                                         label="今日创作"
-                                        value={data.unlimited ? "不限次数" : `剩余 ${remainingQuota} 次`}
-                                        helper={data.unlimited ? `今日已使用 ${data.usedToday} 次` : `已使用 ${data.usedToday} / ${data.dailyLimit} 次${data.reservedToday ? ` · ${data.reservedToday} 次生成中占用` : ""}`}
+                                        value={`${todaySuccessfulImages.toLocaleString()} 张`}
+                                        helper={`${imageQuotaText(data)}${walletOnly ? " · 每张消耗 1 灵卷，升级不赠送每日图片额度" : data.reservedToday ? ` · ${data.reservedToday} 次生成中占用` : ""}`}
                                         percent={quotaPercent}
                                         quota
                                     />

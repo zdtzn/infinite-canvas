@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { cultivationGenerationBlockReason, cultivationProgressPercent, cultivationRefundNotice, cultivationStageLabel, quotaText, requiredCultivationCapabilities } from "./utils";
+import { cultivationGenerationBlockReason, cultivationProgressPercent, cultivationRefundNotice, cultivationStageLabel, imageQuotaText, quotaText, requiredCultivationCapabilities } from "./utils";
 
 describe("cultivation presentation helpers", () => {
     test("clamps experience progress and treats pending breakthroughs as complete", () => {
@@ -25,6 +25,18 @@ describe("cultivation presentation helpers", () => {
         expect(cultivationRefundNotice(true, "all")).toBe("");
         expect(cultivationRefundNotice(true, "failed")).toBe("");
         expect(cultivationRefundNotice(undefined, "all")).toBe("");
+    });
+
+    test("image wallet balances and emperor unlimited access have distinct guidance", () => {
+        expect(imageQuotaText({ dailyLimit: 0, unlimited: false, remainingToday: 0, paidImages: 6 })).toBe("灵卷 6 张");
+        expect(imageQuotaText({ dailyLimit: 0, unlimited: false, remainingToday: 0, paidImages: 0 })).toBe("灵卷 0 张");
+        expect(imageQuotaText({ dailyLimit: 0, unlimited: false, remainingToday: 0 })).toBe("灵卷余额待同步");
+        expect(imageQuotaText({ dailyLimit: null, unlimited: true, remainingToday: null, paidImages: 0 })).toBe("今日不限次数");
+        const input = { dailyLimit: 0, remainingToday: 0, unlimited: false, maxConcurrency: 1, capabilities: [], requiredCapabilities: [], requestedCount: 1, paidImages: 0 };
+        expect(cultivationGenerationBlockReason(input)).toContain("灵卷不足");
+        expect(cultivationGenerationBlockReason({ ...input, paidImages: 6, requestedCount: 6 })).toBeNull();
+        expect(cultivationGenerationBlockReason({ ...input, paidImages: 6, requestedCount: 7 })).toContain("灵卷不足");
+        expect(cultivationGenerationBlockReason({ ...input, dailyLimit: null, unlimited: true, remainingToday: null })).toBeNull();
     });
 
     test("derives generation capability requirements for the UI", () => {

@@ -79,6 +79,8 @@ export function generationFailureFeedback(error: unknown, options: GenerationFai
     const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
     const description = /policy|safety|moderation|审核|违规|安全策略|内容限制/i.test(detail)
         ? "内容未通过审核，请调整提示词或参考图。"
+        : /灵卷.*不足|付费生图次数不足|WALLET_INSUFFICIENT/i.test(detail)
+          ? "灵卷不足，请联系管理员补充灵卷或减少生成数量。"
         : /quota|余额|额度|配额/i.test(detail)
           ? "可用额度不足，请查看余额或换一个模型。"
           : /api.?key|401|403|认证|权限|身份验证/i.test(detail)

@@ -117,7 +117,7 @@ const adminSections = [
     { key: "overview", group: "运营中枢", label: "总览", title: "运营总览", description: "集中查看用户规模、任务状态、渠道健康和最近管理变更。", icon: LayoutDashboard },
     { key: "users", group: "修炼体系", label: "用户管理", title: "用户管理", description: "查看并调整用户境界、修为、额度与账号状态。", icon: Users },
     { key: "rules", group: "修炼体系", label: "成长规则", title: "成长规则", description: "按境界查看阶段进度、升级阈值和突破反馈。", icon: BookOpenCheck },
-    { key: "capabilities", group: "修炼体系", label: "能力与额度", title: "能力与额度", description: "维护修为奖励、能力总开关和各境界默认额度。", icon: ShieldCheck },
+    { key: "capabilities", group: "修炼体系", label: "能力与额度", title: "能力与额度", description: "维护修为奖励、能力总开关和各境界的其他服务默认额度。", icon: ShieldCheck },
     { key: "announcements", group: "系统管理", label: "公告管理", title: "公告管理", description: "创建、置顶、发布和归档面向全体用户的系统公告。", icon: Bell },
     { key: "monitoring", group: "系统管理", label: "运行监控", title: "运行监控", description: "检查渠道成功率、任务运行状态、备份和资源清理。", icon: Activity },
     { key: "records", group: "系统管理", label: "记录中心", title: "记录中心", description: "统一查询生成用量、修为流水、管理操作和登录记录。", icon: ScrollText },
@@ -316,11 +316,14 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
             render: (_: unknown, user) => <CultivationProgress user={user} />,
         },
         {
-            title: "今日额度",
+            title: "其他服务今日额度",
             key: "quota",
             width: 100,
             align: "right",
-            render: (_: unknown, user) => <span className="cultivation-count">{user.unlimited ? "不限" : `${user.usedToday}/${user.dailyLimit ?? 0}`}</span>,
+            render: (_: unknown, user) => {
+                const quota = user.proxyQuota || user;
+                return <span className="cultivation-count">{quota.unlimited ? "不限" : `${quota.usedToday}/${quota.dailyLimit ?? 0}`}</span>;
+            },
         },
         { title: "总作品", dataIndex: "totalImages", key: "totalImages", width: 82, align: "right", render: (value: number) => <span className="cultivation-count">{value.toLocaleString()}</span> },
         { title: "活跃天数", dataIndex: "activeDays", key: "activeDays", width: 84, align: "right", render: (value: number) => <span className="cultivation-count">{value.toLocaleString()}</span> },
@@ -430,6 +433,7 @@ function UserDrawer({
     const [grantReason, setGrantReason] = useState("");
     const [grantLoading, setGrantLoading] = useState(false);
     const [grantedBalance, setGrantedBalance] = useState<number | null>(null);
+    const proxyQuota = user?.proxyQuota || user;
     const grantKeyRef = useRef("");
     const initialValuesRef = useRef<UserFormValues | null>(null);
     const requestClose = () => {
@@ -465,7 +469,7 @@ function UserDrawer({
             void queryClient.invalidateQueries({ queryKey: ["admin", "cultivation", "users"] });
             void queryClient.invalidateQueries({ queryKey: ["cultivation", "profile"] });
             void queryClient.invalidateQueries({ queryKey: ["wallet"] });
-            message.success("灵卷测试次数已发放");
+            message.success("灵卷已发放");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "发放失败");
         } finally {
@@ -487,8 +491,8 @@ function UserDrawer({
                     stageId: user.stageId,
                     currentXp: user.currentXp,
                     xpDelta: 0,
-                    dailyLimitOverride: user.dailyLimitOverride,
-                    unlimited: user.unlimited,
+                    dailyLimitOverride: proxyQuota?.dailyLimitOverride,
+                    unlimited: proxyQuota?.unlimited,
                     status: user.status,
                     internalNote: user.internalNote,
                     publicMessage: user.publicMessage,
@@ -523,10 +527,10 @@ function UserDrawer({
                     </div>
                     <div className="cultivation-drawer-metrics">
                         <AdminMetric label="当前境界" value={cultivationStageLabel(user.realmName, user.stageName)} />
-                        <AdminMetric label="今日用量" value={user.unlimited ? "不限" : `${user.usedToday}/${user.dailyLimit ?? 0}`} />
+                        <AdminMetric label="其他服务用量" value={proxyQuota?.unlimited ? "不限" : `${proxyQuota?.usedToday ?? 0}/${proxyQuota?.dailyLimit ?? 0}`} />
                         <AdminMetric label="累计作品" value={user.totalImages.toLocaleString()} />
                     </div>
-                    <p className="mt-3 text-sm text-stone-500">灵卷可用 {grantedBalance ?? user.paidImages ?? 0} 次 · 管理员发放会记入独立账本</p>
+                    <p className="mt-3 text-sm text-stone-500">灵卷可用 {grantedBalance ?? user.paidImages ?? 0} 张 · 管理员发放会记入独立账本</p>
                 </div>
             ) : null}
             <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)}>
@@ -563,12 +567,12 @@ function UserDrawer({
                 </section>
 
                 <section className="cultivation-form-section">
-                    <FormSectionHeading title="额度与账号" description="用户覆盖优先于当前境界的默认规则。" />
+                    <FormSectionHeading title="额度与账号" description="下方额度覆盖仅用于视频等其他服务，不影响生图灵卷计费与斗帝免费不限。" />
                     <div className="grid grid-cols-2 gap-3">
-                        <Form.Item label="每日次数覆盖" name="dailyLimitOverride" extra="留空继承境界规则">
+                        <Form.Item label="其他服务每日额度覆盖" name="dailyLimitOverride" extra="留空继承境界规则">
                             <InputNumber min={0} className="w-full" />
                         </Form.Item>
-                        <Form.Item label="不限次数" name="unlimited" valuePropName="checked" extra="优先于次数覆盖">
+                        <Form.Item label="其他服务不限" name="unlimited" valuePropName="checked" extra="优先于其他服务额度覆盖">
                             <Switch />
                         </Form.Item>
                     </div>
@@ -682,7 +686,7 @@ function GrowthRulesPanel() {
                                 <span className="min-w-0 flex-1">
                                     <span className="cultivation-realm-name">{realm.name}</span>
                                     <span className="cultivation-realm-meta">
-                                        <span>{realm.dailyLimit === null ? "不限额度" : `${realm.dailyLimit} 次/日`}</span>
+                                        <span>{realm.dailyLimit === null ? "其他服务不限" : `其他服务 ${realm.dailyLimit} 次/日`}</span>
                                         <span aria-hidden="true">·</span>
                                         <span>{activeStageCount} 阶段</span>
                                     </span>
@@ -715,7 +719,7 @@ function GrowthRulesPanel() {
                             </div>
                         </div>
                         <div className="cultivation-admin-metric-strip cultivation-rule-metrics">
-                            <AdminMetric label="每日额度" value={selectedRealm.dailyLimit === null ? "不限" : `${selectedRealm.dailyLimit} 次`} />
+                            <AdminMetric label="其他服务每日额度" value={selectedRealm.dailyLimit === null ? "不限" : `${selectedRealm.dailyLimit} 次`} />
                             <AdminMetric label="最大并发" value={selectedRealm.maxConcurrency.toLocaleString()} />
                             <AdminMetric label="阶段数量" value={selectedRealm.stages.length.toLocaleString()} />
                             <AdminMetric label="突破反馈" value={animationPresetLabel(selectedRealm.animationPreset)} />
@@ -814,7 +818,7 @@ function CapabilitiesQuotaPanel() {
             await updateCultivationRealm(editingRealm.id, values);
             setEditingRealm(null);
             await refresh();
-            message.success("境界额度已保存");
+            message.success("其他服务额度已保存");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存失败");
         }
@@ -824,8 +828,8 @@ function CapabilitiesQuotaPanel() {
             <section className="cultivation-admin-panel">
                 <div className="cultivation-admin-section-heading">
                     <div>
-                        <h2>境界默认额度</h2>
-                        <p>用户没有单独覆盖时，将使用这里的每日额度和最大并发。</p>
+                        <h2>其他服务默认额度</h2>
+                        <p>用户没有单独覆盖时，视频等其他服务使用这里的每日额度；普通账号在斗帝以下生图按灵卷计费，斗帝免费不限，最大并发仍对创作任务生效。</p>
                     </div>
                 </div>
                 <RealmQuotaTable realms={data.realms} onEdit={setEditingRealm} />
@@ -848,7 +852,7 @@ function RealmQuotaTable({ realms, onEdit }: { realms: CultivationRealmConfig[];
             dataSource={realms}
             columns={[
                 { title: "境界", key: "realm", width: 240, render: (_: unknown, realm) => <RealmConfigIdentity realm={realm} showBadge /> },
-                { title: "每日额度", key: "dailyLimit", width: 130, align: "right", render: (_: unknown, realm) => <span className="cultivation-count">{realm.dailyLimit === null ? "不限" : `${realm.dailyLimit} 次`}</span> },
+                { title: "其他服务每日额度", key: "dailyLimit", width: 130, align: "right", render: (_: unknown, realm) => <span className="cultivation-count">{realm.dailyLimit === null ? "不限" : `${realm.dailyLimit} 次`}</span> },
                 { title: "最大并发", dataIndex: "maxConcurrency", width: 110, align: "right", render: (value: number) => <span className="cultivation-count">{value}</span> },
                 { title: "状态", dataIndex: "active", width: 96, render: (active: boolean) => (active ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>) },
                 {
@@ -934,7 +938,7 @@ function RealmDrawer({ realm, onClose, onSubmit }: { realm: CultivationRealmConf
                     }}
                 </Form.Item>
                 <div className="mt-5 grid grid-cols-2 gap-3">
-                    <Form.Item label="每日生图额度" name="dailyLimit" extra="留空则不限次数">
+                    <Form.Item label="其他服务每日额度" name="dailyLimit" extra="留空则其他服务不限；不影响生图计费规则">
                         <InputNumber min={0} className="w-full" />
                     </Form.Item>
                     <Form.Item label="最大并发任务" name="maxConcurrency" extra="同一用户同时运行的任务数">

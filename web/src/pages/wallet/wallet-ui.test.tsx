@@ -101,7 +101,7 @@ test("the actual page uses the current account's newer cached page two while pag
 
 test("the actual page lets newer profile and overview balances supersede cached pages without using another account", () => {
     const client = new QueryClient();
-    const profile = { realmId: "realm-dou-emperor", unlimited: true, remainingToday: null, paidImages: 37, totalImages: 202 };
+    const profile = { realmId: "realm-dou-emperor", unlimited: true, dailyLimit: null, remainingToday: null, paidImages: 37, totalImages: 202 };
     client.setQueryData(walletQueryOptions("").queryKey, firstPage, { updatedAt: 100 });
     client.setQueryData(walletQueryOptions("", 2).queryKey, { ...firstPage, page: 2, balance: 38 }, { updatedAt: 200 });
     client.setQueryData(walletQueryOptions("user-b", 2).queryKey, { ...firstPage, page: 2, balance: 999 }, { updatedAt: 1_000 });
@@ -167,7 +167,7 @@ test("a failed ledger refresh retains its newer successfully cached balance", as
 
 test("the actual page displays the newer overview or profile balance", () => {
     const client = new QueryClient();
-    const profile = { realmId: "realm-dou-emperor", unlimited: true, remainingToday: null, paidImages: 38, totalImages: 202 };
+    const profile = { realmId: "realm-dou-emperor", unlimited: true, dailyLimit: null, remainingToday: null, paidImages: 38, totalImages: 202 };
     client.setQueryData(walletQueryOptions("").queryKey, firstPage, { updatedAt: 100 });
     for (const userId of ["", "local"]) client.setQueryData(cultivationProfileQueryKeyFor(userId), profile, { updatedAt: 200 });
     try {
@@ -180,7 +180,15 @@ test("the actual page displays the newer overview or profile balance", () => {
 });
 
 test("zero paid balance does not imply an unlimited user needs a top-up", () => {
-    assert.equal(walletResourceStatus({ unlimited: true, remainingToday: null }, 0), "今日免费不限，可直接创作，无需消耗灵卷。");
+    assert.equal(walletResourceStatus({ unlimited: true, remainingToday: null, dailyLimit: null }, 0), "今日免费不限，可直接创作，无需消耗灵卷。");
+});
+
+test("wallet-only status distinguishes available, depleted and unknown balances without free quota promises", () => {
+    const profile = { unlimited: false, remainingToday: 0, dailyLimit: 0 };
+    assert.match(walletResourceStatus(profile, 40), /图片生成使用灵卷，可使用灵卷继续创作/);
+    assert.match(walletResourceStatus(profile, 0), /当前灵卷不足，请联系管理员补充/);
+    assert.match(walletResourceStatus(profile, undefined), /图片生成使用灵卷，灵卷余额待同步/);
+    for (const balance of [40, 0, undefined]) assert.doesNotMatch(walletResourceStatus(profile, balance), /免费|明日|命宫/);
 });
 
 test("resource status distinguishes free, paid, depleted and unknown quotas", () => {
@@ -210,6 +218,12 @@ test("record sources show purpose first and keep identifiers in details", () => 
     assert.deepEqual(walletRecordSource(record, packages), { label: "图片生成", fullId: record.sourceId });
     assert.deepEqual(walletRecordSource({ ...record, sourceId: "short-job" }, packages), { label: "图片生成", fullId: "short-job" });
     assert.deepEqual(walletRecordSource({ ...record, packageId: "removed-package" }, packages), { label: "灵卷补充" });
+});
+
+test("registration gifts have their own ledger label and source", () => {
+    assert.equal(walletLedgerLabels.registration_grant, "注册赠送");
+    assert.deepEqual(walletRecordSource({ ...record, kind: "registration_grant", sourceId: "registration:user-a" }, packages), { label: "新用户赠送" });
+    assert.deepEqual(walletRecordSource({ ...record, kind: "registration_grant", packageId: "juling" }, packages), { label: "新用户赠送" });
 });
 
 test("long source disclosure uses native keyboard-operable details and selectable full text", () => {
@@ -365,7 +379,7 @@ test("the actual page renders zero balance with unlimited free creation and inte
     const client = new QueryClient();
     // Zustand's server snapshot starts with no user; seed both profile runtime modes without making HTTP requests.
     client.setQueryData(walletQueryOptions("").queryKey, { ...firstPage, balance: 0, items: [], total: 0 });
-    for (const userId of ["", "local"]) client.setQueryData(cultivationProfileQueryKeyFor(userId), { realmId: "realm-dou-emperor", unlimited: true, remainingToday: null, paidImages: 0, totalImages: 202 });
+    for (const userId of ["", "local"]) client.setQueryData(cultivationProfileQueryKeyFor(userId), { realmId: "realm-dou-emperor", unlimited: true, dailyLimit: null, remainingToday: null, paidImages: 0, totalImages: 202 });
     try {
         const html = renderWallet(client);
         assert.match(html, /今日免费不限，可直接创作，无需消耗灵卷/);
@@ -383,6 +397,30 @@ test("the actual page renders zero balance with unlimited free creation and inte
         assert.doesNotMatch(html, /需要充值|最划算|超值/);
     } finally {
         client.clear();
+    }
+});
+
+test("the actual ordinary wallet-only page explains one-time registration gifts and administrator replenishment", () => {
+    for (const balance of [0, 40]) {
+        const client = new QueryClient();
+        client.setQueryData(walletQueryOptions("").queryKey, { ...firstPage, balance });
+        for (const userId of ["", "local"]) client.setQueryData(cultivationProfileQueryKeyFor(userId), { realmId: "realm-dou-zun", realmName: "斗尊", stageName: "一星", iconKey: "Star", dailyLimit: 0, unlimited: false, remainingToday: 0, paidImages: balance, totalImages: 202 });
+        try {
+            const html = renderWallet(client);
+            assert.match(html, /图片生成消耗/);
+            assert.match(html, /灵卷 \/ 张/);
+            assert.match(html, /每生成 1 张图片消耗 1 灵卷/);
+            assert.match(html, /新注册账号一次性获赠 6 灵卷，不每日续赠/);
+            assert.match(html, /赠送用完后需补充灵卷/);
+            assert.match(html, /境界提升不赠送每日图片额度/);
+            assert.match(html, /斗帝境界可免费不限生成/);
+            assert.match(html, /未生成结果的灵卷按实际结算返还/);
+            assert.match(html, /支付功能暂未开放/);
+            assert.match(html, balance ? /可使用灵卷继续创作/ : /请联系管理员补充/);
+            assert.doesNotMatch(html, /今日免费|优先使用|明日恢复|充值/);
+        } finally {
+            client.clear();
+        }
     }
 });
 

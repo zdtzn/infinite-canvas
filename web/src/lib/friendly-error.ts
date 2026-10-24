@@ -17,6 +17,10 @@ export function friendlyErrorMessage(value: unknown, status?: number) {
     const supportReference = extractSupportReference(value);
     const withSupportReference = (message: string) => (supportReference && !message.includes(supportReference) ? `${message}（${supportReference}）` : message);
 
+    if (/(灵卷.*不足|付费生图次数不足|WALLET_INSUFFICIENT)/i.test(raw)) {
+        return withSupportReference("灵卷不足，请联系管理员补充灵卷或减少生成数量");
+    }
+
     if (/(content policy|safety|moderation|blocked prompt|content_filter)/i.test(raw)) {
         return withSupportReference("提示词或参考图触发了渠道内容限制，请调整内容后重试");
     }

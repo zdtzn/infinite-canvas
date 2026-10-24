@@ -78,10 +78,11 @@ export default function VideoPage() {
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const requiredCapabilities = requiredCultivationCapabilities({ model, quality: effectiveConfig.quality, referenceCount: references.length, hasMask: false });
-    const generationBlockReason = cultivationProfile
+    const proxyQuota = cultivationProfile?.proxyQuota || cultivationProfile;
+    const generationBlockReason = cultivationProfile && proxyQuota
         ? cultivationGenerationBlockReason({
-              remainingToday: cultivationProfile.remainingToday,
-              unlimited: cultivationProfile.unlimited,
+              remainingToday: proxyQuota.remainingToday,
+              unlimited: proxyQuota.unlimited,
               maxConcurrency: cultivationProfile.maxConcurrency,
               capabilities: cultivationProfile.capabilities,
               requestedCount: 1,
@@ -337,8 +338,8 @@ export default function VideoPage() {
             <p className="mt-2 text-center text-xs text-stone-400">最多同时跟踪 2 个任务 · 待处理上限 {VIDEO_TASK_QUEUE_LIMIT} 个 · 离开本页仍会继续查询</p>
             {generationBlockReason ? (
                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
-            ) : cultivationProfile ? (
-                <div className="mt-2 text-center text-xs text-stone-400">{quotaText(cultivationProfile.remainingToday, cultivationProfile.unlimited)}</div>
+            ) : proxyQuota ? (
+                <div className="mt-2 text-center text-xs text-stone-400">其他服务额度 · {quotaText(proxyQuota.remainingToday, proxyQuota.unlimited)}</div>
             ) : null}
         </>
     );

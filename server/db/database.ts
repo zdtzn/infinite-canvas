@@ -1159,6 +1159,36 @@ function runMigrations(database: Database) {
       database.exec("ALTER TABLE system_announcements ADD COLUMN style_json TEXT NOT NULL DEFAULT '{}'");
       database.query("INSERT INTO schema_migrations(version, applied_at) VALUES (27, ?)").run(Date.now());
     })();
+  if (!database.query("SELECT 1 FROM schema_migrations WHERE version = 28").get())
+    database.transaction(() => {
+      const sequence = database.query("SELECT seq FROM sqlite_sequence WHERE name = 'wallet_ledger'").get() as { seq: number } | null;
+      database.exec(`
+        CREATE TABLE wallet_ledger_registration (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+          delta INTEGER NOT NULL,
+          balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
+          kind TEXT NOT NULL CHECK (kind IN ('registration_grant', 'admin_grant', 'reserve', 'refund')),
+          source_id TEXT NOT NULL,
+          package_id TEXT,
+          operator_user_id TEXT,
+          reason TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          UNIQUE (user_id, kind, source_id)
+        );
+        INSERT INTO wallet_ledger_registration SELECT * FROM wallet_ledger;
+        DROP TABLE wallet_ledger;
+        ALTER TABLE wallet_ledger_registration RENAME TO wallet_ledger;
+        CREATE INDEX idx_wallet_ledger_user_created ON wallet_ledger(user_id, sequence DESC);
+        CREATE UNIQUE INDEX idx_wallet_admin_grant_source ON wallet_ledger(source_id) WHERE kind = 'admin_grant';
+      `);
+      if (sequence) {
+        const updated = database.query("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'wallet_ledger'").run(sequence.seq);
+        if (!updated.changes) database.query("INSERT INTO sqlite_sequence(name, seq) VALUES ('wallet_ledger', ?)").run(sequence.seq);
+      }
+      database.query("INSERT INTO schema_migrations(version, applied_at) VALUES (28, ?)").run(Date.now());
+    })();
 }
 
 function migrateLegacyState(

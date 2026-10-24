@@ -51,6 +51,7 @@ export default function WalletPage() {
     );
     const balance = useSyncExternalStore(subscribeWalletBalance, getWalletBalance, getWalletBalance);
     const imperial = Boolean(profile && isDouEmperorRealm(profile.realmId));
+    const walletOnly = profile?.dailyLimit === 0 && !profile.unlimited;
     const data = wallet.data;
     const loading = wallet.isPending;
     const records = ledger.data;
@@ -93,10 +94,10 @@ export default function WalletPage() {
                         <p className="wallet-resource-status">{walletResourceStatus(profile, balance)}</p>
                         <dl className="wallet-resource-details">
                             <div>
-                                <dt>今日免费剩余</dt>
+                                <dt>{walletOnly ? "图片生成消耗" : "今日免费剩余"}</dt>
                                 <dd>
-                                    {profile ? (profile.unlimited ? "不限" : (profile.remainingToday?.toLocaleString() ?? "—")) : "—"}
-                                    {profile && !profile.unlimited && profile.remainingToday !== null ? <small> 次</small> : null}
+                                    {walletOnly ? "1" : profile ? (profile.unlimited ? "不限" : (profile.remainingToday?.toLocaleString() ?? "—")) : "—"}
+                                    {walletOnly ? <small> 灵卷 / 张</small> : profile && !profile.unlimited && profile.remainingToday !== null ? <small> 次</small> : null}
                                 </dd>
                             </div>
                             <div>
@@ -178,7 +179,8 @@ export default function WalletPage() {
                             <div className="wallet-rules">
                                 <Info size={17} aria-hidden="true" />
                                 <p>
-                                    <strong>1 灵卷对应 1 张图片生成额度。</strong>优先使用今日免费额度，不足部分使用灵卷；未生成结果的灵卷按实际结算返还。
+                                    <strong>{walletOnly ? "每生成 1 张图片消耗 1 灵卷。" : "1 灵卷对应 1 张图片生成额度。"}</strong>
+                                    {walletOnly ? "新注册账号一次性获赠 6 灵卷，不每日续赠；赠送用完后需补充灵卷。境界提升不赠送每日图片额度，斗帝境界可免费不限生成；未生成结果的灵卷按实际结算返还。" : "优先使用今日免费额度，不足部分使用灵卷；未生成结果的灵卷按实际结算返还。"}
                                 </p>
                             </div>
                         </section>
@@ -186,7 +188,7 @@ export default function WalletPage() {
                             <div className="wallet-section-heading">
                                 <div>
                                     <h2 id="wallet-ledger-heading">灵卷记录</h2>
-                                    <p>仅记录灵卷收支，免费额度使用不在此列。</p>
+                                    <p>{walletOnly ? "记录灵卷收支与图片生成消耗。" : "仅记录灵卷收支，免费额度使用不在此列。"}</p>
                                 </div>
                                 {recordTotal ? <span className="wallet-record-count">共 {recordTotal.toLocaleString()} 条</span> : null}
                             </div>

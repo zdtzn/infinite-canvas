@@ -708,6 +708,7 @@ async function registerWithEmail(request: Request, codeOnly: boolean) {
                 writeState();
                 emailRegistration.bind(user.userId, email);
                 cultivation?.ensureUser(user.userId, false);
+                requireCultivation().grantRegistrationImages(user.userId);
             })();
         } catch (error) { delete state.users[user.userId]; throw error; }
         return authenticatedResponse(user);
@@ -4002,6 +4003,7 @@ async function proxyAiRequest(request: Request, session: SessionPayload, channel
     }
     if (usageId && cultivationService) {
         cultivationService.reserveGeneration({
+            kind: "proxy",
             jobId: usageId,
             userId: session.userId,
             channelId,
@@ -4541,7 +4543,7 @@ function errorResponse(error: unknown, requestId: string) {
             stack: error instanceof Error ? error.stack : undefined,
         }),
     );
-    return json({ error: { message }, requestId }, status);
+    return json({ error: { message, ...(error instanceof CultivationError ? { code: error.code } : {}) }, requestId }, status);
 }
 
 function json(value: unknown, status = 200, headers?: HeadersInit) {

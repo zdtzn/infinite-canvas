@@ -35,6 +35,14 @@ test("keeps ordinary prompt and parameter failures in the common vocabulary", ()
     expect(generationFailureText(first)).not.toContain("生成失败");
 });
 
+test("image wallet exhaustion keeps useful advice in ordinary and emperor feedback", () => {
+    for (const isDouEmperor of [false, true]) {
+        const feedback = generationFailureFeedback(friendlyErrorMessage("灵卷余额不足，请先补充灵卷后再生图", 402), { isDouEmperor });
+        expect(feedback.description).toContain("灵卷不足");
+        expect(feedback.description).not.toMatch(/换一个模型|明日|每日/);
+    }
+});
+
 test("preserves a support reference for details without exposing it in the default feedback", () => {
     const feedback = generationFailureFeedback("上游暂时不可用（请求编号 1234567890abcdef）", { seed: "support" });
 

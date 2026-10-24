@@ -91,6 +91,8 @@ export type CultivationProfile = {
     usedToday: number;
     reservedToday: number;
     remainingToday: number | null;
+    proxyQuota?: { dailyLimit: number | null; dailyLimitOverride: number | null; unlimited: boolean; remainingToday: number | null; usedToday: number; reservedToday: number };
+    todaySuccessfulImages?: number;
     paidImages?: number;
     maxConcurrency: number;
     capabilities: string[];
@@ -635,7 +637,7 @@ export async function fetchCultivationProfile() {
 }
 
 export type WalletPackage = { id: string; name: string; priceFen: number; images: number };
-export type WalletLedgerItem = { id: string; delta: number; balanceAfter: number; kind: "admin_grant" | "reserve" | "refund"; sourceId: string; packageId: string | null; createdAt: number };
+export type WalletLedgerItem = { id: string; delta: number; balanceAfter: number; kind: "admin_grant" | "registration_grant" | "reserve" | "refund"; sourceId: string; packageId: string | null; createdAt: number };
 export type WalletOverview = { balance: number; packages: WalletPackage[]; paymentEnabled: boolean; items: WalletLedgerItem[]; page: number; pageSize: number; total: number };
 
 export async function fetchWallet(page = 1) {

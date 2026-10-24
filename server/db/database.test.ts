@@ -29,6 +29,40 @@ afterEach(() => {
 });
 
 describe("SQLite application database", () => {
+  test("extends registration-grant ledger kinds without changing existing balances, history or sequences", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const db = openAppDatabase({ dataDir });
+    try {
+      const definition = (db.raw!.query("SELECT sql FROM sqlite_master WHERE name = 'wallet_ledger'").get() as { sql: string }).sql.replace("'registration_grant', ", "");
+      db.raw!.exec(`DROP TABLE wallet_ledger; ${definition};
+        CREATE INDEX idx_wallet_ledger_user_created ON wallet_ledger(user_id, sequence DESC);
+        CREATE UNIQUE INDEX idx_wallet_admin_grant_source ON wallet_ledger(source_id) WHERE kind = 'admin_grant';
+        INSERT INTO users(user_id, display_name, created_at) VALUES ('existing', 'Existing', 1);
+        INSERT INTO wallet_balances VALUES ('existing', 37, 1);
+        INSERT INTO wallet_ledger(sequence, id, user_id, delta, balance_after, kind, source_id, created_at) VALUES
+          (7, 'old-grant', 'existing', 40, 40, 'admin_grant', 'existing-package', 1),
+          (8, 'old-reserve', 'existing', -3, 37, 'reserve', 'existing-job', 1),
+          (100, 'removed', 'existing', 0, 37, 'refund', 'removed-job', 1);
+        DELETE FROM wallet_ledger WHERE sequence = 100;
+        DELETE FROM schema_migrations WHERE version = 28;`);
+    } finally {
+      db.close();
+    }
+    const upgraded = openAppDatabase({ dataDir });
+    try {
+      expect(upgraded.raw!.query("SELECT image_balance FROM wallet_balances WHERE user_id = 'existing'").get()).toEqual({ image_balance: 37 });
+      expect(upgraded.raw!.query("SELECT sequence, id, delta FROM wallet_ledger ORDER BY sequence").all()).toEqual([{ sequence: 7, id: "old-grant", delta: 40 }, { sequence: 8, id: "old-reserve", delta: -3 }]);
+      expect(upgraded.raw!.query("SELECT 1 FROM wallet_ledger WHERE kind = 'registration_grant'").get()).toBeNull();
+      upgraded.raw!.query("INSERT INTO wallet_ledger(id, user_id, delta, balance_after, kind, source_id, created_at) VALUES ('new-registration-grant', 'existing', 6, 43, 'registration_grant', 'registration', 1)").run();
+      expect(upgraded.raw!.query("SELECT sequence FROM wallet_ledger WHERE id = 'new-registration-grant'").get()).toEqual({ sequence: 101 });
+      expect(() => upgraded.raw!.query("INSERT INTO wallet_ledger(id, user_id, delta, balance_after, kind, source_id, created_at) VALUES ('duplicate', 'existing', 6, 43, 'registration_grant', 'registration', 1)").run()).toThrow();
+      expect(upgraded.raw!.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_wallet_%' ORDER BY name").all()).toEqual([{ name: "idx_wallet_admin_grant_source" }, { name: "idx_wallet_ledger_user_created" }]);
+    } finally {
+      upgraded.close();
+    }
+  });
+
   test("upgrades pre-wallet reservations as free usage", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
@@ -38,7 +72,7 @@ describe("SQLite application database", () => {
         "INSERT INTO users(user_id, display_name, created_at) VALUES ('legacy', 'Legacy', 1)",
       ).run();
       db.raw!.exec(`
-        DELETE FROM schema_migrations WHERE version = 26;
+        DELETE FROM schema_migrations WHERE version IN (26, 28);
         DROP TABLE wallet_ledger;
         DROP TABLE wallet_balances;
         ALTER TABLE generation_usage DROP COLUMN paid_count;

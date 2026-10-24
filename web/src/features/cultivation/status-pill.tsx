@@ -9,7 +9,7 @@ import { isDouEmperorRealm } from "./imperial-mode";
 import { ImperialSeal } from "./imperial-seal";
 import { RealmIcon } from "./realm-icon";
 import { useCultivationProfile } from "./queries";
-import { cultivationAccentColor, cultivationStageLabel, quotaText } from "./utils";
+import { cultivationAccentColor, cultivationStageLabel, imageQuotaText } from "./utils";
 import "./cultivation-visuals.css";
 
 const ImperialIdentity = lazyRoute(() => import("./imperial-identity"));
@@ -35,13 +35,13 @@ export function CultivationStatusPill() {
         <>
             {isDouEmperor ? <ImperialSeal className="size-7" decorative /> : <RealmIcon iconKey={data.iconKey} className="size-3.5 shrink-0" />}
             <span className="cultivation-status-copy hidden max-w-32 truncate lg:block">{label}</span>
-            {!isDouEmperor ? <span className="cultivation-status-copy hidden text-xs text-stone-400 lg:block dark:text-stone-500">{data.remainingToday}</span> : null}
+            <span className="cultivation-status-copy hidden text-xs text-stone-400 lg:block dark:text-stone-500">{imageQuotaText(data)}</span>
         </>
     );
 
     if (!isDouEmperor)
         return (
-            <Link to="/cultivation" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} title={`${label} · ${quotaText(data.remainingToday, data.unlimited)} · 灵卷 ${data.paidImages || 0} 次`} aria-label={`打开我的修炼：${label}`}>
+            <Link to="/cultivation" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} title={`${label} · ${imageQuotaText(data)}`} aria-label={`打开我的修炼：${label}`}>
                 {statusContent}
             </Link>
         );
@@ -66,7 +66,7 @@ export function CultivationStatusPill() {
                 </Suspense>
             }
         >
-            <button type="button" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} aria-label="查看斗帝身份与帝临设置">
+            <button type="button" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} title={`${label} · ${imageQuotaText(data)}`} aria-label="查看斗帝身份与帝临设置">
                 {statusContent}
             </button>
         </Popover>

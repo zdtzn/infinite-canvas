@@ -30,6 +30,13 @@ test("explains when an image provider has no compatible account available", () =
     assert.equal(friendlyErrorMessage("No available compatible accounts"), "当前渠道暂时没有可用的模型账号，请稍后重试或切换其他渠道");
 });
 
+test("wallet balance errors do not suggest changing models or waiting for daily free quota", () => {
+    for (const detail of ["灵卷余额不足，请先补充灵卷后再生图", "付费生图次数不足", "WALLET_INSUFFICIENT"]) {
+        assert.equal(friendlyErrorMessage(detail, 402), "灵卷不足，请联系管理员补充灵卷或减少生成数量");
+    }
+    assert.equal(friendlyErrorMessage("insufficient quota"), "当前模型可用额度不足，请更换模型或联系管理员");
+});
+
 test("preserves useful application errors and handles empty server failures", () => {
     assert.equal(friendlyErrorMessage("今日斗气已经耗尽"), "今日斗气已经耗尽");
     assert.equal(friendlyErrorMessage("", 503), "当前渠道或模型暂时不可用，请刷新模型列表或更换渠道后重试");

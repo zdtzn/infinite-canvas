@@ -12,6 +12,11 @@ export function quotaText(remaining: number | null, unlimited: boolean) {
     return unlimited || remaining === null ? "今日不限次数" : `今日剩余 ${remaining} 次`;
 }
 
+export function imageQuotaText(profile: { dailyLimit?: number | null; remainingToday: number | null; unlimited: boolean; paidImages?: number }) {
+    if (profile.dailyLimit === 0 && !profile.unlimited) return typeof profile.paidImages === "number" ? `灵卷 ${profile.paidImages.toLocaleString()} 张` : "灵卷余额待同步";
+    return quotaText(profile.remainingToday, profile.unlimited);
+}
+
 export function cultivationRefundNotice(unlimited: boolean | undefined, scope: "all" | "failed") {
     if (unlimited !== false) return "";
     return scope === "failed" ? "，失败额度已自动退还" : "，本次额度已自动退还";
@@ -73,10 +78,11 @@ export function cultivationAccentColor(color: string) {
     return `hsl(${Math.round(hue)} ${Math.max(42, Math.round(saturation * 100))}% 64%)`;
 }
 
-export function cultivationGenerationBlockReason(input: { remainingToday: number | null; paidImages?: number; unlimited: boolean; maxConcurrency: number; capabilities: string[]; requestedCount: number; requiredCapabilities: string[] }) {
+export function cultivationGenerationBlockReason(input: { dailyLimit?: number | null; remainingToday: number | null; paidImages?: number; unlimited: boolean; maxConcurrency: number; capabilities: string[]; requestedCount: number; requiredCapabilities: string[] }) {
     const missing = input.requiredCapabilities.filter((key) => !input.capabilities.includes(key));
     if (missing.length) return `当前境界尚未开放${missing.map(cultivationCapabilityLabel).join("、")}`;
     if (!input.unlimited && input.remainingToday !== null && input.remainingToday + (input.paidImages || 0) < input.requestedCount) {
+        if (input.dailyLimit === 0) return "灵卷不足，请联系管理员补充灵卷或减少生成数量";
         return input.paidImages ? "今日免费次数与灵卷余额不足" : input.remainingToday > 0 ? `今日仅剩 ${input.remainingToday} 次，请减少生成数量` : "今日斗气已经耗尽";
     }
     return null;

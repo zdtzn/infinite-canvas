@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 import type { CultivationProfile } from "@/services/server-api";
+import { imageQuotaText } from "@/features/cultivation/utils";
 import "./dou-emperor-palace.css";
 import "./sovereign-domain.css";
 import { RealmCollection } from "./realm-collection";
@@ -23,6 +24,8 @@ type DouEmperorPalaceProps = {
 export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarInputRef, onAvatarChange, admin }: DouEmperorPalaceProps) {
     const capabilities = profile.capabilities;
     const modelUsage = profile.modelUsage || [];
+    const todaySuccessfulImages = profile.todaySuccessfulImages ?? profile.usedToday;
+    const walletOnly = profile.dailyLimit === 0 && !profile.unlimited;
 
     return (
         <main className="dep-page palace-redesign">
@@ -138,7 +141,7 @@ export function DouEmperorPalace({ profile, avatarUrl, avatarUploading, avatarIn
                             <Link to="/assets" className="sovereign-archive-link">前往藏卷阁 <ArrowUpRight size={16} aria-hidden="true" /></Link>
                         </header>
                         <div className="sovereign-achievements">
-                            <div className="sovereign-work-total"><span>今日创作</span><strong>{profile.usedToday.toLocaleString()}<small>次</small></strong><p>{profile.usedToday > 0 ? "今日落笔，已留新篇。" : "今日尚未落笔，随时可启新篇。"}</p></div>
+                            <div className="sovereign-work-total"><span>今日创作</span><strong>{todaySuccessfulImages.toLocaleString()}<small>张</small></strong><p>{profile.unlimited ? "图片生成免费不限次数，无需消耗灵卷。" : walletOnly ? `${imageQuotaText(profile)} · 每张消耗 1 灵卷，升级不赠送每日图片额度` : todaySuccessfulImages > 0 ? "今日落笔，已留新篇。" : "今日尚未落笔，随时可启新篇。"}</p></div>
                             <p className="sovereign-record-note">作品可在藏卷阁中查看与整理；下方记录各模型的累计创作情况。</p>
                         </div>
                         <details className="sovereign-model-details">

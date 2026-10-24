@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { openAppDatabase } from "../../db/database";
 import type { ServerState } from "../../types";
-import { createCultivationService } from "./service";
+import { CultivationError, createCultivationService } from "./service";
 
 const directories: string[] = [];
 
@@ -20,7 +20,198 @@ afterEach(() => {
 });
 
 describe("cultivation quota and settlement", () => {
-  test("grants a package once and spends free images before wallet images", () => {
+  test("grants six registration images once and never replenishes them on restart or profile reads", () => {
+    const { store, service, dataDir } = setup();
+    service.ensureUser("user", false);
+    expect(service.getWallet("user").balance).toBe(0);
+    expect(service.grantRegistrationImages("user")).toBe(6);
+    expect(service.grantRegistrationImages("user")).toBe(6);
+    expect(service.getWallet("user").items[0]).toMatchObject({ kind: "registration_grant", delta: 6, sourceId: "registration" });
+    service.reserveGeneration({ jobId: "registration-images", userId: "user", channelId: "channel", model: "gpt-image-1", count: 6, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
+    service.settleGeneration({ jobId: "registration-images", successCount: 6, failCount: 0, durationMs: 10 });
+    expect(service.grantRegistrationImages("user")).toBe(0);
+    expect(service.getProfile("user")).toMatchObject({ dailyLimit: 0, remainingToday: 0, paidImages: 0, todaySuccessfulImages: 6 });
+    store.close();
+    const reopened = openAppDatabase({ dataDir });
+    try {
+      const restored = createCultivationService(reopened.raw!, { now: () => new Date("2026-07-23T08:00:00+08:00") });
+      restored.ensureUser("user", false);
+      expect(restored.grantRegistrationImages("user")).toBe(0);
+      expect(restored.getProfile("user")).toMatchObject({ paidImages: 0, remainingToday: 0, todaySuccessfulImages: 0 });
+      expect(restored.getWallet("user").items.filter((item: any) => item.kind === "registration_grant")).toHaveLength(1);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  test("rolls registration credits back with account creation and leaves existing accounts unchanged", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      service.getProfile("user");
+      createCultivationService(store.raw!).ensureUser("user", false);
+      expect(service.getWallet("user").balance).toBe(0);
+      expect(() => store.raw!.transaction(() => {
+        store.raw!.query("INSERT INTO users(user_id, display_name, created_at) VALUES ('new-registration', 'New', 1)").run();
+        service.ensureUser("new-registration", false);
+        service.grantRegistrationImages("new-registration");
+        throw new Error("registration failed");
+      })()).toThrow("registration failed");
+      expect(store.raw!.query("SELECT 1 FROM users WHERE user_id = 'new-registration'").get()).toBeNull();
+      expect(store.raw!.query("SELECT 1 FROM wallet_balances WHERE user_id = 'new-registration'").get()).toBeNull();
+      expect(store.raw!.query("SELECT 1 FROM wallet_ledger WHERE kind = 'registration_grant'").get()).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  test("ignores below-emperor realm quotas, old overrides and unlimited flags for image billing", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", true);
+      service.grantWalletPackage("admin", "user", "qiling", "grant-policy", "测试图片计费政策");
+      const realms = service.getConfiguration().realms;
+      service.updateRealm("admin", realms.at(-2)!.id, { dailyLimit: null }, "非斗帝空额度不赠送图片");
+      for (const [index, input] of [
+        { stageId: realms[0].stages[0].id, dailyLimitOverride: null, unlimited: false },
+        { stageId: realms[1].stages[0].id, dailyLimitOverride: 500, unlimited: false },
+        { stageId: realms.at(-2)!.stages[0].id, dailyLimitOverride: null, unlimited: false },
+        { stageId: realms[0].stages[0].id, dailyLimitOverride: 500, unlimited: true },
+      ].entries()) {
+        service.updateUser("admin", "user", input, "核对旧账号额度");
+        expect(service.getProfile("user")).toMatchObject({ dailyLimit: 0, dailyLimitOverride: null, unlimited: false, remainingToday: 0 });
+        service.reserveGeneration({ jobId: `policy-${index}`, userId: "user", channelId: "channel", model: "gpt-image-1", count: 1, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
+        expect(store.raw!.query("SELECT free_count, paid_count FROM generation_usage WHERE job_id = ?").get(`policy-${index}`)).toEqual({ free_count: 0, paid_count: 1 });
+      }
+      expect(service.getWallet("user").balance).toBe(36);
+      expect(service.getProfile("user").proxyQuota).toMatchObject({ dailyLimit: 500, dailyLimitOverride: 500, unlimited: true, remainingToday: null });
+      expect(store.raw!.query("SELECT daily_limit_override, unlimited_quota FROM user_cultivation WHERE user_id = 'user'").get()).toEqual({ daily_limit_override: 500, unlimited_quota: 1 });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("unlocks unlimited image generation immediately at Dou Emperor without changing paid reservations", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      service.grantWalletPackage("admin", "user", "qiling", "grant-promotion", "升级前图片预占");
+      const realms = service.getConfiguration().realms;
+      const lastSaintStage = realms.at(-2)!.stages.at(-1)!;
+      service.updateUser("admin", "user", { stageId: lastSaintStage.id, currentXp: 0, dailyLimitOverride: 0, unlimited: false }, "斗圣等待突破");
+      const input = { jobId: "before-emperor", userId: "user", channelId: "channel", model: "gpt-image-1", count: 2, referenceCount: 0, hasMask: false, activeJobs: 0 };
+      service.reserveGeneration({ ...input, allowPaidImages: true });
+      expect(service.getWallet("user").balance).toBe(38);
+      service.updateUser("admin", "user", { currentXp: lastSaintStage.requiredXp }, "突破斗帝");
+      expect(service.getProfile("user")).toMatchObject({ realmId: "realm-dou-emperor", dailyLimit: null, dailyLimitOverride: null, unlimited: true, remainingToday: null, paidImages: 38, proxyQuota: { dailyLimit: 0, unlimited: false, remainingToday: 0 } });
+      service.reserveGeneration({ ...input, jobId: "after-emperor", count: 3 });
+      expect(store.raw!.query("SELECT free_count, paid_count FROM generation_usage WHERE job_id = 'after-emperor'").get()).toEqual({ free_count: 3, paid_count: 0 });
+      expect(service.getWallet("user").balance).toBe(38);
+      service.settleGeneration({ jobId: "before-emperor", successCount: 2, failCount: 0, durationMs: 10 });
+      service.settleGeneration({ jobId: "after-emperor", successCount: 2, failCount: 1, durationMs: 10 });
+      expect(service.getProfile("user")).toMatchObject({ unlimited: true, remainingToday: null, paidImages: 38, todaySuccessfulImages: 4 });
+      expect(service.getWallet("user").items.map((item: any) => item.delta)).toEqual([-2, 40]);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("preserves actual administrators' explicit unlimited and finite image quotas", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("admin", true);
+      expect(service.getProfile("admin")).toMatchObject({ dailyLimit: null, unlimited: true, remainingToday: null });
+      service.reserveGeneration({ jobId: "admin-unlimited", userId: "admin", channelId: "channel", model: "gpt-image-1", count: 2, referenceCount: 0, hasMask: false, activeJobs: 0 });
+      service.refundGeneration("admin-unlimited", "管理员任务取消");
+      service.updateUser("admin", "admin", { dailyLimitOverride: 1, unlimited: false }, "设定管理员有限额度");
+      expect(service.getProfile("admin")).toMatchObject({ dailyLimit: 1, dailyLimitOverride: 1, unlimited: false, remainingToday: 1 });
+      service.reserveGeneration({ jobId: "admin-finite", userId: "admin", channelId: "channel", model: "gpt-image-1", count: 1, referenceCount: 0, hasMask: false, activeJobs: 0 });
+      service.settleGeneration({ jobId: "admin-finite", successCount: 1, failCount: 0, durationMs: 10 });
+      expect(service.getProfile("admin")).toMatchObject({ remainingToday: 0, usedToday: 1, todaySuccessfulImages: 1, paidImages: 0 });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("rejects insufficient or unauthorized wallet reservations atomically", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      service.grantWalletPackage("admin", "user", "qiling", "grant-atomic", "测试原子扣款");
+      const input = { jobId: "denied", userId: "user", channelId: "channel", model: "gpt-image-1", count: 1, referenceCount: 0, hasMask: false, activeJobs: 0 };
+      expect(() => service.reserveGeneration(input)).toThrow("需要使用灵卷");
+      service.reserveGeneration({ ...input, jobId: "accepted", count: 39, allowPaidImages: true });
+      try {
+        service.reserveGeneration({ ...input, count: 2, allowPaidImages: true });
+        throw new Error("Expected insufficient-wallet rejection");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CultivationError);
+        expect(error).toMatchObject({ status: 402, code: "WALLET_INSUFFICIENT" });
+        expect((error as Error).message).toContain("灵卷余额不足");
+      }
+      expect(service.getGenerationUsage("denied")).toBeNull();
+      expect(service.getWallet("user").balance).toBe(1);
+      expect(service.getWallet("user").total).toBe(2);
+      expect(service.getProfile("user").proxyQuota.reservedToday).toBe(0);
+      service.refundGeneration("accepted", "退款");
+      service.refundGeneration("accepted", "重复退款");
+      expect(service.getWallet("user").balance).toBe(40);
+      expect(service.getWallet("user").total).toBe(3);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("keeps proxy budgets independent of image wallet billing and never charges proxies", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      service.grantWalletPackage("admin", "user", "qiling", "grant-proxy", "测试服务额度");
+      service.updateUser("admin", "user", { dailyLimitOverride: 1 }, "服务额度覆盖");
+      const input = { kind: "proxy" as const, jobId: "proxy-one", userId: "user", channelId: "channel", model: "video-model", count: 1, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true };
+      service.reserveGeneration(input);
+      expect(service.getProfile("user").proxyQuota).toMatchObject({ remainingToday: 0, reservedToday: 1 });
+      expect(() => service.reserveGeneration({ ...input, jobId: "proxy-denied" })).toThrow("今日服务额度已经耗尽");
+      expect(service.getGenerationUsage("proxy-denied")).toBeNull();
+      service.consumeGeneration("proxy-one");
+      expect(service.getProfile("user")).toMatchObject({ remainingToday: 0, usedToday: 1, todaySuccessfulImages: 0, proxyQuota: { dailyLimit: 1, usedToday: 1, reservedToday: 0 } });
+      expect(service.getWallet("user").balance).toBe(40);
+      expect(service.getWallet("user").total).toBe(1);
+      service.updateUser("admin", "user", { unlimited: true }, "其他服务不限");
+      service.reserveGeneration({ ...input, jobId: "proxy-unlimited", count: 5 });
+      expect(service.getProfile("user").proxyQuota.remainingToday).toBeNull();
+      expect(service.getWallet("user").balance).toBe(40);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("settles and refunds historical free and mixed reservations without retroactive charges", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      service.grantWalletPackage("admin", "user", "qiling", "grant-historical", "测试旧任务");
+      const insert = store.raw!.query("INSERT INTO generation_usage(job_id, user_id, usage_date, model, channel_id, requested_count, free_count, paid_count, status, created_at) VALUES (?, 'user', '2026-07-21', 'gpt-image-1', 'channel', ?, ?, ?, 'reserved', 1)");
+      insert.run("old-free", 2, 2, 0);
+      insert.run("old-mixed", 3, 1, 2);
+      insert.run("old-refund", 2, 2, 0);
+      store.raw!.query("INSERT INTO daily_usage(user_id, usage_date, reserved_count) VALUES ('user', '2026-07-21', 5)").run();
+      store.raw!.query("UPDATE wallet_balances SET image_balance = image_balance - 2 WHERE user_id = 'user'").run();
+      store.raw!.query("INSERT INTO wallet_ledger(id, user_id, delta, balance_after, kind, source_id, created_at) VALUES ('old-reserve-ledger', 'user', -2, 38, 'reserve', 'old-mixed', 1)").run();
+      service.settleGeneration({ jobId: "old-free", successCount: 1, failCount: 1, durationMs: 10 });
+      service.settleGeneration({ jobId: "old-mixed", successCount: 2, failCount: 1, durationMs: 10 });
+      service.refundGeneration("old-refund", "旧任务失败");
+      service.settleGeneration({ jobId: "old-mixed", successCount: 2, failCount: 1, durationMs: 10 });
+      expect(service.getWallet("user").balance).toBe(39);
+      expect(service.getProfile("user")).toMatchObject({ dailyLimit: 0, remainingToday: 0, usedToday: 0, todaySuccessfulImages: 0, totalImages: 3 });
+      expect(store.raw!.query("SELECT used_count, reserved_count, refunded_count, successful_images FROM daily_usage WHERE user_id = 'user' AND usage_date = '2026-07-21'").get()).toEqual({ used_count: 2, reserved_count: 0, refunded_count: 3, successful_images: 3 });
+      expect(service.getWallet("user").items.filter((item: any) => item.kind === "refund")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("grants a package once and charges every successful ordinary-user image", () => {
     const { store, service } = setup();
     try {
       service.ensureUser("user", false);
@@ -30,15 +221,15 @@ describe("cultivation quota and settlement", () => {
       expect(service.getWallet("user").total).toBe(1);
       expect(() => service.grantWalletPackage("admin", "user", "juling", "grant-request-1", "重复用途")).toThrow();
 
-      service.reserveGeneration({ jobId: "free-job", userId: "user", channelId: "channel", model: "gpt-image-2.5", count: 9, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
-      service.settleGeneration({ jobId: "free-job", successCount: 9, failCount: 0, durationMs: 100 });
-      service.reserveGeneration({ jobId: "mixed-job", userId: "user", channelId: "channel", model: "gpt-image-2.5", count: 4, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
-      expect(service.getProfile("user")).toMatchObject({ remainingToday: 0, paidImages: 37 });
-      service.settleGeneration({ jobId: "mixed-job", successCount: 2, failCount: 2, durationMs: 100 });
-      expect(service.getProfile("user")).toMatchObject({ remainingToday: 0, paidImages: 39, totalImages: 11 });
-      expect(service.getWallet("user").items.map((item: any) => item.delta)).toEqual([2, -3, 40]);
-      service.settleGeneration({ jobId: "mixed-job", successCount: 2, failCount: 2, durationMs: 100 });
-      expect(service.getWallet("user").balance).toBe(39);
+      service.reserveGeneration({ jobId: "paid-job", userId: "user", channelId: "channel", model: "gpt-image-2.5", count: 9, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
+      service.settleGeneration({ jobId: "paid-job", successCount: 9, failCount: 0, durationMs: 100 });
+      service.reserveGeneration({ jobId: "partial-job", userId: "user", channelId: "channel", model: "gpt-image-2.5", count: 4, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
+      expect(service.getProfile("user")).toMatchObject({ remainingToday: 0, paidImages: 27 });
+      service.settleGeneration({ jobId: "partial-job", successCount: 2, failCount: 2, durationMs: 100 });
+      expect(service.getProfile("user")).toMatchObject({ remainingToday: 0, paidImages: 29, totalImages: 11, todaySuccessfulImages: 11, usedToday: 0 });
+      expect(service.getWallet("user").items.map((item: any) => item.delta)).toEqual([2, -4, -9, 40]);
+      service.settleGeneration({ jobId: "partial-job", successCount: 2, failCount: 2, durationMs: 100 });
+      expect(service.getWallet("user").balance).toBe(29);
     } finally {
       store.close();
     }
@@ -48,7 +239,6 @@ describe("cultivation quota and settlement", () => {
     const { store, service, dataDir } = setup();
     service.ensureUser("user", false);
     service.grantWalletPackage("admin", "user", "qiling", "grant-request-2", "测试发放");
-    service.updateUser("admin", "user", { dailyLimitOverride: 0 }, "测试灵卷余额");
     service.reserveGeneration({ jobId: "failed-job", userId: "user", channelId: "channel", model: "gpt-image-2.5", count: 2, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
     expect(service.getWallet("user").balance).toBe(38);
     store.close();
@@ -71,7 +261,6 @@ describe("cultivation quota and settlement", () => {
     try {
       service.ensureUser("user", false);
       service.grantWalletPackage("admin", "user", "qiling", "grant-paid-success", "测试发放");
-      service.updateUser("admin", "user", { dailyLimitOverride: 0 }, "测试纯灵卷生图");
       service.reserveGeneration({ jobId: "paid-success", userId: "user", channelId: "channel", model: "gpt-image-2.5", count: 2, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
       service.settleGeneration({ jobId: "paid-success", successCount: 2, failCount: 0, durationMs: 100 });
       expect(service.getProfile("user")).toMatchObject({ usedToday: 0, paidImages: 38, totalImages: 2 });
@@ -90,11 +279,11 @@ describe("cultivation quota and settlement", () => {
       service.grantWalletPackage("admin", "user", "qiling", "grant-canceled-job", "测试发放");
       service.updateUser("admin", "user", { dailyLimitOverride: 1 }, "测试取消生图");
       service.reserveGeneration({ jobId: "canceled-job", userId: "user", channelId: "channel", model: "gpt-image-2.5", count: 2, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
-      expect(service.getWallet("user").balance).toBe(39);
+      expect(service.getWallet("user").balance).toBe(38);
       service.consumeGeneration("canceled-job", 100);
       service.consumeGeneration("canceled-job", 100);
-      expect(service.getProfile("user")).toMatchObject({ usedToday: 1, paidImages: 40 });
-      expect(service.getWallet("user").items.map((item: any) => item.delta)).toEqual([1, -1, 40]);
+      expect(service.getProfile("user")).toMatchObject({ usedToday: 0, paidImages: 40, todaySuccessfulImages: 0 });
+      expect(service.getWallet("user").items.map((item: any) => item.delta)).toEqual([2, -2, 40]);
     } finally {
       store.close();
     }
@@ -156,12 +345,14 @@ describe("cultivation quota and settlement", () => {
     const { store, service } = setup();
     try {
       service.ensureUser("user", false);
+      service.grantWalletPackage("admin", "user", "qiling", "grant-settlement", "测试结算");
       const before = service.getProfile("user");
-      expect(before.dailyLimit).toBe(10);
-      expect(before.remainingToday).toBe(10);
+      expect(before.dailyLimit).toBe(0);
+      expect(before.remainingToday).toBe(0);
 
       service.reserveGeneration({
         jobId: "job-1",
+        allowPaidImages: true,
         userId: "user",
         channelId: "channel",
         model: "gpt-image-1",
@@ -171,7 +362,7 @@ describe("cultivation quota and settlement", () => {
         hasMask: false,
         activeJobs: 0,
       });
-      expect(service.getProfile("user").remainingToday).toBe(8);
+      expect(service.getProfile("user")).toMatchObject({ remainingToday: 0, paidImages: 38, proxyQuota: { remainingToday: 10 } });
 
       service.settleGeneration({
         jobId: "job-1",
@@ -180,8 +371,10 @@ describe("cultivation quota and settlement", () => {
         durationMs: 250,
       });
       const after = service.getProfile("user");
-      expect(after.usedToday).toBe(1);
-      expect(after.remainingToday).toBe(9);
+      expect(after.usedToday).toBe(0);
+      expect(after.remainingToday).toBe(0);
+      expect(after.paidImages).toBe(39);
+      expect(after.todaySuccessfulImages).toBe(1);
       expect(after.totalXp).toBe(10);
       expect(after.totalImages).toBe(1);
       expect(after.activeDays).toBe(1);
@@ -205,6 +398,7 @@ describe("cultivation quota and settlement", () => {
     const { store, service } = setup();
     try {
       service.ensureUser("user", false);
+      service.grantWalletPackage("admin", "user", "qiling", "grant-refund", "测试退款");
       expect(() =>
         service.reserveGeneration({
           jobId: "job-high",
@@ -234,6 +428,7 @@ describe("cultivation quota and settlement", () => {
 
       service.reserveGeneration({
         jobId: "job-fail",
+        allowPaidImages: true,
         userId: "user",
         channelId: "channel",
         model: "gpt-image-1",
@@ -243,9 +438,9 @@ describe("cultivation quota and settlement", () => {
         hasMask: false,
         activeJobs: 0,
       });
-      expect(service.getProfile("user").remainingToday).toBe(7);
+      expect(service.getProfile("user").paidImages).toBe(37);
       service.refundGeneration("job-fail", "upstream failed");
-      expect(service.getProfile("user").remainingToday).toBe(10);
+      expect(service.getProfile("user").paidImages).toBe(40);
       expect(service.getProfile("user").totalXp).toBe(0);
     } finally {
       store.close();
@@ -258,6 +453,7 @@ describe("cultivation quota and settlement", () => {
       service.ensureUser("user", false);
       service.reserveGeneration({
         jobId: "proxy-work",
+        kind: "proxy",
         userId: "user",
         channelId: "video-channel",
         model: "video-model",
@@ -273,7 +469,9 @@ describe("cultivation quota and settlement", () => {
 
       const profile = service.getProfile("user");
       expect(profile.usedToday).toBe(1);
-      expect(profile.remainingToday).toBe(9);
+      expect(profile.remainingToday).toBe(0);
+      expect(profile.proxyQuota.remainingToday).toBe(9);
+      expect(profile.todaySuccessfulImages).toBe(0);
       expect(profile.totalXp).toBe(0);
       expect(profile.totalImages).toBe(0);
       expect(service.getGenerationUsage("proxy-work")?.status).toBe("settled");
@@ -322,7 +520,8 @@ describe("cultivation quota and settlement", () => {
       const profile = service.getProfile("user");
       expect(profile.stageId).toBe(targetStage.id);
       expect(profile.totalXp).toBe(50);
-      expect(profile.dailyLimit).toBe(25);
+      expect(profile.dailyLimit).toBe(0);
+      expect(profile.proxyQuota.dailyLimit).toBe(25);
       expect(profile.publicMessage).toBe("keep creating");
 
       const ledger = service.listLedger("user", 1, 20).items[0];
@@ -383,8 +582,10 @@ describe("cultivation quota and settlement", () => {
     const { store, service } = setup();
     try {
       service.ensureUser("user", false);
+      service.grantWalletPackage("admin", "user", "qiling", "grant-idempotent", "测试重复请求");
       service.reserveGeneration({
         jobId: "same-job",
+        allowPaidImages: true,
         userId: "user",
         channelId: "channel",
         model: "gpt-image-1",
@@ -397,6 +598,7 @@ describe("cultivation quota and settlement", () => {
       expect(() =>
         service.reserveGeneration({
           jobId: "same-job",
+          allowPaidImages: true,
           userId: "user",
           channelId: "channel",
           model: "gpt-image-1",
@@ -447,6 +649,7 @@ describe("cultivation quota and settlement", () => {
       expect(profile.stageId).toBe(automaticTarget.id);
       expect(profile.currentXp).toBe(5);
       expect(profile.pendingStageId).toBeNull();
+      expect(profile).toMatchObject({ dailyLimit: 0, unlimited: false, remainingToday: 0, proxyQuota: { dailyLimit: 20 } });
     } finally {
       store.close();
     }
@@ -455,8 +658,10 @@ describe("cultivation quota and settlement", () => {
   test("refunds a reserved job after reopening the SQLite database", () => {
     const { store, service, dataDir } = setup();
     service.ensureUser("user", false);
+    service.grantWalletPackage("admin", "user", "qiling", "grant-restart", "测试重启退款");
     service.reserveGeneration({
       jobId: "restart-job",
+      allowPaidImages: true,
       userId: "user",
       channelId: "channel",
       model: "gpt-image-1",
@@ -466,7 +671,7 @@ describe("cultivation quota and settlement", () => {
       hasMask: false,
       activeJobs: 0,
     });
-    expect(service.getProfile("user").remainingToday).toBe(8);
+    expect(service.getProfile("user").paidImages).toBe(38);
     store.close();
 
     const reopened = openAppDatabase({ dataDir });
@@ -475,13 +680,13 @@ describe("cultivation quota and settlement", () => {
         now: () => new Date("2026-07-22T08:00:00+08:00"),
       });
       reopenedService.refundGeneration("restart-job", "server restarted");
-      expect(reopenedService.getProfile("user").remainingToday).toBe(10);
+      expect(reopenedService.getProfile("user")).toMatchObject({ dailyLimit: 0, remainingToday: 0, unlimited: false, paidImages: 40 });
     } finally {
       reopened.close();
     }
   });
 
-  test("applies finite user quota overrides and global capability switches", () => {
+  test("preserves finite proxy overrides at Dou Emperor and global capability switches", () => {
     const { store, service } = setup();
     try {
       service.ensureUser("admin", true);
@@ -494,9 +699,10 @@ describe("cultivation quota and settlement", () => {
         { stageId: topStage.id, dailyLimitOverride: 5, unlimited: false },
         "set finite quota",
       );
-      expect(service.getProfile("user").dailyLimit).toBe(5);
-      expect(service.getProfile("user").dailyLimitOverride).toBe(5);
-      expect(service.getProfile("user").unlimited).toBe(false);
+      expect(service.getProfile("user").dailyLimit).toBeNull();
+      expect(service.getProfile("user").dailyLimitOverride).toBeNull();
+      expect(service.getProfile("user").proxyQuota).toMatchObject({ dailyLimit: 5, dailyLimitOverride: 5, unlimited: false });
+      expect(service.getProfile("user").unlimited).toBe(true);
 
       service.updateCapability(
         "admin",
@@ -655,12 +861,14 @@ describe("cultivation quota and settlement", () => {
   test("reconciles orphaned reservations after restart and preserves resumable jobs", () => {
     const { store, service, dataDir } = setup();
     service.ensureUser("user", false);
+    service.grantWalletPackage("admin", "user", "qiling", "grant-reconcile", "测试恢复任务");
     for (const [jobId, count] of [
       ["orphan-job", 2],
       ["active-job", 1],
     ] as const)
       service.reserveGeneration({
         jobId,
+        allowPaidImages: true,
         userId: "user",
         channelId: "channel",
         model: "gpt-image-1",
@@ -670,7 +878,7 @@ describe("cultivation quota and settlement", () => {
         hasMask: false,
         activeJobs: 0,
       });
-    expect(service.getProfile("user").remainingToday).toBe(7);
+    expect(service.getProfile("user").paidImages).toBe(37);
     store.close();
 
     const reopened = openAppDatabase({ dataDir });
@@ -681,7 +889,7 @@ describe("cultivation quota and settlement", () => {
       expect(
         reopenedService.reconcileReservations(new Set(["active-job"])),
       ).toEqual(["orphan-job"]);
-      expect(reopenedService.getProfile("user").remainingToday).toBe(9);
+      expect(reopenedService.getProfile("user").paidImages).toBe(39);
       expect(
         reopened
           .raw!.query("SELECT status FROM generation_usage WHERE job_id = ?")
@@ -695,7 +903,7 @@ describe("cultivation quota and settlement", () => {
       expect(
         reopenedService.reconcileReservations(new Set(["active-job"])),
       ).toEqual([]);
-      expect(reopenedService.getProfile("user").remainingToday).toBe(9);
+      expect(reopenedService.getProfile("user").paidImages).toBe(39);
     } finally {
       reopened.close();
     }
@@ -705,8 +913,10 @@ describe("cultivation quota and settlement", () => {
     const { store, service } = setup();
     try {
       service.ensureUser("user", false);
+      service.grantWalletPackage("admin", "user", "qiling", "grant-metrics", "测试渠道统计");
       service.reserveGeneration({
         jobId: "channel-a-settled",
+        allowPaidImages: true,
         userId: "user",
         channelId: "channel-a",
         model: "gpt-image-1",
@@ -724,6 +934,7 @@ describe("cultivation quota and settlement", () => {
       });
       service.reserveGeneration({
         jobId: "channel-a-refunded",
+        allowPaidImages: true,
         userId: "user",
         channelId: "channel-a",
         model: "gpt-image-1",
@@ -736,6 +947,7 @@ describe("cultivation quota and settlement", () => {
       service.refundGeneration("channel-a-refunded", "upstream failed");
       service.reserveGeneration({
         jobId: "channel-b-active",
+        allowPaidImages: true,
         userId: "user",
         channelId: "channel-b",
         model: "gpt-image-1",

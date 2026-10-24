@@ -45,7 +45,7 @@ import { limitImageReferenceAdditions } from "@/lib/image-references";
 import { cultivationProfileQueryKey, useCultivationProfile } from "@/features/cultivation/queries";
 import { useImperialGenerationCue, useImperialMode } from "@/features/cultivation/imperial-mode";
 import { GenerationFailureToast, generationFailureFeedback, generationFailureText } from "@/features/cultivation/generation-messages";
-import { cultivationGenerationBlockReason, cultivationRefundNotice, quotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
+import { cultivationGenerationBlockReason, cultivationRefundNotice, imageQuotaText, requiredCultivationCapabilities } from "@/features/cultivation/utils";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { deleteGenerationHistoryRecords, loadGenerationHistoryPage, migrateLocalGenerationHistoryOnce, persistGenerationHistoryRecord } from "@/services/generation-history";
 import { mergePersistedImagesIntoHistoryRecord, mergeServerJobsIntoImageHistory, serverJobModelValue } from "@/services/image-generation-history";
@@ -197,6 +197,7 @@ export default function ImagePage() {
         (cultivationProfile
             ? cultivationGenerationBlockReason({
                   remainingToday: cultivationProfile.remainingToday,
+                  dailyLimit: cultivationProfile.dailyLimit,
                   paidImages: cultivationProfile.paidImages,
                   unlimited: cultivationProfile.unlimited,
                   maxConcurrency: cultivationProfile.maxConcurrency,
@@ -991,7 +992,11 @@ export default function ImagePage() {
                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
             ) : cultivationProfile ? (
                 <div className="mt-2 text-center text-xs text-stone-400">
-                    {cultivationProfile.unlimited ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量` : `本次将占用 ${generationCount} 次 · ${quotaText(cultivationProfile.remainingToday, false)} · 灵卷 ${cultivationProfile.paidImages || 0} 次 · 失败自动退还`}
+                    {cultivationProfile.dailyLimit === 0 && !cultivationProfile.unlimited
+                        ? `本次占用 ${generationCount} 灵卷 · ${imageQuotaText(cultivationProfile)} · 每张消耗 1 灵卷，未生成部分按结算返还`
+                        : cultivationProfile.unlimited
+                          ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量`
+                          : `本次将占用 ${generationCount} 次 · ${imageQuotaText(cultivationProfile)} · 未生成部分按结算返还`}
                 </div>
             ) : null}
         </>

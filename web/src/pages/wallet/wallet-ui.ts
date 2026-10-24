@@ -1,6 +1,7 @@
 import type { CultivationProfile, WalletLedgerItem, WalletOverview, WalletPackage } from "@/services/server-api";
 
 export const walletLedgerLabels: Record<WalletLedgerItem["kind"], string> = {
+    registration_grant: "注册赠送",
     admin_grant: "管理员发放",
     reserve: "生图占用",
     refund: "灵卷返还",
@@ -24,8 +25,12 @@ export function walletBalance(wallets: readonly WalletBalanceSnapshot<Pick<Walle
         .sort((a, b) => b.snapshot.dataUpdatedAt - a.snapshot.dataUpdatedAt)[0]?.balance;
 }
 
-export function walletResourceStatus(profile: Pick<CultivationProfile, "unlimited" | "remainingToday"> | undefined, balance: number | undefined) {
+export function walletResourceStatus(profile: (Pick<CultivationProfile, "unlimited" | "remainingToday"> & Partial<Pick<CultivationProfile, "dailyLimit">>) | undefined, balance: number | undefined) {
     if (profile?.unlimited) return "今日免费不限，可直接创作，无需消耗灵卷。";
+    if (profile?.dailyLimit === 0 && !profile.unlimited) {
+        if (balance === undefined) return "图片生成使用灵卷，灵卷余额待同步。";
+        return balance > 0 ? "图片生成使用灵卷，可使用灵卷继续创作。" : "当前灵卷不足，请联系管理员补充后继续创作。";
+    }
     if (!profile || profile.remainingToday === null) return "灵卷余额不包含今日免费额度，免费额度待同步。";
     if (profile.remainingToday > 0) return `今日还可免费生成 ${profile.remainingToday.toLocaleString()} 张，之后再使用灵卷。`;
     if (balance === undefined) return "今日免费额度已用完，灵卷余额待同步。";
@@ -40,6 +45,7 @@ export function walletUnitPrice(pack: WalletPackage) {
 }
 
 export function walletRecordSource(item: WalletLedgerItem, packages: WalletPackage[]) {
+    if (item.kind === "registration_grant") return { label: "新用户赠送" };
     if (item.packageId) return { label: packages.find((pack) => pack.id === item.packageId)?.name || "灵卷补充" };
     if (item.kind === "admin_grant") return { label: "管理员发放" };
     return { label: "图片生成", fullId: item.sourceId || undefined };
