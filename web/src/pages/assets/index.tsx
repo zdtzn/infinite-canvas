@@ -116,6 +116,8 @@ export default function AssetsPage() {
     const [kindFilter, setKindFilter] = useState<AssetKind | "all">("all");
     const [category, setCategory] = useState<string | undefined>();
     const [filterTags, setFilterTags] = useState<string[]>([]);
+    const [managementOpen, setManagementOpen] = useState(false);
+    const [filtersOpen, setFiltersOpen] = useState(false);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(12);
     const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
@@ -414,22 +416,23 @@ export default function AssetsPage() {
                 <section className="relative overflow-hidden">
                     <img src="/images/ref/spiral-valley-1.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
                     <div className="absolute inset-0 bg-gradient-to-b from-[#0e0e12]/78 via-[#0e0e12]/58 to-[#0e0e12]" aria-hidden />
-                    <div className="relative mx-auto max-w-7xl px-6 pb-12 pt-14">
+                    <div className="relative mx-auto max-w-7xl px-4 pb-6 pt-7 sm:px-6 sm:pb-12 sm:pt-14">
                         <p className="shj-hero-eyebrow">Cang Juan Ge</p>
-                        <h1 className="font-brush mt-4 text-5xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:text-6xl">藏卷阁</h1>
+                        <h1 className="font-brush mt-3 text-4xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:mt-4 sm:text-6xl">藏卷阁</h1>
                         <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">珍藏 {displayedCount} 卷 · 每一卷,都是一次万象落笔</p>
                     </div>
                 </section>
 
-                <div className="mx-auto max-w-7xl px-6 pb-10">
+                <div className="mx-auto max-w-7xl px-4 pb-5 sm:px-6 sm:pb-10">
                     {/* ── 检索与行动 ── */}
-                    <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="mt-4 flex flex-col gap-3 sm:mt-6 lg:flex-row lg:items-center lg:justify-between">
                         <Input.Search
                             className="w-full max-w-xl"
                             size="large"
                             allowClear
                             prefix={<Search className="size-4 text-stone-400" />}
                             value={searchInput}
+                            aria-label="搜索藏卷"
                             placeholder="搜索标题、内容、标签或来源"
                             onChange={(event) => {
                                 setSearchInput(event.target.value);
@@ -440,34 +443,35 @@ export default function AssetsPage() {
                                 setSearchInput(value);
                             }}
                         />
-                        <div className="flex flex-wrap items-center gap-4">
-                            {useRemoteLibrary && <StorageManager />}
-                            <button
-                                type="button"
-                                className="asset-transfer-button inline-flex h-10 items-center gap-2 rounded-md border border-[rgb(201_168_106/0.16)] bg-white/[0.025] px-3 text-sm font-medium text-[#c9c4b9] transition-[color,background-color,border-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a86a]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e0e12]"
-                                onClick={() => void exportAllAssets()}
-                                disabled={exportProgress !== null}
-                            >
-                                <Download className="size-4 text-[#8a8a96] transition-colors duration-200" aria-hidden />
-                                {exportProgress || "导出全部资产"}
-                            </button>
-                            <button
-                                type="button"
-                                className="asset-transfer-button inline-flex h-10 items-center gap-2 rounded-md border border-[rgb(201_168_106/0.16)] bg-white/[0.025] px-3 text-sm font-medium text-[#c9c4b9] transition-[color,background-color,border-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a86a]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e0e12]"
-                                onClick={() => assetInputRef.current?.click()}
-                            >
-                                <Upload className="size-4 text-[#8a8a96] transition-colors duration-200" aria-hidden />
-                                导入资产
-                            </button>
-                            <button type="button" onClick={openCreate} className="inline-flex items-center rounded-md bg-cta px-5 py-2.5 text-sm font-medium tracking-[0.1em] text-cta-foreground transition-colors duration-300 hover:bg-cta/90">
-                                新增资产
-                            </button>
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+                            <button type="button" onClick={openCreate} className="inline-flex min-h-11 items-center rounded-md bg-cta px-4 text-sm font-medium tracking-[0.1em] text-cta-foreground transition-colors hover:bg-cta/90 sm:order-last">新增资产</button>
+                            <button type="button" aria-expanded={managementOpen} aria-controls="asset-management-actions" onClick={() => setManagementOpen(!managementOpen)} className="min-h-11 px-3 text-sm text-muted-foreground sm:hidden">素材管理</button>
+                            <div id="asset-management-actions" className={cn("w-full flex-wrap items-center gap-2 sm:flex sm:w-auto sm:gap-4", managementOpen ? "flex" : "hidden")}>
+                                {useRemoteLibrary && <StorageManager />}
+                                <button
+                                    type="button"
+                                    className="asset-transfer-button inline-flex h-10 items-center gap-2 rounded-md border border-[rgb(201_168_106/0.16)] bg-white/[0.025] px-3 text-sm font-medium text-[#c9c4b9] transition-[color,background-color,border-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a86a]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e0e12]"
+                                    onClick={() => void exportAllAssets()}
+                                    disabled={exportProgress !== null}
+                                >
+                                    <Download className="size-4 text-[#8a8a96] transition-colors duration-200" aria-hidden />
+                                    {exportProgress || "导出全部资产"}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="asset-transfer-button inline-flex h-10 items-center gap-2 rounded-md border border-[rgb(201_168_106/0.16)] bg-white/[0.025] px-3 text-sm font-medium text-[#c9c4b9] transition-[color,background-color,border-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a86a]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e0e12]"
+                                    onClick={() => assetInputRef.current?.click()}
+                                >
+                                    <Upload className="size-4 text-[#8a8a96] transition-colors duration-200" aria-hidden />
+                                    导入资产
+                                </button>
+                            </div>
                         </div>
                     </div>
 
                     <AssetSyncStatus className="mt-4" />
 
-                    <div className="mt-5 flex items-center gap-3">
+                    <div className="mt-3 flex flex-wrap items-center gap-2 sm:mt-5 sm:gap-3">
                         <span className="text-xs tracking-[0.2em] text-[#8a8a96]">类型</span>
                         <div className="flex flex-wrap gap-2">
                             {kindOptions.map((option) => (
@@ -485,7 +489,8 @@ export default function AssetsPage() {
                             ))}
                         </div>
                     </div>
-                    <div className="mt-4">
+                    <button type="button" aria-expanded={filtersOpen} aria-controls="asset-category-filters" onClick={() => setFiltersOpen(!filtersOpen)} className="min-h-11 text-xs text-muted-foreground sm:hidden">分类与标签{category || filterTags.length ? " · 已筛选" : ""}</button>
+                    <div id="asset-category-filters" className={cn("mt-3 sm:mt-4 sm:block", filtersOpen ? "block" : "hidden")}>
                         <AssetFilterControls
                             facets={useRemoteLibrary ? remoteLibrary?.facets || { categories: [], tags: [], total: 0, uncategorized: 0 } : localFacets}
                             category={category}
@@ -497,16 +502,16 @@ export default function AssetsPage() {
                             }}
                         />
                     </div>
-                    <hr className="shj-gold-hairline mt-6" />
+                    <hr className="shj-gold-hairline mt-3 sm:mt-6" />
                 </div>
 
                 {/* ── 画轴瀑布 ── */}
-                <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 pb-12">
+                <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 pb-12 sm:px-6">
                     {pendingAssets.length > 0 && <section aria-label="待同步的本机素材" className="space-y-4">
                         <div><h2 className="text-base font-medium">待同步的本机素材</h2><p className="mt-1 text-sm text-muted-foreground">以下收藏已留在本机，同步到云端后即可在其他设备查看。</p></div>
-                        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{pendingAssets.map(asset => <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />)}</div>
+                        <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{pendingAssets.map(asset => <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />)}</div>
                     </section>}
-                    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {displayedAssets.filter(asset => !pendingAssets.some(pending => pending.id === asset.id)).map((asset) => (
                             <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                         ))}
@@ -731,7 +736,7 @@ function AssetScrollCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }
                             onLoad={(event) => void backfillAssetThumbnail(asset, event.currentTarget)}
                         />
                     ) : (
-                        <div className="flex aspect-[4/3] items-center justify-center bg-[#17171d] p-5 text-center text-sm leading-6 text-[#c9c4b9]">{asset.kind === "text" ? asset.data.content : "暂无封面"}</div>
+                        <div className="relative aspect-[4/3] w-full overflow-hidden bg-muted/35 text-sm leading-6 text-muted-foreground"><div className="absolute inset-0 flex items-center justify-center p-5"><p className="line-clamp-5 break-words">{asset.kind === "text" ? asset.data.content : "暂无封面"}</p></div></div>
                     )}
                 </button>
                 <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-2 bg-gradient-to-t from-[#0e0e12]/85 via-transparent to-transparent p-3 opacity-100 transition-opacity duration-300 md:items-center md:justify-center md:bg-[#0e0e12]/74 md:opacity-0 md:backdrop-blur-[2px] md:group-focus-within:opacity-100 md:group-hover:opacity-100">
@@ -744,7 +749,7 @@ function AssetScrollCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }
                                 title={action.label}
                                 aria-label={action.label}
                                 className={cn(
-                                    "pointer-events-auto grid size-9 place-items-center rounded-md border bg-[#17171d]/90 transition-colors md:size-10",
+                                    "pointer-events-auto grid size-11 place-items-center rounded-md border bg-[#17171d]/90 transition-colors md:size-10",
                                     action.danger ? "border-[rgb(216_64_42/0.5)] text-[#ee5038] hover:bg-[#d8402a] hover:text-[#fff7ee]" : "border-[rgb(237_237_230/0.28)] text-[#edede6] hover:border-[#c9a86a]/70 hover:text-[#c9a86a]",
                                 )}
                                 onClick={action.run}

@@ -18,12 +18,15 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
     const activeStyle = { background: theme.toolbar.activeBg, color: theme.toolbar.activeText };
 
     return (
-        <div className="absolute bottom-24 left-4 z-50 sm:bottom-5 sm:left-5" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-            <div className="canvas-liquid-glass canvas-liquid-glass-surface canvas-animate-blur-fade-up flex h-14 items-center gap-1 rounded-xl px-2" style={{ color: theme.toolbar.item, animationDelay: "360ms" }}>
+        <div className="@container/canvas-zoom pointer-events-none absolute bottom-24 left-4 right-4 z-50" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+            <div
+                className="canvas-liquid-glass canvas-liquid-glass-surface canvas-animate-blur-fade-up pointer-events-auto flex h-14 w-fit items-center gap-1 rounded-xl px-2 @min-[1000px]/canvas-zoom:translate-y-[76px]"
+                style={{ color: theme.toolbar.item, animationDelay: "360ms" }}
+            >
                 <Tooltip title={isMiniMapOpen ? "关闭小地图" : "打开小地图"}>
                     <Button
                         type="text"
-                        className="!h-8 !w-8 !min-w-8 !p-0"
+                        className="!h-11 !w-11 !min-w-11 !p-0 @min-[640px]/canvas-zoom:!h-8 @min-[640px]/canvas-zoom:!w-8 @min-[640px]/canvas-zoom:!min-w-8"
                         style={isMiniMapOpen ? activeStyle : { color: theme.toolbar.item }}
                         icon={<Compass className="size-4" />}
                         onClick={onToggleMiniMap}
@@ -31,7 +34,14 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
                     />
                 </Tooltip>
                 <Tooltip title="重置视图">
-                    <Button type="text" className="!h-8 !w-8 !min-w-8 !p-0" style={{ color: theme.toolbar.item }} icon={<Focus className="size-4" />} onClick={onReset} aria-label="重置视图" />
+                    <Button
+                        type="text"
+                        className="!h-11 !w-11 !min-w-11 !p-0 @min-[640px]/canvas-zoom:!h-8 @min-[640px]/canvas-zoom:!w-8 @min-[640px]/canvas-zoom:!min-w-8"
+                        style={{ color: theme.toolbar.item }}
+                        icon={<Focus className="size-4" />}
+                        onClick={onReset}
+                        aria-label="重置视图"
+                    />
                 </Tooltip>
                 <Tooltip title="放大/缩小画布">
                     <input
@@ -40,7 +50,7 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
                         max="500"
                         step="1"
                         value={Math.round(scale * 100)}
-                        className="hidden w-24 sm:block"
+                        className="hidden w-24 @min-[640px]/canvas-zoom:block"
                         style={{ accentColor: theme.node.activeStroke }}
                         onChange={(event) => onScaleChange(Number(event.target.value) / 100)}
                         aria-label="放大/缩小画布"

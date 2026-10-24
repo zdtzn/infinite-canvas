@@ -119,7 +119,7 @@ export default function CultivationPage() {
                 <header className="flex flex-wrap items-end justify-between gap-4">
                     <div>
                         <p className="shj-hero-eyebrow">Ming Gong</p>
-                        <h1 className="font-brush mt-3 text-5xl text-[#edede6] sm:text-6xl">命宫</h1>
+                        <h1 className="font-brush mt-3 text-5xl text-foreground sm:text-6xl">命宫</h1>
                         <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#8a8a96]">修行进度与境界之路,皆在此宫</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
@@ -136,11 +136,11 @@ export default function CultivationPage() {
                         ) : null}
                         <Link to="/image" className="inline-flex items-center gap-1.5 text-sm text-[#c9c4b9] transition-colors hover:text-[#f7f4ea]">
                             <ImagePlus className="size-4" />
-                            生图工作台
+                            丹青台
                         </Link>
                         <Link
                             to="/canvas"
-                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-cta px-3 text-sm font-medium text-cta-foreground transition-colors hover:bg-cta/90 hover:text-cta-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cta"
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-cta px-3 text-sm font-medium !text-cta-foreground transition-colors hover:bg-cta/90 hover:text-cta-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cta"
                         >
                             <Maximize2 className="size-4" aria-hidden="true" />
                             回到画布
@@ -234,7 +234,7 @@ export default function CultivationPage() {
                                         <p className="mt-2 text-xs text-[#edede6]/70">{nextStageSummary}</p>
                                     </div>
                                 )}
-                                <Link to="/image" className="shj-cta-glow inline-flex items-center gap-2 rounded-md bg-cta px-6 py-3 text-sm font-medium tracking-[0.15em] text-cta-foreground transition-colors duration-300 hover:bg-cta/90">
+                                <Link to="/image" className="shj-cta-glow inline-flex items-center gap-2 rounded-md bg-cta px-6 py-3 text-sm font-medium tracking-[0.15em] !text-cta-foreground transition-colors duration-300 hover:bg-cta/90 hover:!text-cta-foreground">
                                     <ImagePlus className="size-4" />
                                     继续创作
                                     <ArrowUpRight className="size-4" />

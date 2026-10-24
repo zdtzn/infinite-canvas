@@ -40,23 +40,23 @@ export function AgentPanel() {
 
     return (
         <motion.div
-            className="relative z-[70] flex h-full shrink-0"
+            className="fixed inset-y-0 right-0 z-[140] flex h-full shrink-0 lg:relative lg:inset-auto lg:z-[70]"
             inert={!panelOpen}
             aria-hidden={!panelOpen}
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: panelOpen ? width + 1 : 0, opacity: panelOpen ? 1 : 0 }}
             transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
-            style={{ overflow: "clip", pointerEvents: !panelOpen || panelClosing ? "none" : undefined }}
+            style={{ maxWidth: "100vw", overflow: "clip", pointerEvents: !panelOpen || panelClosing ? "none" : undefined }}
         >
             <motion.aside
-                className="relative flex h-full shrink-0 flex-col border-l"
+                className="@container/agent relative flex h-full min-w-0 shrink-0 flex-col border-l"
                 data-canvas-shortcuts-ignore
                 initial={{ x: 48 }}
                 animate={{ x: panelClosing ? 28 : 0 }}
                 transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
-                style={{ width, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
+                style={{ width: `min(${width}px, 100vw)`, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
             >
-                <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label="调整右侧面板宽度" />
+                <button type="button" className="absolute inset-y-0 left-0 z-40 hidden w-4 -translate-x-1/2 cursor-col-resize lg:block" onPointerDown={startResize} aria-label="调整右侧面板宽度" />
                 <LocalAgentPanel embedded />
             </motion.aside>
         </motion.div>

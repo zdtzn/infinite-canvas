@@ -969,6 +969,34 @@ export default function ImagePage() {
         }
     };
 
+    const generationAction = (
+        <>
+            <Button
+                type="primary"
+                size="large"
+                block
+                className="imperial-generate-button"
+                icon={<Sparkles className="size-4" />}
+                aria-live="polite"
+                disabled={!canGenerate}
+                onClick={() => {
+                    imperialGenerationCue.trigger();
+                    generate();
+                }}
+            >
+                {generateButtonLabel}
+            </Button>
+            {activeJobCount ? <p className="mt-2 text-center text-xs text-muted-foreground">{activeJobCount} 组任务进行中 · 可继续提交，超出并发上限自动排队{PUBLIC_MODE ? "；已提交的任务可离开后从右上角“任务与结果”找回" : ""}</p> : null}
+            {generationBlockReason ? (
+                <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
+            ) : cultivationProfile ? (
+                <div className="mt-2 text-center text-xs text-stone-400">
+                    {cultivationProfile.unlimited ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量` : `本次将占用 ${generationCount} 次 · ${quotaText(cultivationProfile.remainingToday, false)} · 灵卷 ${cultivationProfile.paidImages || 0} 次 · 失败自动退还`}
+                </div>
+            ) : null}
+        </>
+    );
+
     return (
         <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
             <main
@@ -985,21 +1013,21 @@ export default function ImagePage() {
             >
                 <section className="grid min-h-0 min-w-0 w-full gap-3 lg:h-full lg:grid-cols-[minmax(380px,460px)_minmax(0,1fr)]">
                     <div className="flex min-h-0 min-w-0 flex-col rounded-lg border border-stone-200 bg-card shadow-sm dark:border-stone-800 lg:h-full">
-                        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4 lg:p-5">
+                        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-5">
                             {/* 丹青台 · 场景横幅(仅 UI,逻辑不变) */}
-                            <div className="relative mb-6 overflow-hidden rounded-lg">
+                            <div className="relative mb-4 overflow-hidden rounded-lg">
                                 <img src="/images/ref/energy-vortex-2.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
                                 <div className="absolute inset-0 bg-gradient-to-r from-[#0e0e12]/88 via-[#0e0e12]/62 to-[#0e0e12]/28" aria-hidden />
-                                <div className="relative p-5">
+                                <div className="relative p-3 sm:p-5">
                                     <div className="min-w-0">
-                                        <p className="text-[10px] tracking-[0.4em] text-[#c9a86a]">DAN QING TAI</p>
-                                        <h1 className="font-brush mt-2 text-4xl text-[#edede6] [text-shadow:0_2px_20px_rgb(0_0_0/0.6)]">丹青台</h1>
-                                        <p className="font-display mt-1.5 text-xs tracking-[0.1em] text-[#edede6]/70">一笔落墨,万象皆成 · 结果在这里持续保留</p>
+                                        <p className="hidden text-[10px] tracking-[0.4em] text-[#c9a86a] sm:block">DAN QING TAI</p>
+                                        <h1 className="font-brush mt-1 text-3xl text-[#edede6] [text-shadow:0_2px_20px_rgb(0_0_0/0.6)] sm:mt-2 sm:text-4xl">丹青台</h1>
+                                        <p className="font-display mt-1.5 hidden text-xs tracking-[0.1em] text-[#edede6]/70 sm:block">一笔落墨,万象皆成 · 结果在这里持续保留</p>
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="mt-6 space-y-5">
+                            <div className="space-y-4">
                                 <div>
                                     <div className="mb-2 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
                                         <span className="text-base font-semibold">提示词</span>
@@ -1049,16 +1077,18 @@ export default function ImagePage() {
                                                 void generate();
                                             }
                                         }}
-                                        rows={6}
+                                        rows={4}
                                         placeholder="描述画面主体、风格、构图、光线和用途（Ctrl+Enter 快速生成）"
                                     />
                                 </div>
+
+                                <div className="lg:hidden">{generationAction}</div>
 
                                 <div className="min-w-0">
                                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                                         <div>
                                             <span className="text-base font-semibold">参考图</span>
-                                            <span className="ml-2 text-xs text-stone-400">可上传、粘贴，点击图片预览，右上角可替换</span>
+                                            <span className="ml-2 hidden text-xs text-stone-400 sm:inline">可上传、粘贴，点击图片预览，右上角可替换</span>
                                         </div>
                                         <div className="flex gap-2">
                                             <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
@@ -1070,7 +1100,7 @@ export default function ImagePage() {
                                         </div>
                                     </div>
                                     <div
-                                        className="hover-scrollbar hover-scrollbar-hint flex min-h-32 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700"
+                                        className={`hover-scrollbar flex w-full min-w-0 max-w-full gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain ${references.length ? "min-h-32 rounded-lg border border-stone-200 p-2 pb-3 dark:border-stone-700" : "min-h-8"}`}
                                         onWheel={(event) => {
                                             if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth) return;
                                             event.preventDefault();
@@ -1121,7 +1151,7 @@ export default function ImagePage() {
                                                 </Tooltip>
                                             </div>
                                         ))}
-                                        {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考图</div> : null}
+                                        {!references.length ? <div className="flex items-center text-xs text-stone-500">可选，上传、粘贴或拖入图片作为参考</div> : null}
                                     </div>
                                 </div>
 
@@ -1157,30 +1187,8 @@ export default function ImagePage() {
                             </div>
                         </div>
 
-                        <div className="shrink-0 border-t border-stone-200 bg-card p-4 dark:border-stone-800">
-                            <Button
-                                type="primary"
-                                size="large"
-                                block
-                                className="imperial-generate-button"
-                                icon={<Sparkles className="size-4" />}
-                                aria-live="polite"
-                                disabled={!canGenerate}
-                                onClick={() => {
-                                    imperialGenerationCue.trigger();
-                                    generate();
-                                }}
-                            >
-                                {generateButtonLabel}
-                            </Button>
-                            {activeJobCount ? <p className="mt-2 text-center text-xs text-muted-foreground">{activeJobCount} 组任务进行中 · 可继续提交，超出并发上限自动排队{PUBLIC_MODE ? "；已提交的任务可离开后从右上角“任务与结果”找回" : ""}</p> : null}
-                            {generationBlockReason ? (
-                                <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
-                            ) : cultivationProfile ? (
-                                <div className="mt-2 text-center text-xs text-stone-400">
-                                    {cultivationProfile.unlimited ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量` : `本次将占用 ${generationCount} 次 · ${quotaText(cultivationProfile.remainingToday, false)} · 灵卷 ${cultivationProfile.paidImages || 0} 次 · 失败自动退还`}
-                                </div>
-                            ) : null}
+                        <div className="hidden shrink-0 border-t border-stone-200 bg-card p-4 dark:border-stone-800 lg:block">
+                            {generationAction}
                         </div>
                     </div>
 
@@ -1388,23 +1396,19 @@ export default function ImagePage() {
                                     )}
                                 </div>
                             ) : (
-                                <div className="relative flex min-h-56 flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-[#d9c8a7]/30 bg-[#151b1e] text-center lg:min-h-[calc(100%_-_3rem)] [&_.empty-state-desc]:!text-[#eee6d8] [&_.empty-state-icon]:!border-[#efe4d0]/30 [&_.empty-state-icon]:!bg-[#11171b]/65 [&_.empty-state-icon]:!text-[#e4c78d] [&_.empty-state-title]:!text-[#fffaf0]">
+                                <div className="relative flex min-h-56 flex-col items-center justify-center overflow-hidden px-4 py-10 text-center lg:min-h-[calc(100%_-_4rem)]">
                                     <img
                                         src="/images/ref/danqing-results-celestial.webp"
                                         alt=""
                                         aria-hidden="true"
-                                        className="pointer-events-none absolute inset-0 size-full object-cover object-center"
-                                        loading="eager"
+                                        className="pointer-events-none absolute bottom-0 right-0 h-52 w-2/3 object-cover object-center opacity-[0.08] [mask-image:radial-gradient(ellipse_at_bottom_right,black,transparent_75%)]"
+                                        loading="lazy"
                                         decoding="async"
-                                        fetchPriority="high"
                                     />
-                                    <div className="pointer-events-none absolute inset-0 bg-[#081014]/20" aria-hidden="true" />
-                                    <div className="empty-state relative z-10 !p-8 [text-shadow:0_2px_12px_rgba(0,0,0,0.95)]">
-                                        <span className="empty-state-icon">
-                                            <ImagePlus className="size-5" />
-                                        </span>
-                                        <span className="empty-state-title">{running ? "正在准备生成结果" : "万象未生"}</span>
-                                        <span className="empty-state-desc">{running ? "结果生成后会保留在这里" : "暂无生成结果，从左侧提示词落下第一笔。"}</span>
+                                    <div className="relative z-10 flex flex-col items-center gap-3 text-muted-foreground">
+                                        <ImagePlus className="size-6 opacity-60" aria-hidden="true" />
+                                        <p className="text-sm font-medium text-foreground">{running ? "正在准备生成结果" : "万象未生"}</p>
+                                        <p className="text-xs leading-6">{running ? "结果生成后会保留在这里" : "暂无生成结果，从提示词落下第一笔。"}</p>
                                     </div>
                                 </div>
                             )}

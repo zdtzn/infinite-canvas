@@ -83,6 +83,7 @@ export default function ChatPage() {
     const [personaSaving, setPersonaSaving] = useState(false);
     const [profileOpen, setProfileOpen] = useState(false);
     const [memoryOpen, setMemoryOpen] = useState(false);
+    const [conversationsOpen, setConversationsOpen] = useState(false);
     const [memories, setMemories] = useState<ChatMemory[]>([]);
     const [memoryDraft, setMemoryDraft] = useState("");
     const [editingMemoryId, setEditingMemoryId] = useState("");
@@ -869,6 +870,46 @@ export default function ChatPage() {
         void messageActions.current[action](item);
     }, []);
 
+    const conversationList = (
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+            {loading ? <Skeleton active paragraph={{ rows: 6 }} /> : null}
+            {!loading && !conversations.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无问道记录" /> : null}
+            {conversations.map((conversation) => (
+                <button
+                    key={conversation.id}
+                    type="button"
+                    aria-current={conversation.id === activeConversationId ? "true" : undefined}
+                    className={cn(
+                        "group flex min-h-14 w-full min-w-0 items-start gap-2 rounded-lg border px-3 py-2 text-left transition",
+                        conversation.id === activeConversationId
+                            ? "border-amber-400/70 bg-amber-50/80 text-stone-950 dark:border-amber-300/35 dark:bg-amber-300/10 dark:text-[#fff8e8]"
+                            : "border-transparent hover:border-stone-200 hover:bg-white/80 dark:hover:border-white/10 dark:hover:bg-white/[0.06]",
+                    )}
+                    onClick={() => { setConversationsOpen(false); void selectConversation(conversation.id); }}
+                >
+                    <MessageCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                    <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{conversation.title}</span>
+                        <span className="mt-0.5 block truncate text-xs text-stone-500 dark:text-stone-400">{conversation.lastMessage || "新的问道"}</span>
+                    </span>
+                    <Popconfirm
+                        title="删除这段问道？"
+                        okText="删除"
+                        cancelText="取消"
+                        onConfirm={(event) => {
+                            event?.stopPropagation();
+                            void handleDeleteConversation(conversation.id);
+                        }}
+                    >
+                        <span className="rounded p-1 text-stone-400 opacity-0 transition hover:bg-stone-100 hover:text-red-500 group-hover:opacity-100 max-lg:opacity-100 dark:hover:bg-white/10" onClick={(event) => event.stopPropagation()}>
+                            <Trash2 className="size-3.5" />
+                        </span>
+                    </Popconfirm>
+                </button>
+            ))}
+        </div>
+    );
+
     if (mode === "douqi") {
         return (
             <Suspense
@@ -890,7 +931,7 @@ export default function ChatPage() {
         <div className="h-full overflow-hidden bg-[#f7f5ef] text-stone-900 dark:bg-[#11100e] dark:text-[#f5efe3]">
             <input ref={importInputRef} type="file" accept=".json,application/json" className="hidden" onChange={(event) => void handleImportFile(event.target.files)} />
             <div className="mx-auto grid h-full max-w-[1480px] grid-cols-[280px_minmax(0,1fr)] gap-0 px-4 py-4 max-lg:grid-cols-1 max-lg:px-3">
-                <aside className="min-h-0 border-r border-stone-200/80 pr-4 max-lg:hidden dark:border-white/10">
+                <aside className="flex min-h-0 flex-col border-r border-stone-200/80 pr-4 max-lg:hidden dark:border-white/10">
                     <div className="mb-4 flex items-center justify-between gap-2">
                         <div>
                             <div className="text-lg font-semibold tracking-[0.18em]">问道台</div>
@@ -900,107 +941,101 @@ export default function ChatPage() {
                             <Button shape="circle" type="text" icon={<Plus className="size-4" />} loading={creating} onClick={handleNewConversation} />
                         </Tooltip>
                     </div>
-                    <div className="min-h-0 space-y-2 overflow-y-auto pr-1">
-                        {loading ? <Skeleton active paragraph={{ rows: 6 }} /> : null}
-                        {!loading && !conversations.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无问道记录" /> : null}
-                        {conversations.map((conversation) => (
-                            <button
-                                key={conversation.id}
-                                type="button"
-                                className={cn(
-                                    "group flex w-full min-w-0 items-start gap-2 rounded-lg border px-3 py-2 text-left transition",
-                                    conversation.id === activeConversationId
-                                        ? "border-amber-400/70 bg-amber-50/80 text-stone-950 dark:border-amber-300/35 dark:bg-amber-300/10 dark:text-[#fff8e8]"
-                                        : "border-transparent bg-white/45 hover:border-stone-200 hover:bg-white/80 dark:bg-white/[0.03] dark:hover:border-white/10 dark:hover:bg-white/[0.06]",
-                                )}
-                                onClick={() => void selectConversation(conversation.id)}
-                            >
-                                <MessageCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
-                                <span className="min-w-0 flex-1">
-                                    <span className="block truncate text-sm font-medium">{conversation.title}</span>
-                                    <span className="mt-0.5 block truncate text-xs text-stone-500 dark:text-stone-400">{conversation.lastMessage || "新的问道"}</span>
-                                </span>
-                                <Popconfirm
-                                    title="删除这段问道？"
-                                    okText="删除"
-                                    cancelText="取消"
-                                    onConfirm={(event) => {
-                                        event?.stopPropagation();
-                                        void handleDeleteConversation(conversation.id);
-                                    }}
-                                >
-                                    <span className="rounded p-1 text-stone-400 opacity-0 transition hover:bg-stone-100 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-white/10" onClick={(event) => event.stopPropagation()}>
-                                        <Trash2 className="size-3.5" />
-                                    </span>
-                                </Popconfirm>
-                            </button>
-                        ))}
-                    </div>
+                    {conversationList}
                 </aside>
 
                 <main className="flex min-h-0 min-w-0 flex-col pl-4 max-lg:pl-0">
-                    <div className="mb-3 flex shrink-0 items-center justify-between gap-3 rounded-xl border border-stone-200/80 bg-white/70 px-4 py-3 shadow-sm dark:border-white/10 dark:bg-white/[0.04]">
-                        <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                                <span className="text-base font-semibold tracking-[0.12em]">问道台</span>
-                                <Tag color="gold" bordered={false}>
-                                    {activePreset.label}
-                                </Tag>
+                    <div className="mb-3 flex shrink-0 flex-col gap-2 border-b border-stone-200/80 pb-3 dark:border-white/10 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
+                        <div className="flex min-w-0 items-center justify-between gap-2 lg:flex-1">
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <span className="shrink-0 whitespace-nowrap text-base font-semibold tracking-[0.12em]">问道台</span>
+                                    <Tag color="gold" bordered={false} className="!m-0 max-w-[120px] truncate max-sm:!hidden">
+                                        {activePreset.label}
+                                    </Tag>
+                                </div>
+                                <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{activeConversation?.title || activePreset.description}</div>
                             </div>
-                            <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{activeConversation?.title || activePreset.description}</div>
+                            <div className="flex shrink-0 items-center gap-2 lg:hidden">
+                                <Button type="text" className="!h-11 !w-11 !min-w-11 !p-0" icon={<MessageCircle className="size-4" />} aria-label="问道记录" aria-expanded={conversationsOpen} onClick={() => setConversationsOpen(true)} />
+                                <Button className="!h-11 !px-3" icon={<Plus className="size-4" />} onClick={handleNewConversation} loading={creating}>
+                                    新建
+                                </Button>
+                            </div>
                         </div>
-                        <div className="flex min-w-0 items-center gap-2">
+                        <div className="flex min-w-0 items-center justify-between gap-2 lg:justify-end">
                             <Segmented
                                 size="small"
+                                className="max-lg:[&_.ant-segmented-item-label]:!min-h-11 max-lg:[&_.ant-segmented-item-label]:!leading-[44px]"
                                 value={mode}
                                 options={[{ label: "普通问道", value: "chat" }, { label: "斗气人生", value: "douqi" }]}
                                 onChange={(value) => setMode(value as ChatMode)}
                             />
-                            <Tooltip title="导出当前会话">
-                                <Button
-                                    type="text"
-                                    className="!h-8 !w-8 !min-w-8 !p-0"
-                                    icon={<Download className="size-4" />}
-                                    aria-label="导出当前会话"
-                                    disabled={!activeConversation || detailLoading || importing}
-                                    onClick={handleExportConversation}
-                                />
-                            </Tooltip>
-                            <Tooltip title="导入会话">
-                                <Button
-                                    type="text"
-                                    className="!h-8 !w-8 !min-w-8 !p-0"
-                                    icon={importing ? <LoaderCircle className="size-4 animate-spin" /> : <FileUp className="size-4" />}
-                                    aria-label="导入会话"
-                                    disabled={turnRunning || importing}
-                                    onClick={() => importInputRef.current?.click()}
-                                />
-                            </Tooltip>
-                            <Tooltip title="查看角色卡与用户身份">
-                                <Button
-                                    type="text"
-                                    className="!h-8 !w-8 !min-w-8 !p-0"
-                                    icon={<BookOpen className="size-4" />}
-                                    aria-label="查看角色卡与用户身份"
-                                    onClick={() => setProfileOpen(true)}
-                                />
-                            </Tooltip>
-                            <Tooltip title="查看长期记忆">
-                                <Button
-                                    type="text"
-                                    className="!h-8 !w-8 !min-w-8 !p-0"
-                                    icon={<Brain className="size-4" />}
-                                    aria-label="查看长期记忆"
-                                    onClick={() => setMemoryOpen(true)}
-                                />
-                            </Tooltip>
-                            <Button className="lg:hidden" icon={<Plus className="size-4" />} onClick={handleNewConversation} loading={creating}>
-                                新建
-                            </Button>
+                            <div className="hidden items-center gap-2 lg:flex">
+                                <Tooltip title="导出当前会话">
+                                    <Button
+                                        type="text"
+                                        className="!h-8 !w-8 !min-w-8 !p-0"
+                                        icon={<Download className="size-4" />}
+                                        aria-label="导出当前会话"
+                                        disabled={!activeConversation || detailLoading || importing}
+                                        onClick={handleExportConversation}
+                                    />
+                                </Tooltip>
+                                <Tooltip title="导入会话">
+                                    <Button
+                                        type="text"
+                                        className="!h-8 !w-8 !min-w-8 !p-0"
+                                        icon={importing ? <LoaderCircle className="size-4 animate-spin" /> : <FileUp className="size-4" />}
+                                        aria-label="导入会话"
+                                        disabled={turnRunning || importing}
+                                        onClick={() => importInputRef.current?.click()}
+                                    />
+                                </Tooltip>
+                                <Tooltip title="查看角色卡与用户身份">
+                                    <Button
+                                        type="text"
+                                        className="!h-8 !w-8 !min-w-8 !p-0"
+                                        icon={<BookOpen className="size-4" />}
+                                        aria-label="查看角色卡与用户身份"
+                                        onClick={() => setProfileOpen(true)}
+                                    />
+                                </Tooltip>
+                                <Tooltip title="查看长期记忆">
+                                    <Button
+                                        type="text"
+                                        className="!h-8 !w-8 !min-w-8 !p-0"
+                                        icon={<Brain className="size-4" />}
+                                        aria-label="查看长期记忆"
+                                        onClick={() => setMemoryOpen(true)}
+                                    />
+                                </Tooltip>
+                            </div>
+                            <Dropdown
+                                trigger={["click"]}
+                                menu={{
+                                    items: [
+                                        { key: "export", label: "导出当前会话", icon: <Download className="size-4" />, disabled: !activeConversation || detailLoading || importing },
+                                        { key: "import", label: "导入会话", icon: <FileUp className="size-4" />, disabled: turnRunning || importing },
+                                        { key: "profile", label: "查看角色卡与用户身份", icon: <BookOpen className="size-4" /> },
+                                        { key: "memory", label: "查看长期记忆", icon: <Brain className="size-4" /> },
+                                    ],
+                                    onClick: ({ key }) => {
+                                        if (key === "export") handleExportConversation();
+                                        if (key === "import") importInputRef.current?.click();
+                                        if (key === "profile") setProfileOpen(true);
+                                        if (key === "memory") setMemoryOpen(true);
+                                    },
+                                }}
+                            >
+                                <Button type="text" className="!h-11 shrink-0 !px-3 lg:!hidden" icon={<MoreHorizontal className="size-4" />}>
+                                    更多
+                                </Button>
+                            </Dropdown>
                         </div>
                     </div>
 
-                    <div ref={scrollRef} onScroll={handleChatScroll} className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-stone-200/80 bg-white/55 p-4 dark:border-white/10 dark:bg-black/10">
+                    <div ref={scrollRef} onScroll={handleChatScroll} className="min-h-0 flex-1 overflow-y-auto px-1 py-3 sm:px-4">
                         {detailLoading ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
                         {!detailLoading && !messages.length ? <WelcomeEmpty preset={activePreset} /> : null}
                         <div className="space-y-6">
@@ -1055,13 +1090,29 @@ export default function ChatPage() {
                                 ))}
                             </div>
                         ) : null}
-                        <div className="flex items-end gap-2">
+                        <div className="grid grid-cols-[44px_minmax(0,1fr)_auto] items-end gap-2 sm:flex">
                             <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(event) => void handleUpload(event.target.files)} />
+                            <Input.TextArea
+                                value={draft}
+                                aria-label="问道内容"
+                                className="col-span-3 row-start-1 !w-full !min-w-0 !text-base !leading-7 sm:order-3 sm:flex-1"
+                                onChange={(event) => setDraft(event.target.value)}
+                                autoSize={{ minRows: 1, maxRows: 6 }}
+                                maxLength={20_000}
+                                placeholder={`以「${activePreset.label}」向问道台提问...`}
+                                onPressEnter={(event) => {
+                                    if (event.shiftKey) return;
+                                    event.preventDefault();
+                                    void handleSend();
+                                }}
+                                disabled={turnRunning}
+                            />
                             <Tooltip title="上传图片提问">
                                 <Button
                                     type="text"
-                                    className="!h-10 !w-10 !min-w-10"
+                                    className="col-start-1 row-start-2 !h-11 !w-11 !min-w-11 sm:order-1 sm:!h-10 sm:!w-10 sm:!min-w-10"
                                     icon={uploading ? <LoaderCircle className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
+                                    aria-label="上传图片提问"
                                     onClick={() => fileInputRef.current?.click()}
                                     disabled={turnRunning || uploading}
                                 />
@@ -1084,33 +1135,19 @@ export default function ChatPage() {
                                     })),
                                 }}
                             >
-                                <Button type="text" className="!h-10 shrink-0 !px-2.5 text-stone-600 dark:text-stone-200" icon={<Sparkles className="size-4 text-amber-600" />} disabled={turnRunning} title={activePreset.hint}>
+                                <Button type="text" className="col-start-2 row-start-2 !h-11 min-w-0 max-w-full justify-self-start !px-2 text-stone-600 dark:text-stone-200 sm:order-2 sm:!h-10 sm:shrink-0 sm:!px-2.5" icon={<Sparkles className="size-4 text-amber-600" />} disabled={turnRunning} title={activePreset.hint}>
                                     <span className="inline-flex max-w-[92px] items-center gap-1 truncate text-xs">
                                         <span className="truncate">{activePreset.label}</span>
                                         <ChevronDown className="size-3 shrink-0" />
                                     </span>
                                 </Button>
                             </Dropdown>
-                            <Input.TextArea
-                                value={draft}
-                                className="!text-base !leading-7"
-                                onChange={(event) => setDraft(event.target.value)}
-                                autoSize={{ minRows: 1, maxRows: 6 }}
-                                maxLength={20_000}
-                                placeholder={`以「${activePreset.label}」向问道台提问...`}
-                                onPressEnter={(event) => {
-                                    if (event.shiftKey) return;
-                                    event.preventDefault();
-                                    void handleSend();
-                                }}
-                                disabled={turnRunning}
-                            />
                             {turnRunning ? (
-                                <Button className="!h-10" onClick={handleStop} disabled={runtimeStatus === "stopping"}>
+                                <Button className="col-start-3 row-start-2 !h-11 shrink-0 sm:order-4 sm:!h-10" onClick={handleStop} disabled={runtimeStatus === "stopping"}>
                                     {runtimeStatus === "stopping" ? "正在停止" : "停止"}
                                 </Button>
                             ) : (
-                                <Button type="primary" className="!h-10" icon={<Send className="size-4" />} disabled={!canSend} onClick={() => void handleSend()}>
+                                <Button type="primary" className="col-start-3 row-start-2 !h-11 shrink-0 sm:order-4 sm:!h-10" icon={<Send className="size-4" />} disabled={!canSend} onClick={() => void handleSend()}>
                                     {editingMessageId ? "保存并重答" : "发送"}
                                 </Button>
                             )}
@@ -1118,6 +1155,9 @@ export default function ChatPage() {
                     </div>
                 </main>
             </div>
+            <Drawer title="问道记录" placement="left" open={conversationsOpen} width="min(340px, 100vw)" onClose={() => setConversationsOpen(false)} styles={{ body: { display: "flex", flexDirection: "column", padding: 16 } }}>
+                {conversationList}
+            </Drawer>
             <Drawer
                 title={
                     <div className="flex items-center gap-2">

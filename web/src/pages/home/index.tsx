@@ -132,7 +132,7 @@ export default function IndexPage() {
                             <p className="font-display shj-hero-tagline home-enter-rise home-enter-delay-3 mt-8 text-balance text-xl leading-8 tracking-[0.3em] sm:text-2xl">一笔落,万象生</p>
 
                             {cultivation ? (
-                                <div className="home-enter-stamp home-enter-delay-4 mt-10 flex items-center gap-4">
+                                <div className="home-realm-summary home-enter-stamp home-enter-delay-4 mt-8 flex items-center gap-3 sm:mt-10 sm:gap-4">
                                     <span className="shj-hero-realm-label text-sm tracking-[0.3em]">汝之境界</span>
                                     <span className={cn("shj-seal-lg", isImperialMode && "is-imperial")}>{cultivationStageLabel(cultivation.realmName, cultivation.stageName)}</span>
                                 </div>
@@ -189,8 +189,8 @@ export default function IndexPage() {
                         <div className="home-cultivation-identity flex items-center gap-4">
                             {isImperialMode ? <ImperialSeal className="size-11" /> : <span className="shj-seal">{cultivation.realmName}</span>}
                             <div className="flex flex-col gap-0.5">
-                                <span className="font-display text-sm tracking-[0.15em] text-[#edede6]">{isImperialMode ? "今日创作" : "今日修行"}</span>
-                                <span className="home-cultivation-description text-xs text-[#8a8a96]">{quotaText(cultivation.remainingToday, cultivation.unlimited)} · 笔耕不辍,境界自现</span>
+                                <span className="font-display text-sm tracking-[0.15em] text-foreground">{isImperialMode ? "今日创作" : "今日修行"}</span>
+                                <span className="home-cultivation-description text-xs text-muted-foreground">{quotaText(cultivation.remainingToday, cultivation.unlimited)} · 笔耕不辍,境界自现</span>
                             </div>
                         </div>
                         <Link
@@ -212,8 +212,8 @@ export default function IndexPage() {
             <section ref={showcaseRef} className="home-showcase mx-auto max-w-6xl px-6 pb-24 pt-20">
                 <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
                     <div>
-                        <h2 className="font-display text-3xl text-[#edede6] sm:text-4xl">功法精选</h2>
-                        <p className="mt-3 max-w-xl text-sm leading-6 text-[#8a8a96]">稳定出图的提示词,皆藏于此楼。收藏风格与结果,让下一次创作从已有经验开始。</p>
+                        <h2 className="font-display text-3xl text-foreground sm:text-4xl">功法精选</h2>
+                        <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">稳定出图的提示词,皆藏于此楼。收藏风格与结果,让下一次创作从已有经验开始。</p>
                     </div>
                     <button
                         type="button"
@@ -241,7 +241,7 @@ export default function IndexPage() {
                             }}
                         />
                     ) : (
-                        <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-sm text-[#b5b5bf]" role="status" aria-live="polite" aria-busy={showcaseStatus === "loading"}>
+                        <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-sm text-muted-foreground" role="status" aria-live="polite" aria-busy={showcaseStatus === "loading"}>
                             <p>{showcaseStatus === "loading" ? "正在展开功法画卷…" : showcaseStatus === "error" ? "功法画卷暂时未能加载" : "暂无精选功法"}</p>
                             {showcaseStatus !== "loading" && (
                                 <>

@@ -267,3 +267,17 @@
     object-position: center 58%;
     pointer-events: none;
 }
+
+/* Keep the realm as a quiet status beside the primary creation action. */
+@media (max-width: 640px) {
+    .home-realm-summary { max-width: 100%; gap: 10px; }
+    .home-realm-summary .shj-hero-realm-label { white-space: nowrap; font-size: 12px; letter-spacing: .1em; }
+    .home-realm-summary .shj-seal-lg { min-width: 0; padding: 7px 12px; white-space: nowrap; font-size: 18px; letter-spacing: .08em; border-width: 1px; box-shadow: none; }
+}
+:root:not(.dark) .home-cultivation-link,
+:root:not(.dark) .home-showcase button,
+:root:not(.dark) .home-showcase a { color: var(--foreground); }
+:root:not(.dark) .home-cultivation-identity .font-display { color: var(--foreground); }
+:root:not(.dark) .home-cultivation-description { color: var(--muted-foreground); }
+
+.home-hero-stage .shj-btn-ghost { color: #edede6; }

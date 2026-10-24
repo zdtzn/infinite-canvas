@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings2, Square, Video } from "lucide-react";
 import { Button, Segmented } from "antd";
 
@@ -29,7 +28,12 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = node.metadata?.generationMode || "image";
     const config = buildNodeConfig(globalConfig, node, mode);
-    const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
+    const references = [
+        { label: "提示词", count: inputSummary.textCount, unit: "个" },
+        { label: "参考图", count: inputSummary.imageCount, unit: "张" },
+        { label: "参考视频", count: inputSummary.videoCount, unit: "个" },
+        { label: "参考音频", count: inputSummary.audioCount, unit: "个" },
+    ].filter((item) => item.count > 0);
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
     const canGenerate = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
@@ -37,11 +41,11 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
 
     return (
         <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
-            <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <div className="shrink-0 text-sm font-semibold">生成配置</div>
-                <div className="cursor-default" onMouseDown={(event) => event.stopPropagation()}>
+                <div className="w-full min-w-0 cursor-default" onMouseDown={(event) => event.stopPropagation()}>
                     <Segmented
-                        size="small"
+                        block
                         className="canvas-config-mode !rounded-md !p-0.5"
                         value={mode}
                         onChange={(value) => onConfigChange(node.id, { generationMode: value as CanvasGenerationMode })}
@@ -87,12 +91,24 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                 </div>
             </div>
 
-            <div className="mb-2 flex flex-wrap gap-1.5">
-                <InputChip label="提示词" value={`${inputSummary.textCount} 个`} style={chipStyle} />
-                <InputChip label="参考图" value={`${inputSummary.imageCount} 张`} style={chipStyle} />
-                <InputChip label="参考视频" value={`${inputSummary.videoCount} 个`} style={chipStyle} />
-                <InputChip label="参考音频" value={`${inputSummary.audioCount} 个`} style={chipStyle} />
-                <button type="button" className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border px-2 text-[11px]" style={chipStyle} onMouseDown={(event) => event.stopPropagation()} onClick={onComposerToggle}>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs leading-5" style={{ color: theme.node.muted }}>
+                    {references.length ? (
+                        references.map((item) => (
+                            <span key={item.label}>
+                                {item.label} {item.count} {item.unit}
+                            </span>
+                        ))
+                    ) : (
+                        <span>连接素材或编辑提示词</span>
+                    )}
+                </div>
+                <button
+                    type="button"
+                    className="inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs transition hover:bg-black/5 dark:hover:bg-white/10"
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={onComposerToggle}
+                >
                     <Settings2 className="size-3.5" />
                     组装提示词
                 </button>
@@ -164,15 +180,6 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                     )}
                 </span>
             </Button>
-        </div>
-    );
-}
-
-function InputChip({ label, value, style }: { label: string; value: string; style: CSSProperties }) {
-    return (
-        <div className="inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[11px]" style={style}>
-            <span>{label}</span>
-            <span className="font-medium">{value}</span>
         </div>
     );
 }

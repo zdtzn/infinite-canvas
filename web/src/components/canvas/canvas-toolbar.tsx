@@ -1,7 +1,46 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Dropdown, Segmented, Switch } from "antd";
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, CircleDot, Columns2, Eraser, Eye, EyeOff, Film, Grid2x2, Grid3X3, Group, Hand, Image as ImageIcon, Info, LocateFixed, Lock, Moon, Music2, Palette, Plus, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Unlock, Upload, Video } from "lucide-react";
+import {
+    AlignCenterHorizontal,
+    AlignCenterVertical,
+    AlignEndHorizontal,
+    AlignEndVertical,
+    AlignHorizontalSpaceAround,
+    AlignStartHorizontal,
+    AlignStartVertical,
+    AlignVerticalSpaceAround,
+    CircleDot,
+    Columns2,
+    Eraser,
+    Eye,
+    EyeOff,
+    Film,
+    Grid2x2,
+    Grid3X3,
+    Group,
+    Hand,
+    Image as ImageIcon,
+    Info,
+    LocateFixed,
+    Lock,
+    Moon,
+    MoreHorizontal,
+    Music2,
+    Palette,
+    Plus,
+    Puzzle,
+    Redo2,
+    Settings2,
+    Square,
+    Sun,
+    Trash2,
+    Type,
+    Undo2,
+    Unlock,
+    Upload,
+    Video,
+} from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -98,22 +137,24 @@ export function CanvasToolbar({
     }, [appearanceOpen]);
 
     return (
-        <div ref={rootRef} data-canvas-toolbar-root data-canvas-bottom-toolbar className="pointer-events-none absolute bottom-5 left-4 right-4 z-50 flex justify-center">
+        <div ref={rootRef} data-canvas-toolbar-root data-canvas-bottom-toolbar className="@container/canvas-toolbar pointer-events-none absolute bottom-5 left-4 right-4 z-50 flex justify-center">
             {tip ? <DockTip label={tip} x={tipX} theme={theme} /> : null}
             <div className="canvas-liquid-glass canvas-liquid-glass-surface canvas-animate-blur-fade-up pointer-events-auto max-w-full rounded-xl" style={{ animationDelay: "260ms" }}>
                 <div ref={wrapRef} className="thin-scrollbar flex h-14 max-w-full items-center gap-1 overflow-x-auto px-2 [&>*]:shrink-0" style={{ color: theme.toolbar.item }}>
                     <ToolbarButton id="tool-hand" label="移动/选择" active={!selectedCount} hovered={hovered} activeStyle={activeStyle} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onDeselect}>
                         <Hand className="size-4.5" />
                     </ToolbarButton>
-                    <ToolbarButton id="tool-undo" label="撤销" disabled={!canUndo} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onUndo}>
-                        <Undo2 className="size-4.5" />
-                    </ToolbarButton>
-                    <ToolbarButton id="tool-redo" label="重做" disabled={!canRedo} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onRedo}>
-                        <Redo2 className="size-4.5" />
-                    </ToolbarButton>
-                    <ToolbarButton id="tool-focus" label="居中选中节点" disabled={!selectedCount} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onFocusSelected}>
-                        <LocateFixed className="size-4.5" />
-                    </ToolbarButton>
+                    <div className="hidden items-center gap-1 @min-[640px]/canvas-toolbar:flex">
+                        <ToolbarButton id="tool-undo" label="撤销" disabled={!canUndo} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onUndo}>
+                            <Undo2 className="size-4.5" />
+                        </ToolbarButton>
+                        <ToolbarButton id="tool-redo" label="重做" disabled={!canRedo} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onRedo}>
+                            <Redo2 className="size-4.5" />
+                        </ToolbarButton>
+                        <ToolbarButton id="tool-focus" label="居中选中节点" disabled={!selectedCount} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onFocusSelected}>
+                            <LocateFixed className="size-4.5" />
+                        </ToolbarButton>
+                    </div>
                     <Divider theme={theme} />
                     <Dropdown
                         trigger={["click"]}
@@ -136,7 +177,7 @@ export function CanvasToolbar({
                             </ToolbarButton>
                         </span>
                     </Dropdown>
-                <ToolbarButton id="tool-upload" label="上传素材" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onUpload}>
+                    <ToolbarButton id="tool-upload" label="上传素材" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onUpload}>
                         <Upload className="size-4.5" />
                     </ToolbarButton>
                     <Divider theme={theme} />
@@ -185,20 +226,43 @@ export function CanvasToolbar({
                                     </ToolbarButton>
                                 </span>
                             </Dropdown>
-                            {selectedCount === 2 ? (
-                                <ToolbarButton id="tool-compare" label="比较选中版本" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onCompare}>
-                                    <Columns2 className="size-4.5" />
+                            <div className="hidden items-center gap-1 @min-[640px]/canvas-toolbar:flex">
+                                {selectedCount === 2 ? (
+                                    <ToolbarButton id="tool-compare" label="比较选中版本" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onCompare}>
+                                        <Columns2 className="size-4.5" />
+                                    </ToolbarButton>
+                                ) : null}
+                                <ToolbarButton id="tool-delete" label="删除选中" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onDelete} danger>
+                                    <Trash2 className="size-4.5" />
                                 </ToolbarButton>
-                            ) : null}
-                            <ToolbarButton id="tool-delete" label="删除选中" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onDelete} danger>
-                                <Trash2 className="size-4.5" />
-                            </ToolbarButton>
+                            </div>
                         </>
                     ) : null}
                     <Divider theme={theme} />
-                    <ToolbarButton id="tool-clear" label="清空画布" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onClear} danger>
-                        <Eraser className="size-4.5" />
-                    </ToolbarButton>
+                    <div className="hidden @min-[640px]/canvas-toolbar:block">
+                        <ToolbarButton id="tool-clear" label="清空画布" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onClear} danger>
+                            <Eraser className="size-4.5" />
+                        </ToolbarButton>
+                    </div>
+                    <Dropdown
+                        trigger={["click"]}
+                        menu={{
+                            items: [
+                                { key: "undo", label: "撤销", icon: <Undo2 className="size-4" />, disabled: !canUndo, onClick: onUndo },
+                                { key: "redo", label: "重做", icon: <Redo2 className="size-4" />, disabled: !canRedo, onClick: onRedo },
+                                { key: "focus", label: "居中选中节点", icon: <LocateFixed className="size-4" />, disabled: !selectedCount, onClick: onFocusSelected },
+                                ...(selectedCount === 2 ? [{ key: "compare", label: "比较选中版本", icon: <Columns2 className="size-4" />, onClick: onCompare }] : []),
+                                ...(selectedCount ? [{ key: "delete", label: "删除选中", icon: <Trash2 className="size-4" />, danger: true, onClick: onDelete }] : []),
+                                { key: "clear", label: "清空画布", icon: <Eraser className="size-4" />, danger: true, onClick: onClear },
+                            ],
+                        }}
+                    >
+                        <span className="@min-[640px]/canvas-toolbar:hidden">
+                            <ToolbarButton id="tool-more" label="更多画布操作" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={() => undefined}>
+                                <MoreHorizontal className="size-4.5" />
+                            </ToolbarButton>
+                        </span>
+                    </Dropdown>
                 </div>
             </div>
 
@@ -304,7 +368,7 @@ function ToolbarButton({
         <Button
             type="text"
             aria-label={label}
-            className="!h-8 !w-8 !min-w-8 !p-0"
+            className="!h-11 !w-11 !min-w-11 !shrink-0 !p-0 @min-[640px]/canvas-toolbar:!h-8 @min-[640px]/canvas-toolbar:!w-8 @min-[640px]/canvas-toolbar:!min-w-8"
             disabled={disabled}
             style={active ? activeStyle : hovered === id && !disabled ? hoverStyle : { color: danger ? "#f87171" : theme.toolbar.item, opacity: disabled ? 0.35 : 1 }}
             icon={children}

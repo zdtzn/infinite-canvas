@@ -88,9 +88,11 @@
     .palace-redesign .dep-hero-metrics { max-width: 400px; }
     .palace-redesign .dep-hero-toolbar { width: calc(100% - 32px); }
     .palace-redesign .dep-domain { width: calc(100% - 32px); }
-    .palace-standard-hero, .palace-standard-hero > img:first-child { min-height: 720px; height: 720px; }
-    .palace-current-insignia { width: 240px; max-width: 70%; top: 88px; right: 50%; transform: translateX(50%); }
-    .palace-standard-copy { right: 0; }
+    .palace-standard-hero { min-height: 0; }
+    .palace-standard-hero > img:first-child { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .palace-current-insignia { width: 160px; max-width: 55%; top: 94px; right: 50%; transform: translateX(50%); }
+    .palace-standard-copy { position: relative; right: 0; gap: 172px; padding: 20px; }
+    .palace-standard-copy h2 { font-size: 40px; }
 }
 /* A single copy column keeps the imperial declaration together, independent of portrait height. */
 .palace-redesign .dep-hero-art { filter: brightness(.23) saturate(.45); }

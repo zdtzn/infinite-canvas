@@ -1,7 +1,7 @@
 import { Drawer } from "antd";
 import { Link } from "react-router-dom";
 
-import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
+import { navigationSceneNames, navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { preloadRoute } from "@/lib/route-loaders";
 import { cn } from "@/lib/utils";
 
@@ -34,8 +34,8 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                                     : "!text-stone-600 hover:bg-stone-100 hover:!text-stone-950 dark:!text-stone-300 dark:hover:bg-stone-800 dark:hover:!text-stone-100",
                             )}
                         >
-                            <Icon className="size-5" />
-                            <span>{tool.label}</span>
+                            <Icon className="size-5 shrink-0" aria-hidden="true" />
+                            <span className="flex min-w-0 flex-1 items-baseline justify-between gap-3"><span>{navigationSceneNames[tool.slug]}</span><span className="text-xs font-normal text-muted-foreground">{tool.label}</span></span>
                         </Link>
                     );
                 })}

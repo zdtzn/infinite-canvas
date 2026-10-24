@@ -70,7 +70,7 @@ export default function PromptsPage() {
                 </section>
 
                 <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:py-8">
-                    <div className="mb-5 flex flex-wrap items-center gap-3">
+                    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
                         <Input
                             size="large"
                             allowClear
@@ -79,14 +79,14 @@ export default function PromptsPage() {
                             value={titleKeyword}
                             placeholder="搜索标题、内容或主分类"
                             onChange={(event) => setTitleKeyword(event.target.value)}
-                            className="min-w-48 flex-1"
+                            className="w-full min-w-0 sm:flex-1"
                         />
                         <Select
                             size="large"
                             aria-label="功法排序"
                             value={order}
                             onChange={setOrder}
-                            className="w-48"
+                            className="w-full sm:w-48"
                             options={[
                                 { value: "asc", label: "来源顺序 · 升序" },
                                 { value: "desc", label: "来源顺序 · 降序" },

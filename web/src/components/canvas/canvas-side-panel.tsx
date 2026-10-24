@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { App, Empty, Input, Popconfirm, Select, Tag } from "antd";
-import { Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, LayoutGrid, ListChecks, Music2, Plus, Rows3, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
+import { Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, LayoutGrid, ListChecks, Music2, PanelLeftClose, Plus, Rows3, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
@@ -60,6 +60,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
     const panelMounted = useCanvasSidePanelStore((state) => state.panelMounted);
     const panelClosing = useCanvasSidePanelStore((state) => state.panelClosing);
     const setWidth = useCanvasSidePanelStore((state) => state.setWidth);
+    const closePanel = useCanvasSidePanelStore((state) => state.closePanel);
     const [resizing, setResizing] = useState(false);
 
     const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -85,44 +86,52 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreview
     if (!panelMounted) return null;
 
     return (
-        <motion.div
-            className="absolute inset-y-0 left-0 z-[60] flex h-full shrink-0 md:relative"
-            initial={{ width: 0, opacity: 0 }}
-            animate={{ width: panelOpen ? width + 1 : 0, opacity: panelOpen ? 1 : 0 }}
-            transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: PANEL_EASE }}
-            style={{ overflow: "clip", pointerEvents: panelClosing ? "none" : undefined }}
-        >
-            <motion.aside
-                className="relative flex h-full shrink-0 flex-col overflow-hidden border-r"
-                initial={{ x: -48 }}
-                animate={{ x: panelClosing ? -28 : 0 }}
+        <>
+            {panelOpen ? <button type="button" className="absolute inset-0 top-16 z-[75] md:hidden" style={{ background: theme.node.text, opacity: 0.12 }} onClick={closePanel} aria-label="关闭图层面板遮罩" /> : null}
+            <motion.div
+                className="absolute bottom-0 left-0 top-16 z-[80] flex shrink-0 md:relative md:top-0 md:z-[60] md:h-full"
+                inert={!panelOpen}
+                aria-hidden={!panelOpen}
+                initial={{ width: 0, opacity: 0 }}
+                animate={{ width: panelOpen ? width + 1 : 0, opacity: panelOpen ? 1 : 0 }}
                 transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: PANEL_EASE }}
-                style={{ width, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
-                data-canvas-no-zoom
+                style={{ maxWidth: "calc(100vw - 16px)", overflow: "clip", pointerEvents: !panelOpen || panelClosing ? "none" : undefined }}
             >
-                <div className="flex items-center gap-5 px-4 pt-3.5">
-                    <TabButton label="图层" active={tab === "canvas"} theme={theme} onClick={() => setTab("canvas")} />
-                    <TabButton label="藏卷阁" active={tab === "assets"} theme={theme} onClick={() => setTab("assets")} />
-                    <TabButton label="提示词" active={tab === "prompts"} theme={theme} onClick={() => setTab("prompts")} />
-                </div>
-                <div className="mt-2 min-h-0 flex-1 overflow-hidden">
-                    {tab === "canvas" ? (
-                        <CanvasNodesTab nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={onFocusNode} onPreviewNode={onPreviewNode} theme={theme} />
-                    ) : tab === "assets" ? (
-                        <CanvasAssetsTab onInsert={onInsertAsset} theme={theme} />
-                    ) : (
-                        <CanvasPromptList onInsert={onInsertAsset} theme={theme} />
-                    )}
-                </div>
-                <button type="button" className="absolute inset-y-0 right-0 z-40 w-4 translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label="调整左侧面板宽度" />
-            </motion.aside>
-        </motion.div>
+                <motion.aside
+                    className="relative flex h-full shrink-0 flex-col overflow-hidden border-r"
+                    initial={{ x: -48 }}
+                    animate={{ x: panelClosing ? -28 : 0 }}
+                    transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: PANEL_EASE }}
+                    style={{ width, maxWidth: "calc(100vw - 16px)", background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                    data-canvas-no-zoom
+                >
+                    <div className="flex shrink-0 items-center gap-3 px-3 pt-1 md:gap-5 md:px-4 md:pt-3.5">
+                        <TabButton label="图层" active={tab === "canvas"} theme={theme} onClick={() => setTab("canvas")} />
+                        <TabButton label="藏卷阁" active={tab === "assets"} theme={theme} onClick={() => setTab("assets")} />
+                        <TabButton label="提示词" active={tab === "prompts"} theme={theme} onClick={() => setTab("prompts")} />
+                        <button type="button" className="ml-auto grid size-11 shrink-0 place-items-center rounded-md hover:bg-black/5 dark:hover:bg-white/10 md:hidden" onClick={closePanel} aria-label="关闭图层面板">
+                            <PanelLeftClose className="size-4" />
+                        </button>
+                    </div>
+                    <div className="mt-2 min-h-0 flex-1 overflow-hidden">
+                        {tab === "canvas" ? (
+                            <CanvasNodesTab nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={onFocusNode} onPreviewNode={onPreviewNode} theme={theme} />
+                        ) : tab === "assets" ? (
+                            <CanvasAssetsTab onInsert={onInsertAsset} theme={theme} />
+                        ) : (
+                            <CanvasPromptList onInsert={onInsertAsset} theme={theme} />
+                        )}
+                    </div>
+                    <button type="button" className="absolute inset-y-0 right-0 z-40 hidden w-4 translate-x-1/2 cursor-col-resize md:block" onPointerDown={startResize} aria-label="调整左侧面板宽度" />
+                </motion.aside>
+            </motion.div>
+        </>
     );
 }
 
 function TabButton({ label, active, theme, onClick }: { label: string; active: boolean; theme: CanvasTheme; onClick: () => void }) {
     return (
-        <button type="button" onClick={onClick} className="relative pb-1.5 text-sm font-semibold transition-opacity" style={{ color: theme.node.text, opacity: active ? 1 : 0.45 }}>
+        <button type="button" onClick={onClick} className="relative min-h-11 min-w-11 shrink-0 pb-1.5 text-sm font-semibold transition-opacity md:min-h-0 md:min-w-0" style={{ color: theme.node.text, opacity: active ? 1 : 0.45 }}>
             {label}
             {active ? <motion.span layoutId="sidePanelTabIndicator" className="absolute inset-x-0 -bottom-px h-0.5 rounded-full" style={{ background: theme.toolbar.activeText }} transition={{ type: "spring", stiffness: 500, damping: 34 }} /> : null}
         </button>

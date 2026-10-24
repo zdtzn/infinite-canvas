@@ -1,6 +1,6 @@
 import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, Eye, FolderPlus, LoaderCircle, Music2, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Tooltip } from "antd";
+import { App, Button, Checkbox, Drawer, Input, Modal, Tag, Tooltip } from "antd";
 import { nanoid } from "nanoid";
 import { videoTaskOwner, videoTasks, useVideoTaskStore } from "@/stores/use-video-task-store";
 import { isActiveVideoTask, videoAssetFromLog, videoDownloadName, videoTaskLabel, videoTaskPhase, type GeneratedVideo, type VideoGenerationLog as GenerationLog } from "@/services/video-task-model";
@@ -329,215 +329,224 @@ export default function VideoPage() {
         message.success("已恢复提示词与生成参数");
     };
 
+    const generationAction = (
+        <>
+            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} disabled={!canGenerate} onClick={() => void generate()}>
+                {activeCount ? "加入生成队列" : "开始生成"}
+            </Button>
+            <p className="mt-2 text-center text-xs text-stone-400">最多同时跟踪 2 个任务 · 待处理上限 {VIDEO_TASK_QUEUE_LIMIT} 个 · 离开本页仍会继续查询</p>
+            {generationBlockReason ? (
+                <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
+            ) : cultivationProfile ? (
+                <div className="mt-2 text-center text-xs text-stone-400">{quotaText(cultivationProfile.remainingToday, cultivationProfile.unlimited)}</div>
+            ) : null}
+        </>
+    );
+
     return (
         <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
             <main className="min-h-0 flex-1 overflow-y-auto p-3 lg:overflow-hidden">
-                <section className="grid min-w-0 gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
-                    <div className="thin-scrollbar flex min-w-0 flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
-                        {/* 流光阁 · 场景横幅(仅 UI,逻辑不变) */}
-                        <div className="relative mb-6 overflow-hidden rounded-lg">
-                            <img src="/images/ref/nebula-vortex.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
-                            <div className="absolute inset-0 bg-gradient-to-r from-[#0e0e12]/88 via-[#0e0e12]/62 to-[#0e0e12]/28" aria-hidden />
-                            <div className="relative flex flex-col items-start gap-4 p-5 sm:flex-row sm:items-end sm:justify-between">
-                                <div className="min-w-0">
-                                    <p className="text-[10px] tracking-[0.4em] text-[#c9a86a]">LIU GUANG GE</p>
-                                    <h1 className="font-brush mt-2 text-4xl text-[#edede6] [text-shadow:0_2px_20px_rgb(0_0_0/0.6)]">流光阁</h1>
-                                    <p className="font-display mt-1.5 text-xs tracking-[0.1em] text-[#edede6]/70">流光一瞬,亦可成境 · 视频由此而生</p>
-                                </div>
-                                <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto lg:hidden">
-                                    <Button
-                                        className="min-w-0"
-                                        icon={<Archive className="size-4" />}
-                                        onClick={() => {
-                                            openHistory();
-                                            window.setTimeout(() => resultPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-                                        }}
-                                    >
-                                        太古遗迹
-                                    </Button>
-                                    <Button className="min-w-0" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                        参数
-                                    </Button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="mt-6 space-y-5">
-                            <div>
-                                <div className="mb-2 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                    <span className="text-base font-semibold">提示词</span>
-                                    <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
-                                        <Button className="min-w-0" size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
-                                            查看提示词库
+                <section className="grid min-h-0 min-w-0 gap-3 lg:h-full lg:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">
+                    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-stone-200 bg-card shadow-sm dark:border-stone-800 lg:h-full">
+                        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+                            {/* 流光阁 · 场景横幅(仅 UI,逻辑不变) */}
+                            <div className="relative mb-4 overflow-hidden rounded-lg">
+                                <img src="/images/ref/nebula-vortex.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
+                                <div className="absolute inset-0 bg-gradient-to-r from-[#0e0e12]/88 via-[#0e0e12]/62 to-[#0e0e12]/28" aria-hidden />
+                                <div className="relative flex flex-col items-start gap-3 p-3 sm:p-5">
+                                    <div className="min-w-0">
+                                        <p className="hidden text-[10px] tracking-[0.4em] text-[#c9a86a] sm:block">LIU GUANG GE</p>
+                                        <h1 className="font-brush mt-1 text-3xl text-[#edede6] [text-shadow:0_2px_20px_rgb(0_0_0/0.6)] sm:mt-2 sm:text-4xl">流光阁</h1>
+                                        <p className="font-display mt-1.5 hidden text-xs tracking-[0.1em] text-[#edede6]/70 sm:block">流光一瞬,亦可成境 · 视频由此而生</p>
+                                    </div>
+                                    <div className="grid w-full grid-cols-2 gap-2 lg:hidden">
+                                        <Button
+                                            className="min-w-0"
+                                            icon={<Archive className="size-4" />}
+                                            onClick={() => {
+                                                openHistory();
+                                                window.setTimeout(() => resultPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+                                            }}
+                                        >
+                                            太古遗迹
                                         </Button>
-                                        <Button className="min-w-0" size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
-                                            查看我的资产
+                                        <Button className="min-w-0" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
+                                            参数
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea
-                                    value={prompt}
-                                    onChange={(event) => setPrompt(event.target.value)}
-                                    onKeyDown={(event) => {
-                                        if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && canGenerate) {
-                                            event.preventDefault();
-                                            void generate();
-                                        }
-                                    }}
-                                    rows={7}
-                                    placeholder="描述镜头运动、主体动作、场景氛围和画面风格（Ctrl+Enter 快速生成）"
-                                />
                             </div>
 
-                            <div className="min-w-0">
-                                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                                    <span className="text-base font-semibold">参考图</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
-                                            剪切板
-                                        </Button>
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                            <div className="space-y-4">
+                                <div>
+                                    <div className="mb-2 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                        <span className="text-base font-semibold">提示词</span>
+                                        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+                                            <Button className="min-w-0" size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
+                                                查看提示词库
+                                            </Button>
+                                            <Button className="min-w-0" size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
+                                                查看我的资产
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <Input.TextArea
+                                        value={prompt}
+                                        onChange={(event) => setPrompt(event.target.value)}
+                                        onKeyDown={(event) => {
+                                            if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && canGenerate) {
+                                                event.preventDefault();
+                                                void generate();
+                                            }
+                                        }}
+                                        rows={4}
+                                        placeholder="描述镜头运动、主体动作、场景氛围和画面风格（Ctrl+Enter 快速生成）"
+                                    />
+                                </div>
+
+                                <div className="lg:hidden">{generationAction}</div>
+
+                                <div className="min-w-0">
+                                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                        <span className="text-base font-semibold">参考图</span>
+                                        <div className="flex gap-2">
+                                            <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
+                                                剪切板
+                                            </Button>
+                                            <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                                上传
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <div
+                                        className={`hover-scrollbar flex w-full min-w-0 max-w-full gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain ${references.length ? "min-h-24 rounded-lg border border-stone-200 p-2 pb-3 dark:border-stone-700" : "min-h-8"}`}
+                                        onDragOver={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                        }}
+                                        onDrop={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files);
+                                        }}
+                                    >
+                                        {references.map((item, index) => (
+                                            <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
+                                                <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                                <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                                    {effectiveConfig.videoMode ? videoImageLabel(effectiveConfig.videoMode, references.length, index, videoReferences.length + audioReferences.length) : seedanceReferenceLabel("image", index)}
+                                                </span>
+                                                <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                                <button
+                                                    type="button"
+                                                    className="absolute right-1 top-1 flex size-6 items-center justify-center rounded bg-black/60 text-white transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+                                                    onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                                    aria-label="移除参考图"
+                                                >
+                                                    <Trash2 className="size-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {!references.length ? <div className="flex items-center text-xs text-stone-500">可选，最多 9 张，也可拖入图片</div> : null}
+                                    </div>
+                                </div>
+
+                                <div className="min-w-0">
+                                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                        <span className="text-base font-semibold">参考视频</span>
+                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => videoInputRef.current?.click()}>
                                             上传
                                         </Button>
                                     </div>
-                                </div>
-                                <div
-                                    className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700"
-                                    onDragOver={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                    }}
-                                    onDrop={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files);
-                                    }}
-                                >
-                                    {references.map((item, index) => (
-                                        <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                            <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                                                {effectiveConfig.videoMode ? videoImageLabel(effectiveConfig.videoMode, references.length, index, videoReferences.length + audioReferences.length) : seedanceReferenceLabel("image", index)}
-                                            </span>
-                                            <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                            <button
-                                                type="button"
-                                                className="absolute right-1 top-1 flex size-6 items-center justify-center rounded bg-black/60 text-white transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
-                                                onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
-                                                aria-label="移除参考图"
-                                            >
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考图，最多 9 张</div> : null}
-                                </div>
-                            </div>
-
-                            <div className="min-w-0">
-                                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                                    <span className="text-base font-semibold">参考视频</span>
-                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => videoInputRef.current?.click()}>
-                                        上传
-                                    </Button>
-                                </div>
-                                <div
-                                    className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700"
-                                    onDragOver={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                    }}
-                                    onDrop={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files);
-                                    }}
-                                >
-                                    {videoReferences.map((item, index) => (
-                                        <div key={item.id} className="group relative h-20 w-32 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-black dark:border-stone-800">
-                                            <video src={item.url} className="size-full object-cover" muted preload="metadata" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{seedanceReferenceLabel("video", index)}</span>
-                                            <ReferenceOrderButtons index={index} total={videoReferences.length} onMove={(offset) => setVideoReferences((value) => moveListItem(value, index, offset))} />
-                                            <button
-                                                type="button"
-                                                className="absolute right-1 top-1 flex size-6 items-center justify-center rounded bg-black/60 text-white transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
-                                                onClick={() => setVideoReferences((value) => value.filter((ref) => ref.id !== item.id))}
-                                                aria-label="移除参考视频"
-                                            >
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!videoReferences.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考视频，最多 3 个</div> : null}
-                                </div>
-                            </div>
-
-                            <div className="min-w-0">
-                                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                                    <span className="text-base font-semibold">参考音频</span>
-                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => audioInputRef.current?.click()}>
-                                        上传
-                                    </Button>
-                                </div>
-                                <div
-                                    className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700"
-                                    onDragOver={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                    }}
-                                    onDrop={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files);
-                                    }}
-                                >
-                                    {audioReferences.map((item, index) => (
-                                        <div key={item.id} className="group relative flex h-20 w-48 shrink-0 flex-col justify-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-2 dark:border-stone-800 dark:bg-stone-900">
-                                            <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
-                                                <Music2 className="size-4 shrink-0" />
-                                                <span className="shrink-0 rounded bg-stone-200 px-1 text-[10px] text-stone-700 dark:bg-stone-800 dark:text-stone-200">{seedanceReferenceLabel("audio", index)}</span>
-                                                <span className="truncate">{item.name}</span>
+                                    <div
+                                        className={`hover-scrollbar flex w-full min-w-0 max-w-full gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain ${videoReferences.length ? "min-h-24 rounded-lg border border-stone-200 p-2 pb-3 dark:border-stone-700" : "min-h-8"}`}
+                                        onDragOver={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                        }}
+                                        onDrop={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files);
+                                        }}
+                                    >
+                                        {videoReferences.map((item, index) => (
+                                            <div key={item.id} className="group relative h-20 w-32 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-black dark:border-stone-800">
+                                                <video src={item.url} className="size-full object-cover" muted preload="metadata" />
+                                                <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{seedanceReferenceLabel("video", index)}</span>
+                                                <ReferenceOrderButtons index={index} total={videoReferences.length} onMove={(offset) => setVideoReferences((value) => moveListItem(value, index, offset))} />
+                                                <button
+                                                    type="button"
+                                                    className="absolute right-1 top-1 flex size-6 items-center justify-center rounded bg-black/60 text-white transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+                                                    onClick={() => setVideoReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                                    aria-label="移除参考视频"
+                                                >
+                                                    <Trash2 className="size-3.5" />
+                                                </button>
                                             </div>
-                                            <audio src={item.url} controls className="h-8 w-full" preload="metadata" />
-                                            <ReferenceOrderButtons index={index} total={audioReferences.length} onMove={(offset) => setAudioReferences((value) => moveListItem(value, index, offset))} />
-                                            <button
-                                                type="button"
-                                                className="absolute right-1 top-1 flex size-6 items-center justify-center rounded bg-black/60 text-white transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
-                                                onClick={() => setAudioReferences((value) => value.filter((ref) => ref.id !== item.id))}
-                                                aria-label="移除参考音频"
-                                            >
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">暂无参考音频，最多 3 个，mp3/wav，单个 16MB 内</div> : null}
+                                        ))}
+                                        {!videoReferences.length ? <div className="flex items-center text-xs text-stone-500">可选，最多 3 个，也可拖入视频</div> : null}
+                                    </div>
                                 </div>
-                            </div>
 
-                            <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
-                                <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s
-                                </span>
-                                <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                    调整
-                                </Button>
-                            </div>
+                                <div className="min-w-0">
+                                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                        <span className="text-base font-semibold">参考音频</span>
+                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => audioInputRef.current?.click()}>
+                                            上传
+                                        </Button>
+                                    </div>
+                                    <div
+                                        className={`hover-scrollbar flex w-full min-w-0 max-w-full gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain ${audioReferences.length ? "min-h-24 rounded-lg border border-stone-200 p-2 pb-3 dark:border-stone-700" : "min-h-8"}`}
+                                        onDragOver={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                        }}
+                                        onDrop={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (e.dataTransfer.files.length) void addReferences(e.dataTransfer.files);
+                                        }}
+                                    >
+                                        {audioReferences.map((item, index) => (
+                                            <div key={item.id} className="group relative flex h-20 w-48 shrink-0 flex-col justify-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-2 dark:border-stone-800 dark:bg-stone-900">
+                                                <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
+                                                    <Music2 className="size-4 shrink-0" />
+                                                    <span className="shrink-0 rounded bg-stone-200 px-1 text-[10px] text-stone-700 dark:bg-stone-800 dark:text-stone-200">{seedanceReferenceLabel("audio", index)}</span>
+                                                    <span className="truncate">{item.name}</span>
+                                                </div>
+                                                <audio src={item.url} controls className="h-8 w-full" preload="metadata" />
+                                                <ReferenceOrderButtons index={index} total={audioReferences.length} onMove={(offset) => setAudioReferences((value) => moveListItem(value, index, offset))} />
+                                                <button
+                                                    type="button"
+                                                    className="absolute right-1 top-1 flex size-6 items-center justify-center rounded bg-black/60 text-white transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+                                                    onClick={() => setAudioReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                                    aria-label="移除参考音频"
+                                                >
+                                                    <Trash2 className="size-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {!audioReferences.length ? <div className="flex items-center text-xs text-stone-500">可选，最多 3 个，mp3/wav，单个 16MB 内</div> : null}
+                                    </div>
+                                </div>
 
-                            <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
+                                    <span className="truncate text-stone-500 dark:text-stone-400">
+                                        {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s
+                                    </span>
+                                    <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
+                                        调整
+                                    </Button>
+                                </div>
+
+                                <div className="hidden gap-4 sm:grid sm:grid-cols-2">
+                                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                </div>
                             </div>
                         </div>
-
-                        <div className="mt-auto pt-6">
-                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} disabled={!canGenerate} onClick={() => void generate()}>
-                                {activeCount ? "加入生成队列" : "开始生成"}
-                            </Button>
-                            <p className="mt-2 text-center text-xs text-stone-400">最多同时跟踪 2 个任务 · 待处理上限 {VIDEO_TASK_QUEUE_LIMIT} 个 · 离开本页仍会继续查询</p>
-                            {generationBlockReason ? (
-                                <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
-                            ) : cultivationProfile ? (
-                                <div className="mt-2 text-center text-xs text-stone-400">{quotaText(cultivationProfile.remainingToday, cultivationProfile.unlimited)}</div>
-                            ) : null}
+                        <div className="hidden shrink-0 border-t border-stone-200 bg-card p-4 dark:border-stone-800 lg:block">
+                            {generationAction}
                         </div>
                     </div>
 
@@ -608,16 +617,24 @@ export default function VideoPage() {
                         ) : displayLogs.length ? (
                             <div className="grid gap-4">
                                 {displayLogs.map((log) => (
-                                    <section key={log.id} aria-label={log.title || "视频任务"}>
+                                    <section key={log.id} aria-label="视频作品">
                                         <div className="mb-2 flex items-start justify-between gap-2">
                                             <div className="min-w-0">
-                                                <p className="line-clamp-2 text-sm">{log.prompt}</p>
+                                                <p className="text-sm font-medium">视频作品</p>
                                                 <p className="mt-1 text-xs text-stone-400">
-                                                    {log.model} · {log.resolution}p · {log.seconds}s
+                                                    {modelOptionLabel(effectiveConfig, log.model) || "默认模型"} · {log.resolution}p · {log.seconds}s
                                                 </p>
                                             </div>
                                             <Tag className="m-0 shrink-0">{videoTaskLabel(log)}</Tag>
                                         </div>
+                                        <details className="mb-3 text-xs text-muted-foreground">
+                                            <summary className="min-h-11 cursor-pointer py-3">提示词与参数</summary>
+                                            <div className="space-y-3 pb-2">
+                                                <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words leading-6 select-text">{log.prompt || "未记录提示词"}</p>
+                                                <p>{videoSizeLabel(log.size)} · {log.resolution}p · {log.seconds}s · 生成音频{boolConfig(log.config.videoGenerateAudio, true) ? "开启" : "关闭"} · 水印{boolConfig(log.config.videoWatermark, false) ? "开启" : "关闭"}</p>
+                                                <Button size="small" icon={<PenLine className="size-3.5" />} onClick={() => continueFromGenerationLog(log)}>恢复提示词与参数</Button>
+                                            </div>
+                                        </details>
                                         {log.video ? (
                                             <ResultVideoCard video={log.video} onDownload={() => void downloadVideo(log)} onSaveAsset={() => saveResultToAssets(log)} />
                                         ) : ["failed", "unknown"].includes(videoTaskPhase(log)) ? (
@@ -630,9 +647,10 @@ export default function VideoPage() {
                                 ))}
                             </div>
                         ) : (
-                            <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
-                                <VideoIcon className="mb-4 size-11 text-stone-400" />
-                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有生成视频" />
+                            <div className="flex min-h-56 flex-col items-center justify-center gap-3 px-4 py-10 text-center text-muted-foreground lg:min-h-[calc(100%_-_4rem)]">
+                                <VideoIcon className="size-6 opacity-60" aria-hidden="true" />
+                                <p className="text-sm font-medium text-foreground">还没有生成视频</p>
+                                <p className="text-xs leading-6">写下提示词，开始生成第一段流光。</p>
                             </div>
                         )}
                     </div>
@@ -876,7 +894,7 @@ function LogCard({
     onPreview: () => void;
     onContinue: () => void;
 }) {
-    const title = log.prompt.replace(/\s+/g, " ").trim() || log.title || "未命名流光";
+    const config = useEffectiveConfig();
 
     return (
         <article
@@ -899,9 +917,9 @@ function LogCard({
                     </Tag>
                 </div>
                 <div className="p-3">
-                    <div className="line-clamp-2 min-h-10 text-sm font-medium leading-5">{title}</div>
+                    <div className="text-sm font-medium leading-5">视频作品</div>
                     <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-xs text-stone-500">
-                        <span className="truncate">{log.model || "默认模型"}</span>
+                        <span className="truncate">{modelOptionLabel(config, log.model) || "默认模型"}</span>
                         <span className="shrink-0">
                             {log.resolution}p · {log.seconds}s · {formatDuration(log.durationMs)}
                         </span>

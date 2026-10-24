@@ -109,7 +109,7 @@ export function AgentConnectView({
         </div>
     );
     return (
-        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
+        <div className="thin-scrollbar min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4">
             <div className="space-y-4">
                 <div>
                     <div className="text-base font-semibold leading-6">连接本地 Agent</div>
@@ -143,7 +143,7 @@ export function AgentConnectView({
                 </div>
                 <div className="rounded-lg border p-3" style={{ borderColor: theme.node.stroke }}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-0 basis-full @min-[520px]/agent:flex-1 @min-[520px]/agent:basis-auto">
                             <div className="flex min-w-0 items-center gap-2">
                                 <span className="shrink-0 text-sm font-medium leading-5">网页连接</span>
                                 <span
@@ -158,13 +158,13 @@ export function AgentConnectView({
                                 首次连接请填写启动终端中的 Local URL 和 Connect token；插件连接链接或已保存的信息可自动带入。
                             </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                             <Tooltip title="检查 Agent、Token、来源授权和版本状态">
-                                <Button className="!h-8 !px-3" icon={diagnosing ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} onClick={() => void testConnection()} disabled={diagnosing}>
+                                <Button className="!h-11 !shrink-0 !px-3" icon={diagnosing ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} onClick={() => void testConnection()} disabled={diagnosing}>
                                     测试连接
                                 </Button>
                             </Tooltip>
-                            <Button className="!h-8 !px-3" type={enabled ? "default" : "primary"} icon={<PlugZap className="size-4" />} onClick={onToggleEnabled}>
+                            <Button className="!h-11 !shrink-0 !px-3" type={enabled ? "default" : "primary"} icon={<PlugZap className="size-4" />} onClick={onToggleEnabled}>
                                 {enabled ? "断开" : "连接"}
                             </Button>
                         </div>

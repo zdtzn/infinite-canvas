@@ -81,14 +81,14 @@ export function CanvasTopBar({
 
     return (
         <>
-            <div className="pointer-events-none absolute left-0 right-0 top-0 z-[70] flex h-16 items-center justify-between gap-2 px-3 sm:px-4">
-                <div className="canvas-liquid-glass canvas-liquid-glass-surface canvas-animate-blur-fade-up pointer-events-auto flex min-w-0 max-w-[58%] items-center gap-1 rounded-xl px-1.5 py-1 sm:gap-2" style={{ animationDelay: "0ms" }}>
+            <div className="@container/canvas-top pointer-events-none absolute left-0 right-0 top-0 z-[70] flex h-16 items-center justify-between gap-2 px-2">
+                <div className="canvas-liquid-glass canvas-liquid-glass-surface canvas-animate-blur-fade-up pointer-events-auto flex min-w-0 items-center gap-1 rounded-xl px-1 py-1 @min-[360px]/canvas-top:px-1.5 @min-[900px]/canvas-top:gap-2" style={{ animationDelay: "0ms" }}>
                     <Tooltip title={sidePanelOpen ? "收起面板" : "展开面板"}>
                         <button
                             type="button"
                             onClick={toggleSidePanel}
                             aria-label={sidePanelOpen ? "收起面板" : "展开面板"}
-                            className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10"
+                            className="grid size-11 shrink-0 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10 @min-[900px]/canvas-top:size-8"
                             style={{ color: theme.node.text }}
                         >
                             {sidePanelOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
@@ -98,16 +98,22 @@ export function CanvasTopBar({
                         <button
                             type="button"
                             onClick={onProjects}
-                            className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10"
+                            className="hidden size-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-sm font-medium transition hover:bg-black/5 dark:hover:bg-white/10 @min-[360px]/canvas-top:flex @min-[900px]/canvas-top:h-8 @min-[900px]/canvas-top:w-auto @min-[900px]/canvas-top:px-2"
                             style={{ color: theme.node.text }}
                             aria-label="返回洞天列表"
                         >
                             <ArrowLeft className="size-4" />
-                            <span className="hidden sm:inline">洞天</span>
+                            <span className="hidden @min-[900px]/canvas-top:inline">洞天</span>
                         </button>
                     </Tooltip>
                     <Tooltip title="返回首页">
-                        <button type="button" onClick={onHome} className="grid size-8 place-items-center rounded-md transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="返回首页">
+                        <button
+                            type="button"
+                            onClick={onHome}
+                            className="hidden size-11 shrink-0 place-items-center rounded-md transition hover:bg-black/5 dark:hover:bg-white/10 @min-[500px]/canvas-top:grid @min-[900px]/canvas-top:size-8"
+                            style={{ color: theme.node.text }}
+                            aria-label="返回首页"
+                        >
                             <Home className="size-4" />
                         </button>
                     </Tooltip>
@@ -141,15 +147,17 @@ export function CanvasTopBar({
                                 { type: "divider" },
                                 { key: "undo", disabled: !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text="撤销" shortcut="⌘ Z" />, onClick: onUndo },
                                 { key: "redo", disabled: !canRedo, icon: <Redo2 className="size-4" />, label: <MenuLabel text="重做" shortcut="⌘ ⇧ Z / ⌘ Y" />, onClick: onRedo },
+                                { key: "home", icon: <Home className="size-4" />, label: "返回首页", onClick: onHome },
+                                { key: "projects", icon: <ArrowLeft className="size-4" />, label: "返回洞天列表", onClick: onProjects },
                             ],
                         }}
                     >
-                        <button type="button" className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="打开画布菜单">
+                        <button type="button" className="grid size-11 shrink-0 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10 @min-[900px]/canvas-top:size-8" style={{ color: theme.node.text }} aria-label="打开画布菜单">
                             <Menu className="size-4" />
                         </button>
                     </Dropdown>
 
-                    <div ref={titleRef} className="hidden min-w-0 items-center gap-2 md:flex">
+                    <div ref={titleRef} className="hidden min-w-0 items-center gap-2 @min-[900px]/canvas-top:flex">
                         {isTitleEditing ? (
                             <input
                                 autoFocus
@@ -160,13 +168,13 @@ export function CanvasTopBar({
                                     if (event.key === "Enter") onFinishTitleEditing();
                                     if (event.key === "Escape") onCancelTitleEditing();
                                 }}
-                                className="max-w-[280px] bg-transparent p-0 text-left text-lg font-semibold tracking-normal outline-none"
+                                className="w-full min-w-0 max-w-[240px] bg-transparent p-0 text-left text-lg font-semibold tracking-normal outline-none"
                                 style={{ color: theme.node.text }}
                             />
                         ) : (
                             <button
                                 type="button"
-                                className="max-w-[280px] truncate border-b border-dashed border-transparent text-left text-lg font-semibold tracking-normal transition hover:border-current"
+                                className="max-w-[240px] truncate border-b border-dashed border-transparent text-left text-lg font-semibold tracking-normal transition hover:border-current"
                                 onDoubleClick={onStartTitleEditing}
                                 title="双击修改画布名称"
                             >
@@ -174,19 +182,29 @@ export function CanvasTopBar({
                             </button>
                         )}
                     </div>
-                    <div className="hidden xl:block">
+                    <div className="hidden shrink-0 @min-[1240px]/canvas-top:block">
                         <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
                     </div>
                 </div>
 
-                <div className="canvas-liquid-glass canvas-liquid-glass-surface canvas-animate-blur-fade-up pointer-events-auto flex shrink-0 items-center gap-1 rounded-xl px-1.5 py-1 sm:gap-1.5" style={{ animationDelay: "120ms" }}>
-                    <div className="hidden xl:block">
+                <div
+                    className="canvas-liquid-glass canvas-liquid-glass-surface canvas-animate-blur-fade-up pointer-events-auto flex shrink-0 items-center gap-1 rounded-xl px-1 py-1 [&_button]:min-h-11 [&_button]:min-w-11 @min-[360px]/canvas-top:px-1.5 @min-[900px]/canvas-top:[&_button]:min-h-7 @min-[900px]/canvas-top:[&_button]:min-w-7"
+                    style={{ animationDelay: "120ms" }}
+                >
+                    <div className="hidden @min-[1240px]/canvas-top:block">
                         <CultivationStatusPill />
                     </div>
                     <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
-                    <span className="hidden h-6 w-px sm:block" style={{ background: theme.toolbar.border }} />
-                    <Button type="text" className="!h-10 !rounded-lg !px-2 !font-medium sm:!px-3" style={{ background: agentOpen ? theme.toolbar.activeBg : "transparent", color: theme.node.text }} icon={<Bot className="size-4" />} onClick={onToggleAgent}>
-                        <span className="hidden sm:inline">Agent</span>
+                    <span className="hidden h-6 w-px @min-[900px]/canvas-top:block" style={{ background: theme.toolbar.border }} />
+                    <Button
+                        type="text"
+                        aria-label={agentOpen ? "收起 Agent" : "打开 Agent"}
+                        className="!h-11 !shrink-0 !rounded-lg !px-2 !font-medium @min-[900px]/canvas-top:!h-10 @min-[900px]/canvas-top:!px-3"
+                        style={{ background: agentOpen ? theme.toolbar.activeBg : "transparent", color: theme.node.text }}
+                        icon={<Bot className="size-4" />}
+                        onClick={onToggleAgent}
+                    >
+                        <span className="hidden @min-[900px]/canvas-top:inline">Agent</span>
                     </Button>
                 </div>
             </div>
