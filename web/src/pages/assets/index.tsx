@@ -415,8 +415,8 @@ export default function AssetsPage() {
                 {/* ── 阁头:螺旋山谷 ── */}
                 <section className="relative overflow-hidden">
                     <img src="/images/ref/spiral-valley-1.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
-                    <div className="absolute inset-0 bg-gradient-to-b from-[#0e0e12]/78 via-[#0e0e12]/58 to-[#0e0e12]" aria-hidden />
-                    <div className="relative mx-auto max-w-7xl px-4 pb-6 pt-7 sm:px-6 sm:pb-12 sm:pt-14">
+                    <div className="absolute inset-0 bg-gradient-to-b from-[#0e0e12]/45 via-[#0e0e12]/28 to-[#0e0e12]" aria-hidden />
+                    <div className="relative mx-auto max-w-7xl px-4 pb-6 pt-7 [text-shadow:0_1px_4px_rgb(0_0_0/0.9)] sm:px-6 sm:pb-12 sm:pt-14">
                         <p className="shj-hero-eyebrow">Cang Juan Ge</p>
                         <h1 className="font-brush mt-3 text-4xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:mt-4 sm:text-6xl">藏卷阁</h1>
                         <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">珍藏 {displayedCount} 卷 · 每一卷,都是一次万象落笔</p>
@@ -736,7 +736,7 @@ function AssetScrollCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }
                             onLoad={(event) => void backfillAssetThumbnail(asset, event.currentTarget)}
                         />
                     ) : (
-                        <div className="relative aspect-[4/3] w-full overflow-hidden bg-muted/35 text-sm leading-6 text-muted-foreground"><div className="absolute inset-0 flex items-center justify-center p-5"><p className="line-clamp-5 break-words">{asset.kind === "text" ? asset.data.content : "暂无封面"}</p></div></div>
+                        <div className="relative aspect-[4/3] w-full overflow-hidden bg-[#17171d] text-sm leading-6 text-[#c9c4b9]"><div className="absolute inset-0 flex items-center justify-center p-5"><p className="line-clamp-5 break-words">{asset.kind === "text" ? asset.data.content : "暂无封面"}</p></div></div>
                     )}
                 </button>
                 <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-2 bg-gradient-to-t from-[#0e0e12]/85 via-transparent to-transparent p-3 opacity-100 transition-opacity duration-300 md:items-center md:justify-center md:bg-[#0e0e12]/74 md:opacity-0 md:backdrop-blur-[2px] md:group-focus-within:opacity-100 md:group-hover:opacity-100">

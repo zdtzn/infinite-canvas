@@ -275,9 +275,10 @@
     .home-realm-summary .shj-seal-lg { min-width: 0; padding: 7px 12px; white-space: nowrap; font-size: 18px; letter-spacing: .08em; border-width: 1px; box-shadow: none; }
 }
 :root:not(.dark) .home-cultivation-link,
-:root:not(.dark) .home-showcase button,
-:root:not(.dark) .home-showcase a { color: var(--foreground); }
+:root:not(.dark) .home-section-action { color: var(--foreground); }
 :root:not(.dark) .home-cultivation-identity .font-display { color: var(--foreground); }
 :root:not(.dark) .home-cultivation-description { color: var(--muted-foreground); }
 
 .home-hero-stage .shj-btn-ghost { color: #edede6; }
+
+.home-showcase .drift-wall__overlay { opacity: .14; }

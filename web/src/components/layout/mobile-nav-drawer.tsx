@@ -35,7 +35,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                             )}
                         >
                             <Icon className="size-5 shrink-0" aria-hidden="true" />
-                            <span className="flex min-w-0 flex-1 items-baseline justify-between gap-3"><span>{navigationSceneNames[tool.slug]}</span><span className="text-xs font-normal text-muted-foreground">{tool.label}</span></span>
+                            <span className="flex min-w-0 flex-1 items-baseline justify-between gap-3"><span>{navigationSceneNames[tool.slug]}</span><span className="text-sm font-normal text-stone-600 dark:text-stone-300">{tool.label}</span></span>
                         </Link>
                     );
                 })}

@@ -92,7 +92,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
             </div>
 
             <div className="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs leading-5" style={{ color: theme.node.muted }}>
+                <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs leading-5" style={{ color: theme.node.label }}>
                     {references.length ? (
                         references.map((item) => (
                             <span key={item.label}>

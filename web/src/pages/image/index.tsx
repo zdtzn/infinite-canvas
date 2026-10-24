@@ -1017,8 +1017,8 @@ export default function ImagePage() {
                             {/* 丹青台 · 场景横幅(仅 UI,逻辑不变) */}
                             <div className="relative mb-4 overflow-hidden rounded-lg">
                                 <img src="/images/ref/energy-vortex-2.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
-                                <div className="absolute inset-0 bg-gradient-to-r from-[#0e0e12]/88 via-[#0e0e12]/62 to-[#0e0e12]/28" aria-hidden />
-                                <div className="relative p-3 sm:p-5">
+                                <div className="absolute inset-0 bg-gradient-to-r from-[#0e0e12]/65 via-[#0e0e12]/35 to-[#0e0e12]/10" aria-hidden />
+                                <div className="relative p-3 [text-shadow:0_1px_4px_rgb(0_0_0/0.9)] sm:p-5">
                                     <div className="min-w-0">
                                         <p className="hidden text-[10px] tracking-[0.4em] text-[#c9a86a] sm:block">DAN QING TAI</p>
                                         <h1 className="font-brush mt-1 text-3xl text-[#edede6] [text-shadow:0_2px_20px_rgb(0_0_0/0.6)] sm:mt-2 sm:text-4xl">丹青台</h1>

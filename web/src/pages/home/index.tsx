@@ -222,7 +222,7 @@ export default function IndexPage() {
                         onFocus={() => void preloadRoute("/prompts")}
                         onPointerDown={() => void preloadRoute("/prompts")}
                         onTouchStart={() => void preloadRoute("/prompts")}
-                        className="group inline-flex items-center gap-2 text-sm text-[#c9a86a] transition-colors hover:text-[#edede6]"
+                        className="home-section-action group inline-flex items-center gap-2 text-sm text-[#c9a86a] transition-colors hover:text-[#edede6]"
                     >
                         查看功法楼
                         <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-0.5" />
@@ -234,6 +234,7 @@ export default function IndexPage() {
                     {driftWallItems.length > 0 ? (
                         <DriftWall
                             items={driftWallItems}
+                            dim={0.94}
                             onHoverChange={setShowcaseHovered}
                             onItemClick={(_, originalIndex) => {
                                 setPreviewIndex(originalIndex);
@@ -241,7 +242,7 @@ export default function IndexPage() {
                             }}
                         />
                     ) : (
-                        <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-sm text-muted-foreground" role="status" aria-live="polite" aria-busy={showcaseStatus === "loading"}>
+                        <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-sm text-muted-foreground dark:text-[#b5b5bf]" role="status" aria-live="polite" aria-busy={showcaseStatus === "loading"}>
                             <p>{showcaseStatus === "loading" ? "正在展开功法画卷…" : showcaseStatus === "error" ? "功法画卷暂时未能加载" : "暂无精选功法"}</p>
                             {showcaseStatus !== "loading" && (
                                 <>
@@ -251,12 +252,12 @@ export default function IndexPage() {
                                             <button
                                                 type="button"
                                                 onClick={() => setShowcaseRetry((value) => value + 1)}
-                                                className="min-h-11 rounded-md border border-[#c9a86a]/40 px-5 text-[#e7d2a6] hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e7d2a6]"
+                                                className="home-section-action min-h-11 rounded-md border border-[#c9a86a]/40 px-5 text-[#e7d2a6] hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e7d2a6]"
                                             >
                                                 重新加载
                                             </button>
                                         )}
-                                        <Link to="/prompts" className="inline-flex min-h-11 items-center gap-2 rounded text-[#e7d2a6] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e7d2a6]">
+                                        <Link to="/prompts" className="home-section-action inline-flex min-h-11 items-center gap-2 rounded text-[#e7d2a6] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e7d2a6]">
                                             前往功法楼
                                             <ArrowRight size={16} aria-hidden="true" />
                                         </Link>
