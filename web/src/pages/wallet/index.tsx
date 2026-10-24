@@ -59,21 +59,17 @@ export default function WalletPage() {
 
     return (
         <main className="wallet-space h-full overflow-y-auto">
+            <picture className="wallet-scene" aria-hidden="true">
+                <source media="(max-width: 767px)" srcSet="/images/wallet-scroll-sanctuary-v1-small.webp" />
+                <img src="/images/wallet-scroll-sanctuary-v1.webp" alt="" width={1774} height={887} loading="eager" fetchPriority="high" decoding="async" />
+            </picture>
             <div className="wallet-content">
                 <header className="wallet-heading">
-                    <p className="wallet-eyebrow">LING JUAN GE / 创作补给</p>
+                    <p className="wallet-eyebrow">云中藏卷 · 万象续笔</p>
                     <h1 className="font-brush">灵卷阁</h1>
                     <p>补充灵卷，继续执笔万象</p>
                 </header>
                 <section className={"wallet-hero" + (imperial ? " is-imperial" : "")} aria-label="我的创作资源">
-                    <svg className="wallet-hero-art" viewBox="0 0 680 280" fill="none" aria-hidden="true">
-                        <path d="M20 250C180 235 240 75 440 90S600 150 700 25M-20 270C170 260 230 100 430 115S610 175 720 55" />
-                        <path d="M235 280V62Q235 42 255 42H554Q574 42 574 62V245M255 42V245H610M280 67H545M280 80H465" />
-                        <ellipse cx="442" cy="180" rx="205" ry="60" transform="rotate(-23 442 180)" />
-                        <circle cx="560" cy="78" r="2" />
-                        <circle cx="338" cy="180" r="2" />
-                        <circle cx="612" cy="194" r="1.5" />
-                    </svg>
                     <div className="wallet-hero-main">
                         {profile ? (
                             <Link to="/cultivation" className="wallet-identity">
@@ -113,11 +109,9 @@ export default function WalletPage() {
                         </dl>
                     </div>
                     <div className="wallet-hero-action">
-                        <p>灵卷在手，画卷可续。</p>
                         <Link to="/image" className="wallet-create">
                             继续创作 <ArrowRight size={18} aria-hidden="true" />
                         </Link>
-                        <span>前往丹青台</span>
                     </div>
                 </section>
 

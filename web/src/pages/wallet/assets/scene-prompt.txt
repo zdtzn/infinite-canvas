@@ -1,0 +1,10 @@
+Generated using the built-in image_gen tool. No external provider API key was used.
+Source image: exec-6eaf985a-31a4-4707-89ec-87c8381162f5.png (1774 x 887).
+Web exports: wallet-scroll-sanctuary-v1.webp and wallet-scroll-sanctuary-v1-small.webp, WebP quality 84. No image darkening or color transformation applied to these files.
+
+Final generation prompt:
+Use case: stylized-concept.
+Asset type: production website hero/background illustration for a Chinese xianxia creative platform's 'Ling Juan Ge' scroll treasury page. Generate a single polished panoramic landscape illustration, approximately 2:1 aspect ratio, without any interface or text.
+Scene: an ethereal cloud library above blue-green mountain valleys, ancient Chinese pavilion roofs and archways emerging from mist; a beautiful floating silk-and-jade scroll with gently curled ivory parchment, fine champagne-gold fittings and a jade tassel, on the RIGHT THIRD as the clear focal subject. A few small floating gold flecks and soft cloud ribbons lead into the distant mountain library. No characters are needed.
+Composition: reserve the LEFT 45 percent as calm, spacious deep teal-blue atmosphere and soft low-detail clouds, suitable for overlaying live website headings and a balance number. Keep the primary scroll and architectural detail concentrated on the right; the scroll remains fully within the image, with breathing room. Lower edge should become a smooth deep blue-teal atmosphere so the artwork can transition into a page background. No rectangular card or enclosing decorative frame.
+Style: refined high-end Chinese fantasy book illustration, intricate painterly detail, cinematic depth, elegant restrained ornament, luminous jade and warm ivory-gold against sapphire/teal clouds. Bright readable scroll, richly colored scenery that remains visible, not a nearly black image. Avoid muddy gray, crushed shadows, heavy dark fog, excessive glowing particles, coins, money symbols, cyberpunk, modern objects, dashboard panels, UI components, typography, labels, logos, signatures, watermark, borders, or printed glyphs on the scroll. All functional text will be rendered as HTML separately.
