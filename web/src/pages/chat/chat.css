@@ -1,0 +1,47 @@
+.chat-page {
+    --chat-ground: #f7f5ef;
+    --chat-scene-strength: 0.22;
+    --chat-reading-veil: rgb(247 245 239 / 82%);
+    position: relative;
+    isolation: isolate;
+}
+
+.dark .chat-page {
+    --chat-ground: #11100e;
+    --chat-scene-strength: 0.42;
+    --chat-reading-veil: rgb(17 16 14 / 40%);
+}
+
+.chat-scene {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    display: block;
+    pointer-events: none;
+}
+
+.chat-scene img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center bottom;
+    opacity: var(--chat-scene-strength);
+}
+
+.chat-scene::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 56% 44%, var(--chat-reading-veil), transparent 78%), linear-gradient(180deg, var(--chat-ground), transparent 26%, transparent 80%, var(--chat-ground));
+}
+
+.chat-layout {
+    position: relative;
+}
+
+@media (max-width: 1023px) {
+    .chat-scene img {
+        object-position: 82% bottom;
+    }
+}

@@ -16,6 +16,7 @@ import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
 import { useChatRuntimeStore } from "@/stores/use-chat-runtime-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId, type ChatPresetOption } from "./chat-presets";
 import { mergeChatHistoryWithPendingTurn, mergeStartedChatMessages } from "./chat-message-reconciliation";
+import "./chat.css";
 
 const DouQiLifeView = lazyRoute(() => import("./dou-qi-life-view"));
 const ChatMarkdown = lazyRoute(() => import("./chat-markdown"));
@@ -928,9 +929,13 @@ export default function ChatPage() {
     }
 
     return (
-        <div className="h-full overflow-hidden bg-[#f7f5ef] text-stone-900 dark:bg-[#11100e] dark:text-[#f5efe3]">
+        <div className="chat-page h-full overflow-hidden bg-[#f7f5ef] text-stone-900 dark:bg-[#11100e] dark:text-[#f5efe3]">
+            <picture className="chat-scene" aria-hidden="true">
+                <source media="(max-width: 1023px)" srcSet="/images/chat-mountain-study-v1-small.webp" />
+                <img src="/images/chat-mountain-study-v1.webp" alt="" width={1774} height={887} loading="eager" decoding="async" />
+            </picture>
             <input ref={importInputRef} type="file" accept=".json,application/json" className="hidden" onChange={(event) => void handleImportFile(event.target.files)} />
-            <div className="mx-auto grid h-full max-w-[1480px] grid-cols-[280px_minmax(0,1fr)] gap-0 px-4 py-4 max-lg:grid-cols-1 max-lg:px-3">
+            <div className="chat-layout mx-auto grid h-full max-w-[1480px] grid-cols-[280px_minmax(0,1fr)] gap-0 px-4 py-4 max-lg:grid-cols-1 max-lg:px-3">
                 <aside className="flex min-h-0 flex-col border-r border-stone-200/80 pr-4 max-lg:hidden dark:border-white/10">
                     <div className="mb-4 flex items-center justify-between gap-2">
                         <div>

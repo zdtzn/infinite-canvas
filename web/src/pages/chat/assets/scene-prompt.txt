@@ -1,0 +1,11 @@
+Generated using the built-in image_gen tool. No external provider API key was used.
+Source image: exec-45b18d56-a4b8-4a86-8937-f346373bbc5e.png (1774 x 887).
+Web exports: chat-mountain-study-v1.webp (1774 x 887) and chat-mountain-study-v1-small.webp (1120 x 560), WebP quality 82. No color or brightness changes applied to the files; reading veils are page-scoped CSS.
+
+Final generation prompt:
+Use case: stylized-concept.
+Asset type: a production background illustration for a Chinese xianxia AI conversation page, landscape panoramic composition, approximately 2:1. This is scenery only; not a screenshot, mockup, poster or framed panel.
+Scene: a tranquil mountain study above a sea of mist at blue hour. Soft layered ink-wash mountain silhouettes and drifting pale blue-green clouds; an elegant small ancient Chinese open reading pavilion tucked into the LOWER RIGHT OUTER EDGE, with a very restrained warm lantern and a few scrolls suggested inside. A sparse pine branch and distant cliffs at the far left edge balance the view. No people.
+Composition for a real chat interface: the central 65 percent and upper half must remain spacious, soft, low-detail mist with gentle tonal variation so long chat text and message panels can sit over it. Keep recognizable architectural detail and landscape ridges mostly near the outer edges and lower third; no bright focal object behind the middle of the interface. No enclosing border or card. Let the lower atmosphere remain continuous rather than a hard horizontal horizon.
+Style and palette: refined Chinese fantasy ink-and-gouache painting, quiet jade teal, blue slate, muted sage, misty pearl-gray and tiny accents of antique champagne gold. Soft medium-dark atmosphere with clearly legible mountain depth and visible scenery; not black, muddy, crushed, glittery, oversaturated or flashy. Very gentle diffused light, no dazzling sun or moon, no high-contrast beams, no particles or effects. The illustration should add calm depth while staying subordinate to reading and writing.
+Constraints: no UI, no typography, no calligraphy, no printed glyphs, no labels, no logos, no watermarks, no modern objects, no massive ornate gold frames, no coins. All functional text will be live HTML.
