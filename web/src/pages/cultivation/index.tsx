@@ -268,8 +268,8 @@ export default function CultivationPage() {
                                     <div className="min-w-0 border-t border-[rgb(237_237_230/0.09)] pt-6 sm:border-l sm:border-t-0 sm:pl-8 sm:pt-0">
                                         <span className="font-display text-sm tracking-[0.1em] text-[#edede6]">今日创作</span>
                                         <div className="mt-3 flex items-baseline gap-1.5">
-                                            <span className="font-display text-3xl leading-none text-[#edede6]">{todaySuccessfulImages.toLocaleString()}</span>
-                                            <span className="text-sm text-[#c9c4b9]">张</span>
+                                            <span className="font-display text-3xl leading-none text-[#edede6]">{data.usedToday.toLocaleString()}</span>
+                                            <span className="text-sm text-[#c9c4b9]">次</span>
                                         </div>
                                         <p className="mt-2 text-sm text-[#8a8a96]">今日创作持续累计</p>
                                     </div>

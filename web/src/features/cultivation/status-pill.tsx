@@ -35,7 +35,7 @@ export function CultivationStatusPill() {
         <>
             {isDouEmperor ? <ImperialSeal className="size-7" decorative /> : <RealmIcon iconKey={data.iconKey} className="size-3.5 shrink-0" />}
             <span className="cultivation-status-copy hidden max-w-32 truncate lg:block">{label}</span>
-            <span className="cultivation-status-copy hidden text-xs text-stone-400 lg:block dark:text-stone-500">{imageQuotaText(data)}</span>
+            {!isDouEmperor ? <span className="cultivation-status-copy hidden text-xs text-stone-400 lg:block dark:text-stone-500">{imageQuotaText(data)}</span> : null}
         </>
     );
 
@@ -66,7 +66,7 @@ export function CultivationStatusPill() {
                 </Suspense>
             }
         >
-            <button type="button" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} title={`${label} · ${imageQuotaText(data)}`} aria-label="查看斗帝身份与帝临设置">
+            <button type="button" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} aria-label="查看斗帝身份与帝临设置">
                 {statusContent}
             </button>
         </Popover>

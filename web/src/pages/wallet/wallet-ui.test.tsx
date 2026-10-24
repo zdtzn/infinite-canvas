@@ -413,7 +413,7 @@ test("the actual ordinary wallet-only page explains one-time registration gifts 
             assert.match(html, /新注册账号一次性获赠 6 灵卷，不每日续赠/);
             assert.match(html, /赠送用完后需补充灵卷/);
             assert.match(html, /境界提升不赠送每日图片额度/);
-            assert.match(html, /斗帝境界可免费不限生成/);
+            assert.doesNotMatch(html, /斗帝境界可免费不限生成/);
             assert.match(html, /未生成结果的灵卷按实际结算返还/);
             assert.match(html, /支付功能暂未开放/);
             assert.match(html, balance ? /可使用灵卷继续创作/ : /请联系管理员补充/);

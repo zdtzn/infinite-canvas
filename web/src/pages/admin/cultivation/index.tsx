@@ -567,7 +567,7 @@ function UserDrawer({
                 </section>
 
                 <section className="cultivation-form-section">
-                    <FormSectionHeading title="额度与账号" description="下方额度覆盖仅用于视频等其他服务，不影响生图灵卷计费与斗帝免费不限。" />
+                    <FormSectionHeading title="额度与账号" description="下方额度覆盖仅用于视频等其他服务，不影响普通图片生成的灵卷计费。" />
                     <div className="grid grid-cols-2 gap-3">
                         <Form.Item label="其他服务每日额度覆盖" name="dailyLimitOverride" extra="留空继承境界规则">
                             <InputNumber min={0} className="w-full" />
@@ -829,7 +829,7 @@ function CapabilitiesQuotaPanel() {
                 <div className="cultivation-admin-section-heading">
                     <div>
                         <h2>其他服务默认额度</h2>
-                        <p>用户没有单独覆盖时，视频等其他服务使用这里的每日额度；普通账号在斗帝以下生图按灵卷计费，斗帝免费不限，最大并发仍对创作任务生效。</p>
+                        <p>用户没有单独覆盖时，视频等其他服务使用这里的每日额度；普通图片生成按灵卷计费，最大并发仍对创作任务生效。</p>
                     </div>
                 </div>
                 <RealmQuotaTable realms={data.realms} onEdit={setEditingRealm} />
