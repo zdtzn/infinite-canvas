@@ -280,5 +280,3 @@
 :root:not(.dark) .home-cultivation-description { color: var(--muted-foreground); }
 
 .home-hero-stage .shj-btn-ghost { color: #edede6; }
-
-.home-showcase .drift-wall__overlay { opacity: .14; }

@@ -234,7 +234,6 @@ export default function IndexPage() {
                     {driftWallItems.length > 0 ? (
                         <DriftWall
                             items={driftWallItems}
-                            dim={0.94}
                             onHoverChange={setShowcaseHovered}
                             onItemClick={(_, originalIndex) => {
                                 setPreviewIndex(originalIndex);

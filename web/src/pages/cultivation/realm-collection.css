@@ -59,7 +59,7 @@
 .palace-redesign .dep-domain::before { width: 100%; }
 .palace-redesign .dep-core-grid { padding-top: 16px; }
 .palace-standard-hero { min-height: 430px; }
-.palace-standard-hero > img:first-child { height: 430px; opacity: .9; }
+.palace-standard-hero > img:first-child { height: 430px; opacity: .5; }
 .palace-current-insignia { position: absolute; top: 50%; right: 4%; transform: translateY(-50%); width: 34%; max-width: 350px; height: auto; aspect-ratio: 1; object-fit: contain; z-index: 1; }
 .palace-standard-copy { right: 40%; }
 .palace-standard .realm-collection { padding-top: 8px; }
@@ -95,12 +95,12 @@
     .palace-standard-copy h2 { font-size: 40px; }
 }
 /* A single copy column keeps the imperial declaration together, independent of portrait height. */
-.palace-redesign .dep-hero-art { filter: brightness(.78) saturate(.85); }
+.palace-redesign .dep-hero-art { filter: brightness(.23) saturate(.45); }
 .palace-redesign .dep-hero-center { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: clamp(24px, 4vw, 64px); width: min(100% - 64px, 1240px); margin-top: 20px; }
 .palace-redesign .dep-imperial-crest { grid-row: auto; width: min(100%, 480px); }
 .palace-redesign .dep-imperial-crest-frame img { mask-image: linear-gradient(90deg, transparent, black 16%, black 82%, transparent), linear-gradient(180deg, transparent, black 7%, black 86%, transparent); mask-composite: intersect; }
-.dep-sovereign-copy { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; padding: 32px 0; text-shadow: 0 2px 4px #050507, 0 0 12px #050507b3; }
-.palace-redesign .dep-arrival-mark { letter-spacing: .22em; color: #f0d9a0; }
+.dep-sovereign-copy { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; padding: 32px 0; }
+.palace-redesign .dep-arrival-mark { letter-spacing: .22em; color: #d6b777; }
 .palace-redesign .dep-emperor-title-wrap { display: block; margin: 20px 0 8px; }
 .palace-redesign .dep-emperor-title { font-size: clamp(80px, 9vw, 132px); letter-spacing: .12em; line-height: 1.15; text-shadow: 0 4px 40px #cda65030; }
 .palace-redesign .dep-emperor-rank { font-size: clamp(20px, 2.4vw, 30px); letter-spacing: .12em; color: #f0dfb8; }

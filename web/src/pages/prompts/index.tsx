@@ -61,8 +61,8 @@ export default function PromptsPage() {
                 {/* ── 功法楼 · 场景阁头(仅 UI,逻辑不变) ── */}
                 <section className="relative overflow-hidden">
                     <img src="/images/ref/misty-dawn.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
-                    <div className="absolute inset-0 bg-gradient-to-b from-[#0e0e12]/45 via-[#0e0e12]/28 to-[#0e0e12]" aria-hidden />
-                    <div className="relative mx-auto max-w-7xl px-6 pb-6 pt-8 text-center [text-shadow:0_1px_4px_rgb(0_0_0/0.9)] lg:pb-10 lg:pt-14">
+                    <div className="absolute inset-0 bg-gradient-to-b from-[#0e0e12]/78 via-[#0e0e12]/55 to-[#0e0e12]" aria-hidden />
+                    <div className="relative mx-auto max-w-7xl px-6 pb-6 pt-8 text-center lg:pb-10 lg:pt-14">
                         <p className="shj-hero-eyebrow inline-flex">Gong Fa Lou</p>
                         <h1 className="font-brush mt-4 text-5xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:text-6xl">功法楼</h1>
                         <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">楼藏功法 {totalPrompts} 卷 · 每一卷,皆可助你落笔成象</p>

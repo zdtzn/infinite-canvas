@@ -160,7 +160,7 @@ export default function CultivationPage() {
                         decoding="async"
                         fetchPriority="high"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#0e0e12] via-[#0e0e12]/30 to-transparent" aria-hidden />
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#0e0e12] via-[#0e0e12]/45 to-transparent" aria-hidden />
                     <img className="palace-current-insignia" src={palaceInsignia(REALM_LADDER[ladderIndex].id)} alt={`${data.realmName}勋章`} width={640} height={640} fetchPriority="high" />
                     <div className="palace-standard-copy absolute inset-0 flex flex-col justify-between p-6 sm:p-8">
                         <div className="flex items-center gap-3">
