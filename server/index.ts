@@ -91,7 +91,7 @@ import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
 import { AnnouncementError, createAnnouncementService, type AnnouncementInput } from "./modules/announcements/service";
 import { createColorAlchemyService, ColorAlchemyError } from "./modules/color-alchemy/service";
-import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
+import { createCultivationService, CultivationError, type CultivationCapabilityUpdate, type CultivationImageBalanceUpdate, type CultivationRealmUpdate, type CultivationStageUpdate, type CultivationUserUpdate } from "./modules/cultivation/service";
 import { createDouQiLifeService, DouQiLifeError } from "./modules/dou-qi-life/service";
 import { buildDouQiLifeTurnPrompt, DOU_QI_LIFE_SYSTEM_PROMPT } from "./modules/dou-qi-life/prompt";
 import { streamDouQiLifeTurn } from "./modules/dou-qi-life/stream";
@@ -496,6 +496,8 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/cultivation/users" && request.method === "GET") return adminCultivationUsers(url, session);
         const cultivationUserMatch = url.pathname.match(/^\/api\/admin\/cultivation\/users\/([^/]+)$/);
         if (cultivationUserMatch && request.method === "PATCH") return adminUpdateCultivationUser(request, session, cultivationUserMatch[1]);
+        const cultivationImageBalanceMatch = url.pathname.match(/^\/api\/admin\/cultivation\/users\/([^/]+)\/image-balance$/);
+        if (cultivationImageBalanceMatch && request.method === "PUT") return adminSetCultivationImageBalance(request, session, cultivationImageBalanceMatch[1]);
         if (url.pathname === "/api/admin/cultivation/config" && request.method === "GET") return adminCultivationConfiguration(session);
         const realmMatch = url.pathname.match(/^\/api\/admin\/cultivation\/realms\/([^/]+)$/);
         if (realmMatch && request.method === "PATCH") return adminUpdateRealm(request, session, realmMatch[1]);
@@ -1116,6 +1118,13 @@ async function adminUpdateCultivationUser(request: Request, session: SessionPayl
     return json({ profile });
 }
 
+async function adminSetCultivationImageBalance(request: Request, session: SessionPayload, encodedUserId: string) {
+    requireAdmin(session);
+    const userId = decodeRouteSegment(encodedUserId, "用户 ID");
+    const body = await readJson<CultivationImageBalanceUpdate>(request, 4 * 1024);
+    return json({ profile: requireCultivation().setImageBalance(session.userId, userId, body) }, 200, { "Cache-Control": "private, no-store" });
+}
+
 function adminCultivationConfiguration(session: SessionPayload) {
     requireAdmin(session);
     return json(requireCultivation().getConfiguration());
@@ -1166,13 +1175,13 @@ function adminCultivationUsage(url: URL, session: SessionPayload) {
 function adminCultivationAuditLogs(url: URL, session: SessionPayload) {
     requireAdmin(session);
     const { page, pageSize } = readPagination(url);
-    return json(requireCultivation().listAuditLogs(page, pageSize));
+    return json(requireCultivation().listAuditLogs(page, pageSize, url.searchParams.get("userId")));
 }
 
 function adminCultivationLoginLogs(url: URL, session: SessionPayload) {
     requireAdmin(session);
     const { page, pageSize } = readPagination(url);
-    return json(requireCultivation().listLoginLogs(page, pageSize));
+    return json(requireCultivation().listLoginLogs(page, pageSize, url.searchParams.get("userId")));
 }
 
 function adminCultivationBreakthroughs(url: URL, session: SessionPayload) {

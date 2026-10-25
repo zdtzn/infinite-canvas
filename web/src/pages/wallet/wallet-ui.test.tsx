@@ -214,7 +214,7 @@ test("refund wording includes canceled tasks without inventing an unavailable re
 
 test("record sources show purpose first and keep identifiers in details", () => {
     assert.deepEqual(walletRecordSource({ ...record, packageId: "juling" }, packages), { label: "聚灵卷" });
-    assert.deepEqual(walletRecordSource({ ...record, kind: "admin_grant" }, packages), { label: "管理员发放" });
+    assert.deepEqual(walletRecordSource({ ...record, kind: "admin_grant" }, packages), { label: "管理员调整" });
     assert.deepEqual(walletRecordSource(record, packages), { label: "图片生成", fullId: record.sourceId });
     assert.deepEqual(walletRecordSource({ ...record, sourceId: "short-job" }, packages), { label: "图片生成", fullId: "short-job" });
     assert.deepEqual(walletRecordSource({ ...record, packageId: "removed-package" }, packages), { label: "灵卷补充" });

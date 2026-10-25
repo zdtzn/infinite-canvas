@@ -664,6 +664,10 @@ export async function updateAdminCultivationUser(userId: string, input: Record<s
     return serverRequest<{ profile: CultivationProfile }>(`/api/admin/cultivation/users/${encodeURIComponent(userId)}`, { method: "PATCH", body: input });
 }
 
+export async function updateAdminImageBalance(userId: string, input: { imageBalance: number; expectedImageBalance: number; adjustmentId: string; reason?: string }) {
+    return serverRequest<{ profile: CultivationProfile }>(`/api/admin/cultivation/users/${encodeURIComponent(userId)}/image-balance`, { method: "PUT", body: input });
+}
+
 export async function fetchCultivationConfiguration() {
     return serverRequest<CultivationConfiguration>("/api/admin/cultivation/config");
 }

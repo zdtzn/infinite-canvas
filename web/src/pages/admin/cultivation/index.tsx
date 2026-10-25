@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Descriptions, Drawer, Empty, Form, Input, InputNumber, Modal, Result, Segmented, Select, Switch, Table, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import type { InputRef } from "antd";
 import {
     Activity,
     ArrowLeft,
@@ -42,8 +43,8 @@ import {
     fetchAdminMetrics,
     fetchCultivationConfiguration,
     fetchCultivationLog,
-    fetchWallet,
-    grantWalletPackage,
+    ServerRequestError,
+    updateAdminImageBalance,
     updateAdminCultivationUser,
     updateCultivationCapability,
     updateCultivationRealm,
@@ -113,6 +114,8 @@ const accountStatusOptions = [
     { value: "BANNED", label: "已封禁" },
 ];
 
+const imageBalanceHelp = "不含运行中任务已占用的次数；生成失败后会退回占用次数。";
+
 const adminSections = [
     { key: "overview", group: "运营中枢", label: "总览", title: "运营总览", description: "集中查看用户规模、任务状态、渠道健康和最近管理变更。", icon: LayoutDashboard },
     { key: "users", group: "修炼体系", label: "用户管理", title: "用户管理", description: "查看并调整用户境界、修为、额度与账号状态。", icon: Users },
@@ -130,24 +133,67 @@ export default function AdminCultivationPage() {
     const activeSection = resolveAdminSection(searchParams.get("tab"));
     const activeRecordKind = resolveAdminRecordKind(searchParams.get("record"));
     const section = adminSections.find((item) => item.key === activeSection) || adminSections[0];
+    const { message } = App.useApp();
+    const queryClient = useQueryClient();
+    const [editing, setEditing] = useState<AdminCultivationUser | null>(null);
+    const [adjusting, setAdjusting] = useState<AdminCultivationUser | null>(null);
+    const [searchFocus, setSearchFocus] = useState(0);
+    const { data: config } = useQuery({ queryKey: ["admin", "cultivation", "config"], queryFn: fetchCultivationConfiguration, enabled: admin });
+    const stageOptions = useMemo(() => config?.realms.filter((realm) => realm.active).map((realm) => ({ label: realm.name, options: realm.stages.filter((stage) => stage.active).map((stage) => ({ value: stage.id, label: cultivationStageLabel(realm.name, stage.name) })) })) || [], [config]);
+    const mutation = useMutation({
+        mutationFn: ({ userId, values }: { userId: string; values: CultivationUserPatch }) => updateAdminCultivationUser(userId, values),
+        onSuccess: () => {
+            setEditing(null);
+            void queryClient.invalidateQueries({ queryKey: ["admin", "cultivation"] });
+            void queryClient.invalidateQueries({ queryKey: ["cultivation", "profile"] });
+            message.success("用户信息已更新");
+        },
+        onError: (error) => message.error(error instanceof Error ? error.message : "更新失败"),
+    });
 
-    const updateParams = (updates: Record<string, string | null>) => {
+    const updateParams = (updates: Record<string, string | null>, replace = true) => {
         const next = new URLSearchParams(searchParams);
         for (const [key, value] of Object.entries(updates)) {
             if (value) next.set(key, value);
             else next.delete(key);
         }
-        setSearchParams(next, { replace: true });
+        setSearchParams(next, { replace });
     };
 
-    const selectSection = (key: AdminSectionKey) =>
+    const selectSection = (key: AdminSectionKey) => {
+        if (key === activeSection) return;
         updateParams({
             tab: key === "overview" ? null : key,
             search: key === "users" ? searchParams.get("search") : null,
             record: key === "records" ? searchParams.get("record") : null,
             user: key === "records" ? searchParams.get("user") : null,
-        });
-    const openUserFromLog = (displayName: string) => updateParams({ tab: "users", search: displayName, record: null, user: null });
+        }, false);
+    };
+    const openUserFromLog = async (userId: string) => {
+        if (!userId) return;
+        try {
+            const result = await fetchAdminCultivationUsers(1, 20, userId);
+            const user = result.items.find((item) => item.userId === userId);
+            if (user) setEditing(user);
+            else message.warning("未找到该用户，请刷新记录后重试");
+        } catch {
+            message.error("用户信息加载失败，请重试");
+        }
+    };
+    const openUserSearch = () => {
+        selectSection("users");
+        setSearchFocus((value) => value + 1);
+    };
+    useEffect(() => {
+        const onKeyDown = (event: KeyboardEvent) => {
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+                event.preventDefault();
+                openUserSearch();
+            }
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [searchParams]);
 
     if (!admin) return <Result status="403" title="无权访问" subTitle="只有管理员可以进入修炼管理。" />;
 
@@ -206,11 +252,11 @@ export default function AdminCultivationPage() {
                             </div>
                         </div>
                         <div className="cultivation-admin-topbar-actions">
-                            <div className="cultivation-admin-command-search" aria-label="后台搜索">
+                            <button type="button" className="cultivation-admin-command-search" aria-label="搜索用户" onClick={openUserSearch}>
                                 <Search className="size-4" aria-hidden="true" />
-                                <span>搜索用户、规则或记录</span>
+                                <span>搜索用户</span>
                                 <kbd>Ctrl K</kbd>
-                            </div>
+                            </button>
                             <button type="button" className="cultivation-admin-icon-button" aria-label="打开公告管理" title="公告管理" onClick={() => selectSection("announcements")}>
                                 <Bell className="size-4" aria-hidden="true" />
                                 <span className="cultivation-admin-notification-dot" />
@@ -237,7 +283,7 @@ export default function AdminCultivationPage() {
 
                     <div className="cultivation-admin-content">
                         {activeSection === "overview" ? <OverviewPanel onOpenUser={openUserFromLog} onNavigate={selectSection} /> : null}
-                        {activeSection === "users" ? <UsersPanel searchFromUrl={searchParams.get("search") || ""} onSearchChange={(search) => updateParams({ search })} /> : null}
+                        {activeSection === "users" ? <UsersPanel searchFromUrl={searchParams.get("search") || ""} searchFocus={searchFocus} onSearchChange={(search) => updateParams({ search })} onEdit={setEditing} onAdjustBalance={setAdjusting} /> : null}
                         {activeSection === "rules" ? <GrowthRulesPanel /> : null}
                         {activeSection === "capabilities" ? <CapabilitiesQuotaPanel /> : null}
                         {activeSection === "announcements" ? <AnnouncementAdminPanel /> : null}
@@ -252,49 +298,32 @@ export default function AdminCultivationPage() {
                             />
                         ) : null}
                     </div>
+                    <UserDrawer user={editing} stageOptions={stageOptions} loading={mutation.isPending} onClose={() => setEditing(null)} onSubmit={(values) => editing && mutation.mutate({ userId: editing.userId, values })} onAdjustBalance={() => { setAdjusting(editing); setEditing(null); }} />
+                    {adjusting ? <ImageBalanceModal key={adjusting.userId} user={adjusting} onClose={() => setAdjusting(null)} /> : null}
                 </div>
             </div>
         </main>
     );
 }
 
-function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; onSearchChange: (search: string) => void }) {
-    const { message } = App.useApp();
+function UsersPanel({ searchFromUrl, searchFocus, onSearchChange, onEdit, onAdjustBalance }: { searchFromUrl: string; searchFocus: number; onSearchChange: (search: string) => void; onEdit: (user: AdminCultivationUser) => void; onAdjustBalance: (user: AdminCultivationUser) => void }) {
     const queryClient = useQueryClient();
     const [page, setPage] = useState(1);
     const [searchDraft, setSearchDraft] = useState(searchFromUrl);
-    const [editing, setEditing] = useState<AdminCultivationUser | null>(null);
+    const searchRef = useRef<InputRef>(null);
     const { data, isFetching } = useQuery({
         queryKey: ["admin", "cultivation", "users", page, searchFromUrl],
         queryFn: () => fetchAdminCultivationUsers(page, 20, searchFromUrl),
     });
-    const { data: config } = useQuery({ queryKey: ["admin", "cultivation", "config"], queryFn: fetchCultivationConfiguration });
 
     useEffect(() => {
         setSearchDraft(searchFromUrl);
         setPage(1);
     }, [searchFromUrl]);
 
-    const mutation = useMutation({
-        mutationFn: ({ userId, values }: { userId: string; values: CultivationUserPatch }) => updateAdminCultivationUser(userId, values),
-        onSuccess: () => {
-            setEditing(null);
-            void queryClient.invalidateQueries({ queryKey: ["admin", "cultivation"] });
-            void queryClient.invalidateQueries({ queryKey: ["cultivation", "profile"] });
-            message.success("用户修炼信息已更新");
-        },
-        onError: (error) => message.error(error instanceof Error ? error.message : "更新失败"),
-    });
-    const stageOptions = useMemo(
-        () =>
-            config?.realms
-                .filter((realm) => realm.active)
-                .map((realm) => ({
-                    label: realm.name,
-                    options: realm.stages.filter((stage) => stage.active).map((stage) => ({ value: stage.id, label: cultivationStageLabel(realm.name, stage.name) })),
-                })) || [],
-        [config],
-    );
+    useEffect(() => {
+        if (searchFocus) searchRef.current?.focus({ cursor: "all" });
+    }, [searchFocus]);
 
     const columns: ColumnsType<AdminCultivationUser> = [
         {
@@ -302,6 +331,13 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
             key: "user",
             width: 180,
             render: (_: unknown, user) => <UserIdentity user={user} />,
+        },
+        {
+            title: <Tooltip title={imageBalanceHelp}><span>灵卷次数</span></Tooltip>,
+            key: "imageBalance",
+            width: 120,
+            align: "right",
+            render: (_: unknown, user) => <span className="cultivation-count">{(user.paidImages ?? 0).toLocaleString()} 次</span>,
         },
         {
             title: "当前境界",
@@ -334,23 +370,12 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
             render: (_: unknown, user) => <AccountStatusTag status={user.status} />,
         },
         {
-            title: "",
+            title: "操作",
             key: "actions",
-            width: 56,
+            width: 104,
             fixed: "right",
             render: (_: unknown, user) => (
-                <Tooltip title="编辑用户">
-                    <Button
-                        type="text"
-                        shape="circle"
-                        icon={<Edit3 className="size-4" />}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            setEditing(user);
-                        }}
-                        aria-label={`编辑 ${user.displayName}`}
-                    />
-                </Tooltip>
+                <Button type="link" className="min-h-11" size="small" onClick={(event) => { event.stopPropagation(); onAdjustBalance(user); }} aria-label={`调整 ${user.displayName} 的生图次数`}>调整次数</Button>
             ),
         },
     ];
@@ -364,9 +389,11 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
                 </div>
                 <div className="cultivation-admin-toolbar">
                     <Input.Search
+                        ref={searchRef}
                         allowClear
                         value={searchDraft}
-                        placeholder="搜索昵称…"
+                        placeholder="搜索昵称或 UID…"
+                        aria-label="搜索用户昵称或 UID"
                         className="w-64 max-w-full"
                         onChange={(event) => {
                             const value = event.target.value;
@@ -388,24 +415,99 @@ function UsersPanel({ searchFromUrl, onSearchChange }: { searchFromUrl: string; 
                 loading={isFetching}
                 dataSource={data?.items || []}
                 locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无匹配用户" /> }}
-                scroll={{ x: 900 }}
+                scroll={{ x: 1100 }}
                 pagination={{ current: page, pageSize: 20, total: data?.total || 0, onChange: setPage, showSizeChanger: false, showTotal: (total) => `共 ${total} 位用户` }}
                 columns={columns}
                 onRow={(user) => ({
                     className: "cultivation-admin-clickable-row",
                     tabIndex: 0,
-                    onClick: () => setEditing(user),
+                    onClick: () => onEdit(user),
                     onKeyDown: (event) => {
+                        if (event.target !== event.currentTarget) return;
                         if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            setEditing(user);
+                            onEdit(user);
                         }
                     },
                 })}
             />
 
-            <UserDrawer user={editing} stageOptions={stageOptions} loading={mutation.isPending} onClose={() => setEditing(null)} onSubmit={(values) => editing && mutation.mutate({ userId: editing.userId, values })} />
         </section>
+    );
+}
+
+function ImageBalanceModal({ user, onClose }: { user: AdminCultivationUser; onClose: () => void }) {
+    const { message } = App.useApp();
+    const queryClient = useQueryClient();
+    const [imageBalance, setImageBalance] = useState<number | null>(user.paidImages ?? 0);
+    const [expectedBalance, setExpectedBalance] = useState(user.paidImages ?? 0);
+    const [reason, setReason] = useState("");
+    const [pending, setPending] = useState(false);
+    const [conflict, setConflict] = useState(false);
+    const [error, setError] = useState("");
+    const savingRef = useRef(false);
+    const intentRef = useRef<{ signature: string; adjustmentId: string } | null>(null);
+    const valid = imageBalance !== null && Number.isSafeInteger(imageBalance) && imageBalance >= 0;
+    const save = async () => {
+        if (!valid || imageBalance === expectedBalance || savingRef.current || conflict) return;
+        const signature = JSON.stringify([expectedBalance, imageBalance, reason.trim()]);
+        if (intentRef.current?.signature !== signature) intentRef.current = { signature, adjustmentId: crypto.randomUUID() };
+        savingRef.current = true;
+        setPending(true);
+        setError("");
+        try {
+            await updateAdminImageBalance(user.userId, { imageBalance: imageBalance!, expectedImageBalance: expectedBalance, adjustmentId: intentRef.current.adjustmentId, reason: reason.trim() || undefined });
+            void queryClient.invalidateQueries({ queryKey: ["admin", "cultivation"] });
+            void queryClient.invalidateQueries({ queryKey: ["cultivation", "profile"] });
+            void queryClient.invalidateQueries({ queryKey: ["wallet"] });
+            message.success("灵卷次数已更新");
+            onClose();
+        } catch (failure) {
+            if (failure instanceof ServerRequestError && failure.status === 409) {
+                setConflict(true);
+                setError("灵卷次数已变化。请先读取最新次数，再确认本次调整。");
+            } else if (failure instanceof ServerRequestError) setError(friendlyErrorMessage(failure, failure.status));
+            else setError("保存未确认，请重试。重试同一次调整不会重复扣增次数。");
+        } finally {
+            savingRef.current = false;
+            setPending(false);
+        }
+    };
+    const reload = async () => {
+        if (savingRef.current) return;
+        savingRef.current = true;
+        setPending(true);
+        try {
+            const result = await fetchAdminCultivationUsers(1, 20, user.userId);
+            const latest = result.items.find((item) => item.userId === user.userId);
+            if (!latest) throw new Error();
+            setExpectedBalance(latest.paidImages ?? 0);
+            intentRef.current = null;
+            setConflict(false);
+            setError("");
+        } catch {
+            setError("最新次数读取失败，请重试。");
+        } finally {
+            savingRef.current = false;
+            setPending(false);
+        }
+    };
+    const delta = valid ? imageBalance! - expectedBalance : 0;
+    return (
+        <Modal title="调整生图次数" open onCancel={() => !savingRef.current && onClose()} onOk={() => void save()} okText="保存次数" confirmLoading={pending} okButtonProps={{ disabled: !valid || imageBalance === expectedBalance || conflict }} cancelButtonProps={{ disabled: pending }} closable={!pending} keyboard={!pending} mask={{ closable: !pending }}>
+            <div className="mb-5"><UserIdentity user={user} /></div>
+            <Form layout="vertical" onFinish={() => void save()}>
+                <Form.Item label="灵卷次数" extra={imageBalanceHelp} validateStatus={!valid ? "error" : undefined} help={!valid ? "请输入不小于 0 的整数" : undefined}>
+                    <InputNumber autoFocus min={0} max={Number.MAX_SAFE_INTEGER} precision={0} className="w-full" value={imageBalance} onChange={(value) => setImageBalance(typeof value === "number" ? value : null)} disabled={pending} aria-label="灵卷次数" onPressEnter={() => void save()} />
+                </Form.Item>
+                <p className="mb-4 text-sm text-stone-500" aria-live="polite">{expectedBalance.toLocaleString()} 次 → {valid ? `${imageBalance!.toLocaleString()} 次（${delta > 0 ? "增加" : delta < 0 ? "减少" : "变化"} ${Math.abs(delta).toLocaleString()} 次）` : "待填写"}</p>
+                <details className="mb-4">
+                    <summary className="cursor-pointer text-sm">调整说明（选填）</summary>
+                    <Input.TextArea className="mt-3" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={300} rows={2} disabled={pending} aria-label="调整说明" placeholder="补充本次调整的背景" />
+                </details>
+                {error ? <div role="alert" className="text-sm"><p>{error}</p>{conflict ? <Button className="mt-2" onClick={() => void reload()} loading={pending}>读取最新次数</Button> : null}</div> : null}
+            </Form>
+        </Modal>
     );
 }
 
@@ -415,32 +517,27 @@ function UserDrawer({
     loading,
     onClose,
     onSubmit,
+    onAdjustBalance,
 }: {
     user: AdminCultivationUser | null;
     stageOptions: Array<{ label: string; options: Array<{ value: string; label: string }> }>;
     loading: boolean;
     onClose: () => void;
     onSubmit: (values: CultivationUserPatch) => void;
+    onAdjustBalance: () => void;
 }) {
     const [form] = Form.useForm<UserFormValues>();
     const [dirty, setDirty] = useState(false);
     const [xpMode, setXpMode] = useState<"set" | "adjust">("set");
-    const { message } = App.useApp();
-    const queryClient = useQueryClient();
-    const { data: walletCatalog } = useQuery({ queryKey: ["wallet", "admin-catalog"], queryFn: () => fetchWallet(), enabled: Boolean(user) });
-    const [grantOpen, setGrantOpen] = useState(false);
-    const [grantPackageId, setGrantPackageId] = useState("qiling");
-    const [grantReason, setGrantReason] = useState("");
-    const [grantLoading, setGrantLoading] = useState(false);
-    const [grantedBalance, setGrantedBalance] = useState<number | null>(null);
     const proxyQuota = user?.proxyQuota || user;
-    const grantKeyRef = useRef("");
     const initialValuesRef = useRef<UserFormValues | null>(null);
     const requestClose = () => {
-        if (!dirty || loading) return onClose();
+        if (loading) return;
+        if (!dirty) return onClose();
         confirmDiscard(onClose);
     };
     const save = async () => {
+        if (loading) return;
         const values = await form.validateFields();
         const patch = buildCultivationUserPatch(initialValuesRef.current || values, values);
         if (patch.status && patch.status !== "NORMAL" && patch.status !== user?.status) {
@@ -456,25 +553,6 @@ function UserDrawer({
             return;
         }
         onSubmit(patch);
-    };
-
-    const grant = async () => {
-        if (!user || !grantReason.trim() || grantLoading) return;
-        setGrantLoading(true);
-        try {
-            const result = await grantWalletPackage({ userId: user.userId, packageId: grantPackageId, reason: grantReason.trim(), idempotencyKey: grantKeyRef.current });
-            setGrantedBalance(result.balance);
-            setGrantOpen(false);
-            setGrantReason("");
-            void queryClient.invalidateQueries({ queryKey: ["admin", "cultivation", "users"] });
-            void queryClient.invalidateQueries({ queryKey: ["cultivation", "profile"] });
-            void queryClient.invalidateQueries({ queryKey: ["wallet"] });
-            message.success("灵卷已发放");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "发放失败");
-        } finally {
-            setGrantLoading(false);
-        }
     };
 
     return (
@@ -502,17 +580,15 @@ function UserDrawer({
                 form.setFieldsValue(initialValues);
                 setXpMode("set");
                 setDirty(false);
-                setGrantedBalance(null);
             }}
             footer={
                 <div className="cultivation-drawer-footer">
                     <span>{dirty ? "有未保存的更改" : "修改会写入审计日志"}</span>
                     <div className="flex gap-2">
-                        <Button onClick={() => { grantKeyRef.current = crypto.randomUUID(); setGrantOpen(true); }} disabled={loading}>发放灵卷</Button>
                         <Button onClick={requestClose} disabled={loading}>
                             取消
                         </Button>
-                        <Button type="primary" loading={loading} onClick={() => void save()}>
+                        <Button type="primary" loading={loading} disabled={!dirty} onClick={() => void save()}>
                             保存更改
                         </Button>
                     </div>
@@ -530,12 +606,17 @@ function UserDrawer({
                         <AdminMetric label="其他服务用量" value={proxyQuota?.unlimited ? "不限" : `${proxyQuota?.usedToday ?? 0}/${proxyQuota?.dailyLimit ?? 0}`} />
                         <AdminMetric label="累计作品" value={user.totalImages.toLocaleString()} />
                     </div>
-                    <p className="mt-3 text-sm text-stone-500">灵卷可用 {grantedBalance ?? user.paidImages ?? 0} 张 · 管理员发放会记入独立账本</p>
+                    <div className="mt-3 flex items-center justify-between gap-3 text-sm"><span>灵卷次数 {(user.paidImages ?? 0).toLocaleString()} 次</span><Button type="link" disabled={loading} onClick={() => dirty ? confirmDiscard(onAdjustBalance) : onAdjustBalance()}>调整次数</Button></div>
+                    <p className="mt-1 text-xs text-stone-500">{imageBalanceHelp}</p>
                 </div>
             ) : null}
             <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)}>
-                <section className="cultivation-form-section">
-                    <FormSectionHeading title="境界与修为" description="升级仍由系统自动完成，这里只处理管理员手动调整。" />
+                <Form.Item label="账号状态" name="status" extra="停用或封禁后，用户不能继续登录和创建任务。">
+                    <Select options={accountStatusOptions} />
+                </Form.Item>
+                <details className="cultivation-form-section">
+                    <summary className="mb-3 cursor-pointer font-medium">境界与修为</summary>
+                    <p className="mb-4 text-sm text-stone-500">升级仍由系统自动完成，这里只处理管理员手动调整。</p>
                     <Form.Item label="境界与阶段" name="stageId">
                         <Select showSearch optionFilterProp="label" options={stageOptions} />
                     </Form.Item>
@@ -564,10 +645,11 @@ function UserDrawer({
                             <InputNumber className="w-full" />
                         </Form.Item>
                     )}
-                </section>
+                </details>
 
-                <section className="cultivation-form-section">
-                    <FormSectionHeading title="额度与账号" description="下方额度覆盖仅用于视频等其他服务，不影响普通图片生成的灵卷计费。" />
+                <details className="cultivation-form-section">
+                    <summary className="mb-3 cursor-pointer font-medium">其他服务额度</summary>
+                    <p className="mb-4 text-sm text-stone-500">下方额度覆盖仅用于视频等其他服务，不影响普通图片生成的灵卷计费。</p>
                     <div className="grid grid-cols-2 gap-3">
                         <Form.Item label="其他服务每日额度覆盖" name="dailyLimitOverride" extra="留空继承境界规则">
                             <InputNumber min={0} className="w-full" />
@@ -576,33 +658,26 @@ function UserDrawer({
                             <Switch />
                         </Form.Item>
                     </div>
-                    <Form.Item label="账号状态" name="status" extra="停用或封禁后，用户不能继续登录和创建任务。">
-                        <Select options={accountStatusOptions} />
-                    </Form.Item>
-                </section>
+                </details>
 
-                <section className="cultivation-form-section">
-                    <FormSectionHeading title="备注与留言" description="内部备注仅管理员可见，公开留言显示在用户修炼页面。" />
+                <details className="cultivation-form-section">
+                    <summary className="mb-3 cursor-pointer font-medium">备注与留言</summary>
+                    <p className="mb-4 text-sm text-stone-500">内部备注仅管理员可见，公开留言显示在用户修炼页面。</p>
                     <Form.Item label="内部备注" name="internalNote">
                         <Input.TextArea rows={3} maxLength={500} showCount placeholder="记录管理员内部信息…" />
                     </Form.Item>
                     <Form.Item label="公开留言" name="publicMessage">
                         <Input.TextArea rows={3} maxLength={500} showCount placeholder="填写展示给用户的内容…" />
                     </Form.Item>
-                </section>
+                </details>
 
-                <section className="cultivation-form-section">
-                    <FormSectionHeading title="变更记录" description="不填写时，审计日志会记录为管理员直接调整。" />
-                    <Form.Item className="mb-0" label="调整说明（选填）" name="reason">
+                <details className="cultivation-form-section">
+                    <summary className="mb-3 cursor-pointer font-medium">调整说明（选填）</summary>
+                    <Form.Item className="mb-0" name="reason" extra="不填写时，审计日志会记录为管理员直接调整。">
                         <Input.TextArea rows={2} maxLength={300} showCount placeholder="补充本次调整的背景…" />
                     </Form.Item>
-                </section>
+                </details>
             </Form>
-            <Modal title={`向 ${user?.displayName || "用户"} 发放灵卷`} open={grantOpen} onCancel={() => !grantLoading && setGrantOpen(false)} onOk={() => void grant()} okText="确认发放" okButtonProps={{ disabled: !grantReason.trim() || !walletCatalog?.packages.length }} confirmLoading={grantLoading} destroyOnHidden>
-                <p className="mb-4 text-sm text-stone-500">仅用于支付接入前的测试发放，不会创建支付订单。</p>
-                <Select className="w-full" value={grantPackageId} options={walletCatalog?.packages.map((item) => ({ value: item.id, label: `${item.name} · ${item.images} 次` })) || []} onChange={setGrantPackageId} />
-                <Input.TextArea className="mt-4" value={grantReason} onChange={(event) => setGrantReason(event.target.value)} maxLength={300} showCount rows={3} placeholder="填写发放原因" />
-            </Modal>
         </Drawer>
     );
 }
@@ -945,9 +1020,9 @@ function RealmDrawer({ realm, onClose, onSubmit }: { realm: CultivationRealmConf
                         <InputNumber min={1} className="w-full" />
                     </Form.Item>
                 </div>
-                <Form.Item label="突破反馈" name="animationPreset">
+                <Form.Item label="突破反馈">
                     <div className="flex gap-2">
-                        <Select className="min-w-0 flex-1" options={animationOptions} />
+                        <Form.Item name="animationPreset" noStyle><Select className="min-w-0 flex-1" options={animationOptions} /></Form.Item>
                         <Tooltip title="预览用户看到的突破反馈">
                             <Button icon={<Eye className="size-4" />} onClick={preview} aria-label="预览突破反馈" />
                         </Tooltip>
@@ -1286,7 +1361,7 @@ function OverviewPanel({ onOpenUser, onNavigate }: { onOpenUser: (displayName: s
                                         <div className="truncate text-sm font-medium">{auditActionLabel(String(row.action || ""))}</div>
                                         <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-stone-500">
                                             {targetName ? (
-                                                <button type="button" className="cultivation-log-user" onClick={() => onOpenUser(targetName)}>
+                                                <button type="button" className="cultivation-log-user" onClick={() => onOpenUser(String(row.target_user_id || ""))}>
                                                     {targetName}
                                                 </button>
                                             ) : (
@@ -1484,7 +1559,15 @@ function MonitoringPanel() {
 }
 
 function RecordsPanel({ kind, userId, onKindChange, onUserChange, onOpenUser }: { kind: LogKind; userId: string; onKindChange: (kind: LogKind) => void; onUserChange: (userId: string | null) => void; onOpenUser: (displayName: string) => void }) {
-    const users = useQuery({ queryKey: ["admin", "cultivation", "users", "record-filter"], queryFn: () => fetchAdminCultivationUsers(1, 100, "") });
+    const [searchDraft, setSearchDraft] = useState("");
+    const [search, setSearch] = useState("");
+    useEffect(() => {
+        const timer = window.setTimeout(() => setSearch(searchDraft.trim()), 250);
+        return () => window.clearTimeout(timer);
+    }, [searchDraft]);
+    const users = useQuery({ queryKey: ["admin", "cultivation", "users", "record-filter", search], queryFn: () => fetchAdminCultivationUsers(1, 20, search) });
+    const selected = useQuery({ queryKey: ["admin", "cultivation", "users", "record-selected", userId], queryFn: () => fetchAdminCultivationUsers(1, 20, userId), enabled: Boolean(userId) });
+    const options = [...new Map([...(selected.data?.items.filter((user) => user.userId === userId) || []), ...(users.data?.items || [])].map((user) => [user.userId, { value: user.userId, label: `${user.displayName} · ${user.userId.slice(0, 8)}` }])).values()];
     const details = recordViewDetails[kind];
     return (
         <section className="cultivation-admin-panel cultivation-records-panel">
@@ -1497,10 +1580,13 @@ function RecordsPanel({ kind, userId, onKindChange, onUserChange, onOpenUser }: 
                     showSearch
                     value={userId || undefined}
                     className="w-52 max-w-full"
-                    placeholder="筛选用户…"
-                    aria-label="筛选记录用户"
-                    optionFilterProp="label"
-                    options={(users.data?.items || []).map((user) => ({ value: user.userId, label: user.displayName }))}
+                    placeholder={kind === "audit-logs" ? "筛选目标用户…" : "搜索昵称或 UID…"}
+                    aria-label={kind === "audit-logs" ? "筛选操作目标用户" : "筛选记录用户"}
+                    filterOption={false}
+                    onSearch={setSearchDraft}
+                    loading={users.isFetching}
+                    notFoundContent={users.isFetching ? "正在查找用户…" : "暂无匹配用户"}
+                    options={options}
                     onChange={(value) => onUserChange(value || null)}
                 />
             </div>
@@ -1548,6 +1634,7 @@ function LogPanel({ kind, userId, onOpenUser }: { kind: LogKind; userId: string;
                     tabIndex: 0,
                     onClick: () => setSelected(row),
                     onKeyDown: (event) => {
+                        if (event.target !== event.currentTarget) return;
                         if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
                             setSelected(row);
@@ -1822,7 +1909,7 @@ function LogUser({ value, id, onOpenUser }: { value: unknown; id: unknown; onOpe
                 className="cultivation-log-user"
                 onClick={(event) => {
                     event.stopPropagation();
-                    onOpenUser(name);
+                    onOpenUser(String(id || ""));
                 }}
             >
                 {name}
@@ -1958,6 +2045,7 @@ function auditActionLabel(value: string) {
         (
             {
                 "cultivation.user.update": "更新用户修炼信息",
+                "cultivation.user.image_balance": "调整灵卷次数",
                 "cultivation.breakthrough.approve": "历史人工突破",
                 "cultivation.realm.update": "更新境界规则",
                 "cultivation.stage.update": "更新阶段规则",

@@ -2,7 +2,7 @@ import type { CultivationProfile, WalletLedgerItem, WalletOverview, WalletPackag
 
 export const walletLedgerLabels: Record<WalletLedgerItem["kind"], string> = {
     registration_grant: "注册赠送",
-    admin_grant: "管理员发放",
+    admin_grant: "管理员调整",
     reserve: "生图占用",
     refund: "灵卷返还",
 };
@@ -47,6 +47,6 @@ export function walletUnitPrice(pack: WalletPackage) {
 export function walletRecordSource(item: WalletLedgerItem, packages: WalletPackage[]) {
     if (item.kind === "registration_grant") return { label: "新用户赠送" };
     if (item.packageId) return { label: packages.find((pack) => pack.id === item.packageId)?.name || "灵卷补充" };
-    if (item.kind === "admin_grant") return { label: "管理员发放" };
+    if (item.kind === "admin_grant") return { label: "管理员调整" };
     return { label: "图片生成", fullId: item.sourceId || undefined };
 }

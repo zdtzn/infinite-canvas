@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -988,6 +989,198 @@ describe("cultivation quota and settlement", () => {
         p95DurationMs: 0,
         lastUsedAt: new Date("2026-07-22T08:00:00+08:00").getTime(),
       });
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe("admin image balance adjustments and user filters", () => {
+  test("rejects invalid balances, adjustment IDs, reasons and unrelated user fields without writes", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      const valid = { imageBalance: 5, expectedImageBalance: 0, adjustmentId: randomUUID() };
+      const invalid = [
+        null, [], {},
+        ...[-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "5", null, undefined].flatMap((value) => [
+          { ...valid, imageBalance: value }, { ...valid, expectedImageBalance: value },
+        ]),
+        { ...valid, adjustmentId: "not-a-uuid" }, { ...valid, adjustmentId: 123 },
+        { ...valid, reason: "x".repeat(301) }, { ...valid, reason: null },
+        { ...valid, stageId: "realm-dou-emperor" }, { ...valid, xpDelta: 10 },
+      ];
+      for (const input of invalid) expect(() => service.setImageBalance("admin", "user", input as any)).toThrow(CultivationError);
+      expect(service.getWallet("user")).toMatchObject({ balance: 0, total: 0 });
+      expect(service.listAuditLogs().total).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("sets absolute balances up, down and to zero with signed ledger entries and before/after audit", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      const before = service.getProfile("user");
+      expect(service.setImageBalance("admin", "user", { imageBalance: 17, expectedImageBalance: 0, adjustmentId: randomUUID() })).toEqual({ ...before, paidImages: 17 });
+      service.setImageBalance("admin", "user", { imageBalance: 2, expectedImageBalance: 17, adjustmentId: randomUUID(), reason: "  更正次数  " });
+      service.setImageBalance("admin", "user", { imageBalance: 0, expectedImageBalance: 2, adjustmentId: randomUUID() });
+      expect(service.getWallet("user").items.map((item: any) => [item.kind, item.delta, item.balanceAfter, item.packageId])).toEqual([
+        ["admin_grant", -2, 0, null], ["admin_grant", -15, 2, null], ["admin_grant", 17, 17, null],
+      ]);
+      expect(store.raw!.query("SELECT operator_user_id, reason FROM wallet_ledger WHERE delta = -15").get()).toEqual({ operator_user_id: "admin", reason: "更正次数" });
+      const audit = store.raw!.query("SELECT action, before_json, after_json FROM admin_audit_logs WHERE reason = '更正次数'").get() as { action: string; before_json: string; after_json: string };
+      expect(audit.action).toBe("cultivation.user.image_balance");
+      expect(JSON.parse(audit.before_json)).toEqual({ imageBalance: 17 });
+      expect(JSON.parse(audit.after_json)).toEqual({ imageBalance: 2 });
+      service.setImageBalance("admin", "user", { imageBalance: Number.MAX_SAFE_INTEGER, expectedImageBalance: 0, adjustmentId: randomUUID() });
+      expect(service.getWallet("user").balance).toBe(Number.MAX_SAFE_INTEGER);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("replays a durable adjustment before CAS without resetting later generation usage and rejects key reuse", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      const input = { imageBalance: 9, expectedImageBalance: 0, adjustmentId: randomUUID(), reason: "测试调整" };
+      service.setImageBalance("admin", "user", input);
+      service.reserveGeneration({ jobId: "after-adjustment", userId: "user", channelId: "channel", model: "gpt-image-1", count: 2, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
+      const restored = createCultivationService(store.raw!);
+      expect(restored.setImageBalance("admin", "user", input).paidImages).toBe(7);
+      expect(service.getWallet("user").total).toBe(2);
+      expect(service.listAuditLogs().total).toBe(1);
+      for (const retry of [
+        { admin: "other-admin", user: "user", input },
+        { admin: "admin", user: "admin", input },
+        { admin: "admin", user: "user", input: { ...input, imageBalance: 10 } },
+        { admin: "admin", user: "user", input: { ...input, expectedImageBalance: 1 } },
+        { admin: "admin", user: "user", input: { ...input, reason: "另一用途" } },
+      ]) {
+        try {
+          service.setImageBalance(retry.admin, retry.user, retry.input);
+          throw new Error("expected source conflict");
+        } catch (error) {
+          expect(error).toMatchObject({ status: 409, code: "WALLET_SOURCE_CONFLICT" });
+        }
+      }
+      const packageId = randomUUID();
+      service.grantWalletPackage("admin", "user", "qiling", packageId, "预设套餐");
+      expect(() => service.setImageBalance("admin", "user", { ...input, adjustmentId: packageId })).toThrow("调整请求编号已用于其他操作");
+      expect(service.getWallet("user").balance).toBe(47);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("rejects stale balances atomically and records no-op intents so replay preserves later credits", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      const input = { imageBalance: 0, expectedImageBalance: 0, adjustmentId: randomUUID() };
+      service.setImageBalance("admin", "user", input);
+      service.grantRegistrationImages("user");
+      expect(service.setImageBalance("admin", "user", input).paidImages).toBe(6);
+      const wallet = service.getWallet("user");
+      const auditCount = service.listAuditLogs().total;
+      try {
+        service.setImageBalance("admin", "user", { imageBalance: 10, expectedImageBalance: 0, adjustmentId: randomUUID() });
+        throw new Error("expected stale balance conflict");
+      } catch (error) {
+        expect(error).toMatchObject({ status: 409, code: "WALLET_BALANCE_CONFLICT" });
+      }
+      expect(service.getWallet("user")).toEqual(wallet);
+      expect(service.listAuditLogs().total).toBe(auditCount);
+      expect(() => service.setImageBalance("admin", "missing-user", { ...input, adjustmentId: randomUUID() })).toThrow("用户不存在");
+      expect(store.raw!.query("SELECT 1 FROM wallet_balances WHERE user_id = 'missing-user'").get()).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  test("keeps pending paid reservations, refunds, onboarding, proxy quotas and Dou Emperor entitlements", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      service.grantRegistrationImages("user");
+      service.updateUser("admin", "user", { dailyLimitOverride: 17, unlimited: false }, "其他服务额度");
+      service.reserveGeneration({ jobId: "adjust-reserved", userId: "user", channelId: "channel", model: "gpt-image-1", count: 2, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
+      const usage = store.raw!.query("SELECT * FROM generation_usage WHERE job_id = 'adjust-reserved'").get();
+      const before = service.getProfile("user");
+      expect(service.setImageBalance("admin", "user", { imageBalance: 10, expectedImageBalance: 4, adjustmentId: randomUUID() })).toEqual({ ...before, paidImages: 10 });
+      expect(store.raw!.query("SELECT * FROM generation_usage WHERE job_id = 'adjust-reserved'").get()).toEqual(usage);
+      service.settleGeneration({ jobId: "adjust-reserved", successCount: 1, failCount: 1, durationMs: 10 });
+      expect(service.grantRegistrationImages("user")).toBe(11);
+      expect(service.getProfile("user")).toMatchObject({ remainingToday: 0, dailyLimit: 0, paidImages: 11, proxyQuota: { dailyLimit: 17, unlimited: false } });
+      const emperor = service.getConfiguration().realms.find((realm) => realm.code === "dou-emperor")!;
+      service.updateUser("admin", "user", { stageId: emperor.stages[0].id }, "斗帝资格");
+      const emperorBefore = service.getProfile("user");
+      expect(service.setImageBalance("admin", "user", { imageBalance: 3, expectedImageBalance: 11, adjustmentId: randomUUID() })).toEqual({ ...emperorBefore, paidImages: 3 });
+      expect(service.getProfile("user")).toMatchObject({ unlimited: true, dailyLimit: null, remainingToday: null });
+      expect(service.getWallet("admin").balance).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("rolls the balance and ledger back if its audit cannot be persisted", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      store.raw!.exec("CREATE TRIGGER reject_balance_audit BEFORE INSERT ON admin_audit_logs WHEN NEW.action = 'cultivation.user.image_balance' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");
+      expect(() => service.setImageBalance("admin", "user", { imageBalance: 8, expectedImageBalance: 0, adjustmentId: randomUUID() })).toThrow("audit unavailable");
+      expect(service.getWallet("user")).toMatchObject({ balance: 0, total: 0 });
+      expect(service.listAuditLogs().total).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("searches literal nickname or UID substrings with matching pagination totals", () => {
+    const { store, service } = setup();
+    try {
+      for (const [id, name, createdAt] of [["uid_%\\literal", "Under_score%\\literal", 2], ["id-search-1", "Artist", 3], ["id-search-2", "Artist", 4]] as const) {
+        store.raw!.query("INSERT INTO users(user_id, display_name, created_at) VALUES (?, ?, ?)").run(id, name, createdAt);
+        service.ensureUser(id, false);
+      }
+      service.ensureUser("user", false);
+      service.ensureUser("admin", true);
+      for (const search of ["%", "_", "\\", "uid_", "score%\\", "  uid_%\\literal  "])
+        expect(service.listUsers(1, 20, search).items.map((item) => item.userId)).toEqual(["uid_%\\literal"]);
+      expect(service.listUsers(1, 1, "Artist")).toMatchObject({ page: 1, pageSize: 1, total: 2, items: [{ userId: "id-search-2" }] });
+      expect(service.listUsers(2, 1, "id-search-")).toMatchObject({ page: 2, pageSize: 1, total: 2, items: [{ userId: "id-search-1" }] });
+      expect(service.listUsers(3, 1, "Artist")).toMatchObject({ total: 2, items: [] });
+      expect(service.listUsers(1, 20, "admin").items.map((item) => item.userId)).toEqual(["admin"]);
+      expect(service.listUsers(1, 20).total).toBe(5);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("filters audit targets and login users before pagination while keeping unfiltered logs", () => {
+    const { store, service } = setup();
+    try {
+      const insertAudit = store.raw!.query("INSERT INTO admin_audit_logs(id, admin_user_id, target_user_id, action, reason, created_at) VALUES (?, ?, ?, 'test', '测试', ?)");
+      insertAudit.run("a1", "admin", "user", 1);
+      insertAudit.run("a2", "user", "admin", 2);
+      insertAudit.run("a3", "admin", "user", 3);
+      insertAudit.run("a4", "admin", "user", 4);
+      expect(service.listAuditLogs(1, 2, "user")).toMatchObject({ total: 3, page: 1, pageSize: 2, items: [{ id: "a4" }, { id: "a3" }] });
+      expect(service.listAuditLogs(2, 2, "user")).toMatchObject({ total: 3, items: [{ id: "a1" }] });
+      expect(service.listAuditLogs(1, 20, "admin")).toMatchObject({ total: 1, items: [{ id: "a2" }] });
+      expect(service.listAuditLogs().total).toBe(4);
+      expect(service.listAuditLogs(1, 20, "missing").total).toBe(0);
+      const insertLogin = store.raw!.query("INSERT INTO login_logs(id, user_id, display_name, result, ip_hash, ip_display, user_agent, created_at) VALUES (?, ?, '用户', 'success', '', '', '', ?)");
+      insertLogin.run("l1", "user", 1);
+      insertLogin.run("l2", "admin", 2);
+      insertLogin.run("l3", "user", 3);
+      insertLogin.run("l4", null, 4);
+      expect(service.listLoginLogs(1, 1, "user")).toMatchObject({ total: 2, items: [{ id: "l3" }] });
+      expect(service.listLoginLogs(2, 1, "user")).toMatchObject({ total: 2, items: [{ id: "l1" }] });
+      expect(service.listLoginLogs().total).toBe(4);
+      expect(service.listLoginLogs(1, 20, "missing").total).toBe(0);
     } finally {
       store.close();
     }

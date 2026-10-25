@@ -55,6 +55,12 @@ export type CultivationUserUpdate = {
   internalNote?: string;
   publicMessage?: string;
 };
+export type CultivationImageBalanceUpdate = {
+  imageBalance: number;
+  expectedImageBalance: number;
+  adjustmentId: string;
+  reason?: string;
+};
 export type CultivationRealmUpdate = {
   name?: string;
   color?: string;
@@ -293,6 +299,36 @@ export function createCultivationService(
       }
       adjustWallet(userId, selected.images, "admin_grant", sourceId, packageId, adminUserId, reason.trim());
       return getWallet(userId, 1, 5);
+    })();
+  }
+
+  function setImageBalance(adminUserId: string, userId: string, input: CultivationImageBalanceUpdate) {
+    if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((key) => !["imageBalance", "expectedImageBalance", "adjustmentId", "reason"].includes(key)))
+      throw new CultivationError("生图次数调整参数无效", 400, "WALLET_ADJUSTMENT_INVALID");
+    if (!Number.isSafeInteger(input.imageBalance) || input.imageBalance < 0 || !Number.isSafeInteger(input.expectedImageBalance) || input.expectedImageBalance < 0)
+      throw new CultivationError("生图次数必须为非负安全整数", 400, "WALLET_BALANCE_INVALID");
+    if (typeof input.adjustmentId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.adjustmentId))
+      throw new CultivationError("调整请求编号无效", 400, "WALLET_SOURCE_INVALID");
+    if (input.reason !== undefined && (typeof input.reason !== "string" || input.reason.length > 300))
+      throw new CultivationError("调整说明最多 300 字", 400, "WALLET_REASON_INVALID");
+    const reason = normalizeAdminAdjustmentReason(input.reason || "");
+    const delta = input.imageBalance - input.expectedImageBalance;
+    return database.transaction(() => {
+      const existing = database.query("SELECT user_id, package_id, operator_user_id, delta, balance_after, reason FROM wallet_ledger WHERE kind = 'admin_grant' AND source_id = ?").get(input.adjustmentId) as { user_id: string; package_id: string | null; operator_user_id: string; delta: number; balance_after: number; reason: string } | null;
+      if (existing) {
+        if (existing.user_id !== userId || existing.package_id !== null || existing.operator_user_id !== adminUserId || existing.delta !== delta || existing.balance_after !== input.imageBalance || existing.reason !== reason)
+          throw new CultivationError("调整请求编号已用于其他操作", 409, "WALLET_SOURCE_CONFLICT");
+        return getProfile(userId);
+      }
+      if (!database.query("SELECT 1 FROM users WHERE user_id = ?").get(userId)) throw new CultivationError("用户不存在", 404, "USER_NOT_FOUND");
+      const balance = walletBalance(userId);
+      if (balance !== input.expectedImageBalance)
+        throw new CultivationError("生图可用次数已变化，请刷新后重新调整", 409, "WALLET_BALANCE_CONFLICT");
+      ensureUser(userId, false);
+      // A zero-delta entry also records the intent so retries cannot reset later usage.
+      adjustWallet(userId, delta, "admin_grant", input.adjustmentId, null, adminUserId, reason);
+      audit(database, adminUserId, userId, "cultivation.user.image_balance", reason, { imageBalance: balance }, { imageBalance: input.imageBalance }, now().getTime());
+      return getProfile(userId);
     })();
   }
 
@@ -965,21 +1001,21 @@ export function createCultivationService(
   function listUsers(page = 1, pageSize = 20, search = "") {
     const safeSize = Math.max(1, Math.min(50, Math.floor(pageSize)));
     const safePage = Math.max(1, Math.floor(page));
-    const pattern = `%${search.trim()}%`;
+    const pattern = `%${search.trim().replace(/[\\%_]/g, "\\$&")}%`;
     const rows = database
       .query(
-        "SELECT user_id FROM users WHERE display_name LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        "SELECT user_id FROM users WHERE display_name LIKE ? ESCAPE '\\' OR user_id LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ? OFFSET ?",
       )
-      .all(pattern, safeSize, (safePage - 1) * safeSize) as Array<{
+      .all(pattern, pattern, safeSize, (safePage - 1) * safeSize) as Array<{
       user_id: string;
     }>;
     const total = Number(
       (
         database
           .query(
-            "SELECT COUNT(*) AS value FROM users WHERE display_name LIKE ?",
+            "SELECT COUNT(*) AS value FROM users WHERE display_name LIKE ? ESCAPE '\\' OR user_id LIKE ? ESCAPE '\\'",
           )
-          .get(pattern) as { value: number }
+          .get(pattern, pattern) as { value: number }
       ).value,
     );
     return {
@@ -1084,7 +1120,7 @@ export function createCultivationService(
     }));
   }
 
-  function listAuditLogs(page = 1, pageSize = 20) {
+  function listAuditLogs(page = 1, pageSize = 20, userId: string | null = null) {
     return paginatedQuery(
       database,
       `SELECT a.*, admin.display_name AS admin_name, target.display_name AS target_name
@@ -1092,21 +1128,21 @@ export function createCultivationService(
        LEFT JOIN users admin ON admin.user_id = a.admin_user_id
        LEFT JOIN users target ON target.user_id = a.target_user_id`,
       "admin_audit_logs a",
-      "",
-      [],
+      userId ? "WHERE a.target_user_id = ?" : "",
+      userId ? [userId] : [],
       "a.created_at",
       page,
       pageSize,
     );
   }
 
-  function listLoginLogs(page = 1, pageSize = 20) {
+  function listLoginLogs(page = 1, pageSize = 20, userId: string | null = null) {
     return paginatedQuery(
       database,
       "SELECT * FROM login_logs",
       "login_logs",
-      "",
-      [],
+      userId ? "WHERE user_id = ?" : "",
+      userId ? [userId] : [],
       "created_at",
       page,
       pageSize,
@@ -1164,6 +1200,7 @@ export function createCultivationService(
     getWallet,
     grantRegistrationImages,
     grantWalletPackage,
+    setImageBalance,
     reserveGeneration,
     settleGeneration,
     refundGeneration,

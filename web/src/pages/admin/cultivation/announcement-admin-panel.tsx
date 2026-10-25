@@ -2,12 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Drawer, Empty, Form, Input, Segmented, Select, Switch, Table, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Archive, Bell, Edit3, Plus, RefreshCw, Monitor, Smartphone } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useUserStore } from "@/stores/use-user-store";
 import { AnnouncementCard } from "@/pages/announcements";
 import { DEFAULT_ANNOUNCEMENT_STYLE, normalizeAnnouncementStyle } from "@/lib/announcement-style";
 import { AnnouncementStyleFields } from "./components/announcement-style-fields";
+import { announcementFormSnapshot } from "./announcement-form";
 import { createAdminAnnouncement, fetchAdminAnnouncements, updateAdminAnnouncement, type AnnouncementInput, type AnnouncementStatus, type AnnouncementType, type SystemAnnouncement } from "@/services/server-api";
 
 type AnnouncementFormValues = AnnouncementInput;
@@ -39,6 +40,7 @@ export function AnnouncementAdminPanel() {
     const author = useUserStore((state) => state.user);
     const [previewDevice, setPreviewDevice] = useState<"adaptive" | "mobile">("adaptive");
     const [editing, setEditing] = useState<SystemAnnouncement | null>(null);
+    const openingSnapshot = useRef("");
     const query = useQuery({
         queryKey: ["admin", "announcements", page, search, type, status],
         queryFn: () => fetchAdminAnnouncements({ page, pageSize: 20, search, type, status }),
@@ -71,14 +73,16 @@ export function AnnouncementAdminPanel() {
     const openCreate = () => {
         form.resetFields();
         setEditing(null);
-        form.setFieldsValue({ title: "", summary: "", content: "", type: "notice", status: "draft", pinned: false, style: normalizeAnnouncementStyle(null) });
+        const nextValues: AnnouncementFormValues = { title: "", summary: "", content: "", type: "notice", status: "draft", pinned: false, style: normalizeAnnouncementStyle(null) };
+        openingSnapshot.current = announcementFormSnapshot(nextValues);
+        form.setFieldsValue(nextValues);
         setDrawerOpen(true);
     };
 
     const openEdit = (item: SystemAnnouncement) => {
         form.resetFields();
         setEditing(item);
-        form.setFieldsValue({
+        const nextValues: AnnouncementFormValues = {
             title: item.title,
             summary: item.summary,
             content: item.content,
@@ -86,13 +90,15 @@ export function AnnouncementAdminPanel() {
             status: item.status,
             pinned: item.pinned,
             style: normalizeAnnouncementStyle(item.style),
-        });
+        };
+        openingSnapshot.current = announcementFormSnapshot(nextValues);
+        form.setFieldsValue(nextValues);
         setDrawerOpen(true);
     };
 
     const closeDrawer = () => {
         if (saveMutation.isPending) return;
-        if (!form.isFieldsTouched()) {
+        if (announcementFormSnapshot(form.getFieldsValue(true)) === openingSnapshot.current) {
             setDrawerOpen(false);
             return;
         }
@@ -274,15 +280,15 @@ export function AnnouncementAdminPanel() {
                     >
                         <Input.TextArea rows={7} maxLength={8000} showCount placeholder="填写公告正文…" />
                     </Form.Item>
-                    <div className="announcement-style-heading">
-                        <h3>文字样式</h3>
-                        <div className="announcement-style-actions">
+                    <details className="mb-6">
+                        <summary className="cursor-pointer text-base font-semibold">文字样式</summary>
+                        <div className="announcement-style-actions my-3">
                             <Button size="small" onClick={() => form.setFieldsValue({ style: { title: { color: DEFAULT_ANNOUNCEMENT_STYLE.title.color }, body: { color: DEFAULT_ANNOUNCEMENT_STYLE.body.color } } })}>使用月宫配色</Button>
                             <Button size="small" onClick={() => form.setFieldsValue({ style: normalizeAnnouncementStyle(null) })}>恢复默认样式</Button>
                         </div>
-                    </div>
-                    <p className="announcement-style-hint">仅对这条公告生效。手机字号会适度缩小；字体优先使用设备已有字形。</p>
-                    <AnnouncementStyleFields />
+                        <p className="announcement-style-hint">仅对这条公告生效。手机字号会适度缩小；字体优先使用设备已有字形。</p>
+                        <AnnouncementStyleFields />
+                    </details>
                     <Form.Item name="pinned" label="置顶公告" valuePropName="checked" extra="置顶公告会优先出现在系统公告顶部。">
                         <Switch />
                     </Form.Item>
