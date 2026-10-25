@@ -70,15 +70,15 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
 
 export function getAdminAntThemeConfig(dark: boolean): ThemeConfig {
     const color = dark ? {
-        primary: "#d2b578", primaryHover: "#e2c68d", primaryText: "#1c241f",
-        text: "#eeeede", secondary: "#b4bdb3", muted: "#a1b0a4",
-        background: "#151d1b", surface: "#1e2824", elevated: "#26322d", subtle: "#29362e",
-        border: "#71816f", split: "#39463d", selected: "#394132", jade: "#99c2ad", danger: "#ef9c91",
+        primary: "#d3b272", primaryHover: "#e2c58e", primaryText: "#211c15",
+        text: "#eeedf2", secondary: "#b5b3bf", muted: "#aaa7b5",
+        background: "#161619", surface: "#1e1e23", elevated: "#26262d", subtle: "#29292f",
+        border: "#73717e", split: "#37353f", selected: "#353039", info: "#b0bdd1", success: "#91b6a0", danger: "#ef9c91",
     } : {
         primary: "#80602b", primaryHover: "#674b1f", primaryText: "#fffefa",
-        text: "#2c302d", secondary: "#62675f", muted: "#62695f",
-        background: "#f5f4ee", surface: "#fffefa", elevated: "#fffefa", subtle: "#eeefe6",
-        border: "#8b9582", split: "#dedfd4", selected: "#f1ebdc", jade: "#3b7467", danger: "#b5423a",
+        text: "#29282e", secondary: "#62616e", muted: "#6a6775",
+        background: "#f6f5f8", surface: "#ffffff", elevated: "#ffffff", subtle: "#f0eff3",
+        border: "#918c9a", split: "#e3e0e8", selected: "#f3ece2", info: "#576b86", success: "#4d7765", danger: "#b5423a",
     };
     return {
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
@@ -88,8 +88,8 @@ export function getAdminAntThemeConfig(dark: boolean): ThemeConfig {
             colorPrimaryHover: color.primaryHover,
             colorPrimaryActive: color.primaryHover,
             colorPrimaryBg: color.selected,
-            colorInfo: color.jade,
-            colorSuccess: color.jade,
+            colorInfo: color.info,
+            colorSuccess: color.success,
             colorWarning: color.primary,
             colorError: color.danger,
             colorLink: color.primary,

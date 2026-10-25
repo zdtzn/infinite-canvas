@@ -6,7 +6,7 @@ export function resolveAdminSection(value: string | null): AdminSectionKey {
     if (value === "config") return "rules";
     if (value === "usage") return "monitoring";
     if (value === "logs") return "records";
-    return "overview";
+    return "users";
 }
 
 export function resolveAdminRecordKind(value: string | null): AdminRecordKind {

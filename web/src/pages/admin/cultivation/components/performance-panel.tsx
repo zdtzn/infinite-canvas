@@ -39,16 +39,21 @@ export function PerformancePanel() {
             </div>
             <div className="space-y-2 px-5 pb-4 text-sm text-muted-foreground">
                 <p>统计范围：当前服务进程累计，重启清零，各实例独立统计。</p>
-                <p>P50 / P95 为直方图桶上界，不是精确分位数。溢出桶表示超过 300 秒。</p>
-                <p>路由提交就绪（route_ready）测量界面提交后两帧，不代表图片、数据加载完成或 LCP。</p>
-                <p>初始文档 LCP（ms）记录首次输入、隐藏或站内切页前的最大内容绘制时间，始终归属文档初始路由；站内切页不生成新的 LCP。</p>
-                <p>交互事件延迟（ms）为每个约 6 秒活跃采样窗口内最慢的交互事件耗时，包含输入等待、处理和后续绘制；切页或隐藏会提前结束窗口。这不是 INP，仅观测 ≥ 16 ms 的事件，不代表全部交互次数。</p>
-                <p>仅支持相应浏览器接口的前台页面参与感知性能采样；无样本不代表耗时为零。后台加载、预渲染与缓存恢复不补报 LCP。采样限流时合并待发送窗口并保留最大值。</p>
-                <p>各阶段样本可能来自同一任务，请勿相加作为任务总数；终态次数仅计数，不展示耗时分位数。</p>
                 {metrics.data ? <p>进程统计起点：<time dateTime={metrics.data.since}>{new Date(metrics.data.since).toLocaleString("zh-CN", { hour12: false })}</time></p> : null}
                 {metrics.dataUpdatedAt ? <p>快照读取时间：{new Date(metrics.dataUpdatedAt).toLocaleString("zh-CN", { hour12: false })}</p> : null}
                 {metrics.isError ? <p role="alert">性能统计加载失败，请点击重试。{metrics.data ? "下方保留上次快照，可能已过期。" : "其他系统信息仍可正常查看。"}</p> : null}
                 {metrics.isFetching ? <p role="status">正在读取性能统计…</p> : null}
+                <details>
+                    <summary className="min-h-11 cursor-pointer py-3 font-medium">查看统计口径</summary>
+                    <div className="space-y-2 pb-2">
+                        <p>P50 / P95 为直方图桶上界，不是精确分位数。溢出桶表示超过 300 秒。</p>
+                        <p>路由提交就绪（route_ready）测量界面提交后两帧，不代表图片、数据加载完成或 LCP。</p>
+                        <p>初始文档 LCP（ms）记录首次输入、隐藏或站内切页前的最大内容绘制时间，始终归属文档初始路由；站内切页不生成新的 LCP。</p>
+                        <p>交互事件延迟（ms）为每个约 6 秒活跃采样窗口内最慢的交互事件耗时，包含输入等待、处理和后续绘制；切页或隐藏会提前结束窗口。这不是 INP，仅观测 ≥ 16 ms 的事件，不代表全部交互次数。</p>
+                        <p>仅支持相应浏览器接口的前台页面参与感知性能采样；无样本不代表耗时为零。后台加载、预渲染与缓存恢复不补报 LCP。采样限流时合并待发送窗口并保留最大值。</p>
+                        <p>各阶段样本可能来自同一任务，请勿相加作为任务总数；终态次数仅计数，不展示耗时分位数。</p>
+                    </div>
+                </details>
             </div>
             {metrics.data ? (
                 <Table<PerformanceSeries>

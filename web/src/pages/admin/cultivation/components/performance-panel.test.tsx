@@ -21,6 +21,11 @@ test("unloaded panel is demand-only and query overrides global polling/retry def
         expect(html).toContain("加载性能统计");
         expect(html).toContain("尚未加载");
         expect(html).toContain("不是精确分位数");
+        const explanation = html.match(/<details\b([^>]*)>([\s\S]*?)<\/details>/);
+        expect(explanation?.[1]).not.toContain("open");
+        expect(explanation?.[2]).toContain("查看统计口径");
+        expect(explanation?.[2]).toContain("不是精确分位数");
+        expect(html.replace(/<details\b[\s\S]*?<\/details>/, "")).toContain("当前服务进程累计，重启清零");
         const options = client.getQueryCache().find({ queryKey: key })?.options as Record<string, unknown>;
         expect(options.enabled).toBe(false);
         expect(options.refetchInterval).toBe(false);
@@ -68,5 +73,7 @@ test("failed refresh keeps snapshot and provides inline recovery without throwin
         expect(html).toContain("重试加载");
         expect(html).toContain("下方保留上次快照，可能已过期");
         expect(html).toContain("当前进程暂无性能样本");
+        const visible = html.replace(/<details\b[\s\S]*?<\/details>/, "");
+        for (const text of ['role="alert"', "快照读取时间", "进程统计起点", "下方保留上次快照，可能已过期"]) expect(visible).toContain(text);
     } finally { client.clear(); }
 });

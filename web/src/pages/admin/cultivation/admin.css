@@ -2609,7 +2609,7 @@
     }
 }
 
-/* 掌教殿：卷宗底色与墨金层级，颜色统一来自后台 Ant Design 主题。 */
+/* 后台按日常任务组织，中性底色仅在操作和状态处强调。 */
 @layer components {
     .cultivation-admin-scope,
     .cultivation-admin-page,
@@ -2646,9 +2646,11 @@
     }
 
     .cultivation-admin-page::before {
-        height: 24rem;
-        opacity: 1;
-        background: radial-gradient(ellipse at 70% 0%, color-mix(in srgb, var(--cultivation-admin-accent) 5%, transparent), transparent 65%);
+        background: none;
+    }
+
+    .cultivation-admin-page .cultivation-admin-shell {
+        grid-template-columns: 13rem minmax(0, 1fr);
     }
 
     .cultivation-admin-page .cultivation-admin-sidebar {
@@ -2659,6 +2661,9 @@
     }
 
     .cultivation-admin-page .cultivation-admin-workspace {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
         background: transparent;
     }
 
@@ -2686,7 +2691,8 @@
 
     .cultivation-admin-page .cultivation-admin-header {
         position: relative;
-        padding: 0.75rem 2rem 1.5rem;
+        flex-shrink: 0;
+        padding: 1.5rem 1.5rem 1rem;
         border-bottom: 0;
         background: transparent;
         backdrop-filter: none;
@@ -2823,7 +2829,10 @@
     }
 
     .cultivation-admin-page .cultivation-admin-content {
-        padding-top: 0;
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 0 1.5rem 1.5rem;
     }
 
     .cultivation-admin-page .cultivation-admin-panel,
@@ -3021,6 +3030,102 @@
         gap: 0.625rem;
     }
 
+    .cultivation-admin-page .cultivation-admin-users-panel {
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+    }
+
+    .cultivation-users-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .cultivation-users-toolbar .ant-input-search {
+        width: min(100%, 26rem);
+        flex: 0 1 26rem;
+    }
+
+    .cultivation-users-toolbar .cultivation-admin-user-count {
+        margin-left: auto;
+        white-space: nowrap;
+    }
+
+    .cultivation-users-desktop {
+        overflow: hidden;
+        border: 1px solid var(--cultivation-admin-border);
+        border-radius: 0.75rem;
+        background: var(--cultivation-admin-surface);
+    }
+
+    .cultivation-users-mobile {
+        display: none;
+    }
+
+    .cultivation-user-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        white-space: nowrap;
+    }
+
+    .cultivation-users-pagination {
+        display: flex;
+        justify-content: flex-end;
+        padding-block: 1rem;
+    }
+
+    .cultivation-drawer-balance,
+    .cultivation-balance-current,
+    .cultivation-monitoring-freshness {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+    }
+
+    .cultivation-drawer-balance {
+        padding-block: 1rem;
+    }
+
+    .cultivation-drawer-balance > div > span,
+    .cultivation-balance-current > span,
+    .cultivation-monitoring-freshness {
+        color: var(--cultivation-admin-muted);
+        font-size: 0.8125rem;
+    }
+
+    .cultivation-drawer-balance-value {
+        display: block;
+        margin-top: 0.25rem;
+        color: var(--foreground);
+        font-size: 1.75rem;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .cultivation-drawer-balance-actions {
+        display: flex;
+        gap: 0.25rem;
+    }
+
+    .cultivation-balance-current {
+        margin-block: 1rem;
+    }
+
+    .cultivation-balance-current > strong {
+        color: var(--foreground);
+        font-size: 1.125rem;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .cultivation-monitoring-freshness {
+        margin-top: 1rem;
+    }
+
     .cultivation-admin-page .cultivation-admin-user-count {
         color: var(--cultivation-admin-muted);
         font-size: 0.8125rem;
@@ -3124,9 +3229,30 @@
     }
 
     @media (max-width: 1024px) {
+        .cultivation-admin-page .cultivation-admin-shell {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
         .cultivation-admin-page .cultivation-admin-topbar,
         .cultivation-admin-page .cultivation-admin-header {
             padding-inline: 1rem;
+        }
+
+        .cultivation-admin-page .cultivation-admin-mobile-nav {
+            margin: 0;
+        }
+
+        .cultivation-admin-mobile-nav .ant-select {
+            width: 100%;
+            height: 44px;
+        }
+
+        .cultivation-admin-heading-copy h1 {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip-path: inset(50%);
         }
     }
 
@@ -3153,6 +3279,10 @@
             padding: 1rem;
         }
 
+        .cultivation-admin-page .cultivation-admin-users-panel {
+            padding: 0;
+        }
+
         .cultivation-admin-page .cultivation-admin-dashboard-hero {
             padding: 1.25rem;
         }
@@ -3162,7 +3292,92 @@
         }
     }
 
-    @media (max-height: 540px) {
+    @media (max-width: 640px) {
+        .cultivation-users-toolbar {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 44px;
+        }
+
+        .cultivation-users-toolbar .ant-input-search {
+            width: 100%;
+        }
+
+        .cultivation-users-toolbar .cultivation-admin-user-count {
+            grid-column: 1 / -1;
+            margin-left: 0;
+        }
+
+        .cultivation-users-desktop {
+            display: none;
+        }
+
+        .cultivation-users-mobile {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .cultivation-user-card {
+            min-width: 0;
+            padding: 1rem;
+            border: 1px solid var(--cultivation-admin-border);
+            border-radius: 0.75rem;
+            background: var(--cultivation-admin-surface);
+        }
+
+        .cultivation-user-card-heading,
+        .cultivation-user-card-balance {
+            display: flex;
+            min-width: 0;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+        }
+
+        .cultivation-user-card-heading .cultivation-user-identity {
+            min-width: 0;
+        }
+
+        .cultivation-user-card-heading .ant-tag {
+            flex-shrink: 0;
+            margin: 0;
+        }
+
+        .cultivation-user-card-balance {
+            padding-block: 0.875rem;
+            color: var(--cultivation-admin-muted);
+            font-size: 0.8125rem;
+        }
+
+        .cultivation-user-card-balance strong {
+            color: var(--foreground);
+            font-size: 1.5rem;
+        }
+
+        .cultivation-user-card-balance small {
+            font-size: 0.8125rem;
+            font-weight: 400;
+        }
+
+        .cultivation-user-card-actions {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.25rem;
+            padding-top: 0.5rem;
+            border-top: 1px solid var(--cultivation-admin-border);
+        }
+
+        .cultivation-user-card-actions .ant-btn {
+            min-width: 0;
+            min-height: 44px;
+            padding-inline: 0.5rem;
+        }
+
+        .cultivation-users-pagination {
+            justify-content: center;
+        }
+    }
+
+    @media (max-width: 680px), (max-height: 540px) {
         .cultivation-admin-balance-modal .ant-modal {
             /* Ant Design's unlayered placement needs a scoped short-screen override. */
             top: 16px !important;

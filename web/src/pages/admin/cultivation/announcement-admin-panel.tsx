@@ -41,6 +41,7 @@ export function AnnouncementAdminPanel() {
     const [previewDevice, setPreviewDevice] = useState<"adaptive" | "mobile">("adaptive");
     const [editing, setEditing] = useState<SystemAnnouncement | null>(null);
     const openingSnapshot = useRef("");
+    const submitting = useRef(false);
     const query = useQuery({
         queryKey: ["admin", "announcements", page, search, type, status],
         queryFn: () => fetchAdminAnnouncements({ page, pageSize: 20, search, type, status }),
@@ -68,7 +69,8 @@ export function AnnouncementAdminPanel() {
     useEffect(() => setPage(1), [search, type, status]);
 
     const formStatusOptions = editing?.status === "archived" ? statusOptions.map((option) => (option.value === "archived" ? { ...option, disabled: true } : option)) : statusOptions.filter((option) => option.value !== "archived");
-    const submitLabel = selectedStatus === "published" ? (editing?.status === "published" ? "保存修改" : "发布公告") : "保存公告";
+    const dirty = drawerOpen && announcementFormSnapshot(form.getFieldsValue(true)) !== openingSnapshot.current;
+    const submitLabel = selectedStatus === "published" ? (editing?.status === "published" ? "保存修改" : "发布公告") : selectedStatus === "draft" ? "保存草稿" : "保存修改";
 
     const openCreate = () => {
         form.resetFields();
@@ -115,19 +117,28 @@ export function AnnouncementAdminPanel() {
     };
 
     const submit = async () => {
-        const values = await form.validateFields();
-        const save = () => saveMutation.mutateAsync({ id: editing?.id, values });
-        if (values.status === "published" && editing?.status !== "published") {
-            modal.confirm({
-                title: editing ? "发布这条公告？" : "立即发布公告？",
-                content: "发布后，用户登录时会自动看到未读公告，确认“我知道了”后不再提醒，也可以稍后在顶部公告入口阅读。",
-                okText: "确认发布",
-                cancelText: "继续编辑",
-                onOk: save,
-            });
-            return;
+        if (submitting.current || saveMutation.isPending || !dirty) return;
+        submitting.current = true;
+        let confirming = false;
+        try {
+            const values = await form.validateFields();
+            const save = () => saveMutation.mutateAsync({ id: editing?.id, values });
+            if (values.status === "published" && editing?.status !== "published") {
+                confirming = true;
+                modal.confirm({
+                    title: editing ? "发布这条公告？" : "立即发布公告？",
+                    content: "发布后，用户登录时会自动看到未读公告，确认“我知道了”后不再提醒，也可以稍后在顶部公告入口阅读。",
+                    okText: "确认发布",
+                    cancelText: "继续编辑",
+                    onOk: save,
+                    afterClose: () => { submitting.current = false; },
+                });
+                return;
+            }
+            await save();
+        } finally {
+            if (!confirming) submitting.current = false;
         }
-        await save();
     };
 
     const columns: ColumnsType<SystemAnnouncement> = [
@@ -148,24 +159,26 @@ export function AnnouncementAdminPanel() {
         { title: "类型", dataIndex: "type", key: "type", width: 110, render: (value: AnnouncementType) => <AnnouncementTypeTag type={value} /> },
         { title: "状态", dataIndex: "status", key: "status", width: 100, render: (value: AnnouncementStatus) => <AnnouncementStatusTag status={value} /> },
         { title: "发布人", dataIndex: "authorName", key: "authorName", width: 120, ellipsis: true },
-        { title: "发布时间", dataIndex: "publishedAt", key: "publishedAt", width: 170, render: (value: number | null, item) => formatTimestamp(value || item.updatedAt) },
+        { title: "时间", key: "time", width: 185, render: (_value, item) => <div><div className="text-xs text-muted-foreground">{item.publishedAt ? "发布于" : "更新于"}</div><time dateTime={new Date(item.publishedAt || item.updatedAt).toISOString()}>{formatTimestamp(item.publishedAt || item.updatedAt)}</time></div> },
         {
             title: "操作",
             key: "actions",
-            width: 112,
+            width: 200,
             fixed: "right",
             render: (_value, item) => (
                 <div className="announcement-admin-actions">
                     <Tooltip title="编辑公告">
-                        <Button type="text" shape="circle" icon={<Edit3 className="size-4" />} aria-label={`编辑 ${item.title}`} onClick={() => openEdit(item)} />
+                        <Button type="text" style={{ minHeight: 44 }} icon={<Edit3 className="size-4" />} aria-label={`编辑 ${item.title}`} onClick={() => openEdit(item)}>编辑</Button>
                     </Tooltip>
                     {item.status !== "archived" ? (
                         <Tooltip title="归档公告">
                             <Button
                                 type="text"
-                                shape="circle"
+                                style={{ minHeight: 44 }}
                                 danger
                                 icon={<Archive className="size-4" />}
+                                loading={archiveMutation.isPending && archiveMutation.variables === item.id}
+                                disabled={archiveMutation.isPending}
                                 aria-label={`归档 ${item.title}`}
                                 onClick={() =>
                                     modal.confirm({
@@ -176,7 +189,7 @@ export function AnnouncementAdminPanel() {
                                         onOk: () => archiveMutation.mutateAsync(item.id),
                                     })
                                 }
-                            />
+                            >归档</Button>
                         </Tooltip>
                     ) : null}
                 </div>
@@ -188,9 +201,7 @@ export function AnnouncementAdminPanel() {
         <section className="cultivation-admin-panel announcement-admin-panel">
             <div className="cultivation-admin-panel-header">
                 <div>
-                    <p className="cultivation-admin-panel-kicker">SYSTEM ANNOUNCEMENTS</p>
-                    <h2>公告管理</h2>
-                    <p>管理「仙尊告示」，发布前预览月宫卷轴中的文字效果。</p>
+                    <p>先写公告内容，确认预览后再发布。</p>
                 </div>
                 <Button type="primary" icon={<Plus className="size-4" />} onClick={openCreate}>
                     新建公告
@@ -221,7 +232,7 @@ export function AnnouncementAdminPanel() {
                 loading={query.isFetching}
                 dataSource={query.data?.items || []}
                 columns={columns}
-                scroll={{ x: 960 }}
+                scroll={{ x: 1050 }}
                 locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无匹配公告" /> }}
                 pagination={{ current: page, pageSize: 20, total: query.data?.total || 0, showSizeChanger: false, onChange: setPage, showTotal: (total) => `共 ${total} 条公告` }}
                 onRow={(item) => ({ onDoubleClick: () => openEdit(item) })}
@@ -237,10 +248,10 @@ export function AnnouncementAdminPanel() {
                 onClose={closeDrawer}
                 footer={
                     <div className="announcement-admin-drawer-footer">
-                        <span>{editing?.status === "published" ? "仅改样式保留已读；修改标题或正文等内容会重新提醒" : "可以先保存草稿，再确认发布"}</span>
+                        <span aria-live="polite">{saveMutation.isPending ? "正在保存…" : dirty ? "有未保存的更改" : "尚未修改"} · {editing?.status === "published" ? "仅改样式保留已读；修改标题或正文等内容会重新提醒" : "可以先保存草稿，再确认发布"}</span>
                         <div>
                             <Button disabled={saveMutation.isPending} onClick={closeDrawer}>取消</Button>
-                            <Button type="primary" loading={saveMutation.isPending} onClick={() => void submit().catch(() => { /* Field validation or the mutation already displays the error. */ })}>
+                            <Button type="primary" disabled={!dirty} loading={saveMutation.isPending} onClick={() => void submit().catch(() => { /* Field validation or the mutation already displays the error. */ })}>
                                 {submitLabel}
                             </Button>
                         </div>
@@ -248,15 +259,7 @@ export function AnnouncementAdminPanel() {
                 }
             >
                 <div className="announcement-editor-layout">
-                <Form form={form} layout="vertical" initialValues={{ type: "notice", status: "draft", pinned: false, style: normalizeAnnouncementStyle(null) }}>
-                    <div className="announcement-admin-form-grid">
-                        <Form.Item name="type" label="公告类型" rules={[{ required: true, message: "请选择公告类型" }]}>
-                            <Select options={typeOptions} />
-                        </Form.Item>
-                        <Form.Item name="status" label="公告状态" rules={[{ required: true, message: "请选择公告状态" }]}>
-                            <Select options={formStatusOptions} />
-                        </Form.Item>
-                    </div>
+                <Form form={form} layout="vertical" disabled={saveMutation.isPending} initialValues={{ type: "notice", status: "draft", pinned: false, style: normalizeAnnouncementStyle(null) }}>
                     <Form.Item
                         name="title"
                         label="公告标题"
@@ -266,9 +269,6 @@ export function AnnouncementAdminPanel() {
                         ]}
                     >
                         <Input maxLength={120} showCount placeholder="例如：无限画布 2.4 功能更新" />
-                    </Form.Item>
-                    <Form.Item name="summary" label="简短摘要" extra="用于自动提醒中快速说明重点。">
-                        <Input maxLength={240} showCount placeholder="用一句话说明这次公告的核心内容" />
                     </Form.Item>
                     <Form.Item
                         name="content"
@@ -281,6 +281,23 @@ export function AnnouncementAdminPanel() {
                     >
                         <Input.TextArea rows={7} maxLength={8000} showCount placeholder="填写公告正文…" />
                     </Form.Item>
+                    <Form.Item name="summary" label="简短摘要" extra="用于自动提醒中快速说明重点。">
+                        <Input maxLength={240} showCount placeholder="用一句话说明这次公告的核心内容" />
+                    </Form.Item>
+                    <details className="mb-6">
+                        <summary className="cursor-pointer text-base font-semibold">发布设置 · {statusOptions.find((option) => option.value === (selectedStatus || editing?.status || "draft"))?.label}</summary>
+                        <div className="announcement-admin-form-grid mt-4">
+                            <Form.Item name="type" label="公告类型" rules={[{ required: true, message: "请选择公告类型" }]}>
+                                <Select options={typeOptions} />
+                            </Form.Item>
+                            <Form.Item name="status" label="公告状态" extra={editing?.status === "published" && selectedStatus === "draft" ? "保存为草稿后，用户端将不再展示这条公告。" : undefined} rules={[{ required: true, message: "请选择公告状态" }]}>
+                                <Select options={formStatusOptions} />
+                            </Form.Item>
+                        </div>
+                        <Form.Item name="pinned" label="置顶公告" valuePropName="checked" extra="置顶公告会优先出现在系统公告顶部。">
+                            <Switch />
+                        </Form.Item>
+                    </details>
                     <details className="mb-6">
                         <summary className="cursor-pointer text-base font-semibold">文字样式</summary>
                         <div className="announcement-style-actions my-3">
@@ -290,9 +307,6 @@ export function AnnouncementAdminPanel() {
                         <p className="announcement-style-hint">仅对这条公告生效。手机字号会适度缩小；字体优先使用设备已有字形。</p>
                         <AnnouncementStyleFields />
                     </details>
-                    <Form.Item name="pinned" label="置顶公告" valuePropName="checked" extra="置顶公告会优先出现在系统公告顶部。">
-                        <Switch />
-                    </Form.Item>
                 </Form>
                 <aside className="announcement-editor-preview" aria-label="公告实时预览">
                     <div className="announcement-preview-toolbar">
