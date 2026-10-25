@@ -1189,6 +1189,25 @@ function runMigrations(database: Database) {
       }
       database.query("INSERT INTO schema_migrations(version, applied_at) VALUES (28, ?)").run(Date.now());
     })();
+  if (!database.query("SELECT 1 FROM schema_migrations WHERE version = 29").get())
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE chat_turn_requests (
+          user_id TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          signature TEXT NOT NULL,
+          user_message_id TEXT NOT NULL,
+          assistant_message_id TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, request_id),
+          FOREIGN KEY (user_id, conversation_id)
+            REFERENCES chat_conversations(user_id, conversation_id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_chat_turn_requests_conversation ON chat_turn_requests(user_id, conversation_id);
+      `);
+      database.query("INSERT INTO schema_migrations(version, applied_at) VALUES (29, ?)").run(Date.now());
+    })();
 }
 
 function migrateLegacyState(

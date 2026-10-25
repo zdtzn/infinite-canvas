@@ -1,5 +1,11 @@
 import type { ChatMessage } from "@/services/chat-api";
 
+export function mergeLoadedChatHistory(current: ChatMessage[], latest: ChatMessage[]) {
+    if (!latest.length) return latest;
+    const index = current.findIndex((item) => item.id === latest[0].id);
+    return index < 0 ? latest : [...current.slice(0, index), ...latest];
+}
+
 type PendingChatTurnMessageIds = {
     optimisticUserId: string;
     optimisticAssistantId: string;
@@ -29,7 +35,16 @@ export function mergeStartedChatMessages(
     assistantMessage: ChatMessage,
     replaceOptimisticUser: boolean,
     stopped = false,
+    editUserMessageId?: string,
 ) {
+    const live = current.find((item) => item.id === assistantMessage.id);
+    if (assistantMessage.status === "streaming" && live?.status === "streaming" && live.content.length > assistantMessage.content.length) {
+        assistantMessage = { ...assistantMessage, content: live.content, updatedAt: Math.max(live.updatedAt, assistantMessage.updatedAt) };
+    }
+    if (editUserMessageId) {
+        const index = current.findIndex((item) => item.id === editUserMessageId);
+        if (index >= 0) return [...current.slice(0, index), userMessage, assistantMessage];
+    }
     const hasUserMessage = current.some((item) => item.id === userMessage.id);
     const replaceIds = new Set([
         pending.optimisticAssistantId,

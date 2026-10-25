@@ -33,7 +33,7 @@ export function AppTopNav() {
     const slug = pathname.split("/").filter(Boolean)[0];
     const activeToolSlug = [...primaryNavigationTools, ...secondaryNavigationTools].some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
     const secondaryActive = secondaryNavigationTools.some((tool) => tool.slug === activeToolSlug);
-    const chatRuntimeLabel = chatRuntimeStatus === "stopping" ? "正在停止问道台回答" : chatRuntimeStatus === "starting" ? "正在连接问道台" : "问道台正在回答";
+    const chatRuntimeLabel = chatRuntimeStatus === "stopping" ? "正在停止问道台回答" : chatRuntimeStatus === "starting" ? "正在连接问道台" : chatRuntimeStatus === "recovering" ? "正在恢复问道台回答" : "问道台正在回答";
 
     return (
         <>

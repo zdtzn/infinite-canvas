@@ -35,6 +35,14 @@ export type ChatConversation = {
 export type ChatConversationDetail = {
     conversation: ChatConversation;
     messages: ChatMessage[];
+    hasMore?: boolean;
+    nextBefore?: string | null;
+};
+
+export type ChatConversationExport = ChatConversationDetail & {
+    format: "infinite-canvas.chat";
+    version: 1;
+    exportedAt: string;
 };
 
 export type ChatImportResult = {
@@ -74,6 +82,15 @@ export type ChatStartedEvent = {
     assistantMessage: ChatMessage;
 };
 
+export class ChatRequestError extends Error {
+    readonly rejected = true;
+
+    constructor(message: string, readonly status: number) {
+        super(message);
+        this.name = "ChatRequestError";
+    }
+}
+
 export type ChatDoneEvent = {
     conversation: ChatConversation;
     message: ChatMessage;
@@ -83,6 +100,7 @@ export type SendChatMessageInput = {
     conversationId: string;
     content: string;
     attachments: ChatAttachment[];
+    // Reuse for one intent across retries; for a new question this is also its user message ID.
     clientMessageId?: string;
     retryAssistantMessageId?: string;
     editUserMessageId?: string;
@@ -137,8 +155,20 @@ export function updateChatConversationPreset(id: string, presetId: string, expec
     });
 }
 
-export function fetchChatConversation(id: string, expectedUserId?: string) {
-    return serverRequest<ChatConversationDetail>(`/api/chat/conversations/${encodeURIComponent(id)}`, { timeoutMs: 12_000, expectedUserId });
+export function fetchChatConversation(id: string, expectedUserId?: string, options: { before?: string; limit?: number } = {}) {
+    const query = new URLSearchParams();
+    if (options.before !== undefined) query.set("before", options.before);
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    const suffix = query.size ? `?${query}` : "";
+    return serverRequest<ChatConversationDetail>(`/api/chat/conversations/${encodeURIComponent(id)}${suffix}`, { timeoutMs: 12_000, expectedUserId });
+}
+
+export function fetchChatTurn(conversationId: string, clientMessageId: string, expectedUserId?: string) {
+    return serverRequest<{ turn: ChatStartedEvent | null }>(`/api/chat/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(clientMessageId)}`, { timeoutMs: 12_000, expectedUserId });
+}
+
+export function fetchChatConversationExport(id: string, expectedUserId?: string) {
+    return serverRequest<ChatConversationExport>(`/api/chat/conversations/${encodeURIComponent(id)}/export`, { timeoutMs: 30_000, expectedUserId });
 }
 
 export function deleteChatConversation(id: string, expectedUserId?: string) {
@@ -188,7 +218,7 @@ export async function sendChatMessage(input: SendChatMessageInput) {
         input.expectedUserId,
     );
 
-    if (!response.ok) throw new Error(await readErrorResponse(response));
+    if (!response.ok) throw new ChatRequestError(await readErrorResponse(response), response.status);
     if (!response.body) throw new Error("问道台没有返回可读响应");
 
     const reader = response.body.getReader();

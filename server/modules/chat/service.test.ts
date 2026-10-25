@@ -23,6 +23,93 @@ afterEach(() => {
 });
 
 describe("chat service", () => {
+  test("loads the latest messages and pages through more than 1000 tied timestamps without gaps", () => {
+    const { store, service } = setup();
+    try {
+      const conversation = service.createConversation("user-a");
+      const insert = store.raw!.query(
+        "INSERT INTO chat_messages(user_id, message_id, conversation_id, role, content, attachments_json, status, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '[]', 'completed', '', 1, 1)",
+      );
+      const ids = Array.from({ length: 1206 }, (_, index) => `history-message-${index}`);
+      store.raw!.transaction(() => {
+        for (const [index, id] of ids.entries()) insert.run("user-a", id, conversation.id, index % 2 ? "assistant" : "user", `消息 ${index}`);
+      })();
+
+      let page = service.getConversationPage("user-a", conversation.id)!;
+      expect(page.messages.map((message) => message.id)).toEqual(ids.slice(-100));
+      expect(page.hasMore).toBe(true);
+      const originalBefore = page.nextBefore!;
+      insert.run("user-a", "history-new-message", conversation.id, "user", "翻页期间新增");
+      expect(service.getConversationPage("user-a", conversation.id, { before: originalBefore })?.messages.map((message) => message.id)).toEqual(ids.slice(-200, -100));
+
+      const loaded = [...page.messages];
+      while (page.hasMore) {
+        page = service.getConversationPage("user-a", conversation.id, { before: page.nextBefore! })!;
+        loaded.unshift(...page.messages);
+      }
+      expect(loaded.map((message) => message.id)).toEqual(ids);
+      expect(page.nextBefore).toBeNull();
+      expect(service.getConversationWithMessages("user-a", conversation.id)?.messages).toHaveLength(1207);
+      expect(service.exportConversations("user-a")[0].messages).toHaveLength(1207);
+      expect(service.getConversationPage("user-b", conversation.id, { before: originalBefore })).toBeNull();
+      expect(service.exportConversations("user-b")).toEqual([]);
+      expect(service.contextMessages("user-a", conversation.id).at(-1)?.id).toBe("history-new-message");
+      expect(service.getTurn("user-a", conversation.id, ids[1204])?.assistantMessage.id).toBe(ids[1205]);
+      expect(() => service.getTurn("user-b", conversation.id, ids[1204])).toThrow("对话不存在");
+      for (const before of ["invalid", "", "MA", "LTE", "MS4w"])
+        expect(() => service.getConversationPage("user-a", conversation.id, { before })).toThrow("消息分页位置无效");
+      for (const limit of [0, -1, 1.5, 201, Number.NaN])
+        expect(() => service.getConversationPage("user-a", conversation.id, { limit })).toThrow("每页消息数量");
+      expect(service.getConversationPage("user-a", conversation.id, { limit: 200 })?.messages).toHaveLength(200);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("account conversation export does not inherit the sidebar conversation cap", () => {
+    const { store, service } = setup();
+    try {
+      const insert = store.raw!.query(
+        "INSERT INTO chat_conversations(user_id, conversation_id, title, preset_id, created_at, updated_at) VALUES ('user-a', ?, '历史对话', 'default', 1, 1)",
+      );
+      store.raw!.transaction(() => {
+        for (let index = 0; index < 103; index++) insert.run(`export-conversation-${index}`);
+      })();
+      expect(service.listConversations("user-a")).toHaveLength(100);
+      expect(service.exportConversations("user-a")).toHaveLength(103);
+      expect(service.exportConversations("user-b")).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("replays an accepted client message without reserving or creating a second turn", () => {
+    const { store, service } = setup({ dailyLimit: 1 });
+    try {
+      const conversation = service.createConversation("user-a");
+      const input = { content: "只发送一次", attachments: [], channelId: "text-channel", model: "gpt-4o-mini", clientMessageId: "retry-client-message-1" };
+      const first = service.beginTurn("user-a", conversation.id, input);
+      const replay = service.beginTurn("user-a", conversation.id, input);
+      expect(first.isReplay).toBe(false);
+      expect(replay.isReplay).toBe(true);
+      expect(replay.assistantMessage.id).toBe(first.assistantMessage.id);
+      expect(replay.assistantMessage.status).toBe("streaming");
+      service.completeAssistant("user-a", first.assistantMessage.id, "一次回答");
+      expect(service.beginTurn("user-a", conversation.id, input).assistantMessage.status).toBe("completed");
+      expect(service.getTurn("user-a", conversation.id, input.clientMessageId)?.assistantMessage.content).toBe("一次回答");
+      expect(service.getTurn("user-a", conversation.id, "not-accepted-yet")).toBeNull();
+      expect(service.getConversationWithMessages("user-a", conversation.id)?.messages).toHaveLength(2);
+      expect(service.getChatUsage("user-a").usedToday).toBe(1);
+      expect(() => service.beginTurn("user-a", conversation.id, { ...input, content: "不同的问题" })).toThrow("标识已用于其他内容");
+      expect(() => service.beginTurn("user-a", conversation.id, { ...input, attachments: [{ assetKey: "image:other", mimeType: "image/png", name: "other.png" }] })).toThrow("标识已用于其他内容");
+      expect(() => service.beginTurn("user-a", conversation.id, { ...input, canvasContext: { projectId: "different-context" } })).toThrow("标识已用于其他内容");
+      const other = service.createConversation("user-a");
+      expect(() => service.beginTurn("user-a", other.id, input)).toThrow("标识已用于其他内容");
+    } finally {
+      store.close();
+    }
+  });
+
   test("persists the client-generated user message id for optimistic reconciliation", () => {
     const { store, service } = setup();
     try {
@@ -38,6 +125,123 @@ describe("chat service", () => {
 
       expect(turn.userMessage.id).toBe(clientMessageId);
       expect(service.getConversationWithMessages("user-a", conversation.id)?.messages[0]?.id).toBe(clientMessageId);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("replays retry and edit operation ids before streaming eligibility checks", () => {
+    const { store, service } = setup();
+    try {
+      const conversation = service.createConversation("user-a");
+      const input = { content: "原问题", attachments: [], channelId: "text-channel", model: "gpt-4o-mini", clientMessageId: "original-request-id" };
+      const original = service.beginTurn("user-a", conversation.id, input);
+      service.completeAssistant("user-a", original.assistantMessage.id, "原回答");
+      const retryInput = { ...input, content: "", clientMessageId: "retry-operation-id", retryAssistantMessageId: original.assistantMessage.id };
+      const retry = service.beginTurn("user-a", conversation.id, retryInput);
+      expect(retry.isReplay).toBe(false);
+      expect(service.beginTurn("user-a", conversation.id, retryInput)).toMatchObject({ isReplay: true, assistantMessage: { id: retry.assistantMessage.id, status: "streaming" } });
+      expect(service.getTurn("user-a", conversation.id, retryInput.clientMessageId)?.assistantMessage.id).toBe(retry.assistantMessage.id);
+      expect(service.getChatUsage("user-a").usedToday).toBe(2);
+      expect(() => service.beginTurn("user-a", conversation.id, { ...retryInput, content: "更改请求" })).toThrow("标识已用于其他内容");
+      service.completeAssistant("user-a", retry.assistantMessage.id, "重试回答");
+      const editInput = { ...input, content: "编辑后的问题", clientMessageId: "edit-operation-id", editUserMessageId: original.userMessage.id };
+      const edited = service.beginTurn("user-a", conversation.id, editInput);
+      const editReplay = service.beginTurn("user-a", conversation.id, editInput);
+      expect(editReplay.isReplay).toBe(true);
+      expect(editReplay.assistantMessage.id).toBe(edited.assistantMessage.id);
+      expect(editReplay.userMessage.id).toBe(original.userMessage.id);
+      expect(service.getTurn("user-a", conversation.id, editInput.clientMessageId)?.assistantMessage.id).toBe(edited.assistantMessage.id);
+      expect(service.getChatUsage("user-a").usedToday).toBe(3);
+      expect(service.getConversationWithMessages("user-a", conversation.id)?.messages).toHaveLength(2);
+      expect(() => service.beginTurn("user-a", conversation.id, { ...editInput, editUserMessageId: "another-user-message" })).toThrow("标识已用于其他内容");
+      service.completeAssistant("user-a", edited.assistantMessage.id, "编辑后的回答");
+      expect(service.beginTurn("user-a", conversation.id, editInput)).toMatchObject({ isReplay: true, assistantMessage: { content: "编辑后的回答", status: "completed" } });
+      expect(() => service.beginTurn("user-a", conversation.id, input)).toThrow("对应的消息已被删除");
+      expect(service.getChatUsage("user-a").usedToday).toBe(3);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("continuation operation ids replay while streaming and after completion without charging twice", () => {
+    const { store, service } = setup();
+    try {
+      const conversation = service.createConversation("user-a");
+      const original = service.beginTurn("user-a", conversation.id, { content: "继续回答", attachments: [], channelId: "text-channel", model: "model-a" });
+      service.completeAssistant("user-a", original.assistantMessage.id, "第一段");
+      const continueTurn = () => service.beginContinuation("user-a", conversation.id, original.assistantMessage.id, "text-channel", "model-a", "continue-operation-id");
+      expect(continueTurn().isReplay).toBe(false);
+      expect(continueTurn()).toMatchObject({ isReplay: true, assistantMessage: { content: "第一段", status: "streaming" } });
+      expect(service.getTurn("user-a", conversation.id, "continue-operation-id")?.assistantMessage.id).toBe(original.assistantMessage.id);
+      expect(() => service.beginContinuation("user-a", conversation.id, "different-assistant-id", "text-channel", "model-a", "continue-operation-id")).toThrow("标识已用于其他内容");
+      expect(() => service.beginTurn("user-a", conversation.id, { content: "不同操作", attachments: [], channelId: "text-channel", model: "model-a", clientMessageId: "continue-operation-id" })).toThrow("标识已用于其他内容");
+      service.completeAssistant("user-a", original.assistantMessage.id, "第一段第二段");
+      expect(continueTurn()).toMatchObject({ isReplay: true, assistantMessage: { content: "第一段第二段", status: "completed" } });
+      expect(service.getChatUsage("user-a").usedToday).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("rolls back acceptance and edited history together when quota rejects the operation", () => {
+    const { store } = setup();
+    let dailyLimit = 1;
+    const service = createChatService(store.raw!, { getDailyLimit: () => dailyLimit });
+    try {
+      const conversation = service.createConversation("user-a");
+      const input = { content: "原问题", attachments: [], channelId: "text-channel", model: "model-a", clientMessageId: "quota-original-id" };
+      const original = service.beginTurn("user-a", conversation.id, input);
+      service.completeAssistant("user-a", original.assistantMessage.id, "原回答");
+      const edit = { ...input, content: "修改问题", editUserMessageId: original.userMessage.id, clientMessageId: "quota-edit-operation" };
+      expect(() => service.beginTurn("user-a", conversation.id, edit)).toThrow("今日问道次数已用尽");
+      expect(service.getTurn("user-a", conversation.id, edit.clientMessageId)).toBeNull();
+      expect(service.getConversationWithMessages("user-a", conversation.id)?.messages.map((message) => message.content)).toEqual(["原问题", "原回答"]);
+      dailyLimit = 2;
+      expect(service.beginTurn("user-a", conversation.id, edit).isReplay).toBe(false);
+      expect(service.getChatUsage("user-a").usedToday).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("persists operation acceptance across a server restart", () => {
+    const { store, service, dataDir } = setup();
+    let reopened: ReturnType<typeof openAppDatabase> | undefined;
+    try {
+      const conversation = service.createConversation("user-a");
+      const input = { content: "断线后保留", attachments: [], channelId: "text-channel", model: "model-a", clientMessageId: "durable-operation-id" };
+      const accepted = service.beginTurn("user-a", conversation.id, input);
+      store.close();
+      reopened = openAppDatabase({ dataDir });
+      const restarted = createChatService(reopened.raw!);
+      expect(restarted.beginTurn("user-a", conversation.id, input)).toMatchObject({ isReplay: true, assistantMessage: { id: accepted.assistantMessage.id, status: "failed" } });
+      expect(restarted.getTurn("user-a", conversation.id, input.clientMessageId)?.userMessage.id).toBe(input.clientMessageId);
+      expect(restarted.getChatUsage("user-a").usedToday).toBe(1);
+    } finally {
+      if (reopened) reopened.close();
+      else store.close();
+    }
+  });
+
+  test("keeps acceptance evidence after truncation and cleans it up only with its owner scope", () => {
+    const { store, service } = setup();
+    try {
+      const first = service.createConversation("user-a");
+      const second = service.createConversation("user-b");
+      const input = { content: "同名请求", attachments: [], channelId: "text-channel", model: "model-a", clientMessageId: "shared-request-id" };
+      const turn = service.beginTurn("user-a", first.id, input);
+      service.completeAssistant("user-a", turn.assistantMessage.id, "完成");
+      const other = service.beginTurn("user-b", second.id, input);
+      service.deleteMessagesFrom("user-a", first.id, turn.assistantMessage.id);
+      expect(service.getTurn("user-a", first.id, input.clientMessageId)).toBeNull();
+      expect(() => service.beginTurn("user-a", first.id, input)).toThrow("对应的消息已被删除");
+      expect(service.getTurn("user-b", second.id, input.clientMessageId)?.assistantMessage.id).toBe(other.assistantMessage.id);
+      expect(store.raw!.query("SELECT COUNT(*) AS count FROM chat_turn_requests").get()).toEqual({ count: 2 });
+      service.deleteConversation("user-a", first.id);
+      expect(store.raw!.query("SELECT user_id FROM chat_turn_requests").all()).toEqual([{ user_id: "user-b" }]);
+      store.raw!.query("DELETE FROM users WHERE user_id = 'user-b'").run();
+      expect(store.raw!.query("SELECT COUNT(*) AS count FROM chat_turn_requests").get()).toEqual({ count: 0 });
     } finally {
       store.close();
     }
@@ -450,5 +654,5 @@ function setup(options: { dailyLimit?: number | null; now?: () => number } = {})
     "user-b": { userId: "user-b", displayName: "User B", createdAt: 1 },
   };
   store.saveState(state);
-  return { store, service: createChatService(store.raw!, options) };
+  return { store, dataDir, service: createChatService(store.raw!, options) };
 }

@@ -533,6 +533,12 @@ async function route(request: Request, requestId: string) {
         if (chatMemoryMatch && request.method === "PATCH") return updateChatMemory(request, session, decodeRouteSegment(chatMemoryMatch[1], "记忆 ID"));
         if (chatMemoryMatch && request.method === "DELETE") return deleteChatMemory(session, decodeRouteSegment(chatMemoryMatch[1], "记忆 ID"));
         if (url.pathname === "/api/chat/usage" && request.method === "GET") return chatUsage(session);
+        const chatExportMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/export$/);
+        if (chatExportMatch && request.method === "GET")
+            return exportChatConversation(session, decodeRouteSegment(chatExportMatch[1], "对话 ID"));
+        const chatTurnMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/turns\/([^/]+)$/);
+        if (chatTurnMatch && request.method === "GET")
+            return getChatTurn(session, decodeRouteSegment(chatTurnMatch[1], "对话 ID"), decodeRouteSegment(chatTurnMatch[2], "问题消息 ID"));
         const chatCancelMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages\/([^/]+)\/cancel$/);
         if (chatCancelMatch && request.method === "POST") {
             return cancelChatMessage(session, decodeRouteSegment(chatCancelMatch[1], "对话 ID"), decodeRouteSegment(chatCancelMatch[2], "消息 ID"));
@@ -550,7 +556,7 @@ async function route(request: Request, requestId: string) {
         if (chatConversationMatch && request.method === "PATCH")
             return updateChatConversation(request, session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
         if (chatConversationMatch && request.method === "GET")
-            return getChatConversation(session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
+            return getChatConversation(session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"), url.searchParams);
         if (chatConversationMatch && request.method === "DELETE")
             return deleteChatConversation(session, decodeRouteSegment(chatConversationMatch[1], "对话 ID"));
         if (url.pathname === "/api/dou-qi-life/sessions" && request.method === "GET") return listDouQiLifeSessions(session);
@@ -1852,17 +1858,39 @@ async function updateChatConversation(request: Request, session: SessionPayload,
     );
 }
 
-function getChatConversation(session: SessionPayload, conversationId: string) {
-    const detail = requireChat().getConversationWithMessages(session.userId, conversationId);
+function getChatConversation(session: SessionPayload, conversationId: string, query: URLSearchParams) {
+    const detail = requireChat().getConversationPage(session.userId, conversationId, {
+        ...(query.has("before") ? { before: query.get("before")! } : {}),
+        ...(query.has("limit") ? { limit: Number(query.get("limit")) } : {}),
+    });
     if (!detail) throw new HttpError(404, "对话不存在");
     return json(
         {
             conversation: detail.conversation,
             messages: detail.messages.map((message) => publicChatMessage(session.userId, message)),
+            hasMore: detail.hasMore,
+            nextBefore: detail.nextBefore,
         },
         200,
         { "Cache-Control": "no-store" },
     );
+}
+
+function getChatTurn(session: SessionPayload, conversationId: string, clientMessageId: string) {
+    const turn = requireChat().getTurn(session.userId, conversationId, clientMessageId);
+    return json({
+        turn: turn ? {
+            conversation: turn.conversation,
+            userMessage: publicChatMessage(session.userId, turn.userMessage),
+            assistantMessage: publicChatMessage(session.userId, turn.assistantMessage),
+        } : null,
+    }, 200, { "Cache-Control": "no-store" });
+}
+
+function exportChatConversation(session: SessionPayload, conversationId: string) {
+    const detail = requireChat().getConversationWithMessages(session.userId, conversationId);
+    if (!detail) throw new HttpError(404, "对话不存在");
+    return json({ format: "infinite-canvas.chat", version: 1, exportedAt: new Date().toISOString(), ...detail }, 200, { "Cache-Control": "no-store" });
 }
 
 function deleteChatConversation(session: SessionPayload, conversationId: string) {
@@ -2031,17 +2059,20 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
     if ((retryAssistantMessageId && editUserMessageId) || (continueAssistantMessageId && (retryAssistantMessageId || editUserMessageId))) {
         throw new HttpError(400, "一次只能执行一种消息操作");
     }
-    const { channelId, model } = defaultChatTextModel();
+    const accepted = clientMessageId ? requireChat().getTurn(session.userId, conversationId, clientMessageId) : null;
+    const { channelId, model } = accepted ? accepted.conversation : defaultChatTextModel();
     const attachments = normalizeChatAttachmentInput(source.attachments);
-    if (!continueAssistantMessageId) prepareChatAttachments(session.userId, attachments);
-    assertPlatformModelAllowed(channelId, model, "text");
-    reserveChatRequest(session.userId);
+    if (!accepted) {
+        if (!continueAssistantMessageId) prepareChatAttachments(session.userId, attachments);
+        assertPlatformModelAllowed(channelId, model, "text");
+        reserveChatRequest(session.userId);
+    }
 
     const abortController = new AbortController();
     // The upstream task belongs to the server, not to the browser's SSE subscription.
     // A closed tab may cancel the response stream, but it must not cancel a submitted turn.
     const signal = abortController.signal;
-    let releasePending = true;
+    let releasePending = !accepted;
     const release = () => {
         if (!releasePending) return;
         releasePending = false;
@@ -2052,16 +2083,26 @@ async function sendChatMessage(request: Request, session: SessionPayload, conver
     let continuationPrefix = "";
     try {
         turn = continueAssistantMessageId
-            ? requireChat().beginContinuation(session.userId, conversationId, continueAssistantMessageId, channelId, model)
+            ? requireChat().beginContinuation(session.userId, conversationId, continueAssistantMessageId, channelId, model, clientMessageId)
             : requireChat().beginTurn(session.userId, conversationId, {
                 content,
                 attachments,
                 channelId,
                 model,
-                ...(!retryAssistantMessageId && !editUserMessageId && clientMessageId ? { clientMessageId } : {}),
+                ...(clientMessageId ? { clientMessageId } : {}),
+                ...(canvasContext ? { canvasContext } : {}),
                 ...(retryAssistantMessageId ? { retryAssistantMessageId } : {}),
                 ...(editUserMessageId ? { editUserMessageId } : {}),
             });
+        if (turn.isReplay) {
+            release();
+            const assistantMessage = publicChatMessage(session.userId, turn.assistantMessage);
+            return chatEventResponse([
+                ["started", { conversation: turn.conversation, userMessage: publicChatMessage(session.userId, turn.userMessage), assistantMessage }],
+                ...(turn.assistantMessage.status === "completed" ? [["done", { conversation: turn.conversation, message: assistantMessage }] as [string, unknown]] : []),
+                ...(turn.assistantMessage.status === "failed" ? [["error", { messageId: turn.assistantMessage.id, message: turn.assistantMessage.error || "这次回答暂未完成" }] as [string, unknown]] : []),
+            ]);
+        }
         activeChatTasks.set(turn.assistantMessage.id, {
             userId: session.userId,
             conversationId,
@@ -2229,9 +2270,7 @@ function prepareChatAttachments(userId: string, attachments: ChatAttachment[], m
 function exportAccountData(session: SessionPayload) {
     const userId = session.userId;
     const user = state.users[userId];
-    const conversations = chat
-        ? chat.listConversations(userId).map((conversation) => chat.getConversationWithMessages(userId, conversation.id)).filter(Boolean)
-        : [];
+    const conversations = chat?.exportConversations(userId) || [];
     const projects = Object.values(state.projects[userId] || {});
     const jobs = imageQueue.list().filter((job) => job.input.userId === userId).map(publicJob);
     const library = appDatabase.loadAssetLibrary(userId).items.map((item) => ({

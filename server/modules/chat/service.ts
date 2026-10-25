@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { Database } from "bun:sqlite";
 
@@ -16,6 +16,8 @@ const MAX_IMPORTED_CHARACTERS = 300_000;
 const MAX_MEMORIES_PER_USER = 80;
 const MAX_MEMORY_CHARACTERS = 4_000;
 const MEMORY_CONTEXT_CHARACTER_BUDGET = 8_000;
+const DEFAULT_MESSAGE_PAGE_SIZE = 100;
+const MAX_MESSAGE_PAGE_SIZE = 200;
 
 export type ChatAttachment = {
   assetKey: string;
@@ -273,11 +275,84 @@ export function createChatService(
     const messages = (
       database
         .query(
-          "SELECT * FROM chat_messages WHERE user_id = ? AND conversation_id = ? ORDER BY rowid ASC LIMIT 1000",
+          "SELECT * FROM chat_messages WHERE user_id = ? AND conversation_id = ? ORDER BY rowid ASC",
         )
         .all(userId, conversation.id) as ChatMessageRow[]
     ).map(messageFromRow);
     return { conversation, messages };
+  }
+
+  function getConversationPage(userId: string, conversationId: string, options: { before?: string; limit?: number } = {}) {
+    const conversation = getConversation(userId, conversationId);
+    if (!conversation) return null;
+    const limit = options.limit ?? DEFAULT_MESSAGE_PAGE_SIZE;
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_MESSAGE_PAGE_SIZE)
+      throw new ChatError(`每页消息数量应为 1 到 ${MAX_MESSAGE_PAGE_SIZE}`, 400, "CHAT_PAGE_INVALID");
+    const before = options.before === undefined ? Number.MAX_SAFE_INTEGER : decodeMessageCursor(options.before);
+    const rows = database.query(
+      "SELECT rowid AS position, * FROM chat_messages WHERE user_id = ? AND conversation_id = ? AND rowid < ? ORDER BY rowid DESC LIMIT ?",
+    ).all(userId, conversation.id, before, limit + 1) as Array<ChatMessageRow & { position: number }>;
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit).reverse();
+    return {
+      conversation,
+      messages: page.map(messageFromRow),
+      hasMore,
+      nextBefore: hasMore ? Buffer.from(String(page[0].position)).toString("base64url") : null,
+    };
+  }
+
+  function exportConversations(userId: string) {
+    const rows = database.query(
+      "SELECT conversation_id FROM chat_conversations WHERE user_id = ? ORDER BY updated_at DESC",
+    ).all(userId) as Array<{ conversation_id: string }>;
+    return rows.map((row) => getConversationWithMessages(userId, row.conversation_id)!);
+  }
+
+  function getTurn(userId: string, conversationId: string, userMessageId: string) {
+    const conversation = requireConversation(userId, conversationId);
+    const request = getTurnRequest(userId, validId(userMessageId, "问题消息 ID"));
+    if (request) return request.conversation_id === conversation.id ? requestedTurn(userId, conversation, request) : null;
+    const user = database.query(
+      "SELECT rowid AS position, * FROM chat_messages WHERE user_id = ? AND conversation_id = ? AND message_id = ? AND role = 'user'",
+    ).get(userId, conversation.id, validId(userMessageId, "问题消息 ID")) as (ChatMessageRow & { position: number }) | null;
+    if (!user) return null;
+    const assistant = database.query(
+      "SELECT * FROM chat_messages WHERE user_id = ? AND conversation_id = ? AND rowid > ? ORDER BY rowid ASC LIMIT 1",
+    ).get(userId, conversation.id, user.position) as ChatMessageRow | null;
+    if (assistant?.role !== "assistant") return null;
+    return { conversation, userMessage: messageFromRow(user), assistantMessage: messageFromRow(assistant) };
+  }
+
+  function getTurnRequest(userId: string, requestId: string) {
+    return database.query("SELECT * FROM chat_turn_requests WHERE user_id = ? AND request_id = ?")
+      .get(userId, requestId) as ChatTurnRequestRow | null;
+  }
+
+  function requestedTurn(userId: string, conversation: ChatConversation, request: ChatTurnRequestRow) {
+    const userMessage = getMessage(userId, request.user_message_id);
+    const assistantMessage = getMessage(userId, request.assistant_message_id);
+    return userMessage?.conversationId === conversation.id && assistantMessage?.conversationId === conversation.id
+      ? { conversation, userMessage, assistantMessage }
+      : null;
+  }
+
+  function replayTurnRequest(userId: string, conversation: ChatConversation, requestId: string, signature: string) {
+    if (!requestId) return null;
+    const request = getTurnRequest(userId, requestId);
+    if (!request) return null;
+    if (request.conversation_id !== conversation.id || request.signature !== signature)
+      throw new ChatError("这条问题标识已用于其他内容，请重新发送", 409, "MESSAGE_ID_CONFLICT");
+    const turn = requestedTurn(userId, conversation, request);
+    if (!turn) throw new ChatError("这次操作对应的消息已被删除，请重新操作", 409, "TURN_REQUEST_EXPIRED");
+    return { ...turn, isReplay: true };
+  }
+
+  function recordTurnRequest(userId: string, conversationId: string, requestId: string, signature: string, userMessageId: string, assistantMessageId: string) {
+    if (!requestId) return;
+    database.query(
+      "INSERT INTO chat_turn_requests(user_id, request_id, conversation_id, signature, user_message_id, assistant_message_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(userId, requestId, conversationId, signature, userMessageId, assistantMessageId, now());
   }
 
   function importConversation(userId: string, input: unknown) {
@@ -413,6 +488,7 @@ export function createChatService(
       clientMessageId?: unknown;
       retryAssistantMessageId?: unknown;
       editUserMessageId?: unknown;
+      canvasContext?: unknown;
     },
   ) {
     const conversation = requireConversation(userId, conversationId);
@@ -427,31 +503,30 @@ export function createChatService(
       : "";
     if (retryAssistantMessageId && editUserMessageId)
       throw new ChatError("一次只能执行一种消息操作", 400, "MESSAGE_ACTION_CONFLICT");
-    const retryUserMessage = retryAssistantMessageId
-      ? getRetryUserMessage(userId, conversation.id, retryAssistantMessageId)
-      : null;
-    if (retryAssistantMessageId && !retryUserMessage)
-      throw new ChatError("这条回答已经不能重试", 409, "RETRY_NOT_AVAILABLE");
-    const editedUserMessage = editUserMessageId
-      ? getEditableUserMessage(userId, conversation.id, editUserMessageId)
-      : null;
-    if (editUserMessageId && !editedUserMessage)
-      throw new ChatError("这条问题已经不能编辑", 409, "EDIT_NOT_AVAILABLE");
-    const content = editedUserMessage
-      ? optionalText(input.content, MAX_MESSAGE_CHARACTERS)
-      : retryUserMessage
-      ? retryUserMessage.content
-      : optionalText(input.content, MAX_MESSAGE_CHARACTERS);
+    const inputContent = optionalText(input.content, MAX_MESSAGE_CHARACTERS);
     const normalizedInputAttachments = normalizeAttachments(input.attachments);
-    const nextAttachments = editedUserMessage || !retryUserMessage
-      ? normalizedInputAttachments
-      : retryUserMessage.attachments;
-    if (!content && !nextAttachments.length)
-      throw new ChatError("请输入问题或上传图片");
-    const channelId = requiredIdentifier(input.channelId, 128, "文本模型渠道");
-    const model = requiredText(input.model, 256, "文本模型");
-    const timestamp = now();
+    const signature = turnRequestSignature({ content: inputContent, attachments: normalizedInputAttachments, retryAssistantMessageId, editUserMessageId, canvasContext: input.canvasContext });
     return database.transaction(() => {
+      const replay = replayTurnRequest(userId, conversation, clientMessageId, signature);
+      if (replay) return replay;
+      if (clientMessageId && !retryAssistantMessageId && !editUserMessageId && getMessage(userId, clientMessageId))
+        throw new ChatError("这条问题标识已用于其他内容，请重新发送", 409, "MESSAGE_ID_CONFLICT");
+      const retryUserMessage = retryAssistantMessageId
+        ? getRetryUserMessage(userId, conversation.id, retryAssistantMessageId)
+        : null;
+      if (retryAssistantMessageId && !retryUserMessage)
+        throw new ChatError("这条回答已经不能重试", 409, "RETRY_NOT_AVAILABLE");
+      const editedUserMessage = editUserMessageId
+        ? getEditableUserMessage(userId, conversation.id, editUserMessageId)
+        : null;
+      if (editUserMessageId && !editedUserMessage)
+        throw new ChatError("这条问题已经不能编辑", 409, "EDIT_NOT_AVAILABLE");
+      const content = retryUserMessage?.content ?? inputContent;
+      const nextAttachments = retryUserMessage ? retryUserMessage.attachments : normalizedInputAttachments;
+      if (!content && !nextAttachments.length) throw new ChatError("请输入问题或上传图片");
+      const channelId = requiredIdentifier(input.channelId, 128, "文本模型渠道");
+      const model = requiredText(input.model, 256, "文本模型");
+      const timestamp = now();
       if (editedUserMessage) {
         assertNoStreamingMessages(userId, conversation.id);
         database
@@ -554,10 +629,12 @@ export function createChatService(
           "UPDATE chat_conversations SET title = ?, channel_id = ?, model = ?, updated_at = ? WHERE user_id = ? AND conversation_id = ?",
         )
         .run(title, channelId, model, timestamp, userId, conversation.id);
+      recordTurnRequest(userId, conversation.id, clientMessageId, signature, userMessage.id, assistantMessage.id);
       return {
         conversation: { ...conversation, title, channelId, model, updatedAt: timestamp },
         userMessage,
         assistantMessage,
+        isReplay: false,
       };
     })();
   }
@@ -568,21 +645,26 @@ export function createChatService(
     assistantMessageId: unknown,
     channelId: unknown,
     model: unknown,
+    clientMessageId?: unknown,
   ) {
     const conversation = requireConversation(userId, conversationId);
     const validAssistantMessageId = validId(assistantMessageId, "回答消息 ID");
-    const assistant = getLatestCompletedAssistant(userId, conversation.id, validAssistantMessageId);
-    if (!assistant)
-      throw new ChatError("只有当前会话最后一条回答可以继续生成", 409, "CONTINUE_NOT_AVAILABLE");
-    assertNoStreamingMessages(userId, conversation.id);
-    const userMessage = getPreviousUserMessage(userId, conversation.id, validAssistantMessageId);
-    if (!userMessage)
-      throw new ChatError("找不到这条回答对应的问题", 409, "CONTINUE_NOT_AVAILABLE");
-    const context = contextMessages(userId, conversation.id);
-    const nextChannelId = requiredIdentifier(channelId, 128, "文本模型渠道");
-    const nextModel = requiredText(model, 256, "文本模型");
-    const timestamp = now();
+    const requestId = clientMessageId ? validId(clientMessageId, "问题消息 ID") : "";
+    const signature = turnRequestSignature({ continueAssistantMessageId: validAssistantMessageId });
     return database.transaction(() => {
+      const replay = replayTurnRequest(userId, conversation, requestId, signature);
+      if (replay) return replay;
+      const assistant = getLatestCompletedAssistant(userId, conversation.id, validAssistantMessageId);
+      if (!assistant)
+        throw new ChatError("只有当前会话最后一条回答可以继续生成", 409, "CONTINUE_NOT_AVAILABLE");
+      assertNoStreamingMessages(userId, conversation.id);
+      const userMessage = getPreviousUserMessage(userId, conversation.id, validAssistantMessageId);
+      if (!userMessage)
+        throw new ChatError("找不到这条回答对应的问题", 409, "CONTINUE_NOT_AVAILABLE");
+      const context = contextMessages(userId, conversation.id);
+      const nextChannelId = requiredIdentifier(channelId, 128, "文本模型渠道");
+      const nextModel = requiredText(model, 256, "文本模型");
+      const timestamp = now();
       const usageDate = dateKey(new Date(timestamp), timeZone);
       reserveChatUsage(database, userId, usageDate, 0, limitForUser(userId));
       database
@@ -595,11 +677,13 @@ export function createChatService(
           "UPDATE chat_conversations SET channel_id = ?, model = ?, updated_at = ? WHERE user_id = ? AND conversation_id = ?",
         )
         .run(nextChannelId, nextModel, timestamp, userId, conversation.id);
+      recordTurnRequest(userId, conversation.id, requestId, signature, userMessage.id, assistant.id);
       return {
         conversation: { ...conversation, channelId: nextChannelId, model: nextModel, updatedAt: timestamp },
         userMessage,
         assistantMessage: { ...assistant, status: "streaming" as const, error: "", updatedAt: timestamp },
         contextMessages: context,
+        isReplay: false,
       };
     })();
   }
@@ -882,6 +966,9 @@ export function createChatService(
     importConversation,
     updateConversationPreset,
     getConversationWithMessages,
+    getConversationPage,
+    exportConversations,
+    getTurn,
     deleteConversation,
     beginTurn,
     beginContinuation,
@@ -926,6 +1013,17 @@ type ChatMemoryRow = {
   created_at: number;
   updated_at: number;
 };
+
+type ChatTurnRequestRow = {
+  conversation_id: string;
+  signature: string;
+  user_message_id: string;
+  assistant_message_id: string;
+};
+
+function turnRequestSignature(input: Record<string, unknown>) {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
 
 function memoryFromRow(row: ChatMemoryRow): ChatMemory {
   return {
@@ -1110,6 +1208,14 @@ function validId(value: unknown, label: string) {
   const id = String(value || "").trim();
   if (!ID_PATTERN.test(id)) throw new ChatError(`${label}无效`);
   return id;
+}
+
+function decodeMessageCursor(cursor: string) {
+  const decoded = Buffer.from(cursor, "base64url").toString();
+  const position = Number(decoded);
+  if (!/^[1-9]\d*$/.test(decoded) || !Number.isSafeInteger(position) || Buffer.from(decoded).toString("base64url") !== cursor)
+    throw new ChatError("消息分页位置无效", 400, "CHAT_PAGE_INVALID");
+  return position;
 }
 
 function optionalIdentifier(value: unknown, maxLength: number) {

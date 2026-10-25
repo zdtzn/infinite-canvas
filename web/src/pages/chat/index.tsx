@@ -1,13 +1,13 @@
 import { App, Button, Drawer, Dropdown, Empty, Input, Popconfirm, Segmented, Skeleton, Tag, Tooltip } from "antd";
 import { BookOpen, Brain, ChevronDown, Copy, Download, FileUp, ImagePlus, LoaderCircle, MessageCircle, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserRound, X } from "lucide-react";
-import { memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type SetStateAction } from "react";
 import { nanoid } from "nanoid";
 
 import { cn } from "@/lib/utils";
 import { friendlyErrorMessage, userFacingErrorMessage } from "@/lib/friendly-error";
 import { lazyRoute } from "@/lib/lazy-route";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { cancelChatMessage, createChatConversation, createChatMemory, deleteChatConversation, deleteChatMemory, fetchChatConversation, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, updateChatMemory, uploadChatImage, type ChatAttachment, type ChatCanvasContext, type ChatConversation, type ChatMemory, type ChatMessage } from "@/services/chat-api";
+import { cancelChatMessage, ChatRequestError, createChatConversation, createChatMemory, deleteChatConversation, deleteChatMemory, fetchChatConversation, fetchChatConversationExport, fetchChatTurn, importChatConversation, sendChatMessage, truncateChatMessages, updateChatConversationPreset, updateChatMemory, uploadChatImage, type ChatAttachment, type ChatCanvasContext, type ChatConversation, type ChatMemory, type ChatMessage, type ChatStartedEvent } from "@/services/chat-api";
 import { clearChatBootstrapCache, getChatBootstrapRequests } from "@/services/chat-bootstrap-cache";
 import { saveServerUserPreferences } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
@@ -15,7 +15,9 @@ import { readChatMode, writeLifePreference } from "./dou-qi-life-preferences";
 import { useCanvasContextStore } from "@/stores/use-canvas-context-store";
 import { useChatRuntimeStore } from "@/stores/use-chat-runtime-store";
 import { chatPresetOption, chatPresetOptions, defaultChatPresetId, type ChatPresetId, type ChatPresetOption } from "./chat-presets";
-import { mergeChatHistoryWithPendingTurn, mergeStartedChatMessages } from "./chat-message-reconciliation";
+import { mergeChatHistoryWithPendingTurn, mergeStartedChatMessages, mergeLoadedChatHistory } from "./chat-message-reconciliation";
+import { isAcceptedChatTurn, isChatSendBlocked, recoverChatTurn } from "./chat-turn-recovery";
+import { useChatDraft } from "./use-chat-draft";
 import "./chat.css";
 
 const DouQiLifeView = lazyRoute(() => import("./dou-qi-life-view"));
@@ -40,6 +42,26 @@ type PendingChatTurn = {
     retryAssistantMessageId?: string;
     editUserMessageId?: string;
     continueAssistantMessageId?: string;
+    previousAssistant?: ChatMessage;
+    referenceUserMessageId: string;
+    userId: string;
+    turnId: string;
+    operationAccepted?: boolean;
+};
+
+type ChatTurnInput = {
+    conversationId: string;
+    content: string;
+    attachments: ChatAttachment[];
+    canvasContext?: ChatCanvasContext;
+    retryAssistantMessageId?: string;
+    editUserMessageId?: string;
+    continueAssistantMessageId?: string;
+    showOptimisticUser: boolean;
+    clientMessageId?: string;
+    optimisticAssistantId?: string;
+    reconcileBeforeSend?: boolean;
+    clearSubmittedDraft?: () => void;
 };
 
 type ChatMode = "chat" | "douqi";
@@ -60,6 +82,10 @@ export default function ChatPage() {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [loading, setLoading] = useState(true);
     const [detailLoading, setDetailLoading] = useState(false);
+    const [historyPage, setHistoryPage] = useState<{ hasMore: boolean; nextBefore: string | null }>({ hasMore: false, nextBefore: null });
+    const [historyLoading, setHistoryLoading] = useState(false);
+    const historyRequestRef = useRef(0);
+    const historyScrollAnchorRef = useRef<{ conversationId: string; height: number; top: number } | null>(null);
     const [creating, setCreating] = useState(false);
     const [importing, setImporting] = useState(false);
     const [sending, setSending] = useState(false);
@@ -74,9 +100,26 @@ export default function ChatPage() {
         }
     }, [mode, userId]);
     const [uploading, setUploading] = useState(false);
-    const [draft, setDraft] = useState("");
-    const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
-    const [editingMessageId, setEditingMessageId] = useState("");
+    const ordinaryDraft = useChatDraft(userId, activeConversationId);
+    const [editingDraft, setEditingDraft] = useState<{ id: string; userId: string; conversationId: string; messageId: string; draft: string; attachments: ChatAttachment[] } | null>(null);
+    const editing = editingDraft?.userId === userId && editingDraft.conversationId === activeConversationId ? editingDraft : null;
+    const editingMessageId = editing?.messageId || "";
+    const draft = editing ? editing.draft : ordinaryDraft.draft;
+    const attachments = editing ? editing.attachments : ordinaryDraft.attachments;
+    const draftStorageWarnedRef = useRef(false);
+    function setDraft(value: SetStateAction<string>) {
+        if (!editing) return ordinaryDraft.setDraft(value);
+        setEditingDraft((current) => current?.id === editing.id ? { ...current, draft: typeof value === "function" ? value(current.draft) : value } : current);
+    }
+    function setAttachments(value: SetStateAction<ChatAttachment[]>) {
+        if (!editing) return ordinaryDraft.setAttachments(value);
+        setEditingDraft((current) => current?.id === editing.id ? { ...current, attachments: typeof value === "function" ? value(current.attachments) : value } : current);
+    }
+    useEffect(() => {
+        if (!ordinaryDraft.storageError || draftStorageWarnedRef.current) return;
+        draftStorageWarnedRef.current = true;
+        message.warning("草稿暂时无法保存在此浏览器，关闭页面前请先复制内容。");
+    }, [message, ordinaryDraft.storageError]);
     const [presetId, setPresetId] = useState<ChatPresetId>(() => readLocalChatPreset(userId));
     const [presetReadyUser, setPresetReadyUser] = useState("");
     const [chatPersona, setChatPersona] = useState("");
@@ -96,8 +139,18 @@ export default function ChatPage() {
     const pendingTurnRef = useRef<PendingChatTurn | null>(null);
     const sendingRef = useRef(false);
     const sendStartingRef = useRef(false);
+    const sendStartSequenceRef = useRef(0);
+    const uploadingRef = useRef(false);
+    const uploadSequenceRef = useRef(0);
+    const creatingRef = useRef(false);
+    const mountedRef = useRef(true);
+    const pageUserIdRef = useRef(userId);
+    const messagesRef = useRef(messages);
+    const failedTurnsRef = useRef(new Map<string, ChatTurnInput>());
     const shouldStickToBottomRef = useRef(true);
-    const runtimePending = useChatRuntimeStore((state) => state.pending);
+    pageUserIdRef.current = userId;
+    messagesRef.current = messages;
+    const runtimePending = useChatRuntimeStore((state) => state.pending && state.userId === userId);
     const runtimeStatus = useChatRuntimeStore((state) => state.status);
     const runtimeConversationId = useChatRuntimeStore((state) => state.conversationId);
 
@@ -106,6 +159,31 @@ export default function ChatPage() {
     const activePreset = chatPresetOption(activePresetId as ChatPresetId);
     const activeHasStreamingMessage = messages.some((item) => item.status === "streaming");
     const turnRunning = sending || runtimePending || activeHasStreamingMessage;
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
+
+    useLayoutEffect(() => {
+        pendingTurnRef.current = null;
+        sendingRef.current = false;
+        sendStartingRef.current = false;
+        sendStartSequenceRef.current += 1;
+        uploadingRef.current = false;
+        uploadSequenceRef.current += 1;
+        creatingRef.current = false;
+        failedTurnsRef.current.clear();
+        setSending(false);
+        setUploading(false);
+        setCreating(false);
+        setMessages([]);
+        setConversations([]);
+        activeConversationIdRef.current = "";
+        setActiveConversationId("");
+        const runtime = useChatRuntimeStore.getState();
+        if (runtime.userId && runtime.userId !== userId) runtime.clearRuntime();
+    }, [userId]);
 
     useEffect(() => {
         activeConversationIdRef.current = activeConversationId;
@@ -196,16 +274,21 @@ export default function ChatPage() {
             return;
         }
         let canceled = false;
+        historyRequestRef.current += 1;
+        setHistoryLoading(false);
+        setHistoryPage({ hasMore: false, nextBefore: null });
         setDetailLoading(true);
         void getChatBootstrapRequests(userId)
             .firstConversation.catch(() => null)
             .then((prefetched) => (prefetched?.conversation.id === activeConversationId ? prefetched : fetchChatConversation(activeConversationId, userId)))
             .then((detail) => {
                 if (canceled) return;
+                setHistoryPage({ hasMore: Boolean(detail.hasMore), nextBefore: detail.nextBefore || null });
                 setMessages((current) => {
                     const pending = pendingTurnRef.current;
-                    if (pending?.conversationId !== activeConversationId) return detail.messages;
-                    return mergeChatHistoryWithPendingTurn(current, detail.messages, pending);
+                    const merged = mergeLoadedChatHistory(current, detail.messages);
+                    if (pending?.conversationId !== activeConversationId) return merged;
+                    return mergeChatHistoryWithPendingTurn(current, merged, pending);
                 });
                 setConversations((current) => upsertConversation(current, detail.conversation));
             })
@@ -227,8 +310,9 @@ export default function ChatPage() {
                 if (canceled) return;
                 setMessages((current) => {
                     const pending = pendingTurnRef.current;
-                    if (pending?.conversationId !== activeConversationId) return detail.messages;
-                    return mergeChatHistoryWithPendingTurn(current, detail.messages, pending);
+                    const merged = mergeLoadedChatHistory(current, detail.messages);
+                    if (pending?.conversationId !== activeConversationId) return merged;
+                    return mergeChatHistoryWithPendingTurn(current, merged, pending);
                 });
                 setConversations((current) => upsertConversation(current, detail.conversation));
                 if (detail.messages.some((item) => item.status === "streaming")) timer = window.setTimeout(() => void poll(), 1_200);
@@ -243,6 +327,34 @@ export default function ChatPage() {
             if (timer !== undefined) window.clearTimeout(timer);
         };
     }, [activeConversationId, activeHasStreamingMessage, userId]);
+
+    useLayoutEffect(() => {
+        const anchor = historyScrollAnchorRef.current;
+        const element = scrollRef.current;
+        if (!anchor || !element) return;
+        historyScrollAnchorRef.current = null;
+        if (anchor.conversationId === activeConversationId) element.scrollTop = anchor.top + element.scrollHeight - anchor.height;
+    }, [messages, activeConversationId]);
+
+    async function loadEarlierMessages() {
+        if (historyLoading || !historyPage.nextBefore || !activeConversationId || detailLoading) return;
+        const conversationId = activeConversationId;
+        const request = ++historyRequestRef.current;
+        setHistoryLoading(true);
+        try {
+            const detail = await fetchChatConversation(conversationId, userId, { before: historyPage.nextBefore });
+            if (!isCurrentPage(userId) || activeConversationIdRef.current !== conversationId || historyRequestRef.current !== request) return;
+            const element = scrollRef.current;
+            if (element) historyScrollAnchorRef.current = { conversationId, top: element.scrollTop, height: element.scrollHeight };
+            shouldStickToBottomRef.current = false;
+            setMessages((current) => [...detail.messages.filter((item) => !current.some((existing) => existing.id === item.id)), ...current]);
+            setHistoryPage({ hasMore: Boolean(detail.hasMore), nextBefore: detail.nextBefore || null });
+        } catch (error) {
+            if (isCurrentPage(userId) && activeConversationIdRef.current === conversationId) message.error(userFacingErrorMessage(error, "更早的问道记录暂时无法加载，请重试"));
+        } finally {
+            if (historyRequestRef.current === request && isCurrentPage(userId)) setHistoryLoading(false);
+        }
+    }
 
     useEffect(() => {
         if (!shouldStickToBottomRef.current) return;
@@ -259,7 +371,7 @@ export default function ChatPage() {
         [userId],
     );
 
-    const canSend = Boolean((draft.trim() || attachments.length) && !turnRunning && !uploading);
+    const canSend = Boolean(ordinaryDraft.ready && (draft.trim() || attachments.length) && !turnRunning && !uploading && !creating);
 
     function handleChatScroll() {
         const element = scrollRef.current;
@@ -274,7 +386,7 @@ export default function ChatPage() {
     }
 
     function markPendingAssistantStopped(pending: PendingChatTurn) {
-        if (activeConversationIdRef.current !== pending.conversationId) return;
+        if (!isCurrentPage(pending.userId) || activeConversationIdRef.current !== pending.conversationId) return;
         const assistantId = pending.retryAssistantMessageId || pending.continueAssistantMessageId || pending.assistantMessageId || pending.optimisticAssistantId;
         const stoppedMessage = "本次回答已停止";
         setMessages((current) => {
@@ -291,19 +403,27 @@ export default function ChatPage() {
         if (!pending.assistantMessageId) return false;
         const request = (async () => {
             try {
-                await cancelChatMessage(pending.conversationId, pending.assistantMessageId!, userId);
+                await cancelChatMessage(pending.conversationId, pending.assistantMessageId!, pending.userId);
+                if (useUserStore.getState().user?.id !== pending.userId || useChatRuntimeStore.getState().turnId !== pending.turnId) return false;
                 pending.stopped = true;
                 pending.stopRequested = false;
                 markPendingAssistantStopped(pending);
-                if (!pending.terminal && pendingTurnRef.current === pending) abortRef.current?.abort();
+                if (pendingTurnRef.current === pending) {
+                    abortRef.current?.abort();
+                    abortRef.current = null;
+                    pendingTurnRef.current = null;
+                    sendingRef.current = false;
+                    if (isCurrentPage(pending.userId)) setSending(false);
+                }
+                useChatRuntimeStore.getState().clearRuntime(pending.conversationId, pending.turnId);
                 return true;
             } catch (error) {
                 pending.stopRequested = false;
                 const runtime = useChatRuntimeStore.getState();
-                if (runtime.pending && runtime.conversationId === pending.conversationId) {
+                if (runtime.pending && runtime.turnId === pending.turnId) {
                     runtime.setRuntime({ status: pending.started ? "streaming" : "starting" });
                 }
-                message.error("暂时无法停止，回答仍会继续");
+                if (isCurrentPage(pending.userId)) message.error("暂时无法停止，回答仍会继续");
                 return false;
             } finally {
                 pending.cancelRequest = undefined;
@@ -323,6 +443,9 @@ export default function ChatPage() {
         }
 
         const runtime = useChatRuntimeStore.getState();
+        if (runtime.pending && runtime.userId !== userId) return;
+        const stopTurnId = runtime.turnId;
+        const canUpdate = () => isCurrentPage(userId) && (!stopTurnId || useChatRuntimeStore.getState().turnId === stopTurnId);
         const conversationId = runtime.pending ? runtime.conversationId : activeConversationIdRef.current;
         if (!conversationId) return;
         const restoreStatus = runtime.pending && runtime.status === "starting" ? "starting" : "streaming";
@@ -331,6 +454,7 @@ export default function ChatPage() {
             let fetchedMessages: ChatMessage[] | undefined;
             if (!assistant) {
                 let detail = await fetchChatConversation(conversationId, userId);
+                if (!canUpdate()) return;
                 fetchedMessages = detail.messages;
                 assistant = detail.messages.find((item) => item.role === "assistant" && item.status === "streaming");
                 for (let attempt = 0; !assistant && runtime.pending && attempt < 12; attempt += 1) {
@@ -338,6 +462,7 @@ export default function ChatPage() {
                     if (!latestRuntime.pending || latestRuntime.conversationId !== conversationId) break;
                     await new Promise((resolve) => window.setTimeout(resolve, 250));
                     detail = await fetchChatConversation(conversationId, userId);
+                    if (!canUpdate()) return;
                     fetchedMessages = detail.messages;
                     assistant = detail.messages.find((item) => item.role === "assistant" && item.status === "streaming");
                 }
@@ -348,17 +473,19 @@ export default function ChatPage() {
                     latestRuntime.setRuntime({ status: restoreStatus });
                     message.info("回答仍在启动，暂未取得可停止的消息标识；稍后可再次点击停止");
                 } else {
-                    latestRuntime.clearRuntime(conversationId);
+                    latestRuntime.clearRuntime(conversationId, stopTurnId);
                     message.info("这段问道已结束，已刷新消息状态");
                 }
                 if (conversationId === activeConversationIdRef.current) {
                     const detail = await fetchChatConversation(conversationId, userId);
+                    if (!canUpdate()) return;
                     setMessages(detail.messages);
                 }
                 return;
             }
             useChatRuntimeStore.getState().setRuntime({ pending: true, status: "stopping", conversationId });
             await cancelChatMessage(conversationId, assistant.id, userId);
+            if (!canUpdate()) return;
             if (conversationId === activeConversationIdRef.current) {
                 const stoppedAssistant = { ...assistant, status: "failed" as const, error: "本次回答已停止" };
                 setMessages((current) => {
@@ -369,8 +496,9 @@ export default function ChatPage() {
                     return latest ? [...current, stoppedAssistant].sort((left, right) => left.createdAt - right.createdAt) : current;
                 });
             }
-            useChatRuntimeStore.getState().clearRuntime(conversationId);
+            useChatRuntimeStore.getState().clearRuntime(conversationId, stopTurnId);
         } catch (error) {
+            if (!canUpdate()) return;
             const latestRuntime = useChatRuntimeStore.getState();
             if (latestRuntime.pending && latestRuntime.conversationId === conversationId) {
                 latestRuntime.setRuntime({ status: restoreStatus });
@@ -386,66 +514,56 @@ export default function ChatPage() {
         activeConversationIdRef.current = id;
         setActiveConversationId(id);
         setMessages([]);
-        setEditingMessageId("");
-        setDraft("");
-        setAttachments([]);
+        setEditingDraft(null);
     }
 
     async function handleNewConversation() {
-        if (!userId || creating) return;
+        if (!userId || creatingRef.current || sendStartingRef.current) return;
         if (!(await confirmPendingNavigation("新建"))) return;
+        if (!isCurrentPage(userId) || creatingRef.current || sendStartingRef.current) return;
+        creatingRef.current = true;
         setCreating(true);
         try {
             const response = await createChatConversation({ presetId }, userId);
+            if (!isCurrentPage(userId)) return;
             clearChatBootstrapCache(userId);
             setConversations((current) => [response.conversation, ...current]);
             shouldStickToBottomRef.current = true;
             activeConversationIdRef.current = response.conversation.id;
             setActiveConversationId(response.conversation.id);
             setMessages([]);
-            setEditingMessageId("");
-            setDraft("");
-            setAttachments([]);
+            setEditingDraft(null);
         } catch (error) {
-            message.error(userFacingErrorMessage(error, "新建问道失败"));
+            if (isCurrentPage(userId)) message.error(userFacingErrorMessage(error, "新建问道失败"));
         } finally {
-            setCreating(false);
+            if (isCurrentPage(userId)) {
+                creatingRef.current = false;
+                setCreating(false);
+            }
         }
     }
 
-    function handleExportConversation() {
+    async function handleExportConversation() {
         if (!activeConversation) {
             message.info("请先打开一段问道");
             return;
         }
-        const payload = {
-            format: "infinite-canvas.chat",
-            version: 1,
-            exportedAt: new Date().toISOString(),
-            conversation: {
-                title: activeConversation.title,
-                presetId: activeConversation.presetId,
-            },
-            messages: messages
-                .filter((item) => !item.isOptimistic && item.status !== "streaming")
-                .map((item) => ({
-                    role: item.role,
-                    content: item.content,
-                    status: item.status,
-                    error: item.error,
-                    attachments: item.attachments.map(({ assetKey, mimeType, name }) => ({ assetKey, mimeType, name })),
-                })),
-        };
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = `${safeChatFilename(activeConversation.title)}.json`;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 0);
-        message.success("会话已导出");
+        try {
+            const payload = await fetchChatConversationExport(activeConversation.id, userId);
+            if (!isCurrentPage(userId)) return;
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = `${safeChatFilename(payload.conversation.title)}.json`;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 0);
+            message.success("会话已导出");
+        } catch (error) {
+            if (isCurrentPage(userId)) message.error(userFacingErrorMessage(error, "会话暂时无法导出，请重试"));
+        }
     }
 
     async function handleImportFile(files: FileList | null) {
@@ -467,9 +585,7 @@ export default function ChatPage() {
             activeConversationIdRef.current = response.conversation.id;
             setActiveConversationId(response.conversation.id);
             setMessages(response.messages);
-            setEditingMessageId("");
-            setDraft("");
-            setAttachments([]);
+            setEditingDraft(null);
             message.success(response.skippedAttachmentCount ? `会话已导入，${response.skippedAttachmentCount} 张图片未恢复` : "会话已导入");
         } catch (error) {
             message.error(userFacingErrorMessage(error, "会话文件导入失败"));
@@ -479,12 +595,15 @@ export default function ChatPage() {
     }
 
     async function ensureConversation() {
-        if (activeConversationIdRef.current) return activeConversationIdRef.current;
+        if (activeConversationIdRef.current) return { conversationId: activeConversationIdRef.current, clearSubmittedDraft: ordinaryDraft.clearDraft };
         const response = await createChatConversation({ presetId }, userId);
+        if (!isCurrentPage(userId)) return null;
         setConversations((current) => [response.conversation, ...current]);
+        if (activeConversationIdRef.current) return null;
+        const clearSubmittedDraft = ordinaryDraft.moveDraft(response.conversation.id);
         activeConversationIdRef.current = response.conversation.id;
         setActiveConversationId(response.conversation.id);
-        return response.conversation.id;
+        return { conversationId: response.conversation.id, clearSubmittedDraft };
     }
 
     async function handleDeleteConversation(id: string) {
@@ -501,9 +620,7 @@ export default function ChatPage() {
                 activeConversationIdRef.current = nextId;
                 setActiveConversationId(nextId);
                 setMessages([]);
-                setEditingMessageId("");
-                setDraft("");
-                setAttachments([]);
+                setEditingDraft(null);
             }
         } catch (error) {
             message.error(userFacingErrorMessage(error, "删除失败"));
@@ -511,6 +628,7 @@ export default function ChatPage() {
     }
 
     async function handleUpload(files: FileList | null) {
+        if (!ordinaryDraft.ready || !isCurrentPage(userId) || sendBlocked()) return;
         const selected = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
         if (!selected.length) return;
         if (attachments.length + selected.length > 4) {
@@ -518,40 +636,59 @@ export default function ChatPage() {
             return;
         }
         const uploadConversationId = activeConversationIdRef.current;
+        const uploadSequence = ++uploadSequenceRef.current;
+        uploadingRef.current = true;
         setUploading(true);
         try {
             const uploaded = await Promise.all(selected.map((file) => uploadChatImage(file, userId)));
+            if (!isCurrentPage(userId) || uploadSequenceRef.current !== uploadSequence) return;
             if (activeConversationIdRef.current !== uploadConversationId) {
                 message.warning("图片已上传，但你已切换问道会话；为避免附错会话，请在目标会话重新选择图片");
                 return;
             }
             setAttachments((current) => [...current, ...uploaded]);
         } catch (error) {
-            message.error(userFacingErrorMessage(error, "图片上传失败"));
+            if (isCurrentPage(userId)) message.error(userFacingErrorMessage(error, "图片上传失败"));
         } finally {
-            setUploading(false);
-            if (fileInputRef.current) fileInputRef.current.value = "";
+            if (isCurrentPage(userId) && uploadSequenceRef.current === uploadSequence) {
+                uploadingRef.current = false;
+                setUploading(false);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+            }
         }
     }
 
-    async function runChatTurn(input: {
-        conversationId: string;
-        content: string;
-        attachments: ChatAttachment[];
-        canvasContext?: ChatCanvasContext;
-        retryAssistantMessageId?: string;
-        editUserMessageId?: string;
-        continueAssistantMessageId?: string;
-        showOptimisticUser: boolean;
-    }) {
-        if (sendingRef.current || pendingTurnRef.current) return;
+    function isCurrentPage(expectedUserId: string) {
+        return mountedRef.current && pageUserIdRef.current === expectedUserId && useUserStore.getState().user?.id === expectedUserId;
+    }
+
+    function sendBlocked(includeStarting = true) {
+        const runtime = useChatRuntimeStore.getState();
+        return isChatSendBlocked({
+            uploading: uploadingRef.current,
+            starting: includeStarting && sendStartingRef.current,
+            sending: sendingRef.current,
+            pending: Boolean(pendingTurnRef.current),
+            runtimePending: runtime.pending && runtime.userId === userId,
+            hasStreamingMessage: messagesRef.current.some((item) => item.status === "streaming"),
+            creating: creatingRef.current,
+        });
+    }
+
+    async function runChatTurn(input: ChatTurnInput) {
+        if (!isCurrentPage(userId) || sendBlocked(false)) return;
         sendingRef.current = true;
         const createdAt = Date.now();
+        const snapshot = messagesRef.current.filter((item) => item.conversationId === input.conversationId);
+        const targetId = input.editUserMessageId || input.retryAssistantMessageId || input.continueAssistantMessageId;
+        const targetIndex = snapshot.findIndex((item) => item.id === targetId);
+        const previousAssistant = input.editUserMessageId ? snapshot[targetIndex + 1] : snapshot[targetIndex];
+        const optimisticUserId = input.clientMessageId || `optimistic-user-${createdAt}-${nanoid()}`;
         const pending: PendingChatTurn = {
             conversationId: input.conversationId,
-            optimisticUserId: `optimistic-user-${createdAt}-${nanoid()}`,
-            optimisticAssistantId: `optimistic-assistant-${createdAt}`,
-            createdAt,
+            optimisticUserId,
+            optimisticAssistantId: input.optimisticAssistantId || `optimistic-assistant-${nanoid()}`,
+            createdAt: snapshot.find((item) => item.id === optimisticUserId)?.createdAt || createdAt,
             started: false,
             stopped: false,
             stopRequested: false,
@@ -559,122 +696,180 @@ export default function ChatPage() {
             retryAssistantMessageId: input.retryAssistantMessageId,
             editUserMessageId: input.editUserMessageId,
             continueAssistantMessageId: input.continueAssistantMessageId,
+            previousAssistant: previousAssistant?.role === "assistant" ? previousAssistant : undefined,
+            referenceUserMessageId: input.showOptimisticUser ? optimisticUserId : input.editUserMessageId || snapshot.slice(0, targetIndex).findLast((item) => item.role === "user")?.id || "",
+            userId,
+            turnId: nanoid(),
         };
         pendingTurnRef.current = pending;
         const controller = new AbortController();
         abortRef.current = controller;
+        const unsubscribeUser = useUserStore.subscribe((state) => {
+            if (state.user?.id === pending.userId) return;
+            controller.abort();
+            useChatRuntimeStore.getState().clearRuntime(pending.conversationId, pending.turnId);
+        });
         setSending(true);
-        if (userId) clearChatBootstrapCache(userId);
+        clearChatBootstrapCache(userId);
         shouldStickToBottomRef.current = true;
-        useChatRuntimeStore.getState().setRuntime({ pending: true, status: "starting", conversationId: input.conversationId, startedAt: createdAt });
-        if (input.showOptimisticUser) {
-            setDraft("");
-            setAttachments([]);
-            setMessages((current) => [...current, createOptimisticUserMessage(pending, input.content, input.attachments)]);
-        } else if (input.editUserMessageId && activeConversationIdRef.current === input.conversationId) {
-            setDraft("");
-            setAttachments([]);
-            setMessages((current) => {
-                const index = current.findIndex((item) => item.id === input.editUserMessageId);
-                if (index < 0) return current;
-                return [...current.slice(0, index), { ...current[index], content: input.content, attachments: input.attachments, updatedAt: createdAt }];
-            });
-        } else if (input.continueAssistantMessageId && activeConversationIdRef.current === input.conversationId) {
-            setMessages((current) => current.map((item) => (item.id === input.continueAssistantMessageId ? { ...item, status: "streaming", error: "" } : item)));
-        } else if (input.retryAssistantMessageId && activeConversationIdRef.current === input.conversationId) {
-            setMessages((current) => current.map((item) => (item.id === input.retryAssistantMessageId ? { ...item, content: "", status: "streaming", error: "" } : item)));
+        useChatRuntimeStore.getState().setRuntime({ pending: true, status: "starting", conversationId: input.conversationId, startedAt: createdAt, userId, turnId: pending.turnId });
+        const ownsRuntime = () => useUserStore.getState().user?.id === pending.userId && useChatRuntimeStore.getState().turnId === pending.turnId;
+        const visible = () => isCurrentPage(pending.userId) && activeConversationIdRef.current === pending.conversationId;
+        if (input.showOptimisticUser && visible()) {
+            setMessages((current) => [
+                ...current.filter((item) => item.id !== pending.optimisticAssistantId),
+                ...(current.some((item) => item.id === optimisticUserId) ? [] : [createOptimisticUserMessage(pending, input.content, input.attachments)]),
+            ]);
         }
+        const acceptTurn = ({ conversation, userMessage, assistantMessage }: ChatStartedEvent, recovering = false) => {
+            if (!ownsRuntime()) return;
+            const firstStarted = !pending.started;
+            pending.started = true;
+            pending.userMessageId = userMessage.id;
+            pending.assistantMessageId = assistantMessage.id;
+            failedTurnsRef.current.delete(pending.optimisticAssistantId);
+            const runtime = useChatRuntimeStore.getState();
+            if (runtime.status === "stopping") pending.stopRequested = true;
+            runtime.setRuntime({ status: pending.stopRequested ? "stopping" : recovering ? "recovering" : "streaming" });
+            if (pending.stopRequested) void cancelPendingTurn(pending);
+            if (!isCurrentPage(pending.userId)) return;
+            setConversations((current) => upsertConversation(current, conversation));
+            if (firstStarted) input.clearSubmittedDraft?.();
+            if (!visible()) return;
+            setMessages((current) => mergeStartedChatMessages(current, pending, userMessage, assistantMessage, input.showOptimisticUser, pending.stopped, input.editUserMessageId));
+        };
+        const readTurn = async () => {
+            const { turn } = await fetchChatTurn(input.conversationId, pending.optimisticUserId, pending.userId);
+            if (turn) pending.operationAccepted = true;
+            return turn;
+        };
+        const recover = () => {
+            if (ownsRuntime()) useChatRuntimeStore.getState().setRuntime({ status: pending.stopRequested ? "stopping" : "recovering" });
+            return recoverChatTurn({
+                read: readTurn,
+                pending,
+                isCurrent: () => ownsRuntime() && !pending.stopped,
+                onUpdate: (turn) => {
+                    acceptTurn(turn, true);
+                    pending.terminal = turn.assistantMessage.status !== "streaming";
+                },
+            });
+        };
+        const failBeforeStarted = (error: unknown, unknownOutcome: boolean) => {
+            if (!ownsRuntime()) return;
+            const errorText = unknownOutcome ? "暂未确认这次问题是否送达，请重试；系统会先查询已有结果。" : error instanceof Error ? error.message : "问道台暂未回应";
+            if (input.showOptimisticUser) {
+                failedTurnsRef.current.set(pending.optimisticAssistantId, {
+                    ...input, clientMessageId: optimisticUserId, optimisticAssistantId: pending.optimisticAssistantId, reconcileBeforeSend: true,
+                });
+                if (visible()) setMessages((current) => [...current.filter((item) => item.id !== pending.optimisticAssistantId), createOptimisticAssistantMessage(pending, errorText)]);
+            }
+            if (isCurrentPage(pending.userId)) message.error(unknownOutcome && !input.showOptimisticUser ? "暂未确认本次操作结果，已保留原有消息；请查看对话后再试。" : userFacingErrorMessage(errorText, "这次回答暂未开始，可以重试。"));
+        };
         try {
+            if (input.reconcileBeforeSend) {
+                // Reuse the same client id on resubmit; the server treats it idempotently.
+                const result = await recover();
+                if (result !== "missing" || !ownsRuntime()) return;
+                useChatRuntimeStore.getState().setRuntime({ status: "starting" });
+            }
             await sendChatMessage({
                 conversationId: input.conversationId,
                 content: input.content,
                 attachments: input.attachments,
-                ...(input.showOptimisticUser ? { clientMessageId: pending.optimisticUserId } : {}),
+                clientMessageId: optimisticUserId,
                 ...(input.retryAssistantMessageId ? { retryAssistantMessageId: input.retryAssistantMessageId } : {}),
                 ...(input.editUserMessageId ? { editUserMessageId: input.editUserMessageId } : {}),
                 ...(input.continueAssistantMessageId ? { continueAssistantMessageId: input.continueAssistantMessageId } : {}),
                 ...(input.canvasContext ? { canvasContext: input.canvasContext } : {}),
-                expectedUserId: userId,
+                expectedUserId: pending.userId,
                 signal: controller.signal,
-                onStarted: ({ conversation, userMessage, assistantMessage }) => {
-                    pending.started = true;
-                    const runtime = useChatRuntimeStore.getState();
-                    if (runtime.pending && runtime.conversationId === input.conversationId && runtime.status === "stopping") pending.stopRequested = true;
-                    useChatRuntimeStore.getState().setRuntime({ pending: true, status: pending.stopRequested ? "stopping" : "streaming", conversationId: input.conversationId, startedAt: createdAt });
-                    pending.userMessageId = userMessage.id;
-                    pending.assistantMessageId = assistantMessage.id;
-                    setConversations((current) => upsertConversation(current, conversation));
-                    if (pending.stopRequested) void cancelPendingTurn(pending);
-                    if (activeConversationIdRef.current !== input.conversationId) return;
-                    setMessages((current) => mergeStartedChatMessages(current, pending, userMessage, assistantMessage, input.showOptimisticUser, pending.stopped));
-                },
+                onStarted: (turn) => acceptTurn(turn),
                 onDelta: ({ messageId, delta }) => {
-                    if (pending.stopped || activeConversationIdRef.current !== input.conversationId) return;
+                    if (!ownsRuntime() || pending.stopped || !visible()) return;
                     setMessages((current) => current.map((item) => (item.id === messageId ? { ...item, content: item.content + delta } : item)));
                 },
                 onDone: ({ conversation, message: doneMessage }) => {
                     pending.terminal = true;
+                    if (!ownsRuntime() || !isCurrentPage(pending.userId)) return;
                     setConversations((current) => upsertConversation(current, conversation));
-                    if (activeConversationIdRef.current !== input.conversationId) return;
+                    if (!visible()) return;
                     setMessages((current) => (current.some((item) => item.id === doneMessage.id) ? current.map((item) => (item.id === doneMessage.id ? doneMessage : item)) : [...current, doneMessage]));
                 },
                 onError: ({ message: errorMessage, messageId }) => {
                     pending.terminal = true;
-                    if (activeConversationIdRef.current === input.conversationId) {
+                    if (!ownsRuntime() || !isCurrentPage(pending.userId)) return;
+                    if (visible()) {
                         const failedMessageId = messageId || pending.assistantMessageId || pending.optimisticAssistantId;
-                        setMessages((current) => {
-                            if (current.some((item) => item.id === failedMessageId)) {
-                                return current.map((item) => (item.id === failedMessageId ? { ...item, status: "failed", error: pending.stopped ? "本次回答已停止" : errorMessage } : item));
-                            }
-                            return [...current, createOptimisticAssistantMessage(pending, pending.stopped ? "本次回答已停止" : errorMessage)];
-                        });
+                        setMessages((current) => current.some((item) => item.id === failedMessageId)
+                            ? current.map((item) => (item.id === failedMessageId ? { ...item, status: "failed", error: pending.stopped ? "本次回答已停止" : errorMessage } : item))
+                            : [...current, createOptimisticAssistantMessage(pending, pending.stopped ? "本次回答已停止" : errorMessage)]);
                     }
                     if (!pending.stopped) message.error(userFacingErrorMessage(errorMessage, "这次回答暂未完成，请查看对话后再试"));
                 },
             });
         } catch (error) {
-            const aborted = error instanceof DOMException && error.name === "AbortError";
-            if (aborted && !pending.stopped) return;
-            const errorMessage = error instanceof Error ? error.message : "问道台暂未回应";
-            if (activeConversationIdRef.current === input.conversationId) {
-                setMessages((current) => {
-                    const failedMessageId = pending.retryAssistantMessageId || pending.continueAssistantMessageId || pending.assistantMessageId;
-                    if (failedMessageId) {
-                        return current.map((item) => (item.id === failedMessageId ? { ...item, status: "failed", error: aborted ? "本次回答已停止" : errorMessage } : item));
+            if (!ownsRuntime() || pending.stopped || pending.terminal) return;
+            if (!pending.started && error instanceof ChatRequestError && error.rejected) {
+                // Setup can fail after the server persisted the turn but before
+                // it emitted started. Prefer that persisted failure for retry.
+                try {
+                    const turn = await readTurn();
+                    if (!ownsRuntime()) return;
+                    if (turn && isAcceptedChatTurn(turn, pending)) {
+                        acceptTurn(turn, true);
+                        if (turn.assistantMessage.status === "streaming") await recover();
+                        else pending.terminal = true;
+                        return;
                     }
-                    return [...current, createOptimisticAssistantMessage(pending, aborted ? "本次回答已停止" : errorMessage)];
-                });
+                } catch { /* The explicit rejection still provides a retryable failure. */ }
+                failBeforeStarted(error, false);
+            } else {
+                const result = await recover();
+                if (result === "missing") failBeforeStarted(error, true);
             }
-            if (!aborted) message.error(userFacingErrorMessage(errorMessage, "这次回答暂未完成，请查看对话后再试"));
         } finally {
-            setSending(false);
-            abortRef.current = null;
-            if (pendingTurnRef.current === pending) pendingTurnRef.current = null;
-            sendingRef.current = false;
-            if (userId) clearChatBootstrapCache(userId);
-            useChatRuntimeStore.getState().clearRuntime(input.conversationId);
-            if (input.editUserMessageId) setEditingMessageId("");
+            unsubscribeUser();
+            if (pendingTurnRef.current === pending) {
+                pendingTurnRef.current = null;
+                sendingRef.current = false;
+                if (abortRef.current === controller) abortRef.current = null;
+                if (isCurrentPage(pending.userId)) setSending(false);
+            }
+            clearChatBootstrapCache(pending.userId);
+            useChatRuntimeStore.getState().clearRuntime(input.conversationId, pending.turnId);
         }
     }
-
     async function handleSend() {
         const content = draft.trim();
-        if ((!content && !attachments.length) || sendingRef.current || sendStartingRef.current) return;
+        if (!ordinaryDraft.ready || (!content && !attachments.length) || !isCurrentPage(userId) || sendBlocked()) return;
         sendStartingRef.current = true;
+        const sendStartSequence = ++sendStartSequenceRef.current;
         try {
-            const conversationId = await ensureConversation();
-            await runChatTurn({ conversationId, content, attachments, canvasContext: canvasContext || undefined, editUserMessageId: editingMessageId || undefined, showOptimisticUser: !editingMessageId });
-        } catch (error) {
-            message.error(userFacingErrorMessage(error, "问道台暂未回应"));
-        } finally {
+            const ensured = await ensureConversation();
+            if (!ensured) return;
+            const { conversationId } = ensured;
+            if (!conversationId || !isCurrentPage(userId) || activeConversationIdRef.current !== conversationId || sendBlocked(false)) return;
+            const clearSubmittedDraft = editing ? () => setEditingDraft((current) => current === editing ? null : current) : ensured.clearSubmittedDraft;
+            const turn = runChatTurn({ conversationId, content, attachments, canvasContext: canvasContext || undefined, editUserMessageId: editingMessageId || undefined, showOptimisticUser: !editingMessageId, clearSubmittedDraft });
             sendStartingRef.current = false;
+            await turn;
+        } catch (error) {
+            if (isCurrentPage(userId)) message.error(userFacingErrorMessage(error, "问道台暂未回应"));
+        } finally {
+            if (isCurrentPage(userId) && sendStartSequenceRef.current === sendStartSequence) sendStartingRef.current = false;
         }
     }
 
     async function handleRetry(item: ChatMessage) {
-        if (item.role !== "assistant" || !["failed", "completed"].includes(item.status) || item.isOptimistic) return;
-        if (pendingTurnRef.current) {
+        if (item.role !== "assistant" || !["failed", "completed"].includes(item.status)) return;
+        if (sendBlocked()) {
             message.info("请等待当前回答结束");
+            return;
+        }
+        if (item.isOptimistic) {
+            const failed = failedTurnsRef.current.get(item.id);
+            if (failed) await runChatTurn(failed);
             return;
         }
         await runChatTurn({
@@ -688,7 +883,7 @@ export default function ChatPage() {
 
     async function handleContinue(item: ChatMessage) {
         if (item.role !== "assistant" || item.status !== "completed" || item.isOptimistic) return;
-        if (pendingTurnRef.current) {
+        if (sendBlocked()) {
             message.info("请等待当前回答结束");
             return;
         }
@@ -702,16 +897,12 @@ export default function ChatPage() {
     }
 
     function handleEdit(item: ChatMessage) {
-        if (item.role !== "user" || item.status !== "completed" || item.isOptimistic || sendingRef.current) return;
-        setEditingMessageId(item.id);
-        setDraft(item.content);
-        setAttachments(item.attachments);
+        if (item.role !== "user" || item.status !== "completed" || item.isOptimistic || sendBlocked()) return;
+        setEditingDraft({ id: nanoid(), userId, conversationId: item.conversationId, messageId: item.id, draft: item.content, attachments: item.attachments });
     }
 
     function cancelEdit() {
-        setEditingMessageId("");
-        setDraft("");
-        setAttachments([]);
+        setEditingDraft(null);
     }
 
     async function handleDeleteMessage(item: ChatMessage) {
@@ -1041,6 +1232,7 @@ export default function ChatPage() {
                     </div>
 
                     <div ref={scrollRef} onScroll={handleChatScroll} className="min-h-0 flex-1 overflow-y-auto px-1 py-3 sm:px-4">
+                        {historyPage.hasMore ? <div className="mb-3 text-center"><Button type="text" size="small" loading={historyLoading} disabled={detailLoading} onClick={() => void loadEarlierMessages()}>加载更早的对话</Button></div> : null}
                         {detailLoading ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
                         {!detailLoading && !messages.length ? <WelcomeEmpty preset={activePreset} /> : null}
                         <div className="space-y-6">
@@ -1054,6 +1246,8 @@ export default function ChatPage() {
                                         ? "另一段问道正在后台回应..."
                                         : runtimeStatus === "stopping"
                                           ? "正在停止当前回答..."
+                                          : runtimeStatus === "recovering"
+                                            ? "连接暂时中断，正在恢复回答..."
                                           : "天地法则正在回应..."}
                                 </div>
                             ) : null}
@@ -1085,7 +1279,7 @@ export default function ChatPage() {
                                         {attachment.url ? <img src={attachment.url} alt={attachment.name} className="h-full w-full object-cover" /> : null}
                                         <button
                                             type="button"
-                                            className="absolute right-1 top-1 rounded-full bg-black/55 p-0.5 text-white opacity-0 transition group-hover:opacity-100"
+                                            className="absolute right-0 top-0 grid size-11 place-items-center rounded-full bg-black/55 text-white transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-white sm:size-8 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 [@media(pointer:coarse)]:opacity-100"
                                             onClick={() => setAttachments((current) => current.filter((item) => item.assetKey !== attachment.assetKey))}
                                             aria-label="移除图片"
                                         >
@@ -1110,7 +1304,7 @@ export default function ChatPage() {
                                     event.preventDefault();
                                     void handleSend();
                                 }}
-                                disabled={turnRunning}
+                                disabled={turnRunning || !ordinaryDraft.ready}
                             />
                             <Tooltip title="上传图片提问">
                                 <Button
@@ -1119,7 +1313,7 @@ export default function ChatPage() {
                                     icon={uploading ? <LoaderCircle className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
                                     aria-label="上传图片提问"
                                     onClick={() => fileInputRef.current?.click()}
-                                    disabled={turnRunning || uploading}
+                                    disabled={turnRunning || uploading || !ordinaryDraft.ready}
                                 />
                             </Tooltip>
                             <Dropdown

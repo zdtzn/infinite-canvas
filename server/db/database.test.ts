@@ -29,6 +29,41 @@ afterEach(() => {
 });
 
 describe("SQLite application database", () => {
+  test("adds durable chat operation ids without altering existing conversations or messages", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
+    directories.push(dataDir);
+    const db = openAppDatabase({ dataDir });
+    try {
+      db.raw!.exec(`
+        DROP TABLE chat_turn_requests;
+        DELETE FROM schema_migrations WHERE version = 29;
+        INSERT INTO users(user_id, display_name, created_at) VALUES ('existing-chat-user', 'Existing', 1);
+        INSERT INTO chat_conversations(user_id, conversation_id, title, preset_id, created_at, updated_at)
+          VALUES ('existing-chat-user', 'existing-conversation', '保留的对话', 'default', 1, 1);
+        INSERT INTO chat_messages(user_id, message_id, conversation_id, role, content, status, created_at, updated_at)
+          VALUES ('existing-chat-user', 'existing-message', 'existing-conversation', 'user', '保留的问题', 'completed', 1, 1);
+      `);
+    } finally {
+      db.close();
+    }
+    const upgraded = openAppDatabase({ dataDir });
+    try {
+      expect(upgraded.raw!.query("SELECT content FROM chat_messages WHERE message_id = 'existing-message'").get()).toEqual({ content: "保留的问题" });
+      expect(upgraded.raw!.query("SELECT title FROM chat_conversations WHERE conversation_id = 'existing-conversation'").get()).toEqual({ title: "保留的对话" });
+      expect(upgraded.raw!.query("SELECT version FROM schema_migrations WHERE version = 29").get()).toEqual({ version: 29 });
+      const insert = upgraded.raw!.query("INSERT INTO chat_turn_requests VALUES ('existing-chat-user', 'operation-id', 'existing-conversation', 'signature', 'existing-message', 'assistant-message', 1)");
+      insert.run();
+      expect(() => insert.run()).toThrow();
+      upgraded.raw!.query("DELETE FROM chat_conversations WHERE conversation_id = 'existing-conversation'").run();
+      expect(upgraded.raw!.query("SELECT COUNT(*) AS count FROM chat_turn_requests").get()).toEqual({ count: 0 });
+      expect(upgraded.raw!.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      upgraded.close();
+    }
+    const reopened = openAppDatabase({ dataDir });
+    reopened.close();
+  });
+
   test("extends registration-grant ledger kinds without changing existing balances, history or sequences", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "canvas-db-"));
     directories.push(dataDir);
@@ -396,6 +431,7 @@ describe("SQLite application database", () => {
         "chat_conversations",
         "chat_memories",
         "chat_messages",
+        "chat_turn_requests",
         "chat_usage",
       ]);
       const announcementTables = (
