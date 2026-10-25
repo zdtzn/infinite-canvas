@@ -315,11 +315,11 @@ function UsersPanel({ page, searchFromUrl, searchFocus, onPageChange, onSearchCh
             render: (_: unknown, user) => <UserIdentity user={user} />,
         },
         {
-            title: <Tooltip title={imageBalanceHelp}><span>灵卷次数</span></Tooltip>,
+            title: <Tooltip title={imageBalanceHelp}><span>生图次数</span></Tooltip>,
             key: "imageBalance",
             width: 148,
             align: "right",
-            render: (_: unknown, user) => <strong className="cultivation-count">{(user.paidImages ?? 0).toLocaleString()} 次</strong>,
+            render: (_: unknown, user) => <strong className="cultivation-count">{user.unlimited ? "无限" : `${(user.paidImages ?? 0).toLocaleString()} 次`}</strong>,
         },
         {
             title: "状态",
@@ -378,7 +378,7 @@ function UsersPanel({ page, searchFromUrl, searchFocus, onPageChange, onSearchCh
             <div className="cultivation-users-mobile" aria-busy={isFetching}>
                 {data?.items.length ? data.items.map((user) => <article key={user.userId} className="cultivation-user-card">
                     <div className="cultivation-user-card-heading"><UserIdentity user={user} /><AccountStatusTag status={user.status} /></div>
-                    <div className="cultivation-user-card-balance"><span>灵卷次数</span><strong className="cultivation-count">{(user.paidImages ?? 0).toLocaleString()} <small>次</small></strong></div>
+                    <div className="cultivation-user-card-balance"><span>生图次数</span><strong className="cultivation-count">{user.unlimited ? "无限" : <>{(user.paidImages ?? 0).toLocaleString()} <small>次</small></>}</strong></div>
                     <div className="cultivation-user-card-actions">
                         <Button className="min-h-11" onClick={() => onAdjustBalance(user)} aria-label={`调整 ${user.displayName} 的生图次数`}>调整次数</Button>
                         <Button type="text" className="min-h-11" onClick={() => onEdit(user)} aria-label={`管理 ${user.displayName}`}>管理</Button>
@@ -488,13 +488,13 @@ function UserDrawer({
                         <AccountStatusTag status={user.status} />
                     </div>
                     <div className="cultivation-drawer-balance">
-                        <div><span>灵卷次数</span><strong className="cultivation-drawer-balance-value cultivation-count">{(user.paidImages ?? 0).toLocaleString()} <small>次</small></strong></div>
+                        <div><span>生图次数</span><strong className="cultivation-drawer-balance-value cultivation-count">{user.unlimited ? "无限" : <>{(user.paidImages ?? 0).toLocaleString()} <small>次</small></>}</strong></div>
                         <div className="cultivation-drawer-balance-actions">
                             <Button type="primary" className="min-h-11" disabled={loading} onClick={() => dirty ? confirmDiscard(onAdjustBalance) : onAdjustBalance()}>调整次数</Button>
                             <Button type="text" className="min-h-11" disabled={loading} onClick={() => dirty ? confirmDiscard(onOpenRecords) : onOpenRecords()}>查看记录</Button>
                         </div>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{imageBalanceHelp}</p>
+                    {!user.unlimited ? <p className="mt-1 text-xs text-muted-foreground">{imageBalanceHelp}</p> : null}
                 </div>
             ) : null}
             <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)}>
