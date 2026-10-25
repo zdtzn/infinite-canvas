@@ -231,6 +231,7 @@ export function AnnouncementAdminPanel() {
                 title={editing ? "编辑公告" : "新建公告"}
                 width={1360}
                 className="announcement-editor-drawer"
+                rootClassName="cultivation-admin-overlay"
                 open={drawerOpen}
                 destroyOnHidden
                 onClose={closeDrawer}

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Descriptions, Drawer, Empty, Form, Input, InputNumber, Modal, Result, Segmented, Select, Switch, Table, Tag, Tooltip } from "antd";
+import { App, Button, ConfigProvider, Descriptions, Drawer, Empty, Form, Input, InputNumber, Modal, Result, Segmented, Select, Switch, Table, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { InputRef } from "antd";
 import {
@@ -34,6 +34,8 @@ import { previewCultivationBreakthrough } from "@/features/cultivation/breakthro
 import { RealmIcon } from "@/features/cultivation/realm-icon";
 import { cultivationRealmHero } from "@/features/cultivation/realm-hero";
 import { cultivationAccentColor, cultivationStageLabel } from "@/features/cultivation/utils";
+import { useImperialMode } from "@/features/cultivation/imperial-mode";
+import { getAdminAntThemeConfig } from "@/lib/app-theme";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { ProfileAvatarImage } from "@/components/ui/profile-avatar-image";
 import { formatBytes } from "@/lib/image-utils";
@@ -58,6 +60,7 @@ import {
     type AdminMetrics,
 } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { useThemeStore } from "@/stores/use-theme-store";
 import { AnnouncementAdminPanel } from "./announcement-admin-panel";
 import { PerformancePanel } from "./components/performance-panel";
 import { resolveAdminRecordKind, resolveAdminSection, type AdminRecordKind, type AdminSectionKey } from "./navigation";
@@ -127,6 +130,16 @@ const adminSections = [
 ] as const satisfies ReadonlyArray<{ key: AdminSectionKey; group: string; label: string; title: string; description: string; icon: typeof LayoutDashboard }>;
 
 export default function AdminCultivationPage() {
+    const theme = useThemeStore((state) => state.theme);
+    const { isImperialMode } = useImperialMode();
+    return (
+        <ConfigProvider theme={getAdminAntThemeConfig(theme === "dark" || isImperialMode)}>
+            <App className="cultivation-admin-scope h-full min-h-0"><AdminCultivationContent /></App>
+        </ConfigProvider>
+    );
+}
+
+function AdminCultivationContent() {
     const account = useUserStore((state) => state.user);
     const admin = Boolean(account?.admin);
     const [searchParams, setSearchParams] = useSearchParams();
@@ -275,7 +288,6 @@ export default function AdminCultivationPage() {
                             <Select value={activeSection} aria-label="选择管理区域" options={adminSections.map((item) => ({ value: item.key, label: item.label }))} onChange={(value) => selectSection(value as AdminSectionKey)} />
                         </div>
                         <div>
-                            <p className="cultivation-admin-breadcrumb">掌教殿 / {section.label}</p>
                             <h1>{section.title}</h1>
                             <p>{section.description}</p>
                         </div>
@@ -352,9 +364,9 @@ function UsersPanel({ searchFromUrl, searchFocus, onSearchChange, onEdit, onAdju
             render: (_: unknown, user) => <CultivationProgress user={user} />,
         },
         {
-            title: "其他服务今日额度",
+            title: "其他服务用量",
             key: "quota",
-            width: 100,
+            width: 120,
             align: "right",
             render: (_: unknown, user) => {
                 const quota = user.proxyQuota || user;
@@ -381,11 +393,11 @@ function UsersPanel({ searchFromUrl, searchFocus, onSearchChange, onEdit, onAdju
     ];
 
     return (
-        <section className="cultivation-admin-panel">
+        <section className="cultivation-admin-panel cultivation-admin-users-panel">
             <div className="cultivation-admin-panel-header">
                 <div>
-                    <h2>全部用户</h2>
-                    <p>{data ? `共 ${data.total} 位用户，点击任意一行查看和调整。` : "正在读取用户信息…"}</p>
+                    <div className="cultivation-admin-list-title"><h2>用户列表</h2><span className="cultivation-admin-user-count">{data ? `${data.total} 位` : "加载中"}</span></div>
+                    <p>点击用户查看资料，或直接调整次数。</p>
                 </div>
                 <div className="cultivation-admin-toolbar">
                     <Input.Search
@@ -445,9 +457,13 @@ function ImageBalanceModal({ user, onClose }: { user: AdminCultivationUser; onCl
     const [pending, setPending] = useState(false);
     const [conflict, setConflict] = useState(false);
     const [error, setError] = useState("");
+    const errorRef = useRef<HTMLDivElement>(null);
     const savingRef = useRef(false);
     const intentRef = useRef<{ signature: string; adjustmentId: string } | null>(null);
     const valid = imageBalance !== null && Number.isSafeInteger(imageBalance) && imageBalance >= 0;
+    useEffect(() => {
+        if (error) errorRef.current?.scrollIntoView({ block: "nearest" });
+    }, [error]);
     const save = async () => {
         if (!valid || imageBalance === expectedBalance || savingRef.current || conflict) return;
         const signature = JSON.stringify([expectedBalance, imageBalance, reason.trim()]);
@@ -494,18 +510,18 @@ function ImageBalanceModal({ user, onClose }: { user: AdminCultivationUser; onCl
     };
     const delta = valid ? imageBalance! - expectedBalance : 0;
     return (
-        <Modal title="调整生图次数" open onCancel={() => !savingRef.current && onClose()} onOk={() => void save()} okText="保存次数" confirmLoading={pending} okButtonProps={{ disabled: !valid || imageBalance === expectedBalance || conflict }} cancelButtonProps={{ disabled: pending }} closable={!pending} keyboard={!pending} mask={{ closable: !pending }}>
-            <div className="mb-5"><UserIdentity user={user} /></div>
-            <Form layout="vertical" onFinish={() => void save()}>
+        <Modal title="调整生图次数" width={480} rootClassName="cultivation-admin-overlay cultivation-admin-balance-modal" open onCancel={() => !savingRef.current && onClose()} onOk={() => void save()} okText="保存次数" confirmLoading={pending} okButtonProps={{ disabled: !valid || imageBalance === expectedBalance || conflict }} cancelButtonProps={{ disabled: pending }} closable={!pending} keyboard={!pending} mask={{ closable: !pending }}>
+            <div className="cultivation-balance-owner"><UserIdentity user={user} /></div>
+            <Form className="cultivation-balance-form" layout="vertical" onFinish={() => void save()}>
                 <Form.Item label="灵卷次数" extra={imageBalanceHelp} validateStatus={!valid ? "error" : undefined} help={!valid ? "请输入不小于 0 的整数" : undefined}>
-                    <InputNumber autoFocus min={0} max={Number.MAX_SAFE_INTEGER} precision={0} className="w-full" value={imageBalance} onChange={(value) => setImageBalance(typeof value === "number" ? value : null)} disabled={pending} aria-label="灵卷次数" onPressEnter={() => void save()} />
+                    <InputNumber autoFocus min={0} max={Number.MAX_SAFE_INTEGER} precision={0} size="large" suffix="次" style={{ width: "100%" }} value={imageBalance} onChange={(value) => setImageBalance(typeof value === "number" ? value : null)} disabled={pending} aria-label="灵卷次数" onPressEnter={() => void save()} />
                 </Form.Item>
-                <p className="mb-4 text-sm text-stone-500" aria-live="polite">{expectedBalance.toLocaleString()} 次 → {valid ? `${imageBalance!.toLocaleString()} 次（${delta > 0 ? "增加" : delta < 0 ? "减少" : "变化"} ${Math.abs(delta).toLocaleString()} 次）` : "待填写"}</p>
+                <p className="cultivation-balance-preview" aria-live="polite">{expectedBalance.toLocaleString()} 次 → {valid ? `${imageBalance!.toLocaleString()} 次（${delta > 0 ? "增加" : delta < 0 ? "减少" : "变化"} ${Math.abs(delta).toLocaleString()} 次）` : "待填写"}</p>
                 <details className="mb-4">
                     <summary className="cursor-pointer text-sm">调整说明（选填）</summary>
                     <Input.TextArea className="mt-3" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={300} rows={2} disabled={pending} aria-label="调整说明" placeholder="补充本次调整的背景" />
                 </details>
-                {error ? <div role="alert" className="text-sm"><p>{error}</p>{conflict ? <Button className="mt-2" onClick={() => void reload()} loading={pending}>读取最新次数</Button> : null}</div> : null}
+                {error ? <div ref={errorRef} role="alert" className="cultivation-balance-error"><p>{error}</p>{conflict ? <Button className="mt-2" onClick={() => void reload()} loading={pending}>读取最新次数</Button> : null}</div> : null}
             </Form>
         </Modal>
     );
@@ -527,6 +543,8 @@ function UserDrawer({
     onAdjustBalance: () => void;
 }) {
     const [form] = Form.useForm<UserFormValues>();
+    const { modal } = App.useApp();
+    const confirmDiscard = useConfirmDiscard();
     const [dirty, setDirty] = useState(false);
     const [xpMode, setXpMode] = useState<"set" | "adjust">("set");
     const proxyQuota = user?.proxyQuota || user;
@@ -541,7 +559,8 @@ function UserDrawer({
         const values = await form.validateFields();
         const patch = buildCultivationUserPatch(initialValuesRef.current || values, values);
         if (patch.status && patch.status !== "NORMAL" && patch.status !== user?.status) {
-            Modal.confirm({
+            modal.confirm({
+                rootClassName: "cultivation-admin-overlay",
                 title: patch.status === "BANNED" ? "确认封禁该账号？" : "确认停用该账号？",
                 icon: null,
                 content: "账号将无法继续登录和创建任务。该操作会记录到管理员日志。",
@@ -560,7 +579,7 @@ function UserDrawer({
             title="调整用户"
             open={Boolean(user)}
             width={520}
-            rootClassName="cultivation-admin-drawer"
+            rootClassName="cultivation-admin-overlay cultivation-admin-drawer"
             onClose={requestClose}
             destroyOnHidden
             afterOpenChange={(open) => {
@@ -607,7 +626,7 @@ function UserDrawer({
                         <AdminMetric label="累计作品" value={user.totalImages.toLocaleString()} />
                     </div>
                     <div className="mt-3 flex items-center justify-between gap-3 text-sm"><span>灵卷次数 {(user.paidImages ?? 0).toLocaleString()} 次</span><Button type="link" disabled={loading} onClick={() => dirty ? confirmDiscard(onAdjustBalance) : onAdjustBalance()}>调整次数</Button></div>
-                    <p className="mt-1 text-xs text-stone-500">{imageBalanceHelp}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{imageBalanceHelp}</p>
                 </div>
             ) : null}
             <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)}>
@@ -616,7 +635,7 @@ function UserDrawer({
                 </Form.Item>
                 <details className="cultivation-form-section">
                     <summary className="mb-3 cursor-pointer font-medium">境界与修为</summary>
-                    <p className="mb-4 text-sm text-stone-500">升级仍由系统自动完成，这里只处理管理员手动调整。</p>
+                    <p className="mb-4 text-sm text-muted-foreground">升级仍由系统自动完成，这里只处理管理员手动调整。</p>
                     <Form.Item label="境界与阶段" name="stageId">
                         <Select showSearch optionFilterProp="label" options={stageOptions} />
                     </Form.Item>
@@ -649,7 +668,7 @@ function UserDrawer({
 
                 <details className="cultivation-form-section">
                     <summary className="mb-3 cursor-pointer font-medium">其他服务额度</summary>
-                    <p className="mb-4 text-sm text-stone-500">下方额度覆盖仅用于视频等其他服务，不影响普通图片生成的灵卷计费。</p>
+                    <p className="mb-4 text-sm text-muted-foreground">下方额度覆盖仅用于视频等其他服务，不影响普通图片生成的灵卷计费。</p>
                     <div className="grid grid-cols-2 gap-3">
                         <Form.Item label="其他服务每日额度覆盖" name="dailyLimitOverride" extra="留空继承境界规则">
                             <InputNumber min={0} className="w-full" />
@@ -662,7 +681,7 @@ function UserDrawer({
 
                 <details className="cultivation-form-section">
                     <summary className="mb-3 cursor-pointer font-medium">备注与留言</summary>
-                    <p className="mb-4 text-sm text-stone-500">内部备注仅管理员可见，公开留言显示在用户修炼页面。</p>
+                    <p className="mb-4 text-sm text-muted-foreground">内部备注仅管理员可见，公开留言显示在用户修炼页面。</p>
                     <Form.Item label="内部备注" name="internalNote">
                         <Input.TextArea rows={3} maxLength={500} showCount placeholder="记录管理员内部信息…" />
                     </Form.Item>
@@ -827,7 +846,7 @@ function StageRulesTable({ stages, onEdit }: { stages: CultivationStageConfig[];
             render: (name: string, stage) => (
                 <div>
                     <div className="font-medium text-stone-900 dark:text-stone-100">{name}</div>
-                    <div className="mt-1 text-xs text-stone-500">阶段序号 {stage.order}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">阶段序号 {stage.order}</div>
                 </div>
             ),
         },
@@ -947,6 +966,7 @@ function RealmQuotaTable({ realms, onEdit }: { realms: CultivationRealmConfig[];
 }
 
 function RealmDrawer({ realm, onClose, onSubmit }: { realm: CultivationRealmConfig | null; onClose: () => void; onSubmit: (values: RealmFormValues) => void }) {
+    const confirmDiscard = useConfirmDiscard();
     const [form] = Form.useForm<RealmFormValues>();
     const [dirty, setDirty] = useState(false);
     const requestClose = () => {
@@ -963,7 +983,7 @@ function RealmDrawer({ realm, onClose, onSubmit }: { realm: CultivationRealmConf
             title="编辑境界规则"
             open={Boolean(realm)}
             width={500}
-            rootClassName="cultivation-admin-drawer"
+            rootClassName="cultivation-admin-overlay cultivation-admin-drawer"
             onClose={requestClose}
             destroyOnHidden
             afterOpenChange={(open) => {
@@ -1037,6 +1057,7 @@ function RealmDrawer({ realm, onClose, onSubmit }: { realm: CultivationRealmConf
 }
 
 function StageDrawer({ stage, capabilities, onClose, onSubmit }: { stage: CultivationStageConfig | null; capabilities: CultivationConfiguration["capabilities"]; onClose: () => void; onSubmit: (values: StageFormValues) => void }) {
+    const confirmDiscard = useConfirmDiscard();
     const [form] = Form.useForm<StageFormValues>();
     const [dirty, setDirty] = useState(false);
     const capabilityOptions = useMemo(
@@ -1052,7 +1073,7 @@ function StageDrawer({ stage, capabilities, onClose, onSubmit }: { stage: Cultiv
             title="编辑阶段规则"
             open={Boolean(stage)}
             width={500}
-            rootClassName="cultivation-admin-drawer"
+            rootClassName="cultivation-admin-overlay cultivation-admin-drawer"
             onClose={requestClose}
             destroyOnHidden
             afterOpenChange={(open) => {
@@ -1138,6 +1159,7 @@ function RewardEditor({ configuration, onSaved }: { configuration: CultivationCo
 }
 
 function CapabilityEditor({ configuration, onSaved }: { configuration: CultivationConfiguration; onSaved: () => Promise<unknown> | void }) {
+    const promptReason = usePromptReason();
     const { message } = App.useApp();
     const mutation = useMutation({
         mutationFn: ({ key, active, reason }: { key: string; active: boolean; reason: string }) => updateCultivationCapability(key, { active, reason }),
@@ -1172,7 +1194,7 @@ function CapabilityEditor({ configuration, onSaved }: { configuration: Cultivati
                         render: (_: unknown, capability) => (
                             <div className="min-w-0">
                                 <div className="truncate font-medium text-stone-900 dark:text-stone-100">{capability.label}</div>
-                                <div className="mt-1 truncate font-mono text-xs text-stone-500" title={capability.key}>
+                                <div className="mt-1 truncate font-mono text-xs text-muted-foreground" title={capability.key}>
                                     {capability.key}
                                 </div>
                             </div>
@@ -1359,7 +1381,7 @@ function OverviewPanel({ onOpenUser, onNavigate }: { onOpenUser: (displayName: s
                                     </div>
                                     <div className="min-w-0 flex-1">
                                         <div className="truncate text-sm font-medium">{auditActionLabel(String(row.action || ""))}</div>
-                                        <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-stone-500">
+                                        <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                                             {targetName ? (
                                                 <button type="button" className="cultivation-log-user" onClick={() => onOpenUser(String(row.target_user_id || ""))}>
                                                     {targetName}
@@ -1487,7 +1509,7 @@ function MonitoringPanel() {
                                     <div className="truncate font-medium" title={row.channelName}>
                                         {row.channelName}
                                     </div>
-                                    <div className="mt-1 truncate text-xs text-stone-500" title={row.host}>
+                                    <div className="mt-1 truncate text-xs text-muted-foreground" title={row.host}>
                                         {row.host}
                                     </div>
                                 </div>
@@ -1654,7 +1676,7 @@ function RecordDetailDrawer({ kind, record, onClose }: { kind: LogKind; record: 
         children: <span className="break-words">{formatLogValue(value, key)}</span>,
     }));
     return (
-        <Drawer title={`${recordViewDetails[kind].title}详情`} open={Boolean(record)} width={520} rootClassName="cultivation-admin-drawer" onClose={onClose} destroyOnHidden>
+        <Drawer title={`${recordViewDetails[kind].title}详情`} open={Boolean(record)} width={520} rootClassName="cultivation-admin-overlay cultivation-admin-drawer" onClose={onClose} destroyOnHidden>
             <Descriptions className="cultivation-record-details" column={1} size="small" items={items} />
         </Drawer>
     );
@@ -1667,7 +1689,7 @@ function CultivationProgress({ user }: { user: Pick<AdminCultivationUser, "curre
         <div className="cultivation-progress-cell">
             <div className="flex items-center justify-between gap-3">
                 <span className="cultivation-count">{completed ? "已达顶峰" : `${user.currentXp.toLocaleString()} / ${user.requiredXp.toLocaleString()}`}</span>
-                {!completed ? <span className="text-xs text-stone-500">{Math.round(percent)}%</span> : null}
+                {!completed ? <span className="text-xs text-muted-foreground">{Math.round(percent)}%</span> : null}
             </div>
             <div className="cultivation-progress-track" aria-hidden="true">
                 <span style={{ transform: `scaleX(${percent / 100})` }} />
@@ -1821,8 +1843,8 @@ function UserIdentity({ user, large = false }: { user: Pick<AdminCultivationUser
         <div className={`cultivation-user-identity ${large ? "is-large" : ""}`}>
             <ProfileAvatarImage src={user.avatarUrl} alt="" fallback={initial} width={large ? 40 : 32} height={large ? 40 : 32} loading={large ? "eager" : "lazy"} fetchPriority={large ? "high" : "low"} className="cultivation-user-avatar" />
             <div className="min-w-0">
-                <div className="truncate font-medium text-stone-900 dark:text-stone-100">{user.displayName}</div>
-                <div className="mt-0.5 truncate text-xs text-stone-500 dark:text-stone-400" title={user.userId}>
+                <div className="cultivation-user-name truncate font-medium">{user.displayName}</div>
+                <div className="cultivation-user-id mt-0.5 truncate text-xs" title={user.userId}>
                     UID {user.userId.slice(0, 8)}
                 </div>
             </div>
@@ -1856,7 +1878,7 @@ function RealmConfigIdentity({ realm, showBadge = false }: { realm: CultivationR
             )}
             <div className="min-w-0">
                 <div className="truncate font-medium text-stone-900 dark:text-stone-100">{realm.name}</div>
-                <div className="mt-1 truncate text-xs text-stone-500">{realm.code}</div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">{realm.code}</div>
             </div>
         </div>
     );
@@ -1921,7 +1943,7 @@ function LogUser({ value, id, onOpenUser }: { value: unknown; id: unknown; onOpe
 function ShortId({ value }: { value: unknown }) {
     const id = String(value || "").trim();
     return id ? (
-        <span className="font-mono text-xs text-stone-500 dark:text-stone-400" title={id}>
+        <span className="font-mono text-xs text-muted-foreground" title={id}>
             {id.slice(0, 8)}
         </span>
     ) : (
@@ -2088,8 +2110,10 @@ function groupCapabilities(capabilities: CultivationConfiguration["capabilities"
     return Array.from(groups.entries());
 }
 
-function confirmDiscard(onConfirm: () => void) {
-    Modal.confirm({
+function useConfirmDiscard() {
+    const { modal } = App.useApp();
+    return (onConfirm: () => void) => modal.confirm({
+        rootClassName: "cultivation-admin-overlay",
         title: "放弃未保存的更改？",
         icon: null,
         content: "关闭后，本次修改不会被保存。",
@@ -2121,18 +2145,22 @@ const ReasonFormContent = forwardRef<ReasonFormHandle, object>(function ReasonFo
     );
 });
 
-function promptReason(title: string, onConfirm: (reason: string) => void | Promise<unknown>) {
-    const contentRef = createRef<ReasonFormHandle>();
-    Modal.confirm({
-        title,
-        icon: null,
-        content: <ReasonFormContent ref={contentRef} />,
-        okText: "确认",
-        cancelText: "取消",
-        onOk: async () => {
-            if (!contentRef.current) return Promise.reject();
-            const reason = await contentRef.current.validate();
-            await onConfirm(reason);
-        },
-    });
+function usePromptReason() {
+    const { modal } = App.useApp();
+    return (title: string, onConfirm: (reason: string) => void | Promise<unknown>) => {
+        const contentRef = createRef<ReasonFormHandle>();
+        return modal.confirm({
+            rootClassName: "cultivation-admin-overlay",
+            title,
+            icon: null,
+            content: <ReasonFormContent ref={contentRef} />,
+            okText: "确认",
+            cancelText: "取消",
+            onOk: async () => {
+                if (!contentRef.current) return Promise.reject();
+                const reason = await contentRef.current.validate();
+                await onConfirm(reason);
+            },
+        });
+    };
 }
