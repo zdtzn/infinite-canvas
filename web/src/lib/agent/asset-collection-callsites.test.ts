@@ -54,13 +54,19 @@ function fixture() {
     const subscribers = new Set<(state: typeof account, previous: typeof account) => void>();
     const store = {
         ownerUserId: "a",
+        assets,
+        serverHydrated: true,
+        serverAssetHasMore: false,
+        loadAllServerAssets: async () => {},
         addAsset(asset: unknown) { assets.push(asset); return `asset-${assets.length}`; },
+        saveAsset(asset: { id: string }) { assets.push(asset); return asset.id; },
         waitForAssetLocalSave(id: string) { waits.push(id); return local.promise; },
     };
-    const operation = { ownerId: "a", signal: new AbortController().signal, isCurrent: () => !invalidated };
+    const operation = { ownerId: "a", ownerUserId: "a", signal: new AbortController().signal, isCurrent: () => !invalidated };
     const context = {
         Error, console: { error: () => {} }, assetSaveMessage, userFacingErrorMessage,
-        addAsset: store.addAsset, useAssetStore: { getState: () => store },
+        addAsset: store.addAsset, saveAsset: store.saveAsset, useAssetStore: { getState: () => store },
+        resultSaved: () => false, failedAssetImageIds: [], setFailedAssetImageIds: () => {},
         useUserStore: { getState: () => account, subscribe: (fn: (state: typeof account, previous: typeof account) => void) => { subscribers.add(fn); return () => subscribers.delete(fn); } },
         message: {
             open: (value: { type: string; content: string }) => notices.push(value),
@@ -102,7 +108,7 @@ for (const entry of cases) {
             );
             await tick();
             expect(f.assets).toHaveLength(1);
-            expect(f.waits).toEqual(["asset-1"]);
+            expect(f.waits).toEqual([entry.label === "image" ? "image-result-result" : "asset-1"]);
             expect(settled).toBe(false);
             expect(f.notices).toHaveLength(0);
             if (outcome === "pending") f.local.resolve("pending");
