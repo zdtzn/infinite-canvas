@@ -1104,12 +1104,12 @@ function OverviewPanel({ onOpenUser, onNavigate, onOpenAuditRecords }: { onOpenU
     const users = useQuery({ queryKey: ["admin", "cultivation", "users", "overview"], queryFn: () => fetchAdminCultivationUsers(1, 5, "") });
     const audits = useQuery({ queryKey: ["admin", "cultivation", "audit-logs", 1, 6, "overview"], queryFn: () => fetchCultivationLog<LogRow>("audit-logs", 1, 6) });
     const jobs = system.data?.jobs;
-    const activeJobs = jobs ? jobs.queued + jobs.running : undefined;
+    const activeJobs = jobs ? (jobs.queued ?? 0) + (jobs.running ?? 0) : undefined;
     const channelItems = channels.data?.items || [];
     const channelIssues = channelItems.filter((channel) => channel.status === "degraded" || channel.status === "unavailable");
     const realms = (config.data?.realms || []).filter((realm) => realm.active).sort((left, right) => left.sortOrder - right.sortOrder);
     const enabledCapabilities = config.data?.capabilities.filter((capability) => capability.active).length;
-    const failedJobs = jobs?.failed;
+    const failedJobs = jobs ? jobs.failed ?? 0 : undefined;
 
     return (
         <div className="cultivation-admin-dashboard">
@@ -1335,7 +1335,7 @@ function MonitoringPanel() {
     });
     const backup = system.data?.backup;
     const jobs = system.data?.jobs;
-    const activeJobs = jobs ? jobs.queued + jobs.running : undefined;
+    const activeJobs = jobs ? (jobs.queued ?? 0) + (jobs.running ?? 0) : undefined;
     const channelItems = channels.data?.items || [];
     const abnormalChannels = channelItems.filter((channel) => channel.status === "degraded" || channel.status === "unavailable").length;
 
