@@ -972,6 +972,24 @@ export default function ImagePage() {
 
     const generationAction = (
         <>
+            {cultivationProfile ? (
+                <details className="group mb-3 text-xs text-muted-foreground">
+                    <summary className="min-h-8 cursor-pointer list-none flex-wrap items-center justify-between gap-x-3 gap-y-1.5 [&::-webkit-details-marker]:hidden" style={{ display: "flex" }}>
+                        <span className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
+                            <span>{cultivationProfile.dailyLimit === 0 && !cultivationProfile.unlimited ? `本次占用 ${generationCount} 灵卷` : `本次生成 ${generationCount} 张`}</span>
+                            <span>{cultivationProfile.unlimited ? "今日不限次数" : imageQuotaText(cultivationProfile)}</span>
+                        </span>
+                        <span className="inline-flex shrink-0 items-center gap-1">用量说明<ChevronDown className="size-3.5 transition-transform group-open:rotate-180" aria-hidden="true" /></span>
+                    </summary>
+                    <p className="pt-1 leading-5">
+                        {cultivationProfile.dailyLimit === 0 && !cultivationProfile.unlimited
+                            ? `本次占用 ${generationCount} 灵卷 · ${imageQuotaText(cultivationProfile)} · 每张消耗 1 灵卷，未生成部分按结算返还`
+                            : cultivationProfile.unlimited
+                              ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量`
+                              : `本次将占用 ${generationCount} 次 · ${imageQuotaText(cultivationProfile)} · 未生成部分按结算返还`}
+                    </p>
+                </details>
+            ) : null}
             <Button
                 type="primary"
                 size="large"
@@ -987,17 +1005,8 @@ export default function ImagePage() {
             >
                 {generateButtonLabel}
             </Button>
-            {activeJobCount ? <p className="mt-2 text-center text-xs text-muted-foreground">{activeJobCount} 组任务进行中 · 可继续提交，超出并发上限自动排队{PUBLIC_MODE ? "；已提交的任务可离开后从右上角“任务与结果”找回" : ""}</p> : null}
             {generationBlockReason ? (
                 <div className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">{generationBlockReason}</div>
-            ) : cultivationProfile ? (
-                <div className="mt-2 text-center text-xs text-stone-400">
-                    {cultivationProfile.dailyLimit === 0 && !cultivationProfile.unlimited
-                        ? `本次占用 ${generationCount} 灵卷 · ${imageQuotaText(cultivationProfile)} · 每张消耗 1 灵卷，未生成部分按结算返还`
-                        : cultivationProfile.unlimited
-                          ? `本次生成 ${generationCount} 张 · 今日不限次数 · 失败不计入用量`
-                          : `本次将占用 ${generationCount} 次 · ${imageQuotaText(cultivationProfile)} · 未生成部分按结算返还`}
-                </div>
             ) : null}
         </>
     );
@@ -1224,13 +1233,14 @@ export default function ImagePage() {
                                             open={taskPanelOpen}
                                             onOpenChange={setTaskPanelOpen}
                                             content={
-                                                <div className="w-80 max-w-[calc(100vw-48px)]" onKeyDown={(event) => { if (event.key === "Escape") setTaskPanelOpen(false); }}>
+                                                <div className="w-80 max-w-[calc(100vw-72px)]" onKeyDown={(event) => { if (event.key === "Escape") setTaskPanelOpen(false); }}>
                                                     <div className="mb-2 flex items-center justify-between gap-3">
                                                         <span className="font-medium">生成任务</span>
                                                         <Tooltip title="仅清理任务列表，图片和太古遗迹记录会保留。">
                                                             <Button size="small" type="text" disabled={!generationJobs.some((job) => job.status !== "running")} onClick={() => removeGenerationTasks()}>清理已结束任务</Button>
                                                         </Tooltip>
                                                     </div>
+                                                    {activeJobCount ? <p className="mb-2 text-xs leading-5 text-muted-foreground">可继续提交，超出并发上限自动排队。{PUBLIC_MODE ? "已提交的任务可离开后从右上角“任务与结果”找回。" : ""}</p> : null}
                                                     <div className="thin-scrollbar max-h-[min(360px,50dvh)] space-y-1 overflow-y-auto" aria-label="生成任务列表">
                                                         {[...generationJobs].reverse().map((job) => {
                                                             const selected = !previewLog && generationJob?.id === job.id;
