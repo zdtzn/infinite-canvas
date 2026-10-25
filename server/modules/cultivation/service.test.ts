@@ -859,6 +859,148 @@ describe("cultivation quota and settlement", () => {
     }
   });
 
+  test("exposes the raw unlimited override separately from inherited proxy quotas", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      expect(service.getProfile("user").proxyQuota).toMatchObject({ unlimited: false, unlimitedOverride: false });
+      const emperor = service.getConfiguration().realms.find((realm) => realm.code === "dou-emperor")!;
+      service.updateUser("admin", "user", { stageId: emperor.stages[0].id }, "继承境界额度");
+      expect(service.getProfile("user")).toMatchObject({ unlimited: true, proxyQuota: { dailyLimit: null, unlimited: true, unlimitedOverride: false } });
+      service.updateUser("admin", "user", { dailyLimitOverride: 5 }, "设置有限额度");
+      expect(service.getProfile("user").proxyQuota).toMatchObject({ dailyLimit: 5, unlimited: false, unlimitedOverride: false });
+      service.updateUser("admin", "user", { unlimited: true }, "明确设为无限");
+      expect(service.getProfile("user").proxyQuota).toMatchObject({ dailyLimit: 5, unlimited: true, unlimitedOverride: true });
+      service.updateUser("admin", "user", { internalNote: "仅修改备注" }, "保留原始覆盖");
+      expect(service.getProfile("user").proxyQuota.unlimitedOverride).toBe(true);
+      service.updateUser("admin", "user", { unlimited: false }, "取消无限覆盖");
+      expect(service.getProfile("user").proxyQuota).toMatchObject({ unlimited: false, unlimitedOverride: false });
+      service.updateUser("admin", "user", { dailyLimitOverride: null }, "恢复境界额度");
+      expect(service.getProfile("user").proxyQuota).toMatchObject({ unlimited: true, unlimitedOverride: false });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("uses actual current XP changes for absolute settings, signed adjustments and reward ledgers", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      service.updateUser("admin", "user", { currentXp: 40 }, "直接设置修为");
+      expect(service.updateUser("admin", "user", { xpDelta: -10 }, "扣减当前修为")).toMatchObject({ currentXp: 30, totalXp: 30 });
+      expect(service.updateUser("admin", "user", { currentXp: 20, xpDelta: -5 }, "设值后扣减")).toMatchObject({ currentXp: 15, totalXp: 15 });
+      expect(service.updateUser("admin", "user", { xpDelta: -100 }, "扣到零为止")).toMatchObject({ currentXp: 0, totalXp: 0 });
+      expect(service.updateUser("admin", "user", { xpDelta: 10 }, "增加当前修为")).toMatchObject({ currentXp: 10, totalXp: 10 });
+      expect(store.raw!.query("SELECT amount, balance_after, event_type, operator_user_id FROM cultivation_ledger ORDER BY rowid").all()).toEqual([
+        { amount: 40, balance_after: 40, event_type: "XP_ADJUST", operator_user_id: "admin" },
+        { amount: -10, balance_after: 30, event_type: "XP_ADJUST", operator_user_id: "admin" },
+        { amount: -10, balance_after: 20, event_type: "XP_ADJUST", operator_user_id: "admin" },
+        { amount: -5, balance_after: 15, event_type: "XP_ADJUST", operator_user_id: "admin" },
+        { amount: -15, balance_after: 0, event_type: "XP_ADJUST", operator_user_id: "admin" },
+        { amount: 10, balance_after: 10, event_type: "XP_ADJUST", operator_user_id: "admin" },
+      ]);
+      const deductionAudit = store.raw!.query("SELECT before_json, after_json FROM admin_audit_logs WHERE reason = '扣减当前修为'").get() as { before_json: string; after_json: string };
+      expect(JSON.parse(deductionAudit.before_json).profile).toMatchObject({ currentXp: 40, totalXp: 40 });
+      expect(JSON.parse(deductionAudit.after_json).profile).toMatchObject({ currentXp: 30, totalXp: 30 });
+      service.grantRegistrationImages("user");
+      service.reserveGeneration({ jobId: "xp-adjust-reward", userId: "user", channelId: "channel", model: "gpt-image-1", count: 1, referenceCount: 0, hasMask: false, activeJobs: 0, allowPaidImages: true });
+      expect(service.settleGeneration({ jobId: "xp-adjust-reward", successCount: 1, failCount: 0, durationMs: 10 })).toMatchObject({ currentXp: 20, totalXp: 20 });
+      expect(store.raw!.query("SELECT amount, balance_after, event_type, source_type FROM cultivation_ledger WHERE source_id = 'xp-adjust-reward'").get()).toEqual({ amount: 10, balance_after: 20, event_type: "XP_GAIN", source_type: "generation" });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("preserves spent cumulative XP and Dou Emperor rights when current XP is reduced", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      const stages = service.getConfiguration().realms[0].stages;
+      service.updateUser("admin", "user", { currentXp: stages[0].requiredXp + 7 }, "设置修为并升级");
+      expect(service.getProfile("user")).toMatchObject({ stageId: stages[1].id, currentXp: 7, totalXp: stages[0].requiredXp + 7 });
+      expect(service.updateUser("admin", "user", { xpDelta: -1000 }, "仅扣剩余修为")).toMatchObject({ stageId: stages[1].id, currentXp: 0, totalXp: stages[0].requiredXp });
+      expect(service.updateUser("admin", "user", { currentXp: 20 }, "保留已消耗累计")).toMatchObject({ currentXp: 20, totalXp: stages[0].requiredXp + 20 });
+      expect(service.updateUser("admin", "user", { currentXp: 5 }, "降低当前修为")).toMatchObject({ currentXp: 5, totalXp: stages[0].requiredXp + 5 });
+      const emperor = service.getConfiguration().realms.find((realm) => realm.code === "dou-emperor")!;
+      service.updateUser("admin", "user", { stageId: emperor.stages[0].id, currentXp: 3 }, "保留斗帝权益");
+      expect(service.updateUser("admin", "user", { xpDelta: -10 }, "斗帝扣减修为")).toMatchObject({ stageId: emperor.stages[0].id, currentXp: 0, totalXp: stages[0].requiredXp, unlimited: true, dailyLimit: null, remainingToday: null });
+      expect(store.raw!.query("SELECT amount FROM cultivation_ledger WHERE reason = '仅扣剩余修为'").get()).toEqual({ amount: -7 });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("repairs legacy uncounted current XP explicitly before applying an adjustment", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      store.raw!.query("UPDATE user_cultivation SET current_xp = 40, total_xp = 0 WHERE user_id = 'user'").run();
+      expect(service.updateUser("admin", "user", { xpDelta: -10 }, "扣减历史设值")).toMatchObject({ currentXp: 30, totalXp: 30 });
+      expect(store.raw!.query("SELECT amount, balance_after, operator_user_id, reason FROM cultivation_ledger ORDER BY rowid").all()).toEqual([
+        { amount: 40, balance_after: 40, operator_user_id: "admin", reason: "补齐历史当前修为对应的累计修为" },
+        { amount: -10, balance_after: 30, operator_user_id: "admin", reason: "扣减历史设值" },
+      ]);
+      const log = service.listAuditLogs().items[0] as { before_json: string; after_json: string };
+      expect(JSON.parse(log.before_json).profile).toMatchObject({ currentXp: 40, totalXp: 0 });
+      expect(JSON.parse(log.after_json).profile).toMatchObject({ currentXp: 30, totalXp: 30 });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("rolls XP repairs, signed ledgers and promotion back when user audit fails", () => {
+    const { store, service } = setup();
+    try {
+      service.ensureUser("user", false);
+      store.raw!.query("UPDATE user_cultivation SET current_xp = 40, total_xp = 0 WHERE user_id = 'user'").run();
+      const before = service.getProfile("user");
+      store.raw!.exec("CREATE TRIGGER reject_xp_audit BEFORE INSERT ON admin_audit_logs WHEN NEW.action = 'cultivation.user.update' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");
+      expect(() => service.updateUser("admin", "user", { currentXp: before.requiredXp + 5 }, "测试原子回滚")).toThrow("audit unavailable");
+      expect(service.getProfile("user")).toEqual(before);
+      expect(service.listLedger("user").total).toBe(0);
+      expect(store.raw!.query("SELECT COUNT(*) AS count FROM breakthrough_history").get()).toEqual({ count: 0 });
+      expect(service.listAuditLogs().total).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("audits persisted stage capabilities before replacement, removal and clearing", () => {
+    const { store, service } = setup();
+    try {
+      const stage = service.getConfiguration().realms[0].stages[0];
+      const replacement = ["model.gemini", "generation.hd"];
+      service.updateStage("admin", stage.id, { name: "新阶段名称", capabilities: [...replacement, replacement[0], "unknown.capability"] }, "替换阶段能力");
+      service.updateStage("admin", stage.id, { capabilities: [replacement[0]] }, "移除阶段能力");
+      service.updateStage("admin", stage.id, { capabilities: [] }, "清空阶段能力");
+      const logs = store.raw!.query("SELECT reason, before_json, after_json FROM admin_audit_logs WHERE action = 'cultivation.stage.update' ORDER BY rowid").all() as Array<{ reason: string; before_json: string; after_json: string }>;
+      expect(logs.map((log) => ({ reason: log.reason, before: JSON.parse(log.before_json).capabilities, after: JSON.parse(log.after_json).capabilities }))).toEqual([
+        { reason: "替换阶段能力", before: stage.capabilities, after: [...replacement].sort() },
+        { reason: "移除阶段能力", before: [...replacement].sort(), after: [replacement[0]] },
+        { reason: "清空阶段能力", before: [replacement[0]], after: [] },
+      ]);
+      expect(JSON.parse(logs[0].before_json).name).toBe(stage.name);
+      expect(JSON.parse(logs[0].after_json).name).toBe("新阶段名称");
+      expect(service.getConfiguration().realms[0].stages[0].capabilities).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("rolls stage changes and capability replacement back when stage audit fails", () => {
+    const { store, service } = setup();
+    try {
+      const before = service.getConfiguration();
+      const stage = before.realms[0].stages[0];
+      store.raw!.exec("CREATE TRIGGER reject_stage_audit BEFORE INSERT ON admin_audit_logs WHEN NEW.action = 'cultivation.stage.update' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");
+      expect(() => service.updateStage("admin", stage.id, { name: "应回滚名称", requiredXp: stage.requiredXp + 10, capabilities: [] }, "测试原子回滚")).toThrow("audit unavailable");
+      expect(service.getConfiguration()).toEqual(before);
+      expect(service.listAuditLogs().total).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
   test("reconciles orphaned reservations after restart and preserves resumable jobs", () => {
     const { store, service, dataDir } = setup();
     service.ensureUser("user", false);

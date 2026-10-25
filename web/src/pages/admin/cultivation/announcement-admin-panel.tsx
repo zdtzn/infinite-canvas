@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Drawer, Empty, Form, Input, Segmented, Select, Switch, Table, Tag, Tooltip } from "antd";
+import { App, Button, Drawer, Empty, Form, Input, Result, Segmented, Select, Switch, Table, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Archive, Bell, Edit3, Plus, RefreshCw, Monitor, Smartphone } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useBeforeUnload, useBlocker } from "react-router-dom";
 
 import { useUserStore } from "@/stores/use-user-store";
 import { AnnouncementCard } from "@/pages/announcements";
@@ -69,8 +70,34 @@ export function AnnouncementAdminPanel() {
     useEffect(() => setPage(1), [search, type, status]);
 
     const formStatusOptions = editing?.status === "archived" ? statusOptions.map((option) => (option.value === "archived" ? { ...option, disabled: true } : option)) : statusOptions.filter((option) => option.value !== "archived");
-    const dirty = drawerOpen && announcementFormSnapshot(form.getFieldsValue(true)) !== openingSnapshot.current;
+    const hasUnsavedChanges = () => drawerOpen && announcementFormSnapshot(form.getFieldsValue(true)) !== openingSnapshot.current;
+    const dirty = hasUnsavedChanges();
     const submitLabel = selectedStatus === "published" ? (editing?.status === "published" ? "保存修改" : "发布公告") : selectedStatus === "draft" ? "保存草稿" : "保存修改";
+    const blocker = useBlocker(({ currentLocation, nextLocation }) => drawerOpen && (hasUnsavedChanges() || saveMutation.isPending) && (currentLocation.pathname !== nextLocation.pathname || new URLSearchParams(nextLocation.search).get("tab") !== "announcements"));
+    useBeforeUnload((event) => {
+        if (drawerOpen && (hasUnsavedChanges() || saveMutation.isPending)) {
+            event.preventDefault();
+            event.returnValue = "";
+        }
+    });
+
+    useEffect(() => {
+        if (blocker.state !== "blocked") return;
+        if (saveMutation.isPending) {
+            message.info("公告正在保存，请稍候再离开");
+            blocker.reset();
+            return;
+        }
+        const confirmation = modal.confirm({
+            title: "放弃未保存的公告？",
+            content: "离开后，本次修改不会保存。",
+            okText: "放弃修改并离开",
+            cancelText: "继续编辑",
+            onOk: () => blocker.proceed(),
+            onCancel: () => blocker.reset(),
+        });
+        return () => confirmation.destroy();
+    }, [blocker, saveMutation.isPending, message, modal]);
 
     const openCreate = () => {
         form.resetFields();
@@ -226,7 +253,7 @@ export function AnnouncementAdminPanel() {
                 </Tooltip>
             </div>
 
-            <Table<SystemAnnouncement>
+            {query.isError ? <div role="alert"><Result status="error" title="公告列表加载失败" subTitle="暂时无法读取公告，请重试。" extra={<Button loading={query.isFetching} onClick={() => void query.refetch()}>重新加载公告</Button>} /></div> : <Table<SystemAnnouncement>
                 className="cultivation-admin-table"
                 rowKey="id"
                 loading={query.isFetching}
@@ -236,7 +263,7 @@ export function AnnouncementAdminPanel() {
                 locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无匹配公告" /> }}
                 pagination={{ current: page, pageSize: 20, total: query.data?.total || 0, showSizeChanger: false, onChange: setPage, showTotal: (total) => `共 ${total} 条公告` }}
                 onRow={(item) => ({ onDoubleClick: () => openEdit(item) })}
-            />
+            />}
 
             <Drawer
                 title={editing ? "编辑公告" : "新建公告"}

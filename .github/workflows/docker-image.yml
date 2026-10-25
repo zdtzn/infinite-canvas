@@ -70,6 +70,10 @@ jobs:
         working-directory: .
         run: bun run ops/creative-reliability-smoke.ts
 
+      - name: Job replay and announcement API smoke test
+        working-directory: .
+        run: bun run ops/job-replay-announcement-smoke.ts
+
       - name: Type check
         run: bun run typecheck
 

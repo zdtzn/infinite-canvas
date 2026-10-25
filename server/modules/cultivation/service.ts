@@ -232,6 +232,7 @@ export function createCultivationService(
       proxyQuota: {
         dailyLimit: proxyDailyLimit,
         dailyLimitOverride: row.daily_limit_override == null ? null : Number(row.daily_limit_override),
+        unlimitedOverride: Boolean(row.unlimited_quota),
         unlimited: proxyUnlimited,
         remainingToday: proxyRemaining,
         usedToday: Number(usage.used_count),
@@ -695,15 +696,14 @@ export function createCultivationService(
           .run(input.stageId, now().getTime(), userId);
       }
       if (input.currentXp !== undefined)
-        database
-          .query(
-            "UPDATE user_cultivation SET current_xp = ?, updated_at = ? WHERE user_id = ?",
-          )
-          .run(
-            Math.max(0, Math.floor(input.currentXp)),
-            now().getTime(),
-            userId,
-          );
+        adjustXp(
+          database,
+          userId,
+          Math.max(0, Math.floor(input.currentXp)) - before.profile.currentXp,
+          adminUserId,
+          adjustmentReason,
+          now().getTime(),
+        );
       if (input.dailyLimitOverride !== undefined)
         database
           .query(
@@ -868,6 +868,12 @@ export function createCultivationService(
         .get(stageId) as Record<string, unknown> | null;
       if (!before)
         throw new CultivationError("阶段不存在", 404, "STAGE_NOT_FOUND");
+      const stageCapabilities = () => (
+        database
+          .query("SELECT capability_key FROM stage_capabilities WHERE stage_id = ? AND enabled = 1 ORDER BY capability_key")
+          .all(stageId) as Array<{ capability_key: string }>
+      ).map((item) => item.capability_key);
+      before.capabilities = stageCapabilities();
       if (input.active === false && Boolean(before.active)) {
         const usage = database
           .query(
@@ -897,7 +903,7 @@ export function createCultivationService(
               : 0,
           stageId,
         );
-      if (input.capabilities) {
+      if (input.capabilities !== undefined) {
         database
           .query("DELETE FROM stage_capabilities WHERE stage_id = ?")
           .run(stageId);
@@ -907,9 +913,10 @@ export function createCultivationService(
         for (const key of [...new Set(input.capabilities)])
           insert.run(stageId, key);
       }
-      const after = database
-        .query("SELECT * FROM realm_stages WHERE id = ?")
-        .get(stageId);
+      const after = {
+        ...database.query("SELECT * FROM realm_stages WHERE id = ?").get(stageId) as Record<string, unknown>,
+        capabilities: stageCapabilities(),
+      };
       audit(
         database,
         adminUserId,
@@ -1464,37 +1471,40 @@ function adjustXp(
   reason: string,
   timestamp: number,
 ) {
-  if (amount > 0) {
-    awardXp(database, userId, amount, "admin", randomUUID(), reason, timestamp);
-    return;
-  }
   const current = database
     .query(
       "SELECT current_xp, total_xp FROM user_cultivation WHERE user_id = ?",
     )
     .get(userId) as { current_xp: number; total_xp: number };
-  const nextTotal = Math.max(0, current.total_xp + amount);
-  const applied = nextTotal - current.total_xp;
-  const nextCurrent = Math.max(0, current.current_xp + applied);
+  // Older absolute edits could leave available XP missing from the cumulative total.
+  const repairedTotal = Math.max(current.total_xp, current.current_xp);
+  const nextCurrent = Math.max(0, current.current_xp + amount);
+  const applied = nextCurrent - current.current_xp;
+  const nextTotal = repairedTotal + applied;
   database
     .query(
       "UPDATE user_cultivation SET current_xp = ?, total_xp = ?, updated_at = ? WHERE user_id = ?",
     )
     .run(nextCurrent, nextTotal, timestamp, userId);
-  database
-    .query(
-      "INSERT INTO cultivation_ledger(id, user_id, amount, balance_after, event_type, source_type, source_id, operator_user_id, reason, created_at) VALUES (?, ?, ?, ?, 'XP_ADJUST', 'admin', ?, ?, ?, ?)",
-    )
-    .run(
+  const insert = database.query(
+    "INSERT INTO cultivation_ledger(id, user_id, amount, balance_after, event_type, source_type, source_id, operator_user_id, reason, created_at) VALUES (?, ?, ?, ?, 'XP_ADJUST', 'admin', ?, ?, ?, ?)",
+  );
+  for (const entry of [
+    { amount: repairedTotal - current.total_xp, balance: repairedTotal, reason: "补齐历史当前修为对应的累计修为" },
+    { amount: applied, balance: nextTotal, reason },
+  ]) {
+    if (!entry.amount) continue;
+    insert.run(
       randomUUID(),
       userId,
-      applied,
-      nextTotal,
+      entry.amount,
+      entry.balance,
       randomUUID(),
       adminUserId,
-      reason,
+      entry.reason,
       timestamp,
     );
+  }
 }
 
 function audit(

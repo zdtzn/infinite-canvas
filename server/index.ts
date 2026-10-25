@@ -104,6 +104,7 @@ const JOB_FILE_ROOT = join(DATA_DIR, "job-files");
 const ASSET_ROOT = join(DATA_DIR, "assets");
 const PROMPT_CACHE_ROOT = join(DATA_DIR, "prompt-cache");
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
+const MAX_ANNOUNCEMENT_JSON_BYTES = 64 * 1024;
 const MAX_IMAGE_JOB_JSON_BYTES = 32 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 36 * 1024 * 1024;
 const MAX_IMAGE_ASSET_BYTES = 16 * 1024 * 1024;
@@ -1047,13 +1048,13 @@ function adminListAnnouncements(url: URL, session: SessionPayload) {
 
 async function adminCreateAnnouncement(request: Request, session: SessionPayload) {
     requireAdmin(session);
-    const input = await readJson<AnnouncementInput>(request, 16 * 1024);
+    const input = await readJson<AnnouncementInput>(request, MAX_ANNOUNCEMENT_JSON_BYTES);
     return json({ item: requireAnnouncements().create(session.userId, input) }, 201);
 }
 
 async function adminUpdateAnnouncement(request: Request, session: SessionPayload, encodedAnnouncementId: string) {
     requireAdmin(session);
-    const input = await readJson<AnnouncementInput>(request, 16 * 1024);
+    const input = await readJson<AnnouncementInput>(request, MAX_ANNOUNCEMENT_JSON_BYTES);
     const item = requireAnnouncements().update(session.userId, decodeRouteSegment(encodedAnnouncementId, "公告 ID"), input);
     return json({ item });
 }
@@ -3121,6 +3122,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
     const jobId = createHash("sha256").update(`${session.userId}:${idempotencyKey}`).digest("hex");
     const existingBeforeRead = state.jobs[jobId];
     if (existingBeforeRead) return json({ job: publicJob(existingBeforeRead) }, 200);
+    assertUnusedImageJobId(jobId);
     const body = await readJson<ImageJobRequestBody>(request, MAX_IMAGE_JOB_JSON_BYTES);
     const channelId = String(body.channelId || "");
     const channel = platformChannel(channelId);
@@ -3137,6 +3139,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
     assertDiskCapacity(referenceBytes);
     const existing = state.jobs[jobId];
     if (existing) return json({ job: publicJob(existing) }, 200);
+    assertUnusedImageJobId(jobId);
     const model = String(body.model || "").trim();
     if (!model) throw new HttpError(400, "模型不能为空");
     const configuredModel = assertPlatformModelAllowed(channelId, model, "image");
@@ -3253,6 +3256,7 @@ async function retryJob(request: Request, session: SessionPayload, id: string) {
     const jobId = createHash("sha256").update(`${session.userId}:retry:${id}:${idempotencyKey}`).digest("hex");
     const existing = state.jobs[jobId];
     if (existing) return json({ job: publicJob(existing) }, 200);
+    assertUnusedImageJobId(jobId);
     const activeRetry = imageQueue.list().find((job) => job.input.userId === session.userId && job.input.retryOf === id && ["queued", "running"].includes(job.status));
     if (activeRetry) return json({ job: publicJob(activeRetry) }, 200);
     const referenceBytes = imageJobReferenceTotalBytes(
@@ -3277,7 +3281,7 @@ async function retryJob(request: Request, session: SessionPayload, id: string) {
             activeJobs: activeUserJobs(session.userId),
         });
     try {
-        const input = await copyImageJobInputForRetry(source.input, jobId, id, recoveryOnly);
+        const input = copyImageJobInputForRetry(source.input, jobId, id, recoveryOnly);
         const job = imageQueue.add(input, jobId);
         return json({ job: publicJob(job) }, 202);
     } catch (error) {
@@ -3285,6 +3289,11 @@ async function retryJob(request: Request, session: SessionPayload, id: string) {
         if (!recoveryOnly) cultivation?.refundGeneration(jobId, "retry job creation failed");
         throw error;
     }
+}
+
+function assertUnusedImageJobId(jobId: string) {
+    // Usage survives task removal and refunds, so a consumed key cannot submit again.
+    if (cultivation?.getGenerationUsage(jobId)) throw new HttpError(409, "该生图请求已处理，请重新发起生成");
 }
 
 async function recoverJobResult(session: SessionPayload, id: string) {
@@ -3395,7 +3404,7 @@ function storedImageReferenceBytes(reference: string | StoredImageReference) {
     return typeof reference === "string" ? assertSafeDataImage(reference) : reference.bytes;
 }
 
-async function copyImageJobInputForRetry(input: ImageJobInput, jobId: string, retryOf: string, recoveryOnly = false): Promise<ImageJobInput> {
+function copyImageJobInputForRetry(input: ImageJobInput, jobId: string, retryOf: string, recoveryOnly = false): ImageJobInput {
     const references: StoredImageReference[] = [];
     for (const [index, reference] of input.references.entries()) references.push(copyStoredImageReferenceForRetry(input.userId, jobId, index, reference));
     const mask = input.mask ? copyStoredImageReferenceForRetry(input.userId, jobId, 10_000, input.mask) : undefined;

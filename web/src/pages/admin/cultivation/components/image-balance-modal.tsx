@@ -17,6 +17,10 @@ function resultUnknown(error: unknown) {
     return !(error instanceof ServerRequestError) || error.status === 408 || error.status >= 500;
 }
 
+function balanceConflict(error: unknown) {
+    return error instanceof ServerRequestError && error.status === 409 && error.code === "WALLET_BALANCE_CONFLICT";
+}
+
 // Keep an unconfirmed request through closing/reopening, only for this browser lifecycle.
 export function createImageBalanceIntentStore() {
     const intents = new Map<string, Readonly<ImageBalanceInput>>();
@@ -26,7 +30,8 @@ export function createImageBalanceIntentStore() {
         async submit(adminId: string, userId: string, values: ImageBalanceValues, send = updateAdminImageBalance) {
             if (!adminId) throw new Error("请重新登录后调整次数");
             const scope = key(adminId, userId);
-            const input = intents.get(scope) ?? Object.freeze({ ...values, reason: values.reason?.trim() || undefined, adjustmentId: crypto.randomUUID() });
+            const retained = intents.get(scope);
+            const input = retained ?? Object.freeze({ ...values, reason: values.reason?.trim() || undefined, adjustmentId: crypto.randomUUID() });
             intents.set(scope, input);
             const clear = () => {
                 if (intents.get(scope)?.adjustmentId === input.adjustmentId) intents.delete(scope);
@@ -36,7 +41,9 @@ export function createImageBalanceIntentStore() {
                 clear();
                 return result;
             } catch (error) {
-                if (!resultUnknown(error)) clear();
+                // Preflight rejections cannot establish a prior attempt's outcome. A balance
+                // conflict is checked after the server's ledger lookup, so it proves no commit.
+                if ((!retained && !resultUnknown(error)) || balanceConflict(error)) clear();
                 throw error;
             }
         },
@@ -90,11 +97,12 @@ export function ImageBalanceModal({ user, onClose }: { user: BalanceUser; onClos
             onClose();
         } catch (failure) {
             if (!isCurrentAdmin()) return;
-            setUnknown(resultUnknown(failure));
-            if (failure instanceof ServerRequestError && failure.status === 409) {
+            const stillUnknown = Boolean(imageBalanceIntents.get(adminId, user.userId));
+            setUnknown(stillUnknown);
+            if (!stillUnknown && balanceConflict(failure)) {
                 setConflict(true);
                 setError("可用次数已变化，本次调整未应用。请先读取最新次数，再确认调整后的次数。");
-            } else setError(resultUnknown(failure) ? unconfirmedMessage : friendlyErrorMessage(failure, failure instanceof ServerRequestError ? failure.status : undefined));
+            } else setError(stillUnknown ? unconfirmedMessage : friendlyErrorMessage(failure, failure instanceof ServerRequestError ? failure.status : undefined));
         } finally {
             savingRef.current = false;
             setPending(null);

@@ -456,7 +456,7 @@ function UserDrawer({
                     currentXp: user.currentXp,
                     xpDelta: 0,
                     dailyLimitOverride: proxyQuota?.dailyLimitOverride,
-                    unlimited: proxyQuota?.unlimited,
+                    unlimited: user.proxyQuota?.unlimitedOverride ?? false,
                     status: user.status,
                     internalNote: user.internalNote,
                     publicMessage: user.publicMessage,
@@ -1513,10 +1513,10 @@ function LogPanel({ kind, userId, onOpenUser }: { kind: LogKind; userId: string;
         setPage(1);
         setSelected(null);
     }, [kind, userId]);
-    const { data, isFetching } = useQuery({ queryKey: ["admin", "cultivation", kind, page, userId], queryFn: () => fetchCultivationLog<LogRow>(kind, page, 20, userId) });
+    const { data, isFetching, isError, refetch } = useQuery({ queryKey: ["admin", "cultivation", kind, page, userId], queryFn: () => fetchCultivationLog<LogRow>(kind, page, 20, userId) });
     return (
         <>
-            <Table<LogRow>
+            {isError ? <div role="alert"><Result status="error" title="记录加载失败" subTitle="暂时无法读取记录，请重试。" extra={<Button loading={isFetching} onClick={() => void refetch()}>重新加载记录</Button>} /></div> : <Table<LogRow>
                 className="cultivation-admin-table cultivation-admin-log-table"
                 rowKey={(row) => String(row.id || row.job_id || JSON.stringify(row))}
                 size="middle"
@@ -1538,7 +1538,7 @@ function LogPanel({ kind, userId, onOpenUser }: { kind: LogKind; userId: string;
                         }
                     },
                 })}
-            />
+            />}
             <RecordDetailDrawer kind={kind} record={selected} onClose={() => setSelected(null)} />
         </>
     );

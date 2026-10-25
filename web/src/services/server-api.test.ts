@@ -19,6 +19,24 @@ async function withTransport(run: () => Promise<void>) {
     }
 }
 
+test("server errors preserve stable business codes independently of display wording", () =>
+    withTransport(async () => {
+        globalThis.fetch = (async () => Response.json({ error: { message: "次数发生变化", code: "WALLET_BALANCE_CONFLICT" }, requestId: "request-code-fixture" }, { status: 409 })) as typeof fetch;
+        await assert.rejects(serverRequest("/api/code-fixture"), (error: unknown) => {
+            assert(error instanceof ServerRequestError);
+            assert.equal(error.code, "WALLET_BALANCE_CONFLICT");
+            assert.equal(error.status, 409);
+            assert.equal(error.requestId, "request-code-fixture");
+            return true;
+        });
+        globalThis.fetch = (async () => Response.json({ error: { message: "其他拒绝", code: { unexpected: true } } }, { status: 429 })) as typeof fetch;
+        await assert.rejects(serverRequest("/api/code-fixture"), (error: unknown) => {
+            assert(error instanceof ServerRequestError);
+            assert.equal(error.code, undefined);
+            return true;
+        });
+    }));
+
 test("announcement requests keep the captured account and request newest ordering only when selected", () =>
     withTransport(async () => {
         const previousUser = useUserStore.getState().user;

@@ -57,13 +57,15 @@ export type ServerJob = {
 export class ServerRequestError extends Error {
     readonly status: number;
     readonly requestId?: string;
+    readonly code?: string;
 
-    constructor(message: string, status: number, requestId?: string) {
+    constructor(message: string, status: number, requestId?: string, code?: string) {
         const shortRequestId = requestId?.trim().slice(0, 12);
         super(shortRequestId ? `${message}（请求编号 ${shortRequestId}）` : message);
         this.name = "ServerRequestError";
         this.status = status;
         this.requestId = requestId;
+        this.code = code;
     }
 }
 export type CultivationBreakthrough = { id: string; fromStageName: string; toStageName: string; status: string };
@@ -91,7 +93,7 @@ export type CultivationProfile = {
     usedToday: number;
     reservedToday: number;
     remainingToday: number | null;
-    proxyQuota?: { dailyLimit: number | null; dailyLimitOverride: number | null; unlimited: boolean; remainingToday: number | null; usedToday: number; reservedToday: number };
+    proxyQuota?: { dailyLimit: number | null; dailyLimitOverride: number | null; unlimitedOverride?: boolean; unlimited: boolean; remainingToday: number | null; usedToday: number; reservedToday: number };
     todaySuccessfulImages?: number;
     paidImages?: number;
     maxConcurrency: number;
@@ -863,7 +865,8 @@ function throwResponsePayload(status: number, payload: unknown, headerRequestId?
     const originalMessage = readServerError(payload);
     const message = friendlyErrorMessage(originalMessage, status);
     if (status === 401 || (status === 403 && message.includes("账号已停用"))) window.dispatchEvent(new Event("canvas:auth-invalid"));
-    throw new ServerRequestError(message, status, readServerRequestId(payload) || headerRequestId);
+    const code = payload && typeof payload === "object" ? (payload as { error?: { code?: unknown } }).error?.code : undefined;
+    throw new ServerRequestError(message, status, readServerRequestId(payload) || headerRequestId, typeof code === "string" ? code : undefined);
 }
 
 export async function fetchAdminChannelMetrics(days = 7) {
