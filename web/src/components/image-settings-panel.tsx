@@ -64,9 +64,10 @@ type ImageSettingsPanelProps = {
     className?: string;
     maxCount?: number;
     quickCount?: number;
+    section?: "all" | "basic" | "advanced";
 };
 
-export function ImageSettingsPanel({ config, selectedModel, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, selectedModel, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10, section = "all" }: ImageSettingsPanelProps) {
     const snapDimensionToStep = useConfigStore((state) => state.snapDimensionToStep);
     const setSnapDimensionToStep = useConfigStore((state) => state.setSnapDimensionToStep);
     const resolved = resolveImageModelSettings(config, selectedModel, maxCount);
@@ -129,149 +130,176 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                 }}
             >
                 {showTitle ? <div className="text-lg font-semibold">图像设置</div> : null}
-                <div className="space-y-2.5">
-                    <div className="flex items-center justify-between gap-3">
-                        <SettingTitle color={theme.node.muted}>构图比例</SettingTitle>
-                        {customSizeActive ? (
-                            <span className="text-xs" style={{ color: theme.node.muted }}>
-                                当前为自定义尺寸
+                {section !== "advanced" ? (
+                    <>
+                        <div className="space-y-2.5">
+                            <div className="flex items-center justify-between gap-3">
+                                <SettingTitle color={theme.node.muted}>构图比例</SettingTitle>
+                                {customSizeActive ? (
+                                    <span className="text-xs" style={{ color: theme.node.muted }}>
+                                        当前为自定义尺寸
+                                    </span>
+                                ) : null}
+                            </div>
+                            {section === "basic" ? (
+                                <span className="block" onMouseDown={(event) => event.stopPropagation()}>
+                                    <Select
+                                        aria-label="构图比例"
+                                        value={customSizeActive ? undefined : activeSize}
+                                        placeholder={customSizeActive ? `自定义 ${activeSize}` : "选择构图比例"}
+                                        options={ratioAspects.map((item) => ({ value: item.value, label: `${item.name} (${item.label})` }))}
+                                        className="w-full"
+                                        onChange={selectAspect}
+                                    />
+                                </span>
+                            ) : (
+                                <div className="grid grid-cols-2 gap-2">
+                                    {ratioAspects.map((item) => (
+                                        <button
+                                            key={item.value}
+                                            type="button"
+                                            className="flex h-14 min-w-0 cursor-pointer flex-col items-start justify-center rounded-md border px-3 text-left transition hover:opacity-80"
+                                            style={{
+                                                borderColor: selectedAspect?.value === item.value ? theme.node.activeStroke : theme.node.stroke,
+                                                background: selectedAspect?.value === item.value ? theme.node.fill : "transparent",
+                                                color: theme.node.text,
+                                            }}
+                                            onMouseDown={(event) => event.stopPropagation()}
+                                            onClick={() => selectAspect(item.value)}
+                                        >
+                                            <span className="max-w-full truncate text-sm font-semibold">{item.name}</span>
+                                            <span className="mt-0.5 text-xs" style={{ color: theme.node.muted }}>
+                                                {item.label}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div className="space-y-2.5">
+                            <SettingTitle color={theme.node.muted}>输出分辨率</SettingTitle>
+                            {automaticResolution ? (
+                                <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                                    <span>自动</span>
+                                    <span className="min-w-0 truncate">当前模型自动决定图片分辨率</span>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-3 gap-2">
+                                    {visibleResolutions.map((item) => (
+                                        <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
+                                            {item.label}
+                                        </OptionPill>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </>
+                ) : null}
+                {section !== "basic" ? (
+                    <>
+                        <div className="space-y-2.5">
+                            <div className="space-y-0.5">
+                                <SettingTitle color={theme.node.muted}>生成质量</SettingTitle>
+                                <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
+                                    影响模型的细节策略与耗时，不改变输出像素尺寸
+                                </div>
+                            </div>
+                            {canChooseGenerationQuality ? (
+                                <div className="grid grid-cols-4 gap-2">
+                                    {visibleGenerationQualities.map((item) => (
+                                        <OptionPill key={item.value} selected={imageQuality === item.value} theme={theme} onClick={() => onConfigChange("imageQuality", item.value)}>
+                                            {item.label}
+                                        </OptionPill>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                                    <span>自动</span>
+                                    <span className="min-w-0 truncate">{isUuAsyncModel ? "当前模型自动决定图片质量" : "当前模型不支持单独调整质量"}</span>
+                                </div>
+                            )}
+                        </div>
+                        <div className="space-y-2.5">
+                            <div className="space-y-0.5">
+                                <SettingTitle color={theme.node.muted}>输出格式</SettingTitle>
+                                <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
+                                    自动保留渠道原格式；指定格式会在保存与下载时转换
+                                </div>
+                            </div>
+                            {canChooseOutputFormat ? (
+                                <span className="block" onMouseDown={(event) => event.stopPropagation()}>
+                                    <Select value={imageOutputFormat} options={visibleOutputFormats} className="w-full" onChange={selectOutputFormat} />
+                                </span>
+                            ) : (
+                                <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                                    <span>自动</span>
+                                    <span className="min-w-0 truncate">当前模型自动决定图片格式</span>
+                                </div>
+                            )}
+                        </div>
+                        <div className="space-y-2.5">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="space-y-0.5">
+                                    <SettingTitle color={theme.node.muted}>图片尺寸</SettingTitle>
+                                    <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
+                                        {isSadaiModel ? "按所选比例和分辨率生成，最终像素由模型决定" : automaticResolution ? "构图比例仍会生效，像素尺寸由模型决定" : customSizeActive ? "自定义尺寸会覆盖比例和分辨率" : "按比例和分辨率精确换算"}
+                                    </div>
+                                </div>
+                                {capabilities.customSize ? (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
+                                            16倍数对齐
+                                        </span>
+                                        <span title="输入完成后自动向上补成 16 的倍数" onMouseDown={(event) => event.stopPropagation()}>
+                                            <Switch size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
+                                        </span>
+                                    </div>
+                                ) : null}
+                            </div>
+                            {isSadaiModel ? (
+                                <div className="flex h-9 items-center rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                                    {activeSize} · {imageResolutionLabel(resolution)}，最终像素由模型决定
+                                </div>
+                            ) : automaticResolution ? (
+                                <div className="flex h-9 items-center rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                                    像素尺寸将在生成时由当前模型自动确定
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+                                    <DimensionInput prefix="W" value={dimensions.width} disabled={!capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
+                                    <span className="text-lg opacity-45">×</span>
+                                    <DimensionInput prefix="H" value={dimensions.height} disabled={!capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
+                                </div>
+                            )}
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="space-y-0.5">
+                                <SettingTitle color={theme.node.muted}>透明背景</SettingTitle>
+                                <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
+                                    开启后生成无背景的透明图像(仅部分模型可用)
+                                </div>
+                            </div>
+                            <span onMouseDown={(event) => event.stopPropagation()}>
+                                <Switch size="small" checked={transparentBackground && capabilities.transparentBackground} disabled={!capabilities.transparentBackground} onChange={updateTransparentBackground} />
                             </span>
-                        ) : null}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                        {ratioAspects.map((item) => (
-                            <button
-                                key={item.value}
-                                type="button"
-                                className="flex h-14 min-w-0 cursor-pointer flex-col items-start justify-center rounded-md border px-3 text-left transition hover:opacity-80"
-                                style={{ borderColor: selectedAspect?.value === item.value ? theme.node.activeStroke : theme.node.stroke, background: selectedAspect?.value === item.value ? theme.node.fill : "transparent", color: theme.node.text }}
-                                onMouseDown={(event) => event.stopPropagation()}
-                                onClick={() => selectAspect(item.value)}
-                            >
-                                <span className="max-w-full truncate text-sm font-semibold">{item.name}</span>
-                                <span className="mt-0.5 text-xs" style={{ color: theme.node.muted }}>
-                                    {item.label}
-                                </span>
-                            </button>
-                        ))}
-                    </div>
-                </div>
-                <div className="space-y-2.5">
-                    <SettingTitle color={theme.node.muted}>输出分辨率</SettingTitle>
-                    {automaticResolution ? (
-                        <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
-                            <span>自动</span>
-                            <span className="min-w-0 truncate">当前模型自动决定图片分辨率</span>
                         </div>
-                    ) : (
-                        <div className="grid grid-cols-3 gap-2">
-                            {visibleResolutions.map((item) => (
-                                <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
-                                    {item.label}
-                                </OptionPill>
-                            ))}
-                        </div>
-                    )}
-                </div>
-                <div className="space-y-2.5">
-                    <div className="space-y-0.5">
-                        <SettingTitle color={theme.node.muted}>生成质量</SettingTitle>
-                        <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                            影响模型的细节策略与耗时，不改变输出像素尺寸
-                        </div>
-                    </div>
-                    {canChooseGenerationQuality ? (
+                    </>
+                ) : null}
+                {section !== "advanced" ? (
+                    <div className="space-y-2.5">
+                        <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
                         <div className="grid grid-cols-4 gap-2">
-                            {visibleGenerationQualities.map((item) => (
-                                <OptionPill key={item.value} selected={imageQuality === item.value} theme={theme} onClick={() => onConfigChange("imageQuality", item.value)}>
-                                    {item.label}
-                                </OptionPill>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
-                            <span>自动</span>
-                            <span className="min-w-0 truncate">{isUuAsyncModel ? "当前模型自动决定图片质量" : "当前模型不支持单独调整质量"}</span>
-                        </div>
-                    )}
-                </div>
-                <div className="space-y-2.5">
-                    <div className="space-y-0.5">
-                        <SettingTitle color={theme.node.muted}>输出格式</SettingTitle>
-                        <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                            自动保留渠道原格式；指定格式会在保存与下载时转换
+                            {[1, 2, 4]
+                                .filter((value) => value <= Math.min(quickCount, effectiveMaxCount))
+                                .map((value) => (
+                                    <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
+                                        {value} 张
+                                    </OptionPill>
+                                ))}
+                            <CountInput value={count} max={effectiveMaxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
                         </div>
                     </div>
-                    {canChooseOutputFormat ? (
-                        <span className="block" onMouseDown={(event) => event.stopPropagation()}>
-                            <Select value={imageOutputFormat} options={visibleOutputFormats} className="w-full" onChange={selectOutputFormat} />
-                        </span>
-                    ) : (
-                        <div className="flex h-9 items-center justify-between gap-3 rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
-                            <span>自动</span>
-                            <span className="min-w-0 truncate">当前模型自动决定图片格式</span>
-                        </div>
-                    )}
-                </div>
-                <div className="space-y-2.5">
-                    <div className="flex items-center justify-between gap-3">
-                        <div className="space-y-0.5">
-                            <SettingTitle color={theme.node.muted}>图片尺寸</SettingTitle>
-                            <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                                {isSadaiModel ? "按所选比例和分辨率生成，最终像素由模型决定" : automaticResolution ? "构图比例仍会生效，像素尺寸由模型决定" : customSizeActive ? "自定义尺寸会覆盖比例和分辨率" : "按比例和分辨率精确换算"}
-                            </div>
-                        </div>
-                        {capabilities.customSize ? (
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
-                                    16倍数对齐
-                                </span>
-                                <span title="输入完成后自动向上补成 16 的倍数" onMouseDown={(event) => event.stopPropagation()}>
-                                    <Switch size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
-                                </span>
-                            </div>
-                        ) : null}
-                    </div>
-                    {isSadaiModel ? (
-                        <div className="flex h-9 items-center rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
-                            {activeSize} · {imageResolutionLabel(resolution)}，最终像素由模型决定
-                        </div>
-                    ) : automaticResolution ? (
-                        <div className="flex h-9 items-center rounded-md border px-3 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
-                            像素尺寸将在生成时由当前模型自动确定
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                            <DimensionInput prefix="W" value={dimensions.width} disabled={!capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
-                            <span className="text-lg opacity-45">×</span>
-                            <DimensionInput prefix="H" value={dimensions.height} disabled={!capabilities.customSize} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
-                        </div>
-                    )}
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                    <div className="space-y-0.5">
-                        <SettingTitle color={theme.node.muted}>透明背景</SettingTitle>
-                        <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                            开启后生成无背景的透明图像(仅部分模型可用)
-                        </div>
-                    </div>
-                    <span onMouseDown={(event) => event.stopPropagation()}>
-                        <Switch size="small" checked={transparentBackground && capabilities.transparentBackground} disabled={!capabilities.transparentBackground} onChange={updateTransparentBackground} />
-                    </span>
-                </div>
-                <div className="space-y-2.5">
-                    <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
-                    <div className="grid grid-cols-4 gap-2">
-                        {[1, 2, 4]
-                            .filter((value) => value <= Math.min(quickCount, effectiveMaxCount))
-                            .map((value) => (
-                                <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
-                                    {value} 张
-                                </OptionPill>
-                            ))}
-                        <CountInput value={count} max={effectiveMaxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
-                    </div>
-                </div>
+                ) : null}
             </div>
         </ImageSettingsTheme>
     );

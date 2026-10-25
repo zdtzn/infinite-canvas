@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import type { GeneratedImage } from "@/services/image-generation-runtime";
 
-const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
+const RESULT_ACTION_BUTTON_CLASS = "min-w-0 whitespace-nowrap px-1.5 [&_.ant-btn-icon]:shrink-0";
 
 export type ResultContinueAction = "restart" | "append-reference" | "canvas" | "color-alchemy" | "repeat";
 
@@ -23,6 +23,7 @@ export function ResultImageCard({
     image,
     index,
     savingAsset,
+    savedAsset = false,
     onContinue,
     onDownload,
     onSaveAsset,
@@ -31,6 +32,7 @@ export function ResultImageCard({
     image: GeneratedImage;
     index: number;
     savingAsset: boolean;
+    savedAsset?: boolean;
     onContinue: (action: ResultContinueAction, image: GeneratedImage, index: number) => void | Promise<void>;
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
@@ -59,7 +61,7 @@ export function ResultImageCard({
     }, [image.dataUrl]);
 
     return (
-        <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
+        <div className="@container/result-card overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
             <div className="relative aspect-square overflow-hidden bg-stone-100 dark:bg-stone-900">
                 {previewStatus !== "loaded" ? (
                     <div className="absolute inset-0 z-10 grid place-items-center p-4 text-center" aria-live="polite">
@@ -118,9 +120,9 @@ export function ResultImageCard({
                     {image.bytes ? <span>{formatBytes(image.bytes)}</span> : null}
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
-                <div className="grid min-w-0 grid-cols-3 gap-2">
+                <div className="grid min-w-0 grid-cols-2 gap-2 @min-[340px]/result-card:grid-cols-3">
                     <Tooltip title={recoveryPending ? "图片保存中，请稍候" : "选择后续创作方式"}>
-                        <span className="min-w-0" aria-disabled={recoveryPending || continuationPending}>
+                        <span className="col-span-2 min-w-0 @min-[340px]/result-card:col-span-1" aria-disabled={recoveryPending || continuationPending}>
                             <Dropdown trigger={["click"]} disabled={recoveryPending || continuationPending} menu={{ items: CONTINUE_ACTIONS, onClick: ({ key }) => void continueCreation(key as ResultContinueAction) }}>
                                 <Button className={`${RESULT_ACTION_BUTTON_CLASS} w-full`} size="small" loading={continuationPending} disabled={recoveryPending || continuationPending}>
                                     继续创作
@@ -129,9 +131,9 @@ export function ResultImageCard({
                             </Dropdown>
                         </span>
                     </Tooltip>
-                    <Tooltip title={recoveryPending ? "图片保存中，请稍候" : "入藏卷阁"}>
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} loading={savingAsset} disabled={savingAsset || recoveryPending} onClick={() => void onSaveAsset(image, index)}>
-                            入藏卷阁
+                    <Tooltip title={savedAsset ? "已入藏卷阁" : recoveryPending ? "图片保存中，请稍候" : "入藏卷阁"}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} loading={savingAsset} disabled={savedAsset || savingAsset || recoveryPending} onClick={() => void onSaveAsset(image, index)}>
+                            {savedAsset ? "已入藏" : "入藏卷阁"}
                         </Button>
                     </Tooltip>
                     <Tooltip title="下载">

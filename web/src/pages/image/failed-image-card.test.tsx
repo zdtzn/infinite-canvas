@@ -16,3 +16,12 @@ test("a failed image shows guidance first and keeps one support reference in clo
     expect(Object.values(canvasThemes).some((theme) => html.includes(`background:${theme.node.panel}`))).toBe(true);
     expect(html).not.toContain("bg-red-");
 });
+
+test("a history failure can label a whole-group retry and disable it during generation", () => {
+    const html = renderToStaticMarkup(<FailedImageCard id="history" isDouEmperor onRetry={() => {}} retryLabel="重新生成4张" retryDisabled />);
+    const retryButton = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g)?.find((button) => button.includes("重新生成4张"));
+    expect(retryButton).toBeDefined();
+    expect(retryButton).toContain('disabled=""');
+    expect(html).toContain("这一笔未能成卷");
+    expect(html).not.toContain("再试一次");
+});

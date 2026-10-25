@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -125,4 +126,11 @@ test("GPT Image 2 settings show flexible ratios and their constrained request di
     assert.match(html, /value="1280"/);
     assert.match(html, /value="720"/);
     assert.doesNotMatch(html, />1:4<\/span>/);
+});
+
+test("image settings sections render with isolated store imports", () => {
+    const fixture = fileURLToPath(new URL("../../qa/image-settings-panel.fixture.test.tsx", import.meta.url));
+    const result = Bun.spawnSync([process.execPath, "test", fixture], { stdout: "pipe", stderr: "pipe" });
+    if (result.exitCode !== 0) throw new Error(new TextDecoder().decode(result.stderr));
+    assert.equal(result.exitCode, 0);
 });

@@ -6,7 +6,7 @@ import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 
-export function FailedImageCard({ id, error, isDouEmperor, onRetry }: { id: string; error?: string; isDouEmperor: boolean; onRetry: () => void }) {
+export function FailedImageCard({ id, error, isDouEmperor, onRetry, retryLabel = "再试一次", retryDisabled = false }: { id: string; error?: string; isDouEmperor: boolean; onRetry: () => void; retryLabel?: string; retryDisabled?: boolean }) {
     const feedback = generationFailureFeedback(error, { isDouEmperor, seed: `${id}:${error || ""}` });
     const errorDetail = friendlyErrorMessage(error);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -19,8 +19,8 @@ export function FailedImageCard({ id, error, isDouEmperor, onRetry }: { id: stri
                     <h3 className="text-base font-medium">{isDouEmperor ? "这一笔未能成卷" : "这张图没能生成"}</h3>
                     <p className="mt-2 text-sm leading-6" style={{ color: theme.node.muted }}>{feedback.description}</p>
                 </div>
-                <Button className="!min-h-11 !min-w-32" icon={<RotateCcw className="size-3.5" />} onClick={onRetry}>
-                    再试一次
+                <Button className="!min-h-11 !min-w-32" icon={<RotateCcw className="size-3.5" />} onClick={onRetry} disabled={retryDisabled}>
+                    {retryLabel}
                 </Button>
                 {error ? (
                     <details className="w-full max-w-xs text-left text-xs" style={{ color: theme.node.muted }}>

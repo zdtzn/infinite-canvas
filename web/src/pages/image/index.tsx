@@ -56,6 +56,7 @@ import { creativeImageTransferState, type CreativeImageTransfer } from "@/lib/cr
 import { preloadRoute } from "@/lib/route-loaders";
 import type { ResultContinueAction } from "./result-image-card";
 import { summarizeImageTasks } from "./task-summary";
+import { imageHistorySummary } from "./history-summary";
 import { IMAGE_RECONNECT_NOTICE, imageGenerationProgressLabel } from "@/lib/image-generation-progress";
 
 const loadPromptSelectDialog = () => import("@/components/prompts/prompt-select-dialog").then((module) => ({ default: module.PromptSelectDialog }));
@@ -139,7 +140,8 @@ export default function ImagePage() {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
-    const addAsset = useAssetStore((state) => state.addAsset);
+    const assets = useAssetStore((state) => state.assets);
+    const saveAsset = useAssetStore((state) => state.saveAsset);
     const [prompt, setPrompt] = useState("");
     useEffect(() => {
         const state = location.state;
@@ -149,6 +151,8 @@ export default function ImagePage() {
         navigate(`${location.pathname}${location.search}${location.hash}`, { replace: true, state: remainingState });
     }, [location, navigate]);
     const [references, setReferences] = useState<ReferenceImage[]>([]);
+    const [referenceUploads, setReferenceUploads] = useState(0);
+    const referenceUploadsRef = useRef(0);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [historySearchDraft, setHistorySearchDraft] = useState("");
     const [historySearch, setHistorySearch] = useState("");
@@ -164,6 +168,7 @@ export default function ImagePage() {
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [savingAssetIds, setSavingAssetIds] = useState<string[]>([]);
+    const [failedAssetImageIds, setFailedAssetImageIds] = useState<string[]>([]);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [previewReference, setPreviewReference] = useState<ReferenceImage | null>(null);
@@ -193,7 +198,7 @@ export default function ImagePage() {
     const requiredCapabilities = requiredCultivationCapabilities({ model, quality: requestImageConfig.quality, referenceCount: references.length, hasMask: false });
     const referenceLimitReason = references.length > activeImageCapabilities.maxReferences ? `当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图，请先移除多余图片` : null;
     const generationBlockReason =
-        referenceLimitReason ||
+        (referenceUploads ? "参考图正在处理中，请稍候" : null) || referenceLimitReason ||
         (cultivationProfile
             ? cultivationGenerationBlockReason({
                   remainingToday: cultivationProfile.remainingToday,
@@ -219,6 +224,8 @@ export default function ImagePage() {
               ? [{ id: previewLog.id, status: "failed", error: "该次创作未留下可预览的画卷" }]
               : []
         : generationJob?.results || [];
+    const previewSummary = previewLog ? imageHistorySummary(previewLog) : null;
+    const resultSaved = (image: GeneratedImage) => !failedAssetImageIds.includes(image.id) && assets.some((asset) => asset.kind === "image" && (asset.id === `image-result-${image.id}` || asset.metadata?.resultImageId === image.id || Boolean(image.storageKey && asset.data.storageKey === image.storageKey)));
     const previewReferenceIndex = previewReference ? references.findIndex((item) => item.id === previewReference.id) : -1;
     const archivedGenerationImages = generationJobs
         .flatMap((job) => job.results)
@@ -236,16 +243,15 @@ export default function ImagePage() {
     }, [generationJob?.id]);
 
     const uploadReference = async (input: Blob, name: string): Promise<ReferenceImage> => {
-        const image = await uploadImage(input, { thumbnailMaxEdge: 1280 });
-        return {
-            id: nanoid(),
-            name,
-            type: image.mimeType,
-            dataUrl: image.url,
-            storageKey: image.storageKey,
-            thumbnailKey: image.thumbnailKey,
-            thumbnailUrl: image.thumbnailUrl,
-        };
+        referenceUploadsRef.current += 1;
+        setReferenceUploads(referenceUploadsRef.current);
+        try {
+            const image = await uploadImage(input, { thumbnailMaxEdge: 1280 });
+            return { id: nanoid(), name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, thumbnailKey: image.thumbnailKey, thumbnailUrl: image.thumbnailUrl };
+        } finally {
+            referenceUploadsRef.current -= 1;
+            setReferenceUploads(referenceUploadsRef.current);
+        }
     };
 
     const appendReferences = async (entries: Array<{ input: Blob; name: string }>, successMessage?: string) => {
@@ -297,8 +303,9 @@ export default function ImagePage() {
             return;
         }
         try {
+            const referenceId = references[index]?.id;
             const replacement = await uploadReference(file, file.name);
-            setReferences((value) => value.map((item, itemIndex) => (itemIndex === index ? replacement : item)));
+            setReferences((value) => value.map((item) => (item.id === referenceId ? replacement : item)));
             setPreviewReference(null);
             message.success("参考图已替换");
         } catch (error) {
@@ -628,16 +635,39 @@ export default function ImagePage() {
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
         if (savingAssetIdsRef.current.has(image.id)) return;
+        if (resultSaved(image)) return;
         const operation = beginResultTransfer();
         const sourcePrompt = previewLog ? generationUserPrompt(previewLog.prompt) : generationJob?.snapshot?.text || "";
         savingAssetIdsRef.current.add(image.id);
         setSavingAssetIds((ids) => [...ids, image.id]);
         try {
+            if (PUBLIC_MODE) {
+                const store = useAssetStore.getState();
+                if (!store.serverHydrated) await store.hydrateFromServer(operation.ownerUserId);
+                await useAssetStore.getState().loadAllServerAssets();
+                if (!operation.isCurrent()) return;
+                if (!useAssetStore.getState().serverHydrated || useAssetStore.getState().serverAssetHasMore) throw new Error("暂时无法确认入藏状态，请稍后再试");
+            }
+            const existing = useAssetStore.getState().assets.find((asset) => asset.kind === "image" && (asset.id === `image-result-${image.id}` || asset.metadata?.resultImageId === image.id || Boolean(image.storageKey && asset.data.storageKey === image.storageKey)));
+            if (existing) {
+                if (failedAssetImageIds.includes(image.id)) {
+                    saveAsset(existing);
+                    const status = await useAssetStore.getState().waitForAssetLocalSave(existing.id);
+                    if (!operation.isCurrent()) return;
+                    setFailedAssetImageIds((ids) => ids.filter((id) => id !== image.id));
+                    message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: assetSaveMessage(status) });
+                }
+                return;
+            }
             // Generated results are already persisted by the job flow. Reusing that asset avoids a
             // duplicate upload and prevents upstream MIME headers from affecting asset registration.
             const result = await ensureStoredResult(image, operation);
             if (!operation.isCurrent()) return;
-            const id = addAsset({
+            const now = new Date().toISOString();
+            const id = saveAsset({
+                id: `image-result-${image.id}`,
+                createdAt: now,
+                updatedAt: now,
                 kind: "image",
                 title: `${sourcePrompt.trim().replace(/\s+/g, " ").slice(0, 32) || "丹青台作品"} · ${index + 1}`,
                 coverUrl: result.thumbnailUrl || result.dataUrl,
@@ -653,14 +683,16 @@ export default function ImagePage() {
                     bytes: result.bytes,
                     mimeType: result.mimeType || "image/*",
                 },
-                metadata: { source: "image-page", prompt: sourcePrompt },
+                metadata: { source: "image-page", prompt: sourcePrompt, resultImageId: image.id },
             });
             const status = await useAssetStore.getState().waitForAssetLocalSave(id);
             if (!operation.isCurrent()) return;
+            setFailedAssetImageIds((ids) => ids.filter((id) => id !== image.id));
             message.open({ type: status === "failed" ? "warning" : status === "pending" ? "info" : "success", content: assetSaveMessage(status) });
         } catch (error) {
             console.error("Failed to save generated image as an asset", error);
             if (!operation.isCurrent()) return;
+            setFailedAssetImageIds((ids) => ids.includes(image.id) ? ids : [...ids, image.id]);
             message.error(userFacingErrorMessage(error, "入藏卷阁失败，请稍后再试"));
         } finally {
             savingAssetIdsRef.current.delete(image.id);
@@ -882,6 +914,10 @@ export default function ImagePage() {
     };
 
     const buildRequestSnapshot = () => {
+        if (referenceUploadsRef.current) {
+            message.warning("参考图正在处理中，请稍候");
+            return null;
+        }
         const text = prompt.trim();
         if (!text) {
             message.error("请输入生图提示词");
@@ -916,7 +952,19 @@ export default function ImagePage() {
 
     const retryResult = async (index: number) => {
         if (previewLog) {
-            repeatOriginalGeneration();
+            const selectedModel = previewLog.config.imageModel || previewLog.model;
+            const retryCount = Number(resolveImageModelSettings({ ...effectiveConfig, ...previewLog.config, model: selectedModel, imageModel: selectedModel, count: String(imageHistorySummary(previewLog).retryCount) }, selectedModel, 10).config.count);
+            const log = previewLog;
+            modal.confirm({
+                title: `重新生成 ${retryCount} 张图片？`,
+                content: <div className="space-y-2"><p>将按这条记录的原参数重新生成整组图片。</p>{cultivationProfile && !cultivationProfile.unlimited ? <p>{cultivationProfile.dailyLimit === 0 ? `本次占用 ${retryCount} 灵卷，未生成部分按结算返还。` : `本次最多占用 ${retryCount} 次额度，未生成部分按结算返还。`}</p> : null}</div>,
+                okText: `生成 ${retryCount} 张`,
+                cancelText: "取消",
+                onOk: () => {
+                    continueFromGenerationLog({ ...log, config: { ...log.config, count: String(retryCount) } });
+                    setAutoRunToken((value) => value + 1);
+                },
+            });
             return;
         }
         if (running) {
@@ -1096,8 +1144,6 @@ export default function ImagePage() {
                                     />
                                 </div>
 
-                                <div className="lg:hidden">{generationAction}</div>
-
                                 <div className="min-w-0">
                                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                                         <div>
@@ -1113,6 +1159,7 @@ export default function ImagePage() {
                                             </Button>
                                         </div>
                                     </div>
+                                    {referenceUploads ? <p role="status" className="mb-2 flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />正在处理 {referenceUploads} 张参考图…</p> : null}
                                     <div
                                         className={`hover-scrollbar flex w-full min-w-0 max-w-full gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain ${references.length ? "min-h-32 rounded-lg border border-stone-200 p-2 pb-3 dark:border-stone-700" : "min-h-8"}`}
                                         onWheel={(event) => {
@@ -1176,6 +1223,8 @@ export default function ImagePage() {
                                     </label>
                                 </div>
 
+                                <GenerationSettings config={requestImageConfig} updateConfig={updateConfig} section="basic" />
+
                                 <div className="rounded-lg border border-stone-200 dark:border-stone-800">
                                     <details className="group" onToggle={(event) => setAdvancedSettingsOpen(event.currentTarget.open)}>
                                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium marker:content-none">
@@ -1193,7 +1242,7 @@ export default function ImagePage() {
                                         </summary>
                                         {advancedSettingsOpen ? (
                                             <div className="border-t border-stone-200 p-3 dark:border-stone-800">
-                                                <GenerationSettings config={requestImageConfig} updateConfig={updateConfig} />
+                                                <GenerationSettings config={requestImageConfig} updateConfig={updateConfig} section="advanced" />
                                             </div>
                                         ) : null}
                                     </details>
@@ -1201,7 +1250,7 @@ export default function ImagePage() {
                             </div>
                         </div>
 
-                        <div className="hidden shrink-0 border-t border-stone-200 bg-card p-4 dark:border-stone-800 lg:block">
+                        <div className="sticky bottom-0 z-20 shrink-0 border-t border-stone-200 bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:border-stone-800 lg:static lg:p-4">
                             {generationAction}
                         </div>
                     </div>
@@ -1211,7 +1260,7 @@ export default function ImagePage() {
                             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex min-w-0 items-center gap-2">
                                     <h2 className="text-xl font-semibold">{resultView === "results" ? "生成结果" : "太古遗迹"}</h2>
-                                    {resultView === "results" && previewLog ? <Tag className="m-0">遗迹预览</Tag> : null}
+                                    {resultView === "results" && previewLog ? <Tag className="m-0" color={previewSummary?.outcome === "partial" ? "warning" : undefined}>{previewSummary?.label}</Tag> : null}
                                     {resultView === "history" ? <Tag className="m-0">{historyTotal}</Tag> : null}
                                     {running && generationJob && !previewLog && resultView === "results" ? <GenerationElapsed startedAt={generationJob.startedAt} /> : null}
                                 </div>
@@ -1327,7 +1376,7 @@ export default function ImagePage() {
                                         </Button>
                                     )}
                                     <Tooltip title="开始新作">
-                                        <Button aria-label="开始新作" size="small" type="text" icon={<Plus className="size-4" />} onClick={createSession} />
+                                        <Button aria-label="开始新作" size="small" type="text" disabled={Boolean(referenceUploads)} icon={<Plus className="size-4" />} onClick={createSession} />
                                     </Tooltip>
                                 </div>
                             </div>
@@ -1388,15 +1437,15 @@ export default function ImagePage() {
                                     )}
                                 </div>
                             ) : results.length ? (
-                                <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,340px),1fr))] gap-4">
                                     {results.map((result, index) =>
                                         result.status === "success" && result.image ? (
                                             <Suspense key={result.id} fallback={<ResultImageCardLoading />}>
-                                                <ResultImageCard image={result.image} index={index} savingAsset={savingAssetIds.includes(result.image.id)} onContinue={continueFromResult} onDownload={downloadImage} onSaveAsset={saveResultToAssets} onRetryArchive={retryResultArchive} />
+                                                <ResultImageCard image={result.image} index={index} savingAsset={savingAssetIds.includes(result.image.id)} savedAsset={!savingAssetIds.includes(result.image.id) && resultSaved(result.image)} onContinue={continueFromResult} onDownload={downloadImage} onSaveAsset={saveResultToAssets} onRetryArchive={retryResultArchive} />
                                             </Suspense>
                                         ) : result.status === "failed" ? (
                                             <Suspense key={result.id} fallback={<ResultImageCardLoading />}>
-                                                <FailedImageCard id={result.id} error={result.error} isDouEmperor={isDouEmperor} onRetry={() => retryResult(index)} />
+                                                <FailedImageCard id={result.id} error={result.error} isDouEmperor={isDouEmperor} retryLabel={previewSummary ? `重新生成 ${previewSummary.retryCount} 张` : undefined} retryDisabled={Boolean((running && !previewLog) || referenceUploads)} onRetry={() => retryResult(index)} />
                                             </Suspense>
                                         ) : result.status === "canceled" ? (
                                             <div key={result.id} className="flex aspect-square flex-col items-center justify-center gap-3 rounded-lg border border-stone-200 text-muted-foreground dark:border-stone-800">
@@ -1548,7 +1597,7 @@ function ResultImageCardLoading() {
     );
 }
 
-function GenerationSettings({ config, updateConfig }: { config: AiConfig; updateConfig: UpdateAiConfig }) {
+function GenerationSettings({ config, updateConfig, section }: { config: AiConfig; updateConfig: UpdateAiConfig; section: "basic" | "advanced" }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
@@ -1562,7 +1611,7 @@ function GenerationSettings({ config, updateConfig }: { config: AiConfig; update
                 </div>
             }
         >
-            <ImageSettingsPanel config={config} selectedModel={config.imageModel || config.model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
+            <ImageSettingsPanel config={config} selectedModel={config.imageModel || config.model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} section={section} />
         </Suspense>
     );
 }
@@ -1786,6 +1835,7 @@ function LogCard({
     onPreview: () => void;
     onContinue: () => void;
 }) {
+    const summary = imageHistorySummary(log);
     const thumbnails = log.images
         .map((image) => image.thumbnailUrl || image.dataUrl)
         .filter((image): image is string => Boolean(image))
@@ -1815,8 +1865,8 @@ function LogCard({
                             <span className="text-xs">未留下画卷</span>
                         </div>
                     )}
-                    <Tag className="absolute right-2 top-2 m-0" color={log.status === "成功" ? "success" : "error"}>
-                        {log.status}
+                    <Tag style={{ position: "absolute", right: 8, top: 8, margin: 0 }} color={summary.outcome === "partial" ? "warning" : summary.outcome === "success" ? "success" : "error"}>
+                        {summary.label}
                     </Tag>
                 </div>
                 <div className="p-3">
@@ -1824,7 +1874,7 @@ function LogCard({
                     <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-xs text-stone-500">
                         <span className="truncate">{log.model || "默认模型"}</span>
                         <span className="shrink-0">
-                            {log.successCount || log.imageCount} 张 · {formatDuration(log.durationMs)}
+                            {summary.successCount}/{summary.totalCount} 张 · {formatDuration(log.durationMs)}
                         </span>
                     </div>
                     <div className="mt-1 truncate text-xs text-stone-400">{log.time}</div>
@@ -1883,7 +1933,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         config,
         references,
         durationMs: log.durationMs || 0,
-        successCount: log.successCount ?? log.imageCount ?? 0,
+        successCount: log.successCount ?? (log.status === "失败" ? 0 : log.images?.length || log.imageCount || 0),
         failCount: log.failCount || 0,
         imageCount: log.imageCount || log.successCount || 0,
         size: log.size || config.size || "",

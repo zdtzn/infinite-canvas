@@ -67,3 +67,32 @@ test("failed archival offers a save retry without offering regeneration", () => 
     assert.match(html, /重试保存/);
     assert.doesNotMatch(html, /保存中 · 图片已生成/);
 });
+
+test("an image already saved to the collection disables only the collection action", () => {
+    const html = renderToStaticMarkup(createElement(ResultImageCard, {
+        image: { ...temporaryImage, persisted: true }, index: 0, savingAsset: false, savedAsset: true,
+        onContinue: () => undefined, onDownload: () => undefined, onSaveAsset: () => undefined,
+    }));
+    const buttons = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g) || [];
+    const savedButton = buttons.find((button) => button.includes("已入藏"));
+    assert.ok(savedButton);
+    assert.match(savedButton, /\bdisabled=""/);
+    for (const label of ["继续创作", "下载"]) {
+        const button = buttons.find((candidate) => candidate.includes(label));
+        assert.ok(button);
+        assert.doesNotMatch(button, /\bdisabled=/);
+    }
+});
+
+test("a save that is pending stays disabled and an unsaved result can be retried", () => {
+    for (const savingAsset of [true, false]) {
+        const html = renderToStaticMarkup(createElement(ResultImageCard, {
+            image: { ...temporaryImage, persisted: true }, index: 0, savingAsset, savedAsset: false,
+            onContinue: () => undefined, onDownload: () => undefined, onSaveAsset: () => undefined,
+        }));
+        const saveButton = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g)?.find((button) => button.includes("入藏卷阁"));
+        assert.ok(saveButton);
+        assert.equal(/\bdisabled=""/.test(saveButton), savingAsset);
+        assert.doesNotMatch(saveButton, /已入藏/);
+    }
+});
