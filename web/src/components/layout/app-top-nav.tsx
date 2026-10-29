@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { navigationSceneNames, primaryNavigationTools, secondaryNavigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { AnnouncementBell } from "@/components/layout/announcement-bell";
 import { UserStatusActions, WorkspaceMenuAction } from "@/components/layout/user-status-actions";
+import { CultivationStatusPill } from "@/features/cultivation/status-pill";
 import { useDeferredMount } from "@/hooks/use-deferred-mount";
 import { lazyRoute } from "@/lib/lazy-route";
 import { preloadRoute } from "@/lib/route-loaders";
@@ -13,7 +14,6 @@ import { Suspense, useState } from "react";
 import { useChatRuntimeStore } from "@/stores/use-chat-runtime-store";
 
 const AgentNavAction = lazyRoute(() => import("@/components/layout/agent-runtime").then(({ AgentNavAction: Component }) => ({ default: Component })));
-const CultivationStatusPill = lazyRoute(() => import("@/features/cultivation/status-pill").then(({ CultivationStatusPill: Component }) => ({ default: Component })));
 const DeferredAppConfigModal = lazyRoute(() => import("@/components/layout/deferred-app-config-modal").then(({ DeferredAppConfigModal: Component }) => ({ default: Component })));
 const MobileNavDrawer = lazyRoute(() => import("@/components/layout/mobile-nav-drawer").then(({ MobileNavDrawer: Component }) => ({ default: Component })));
 const TaskCenter = lazyRoute(() => import("@/components/layout/task-center").then(({ TaskCenter: Component }) => ({ default: Component })));
@@ -171,11 +171,7 @@ export function AppTopNav() {
                             </span>
                             <WorkspaceMenuAction />
                             <span className="app-top-nav-cultivation-slot inline-flex h-8 w-8 shrink-0 items-center justify-center lg:w-36">
-                                {deferredNavReady ? (
-                                    <Suspense fallback={null}>
-                                        <CultivationStatusPill />
-                                    </Suspense>
-                                ) : null}
+                                <CultivationStatusPill />
                             </span>
                             <UserStatusActions showTaskCenter={false} showWorkspaceMenu={false} />
                         </div>

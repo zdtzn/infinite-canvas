@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
 import { lazyRoute } from "@/lib/lazy-route";
+import { useUserStore } from "@/stores/use-user-store";
 
 import { isDouEmperorRealm } from "./imperial-mode";
 import { ImperialSeal } from "./imperial-seal";
@@ -22,26 +23,30 @@ const ImperialIdentity = lazyRoute(() => import("./imperial-identity"));
  */
 export function CultivationStatusPill() {
     const { data } = useCultivationProfile();
+    const user = useUserStore((state) => state.user);
     const [identityOpen, setIdentityOpen] = useState(false);
-    if (!data) return null;
-    const isDouEmperor = isDouEmperorRealm(data.realmId);
-    const label = isDouEmperor ? "斗帝 · 诸天至尊" : cultivationStageLabel(data.realmName, data.stageName);
-    const accentColor = cultivationAccentColor(data.color);
+    if (!data && !user) return null;
+    // The verified session can supply identity while the live profile loads;
+    // balances and entitlements must still come from the profile.
+    const isDouEmperor = isDouEmperorRealm(data?.realmId ?? user?.realmId);
+    const label = isDouEmperor ? "斗帝 · 诸天至尊" : data ? cultivationStageLabel(data.realmName, data.stageName) : "我的修炼";
+    const quota = data ? imageQuotaText(data) : "";
+    const accentColor = cultivationAccentColor(data?.color ?? "#c9a86a");
     const statusClassName = cn(
         "cultivation-status-pill inline-flex size-8 shrink-0 items-center justify-center rounded-md border text-sm font-medium lg:h-8 lg:w-auto lg:min-w-0 lg:gap-2 lg:px-2.5",
         isDouEmperor ? "is-imperial-identity !text-[#e4ca8b] hover:!text-[#f3dfad]" : "!text-stone-700 hover:!text-stone-950 dark:!text-stone-200 dark:hover:!text-white",
     );
     const statusContent = (
         <>
-            {isDouEmperor ? <ImperialSeal className="size-7" decorative /> : <RealmIcon iconKey={data.iconKey} className="size-3.5 shrink-0" />}
+            {isDouEmperor ? <ImperialSeal className="size-7" decorative /> : <RealmIcon iconKey={data?.iconKey ?? "Sparkles"} className="size-3.5 shrink-0" />}
             <span className="cultivation-status-copy hidden max-w-32 truncate lg:block">{label}</span>
-            {!isDouEmperor ? <span className="cultivation-status-copy hidden text-xs text-stone-400 lg:block dark:text-stone-500">{imageQuotaText(data)}</span> : null}
+            {!isDouEmperor && quota ? <span className="cultivation-status-copy hidden text-xs text-stone-400 lg:block dark:text-stone-500">{quota}</span> : null}
         </>
     );
 
     if (!isDouEmperor)
         return (
-            <Link to="/cultivation" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} title={`${label} · ${imageQuotaText(data)}`} aria-label={`打开我的修炼：${label}`}>
+            <Link to="/cultivation" className={statusClassName} style={{ "--cultivation-accent": accentColor } as CSSProperties} title={quota ? `${label} · ${quota}` : label} aria-label={`打开我的修炼：${label}`}>
                 {statusContent}
             </Link>
         );
