@@ -494,7 +494,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         className="absolute inset-x-0 bottom-0 px-2 py-1 text-xs"
                         style={{ background: theme.canvas.background, color: theme.node.activeStroke }}
                         disabled={imageSaveState(data.metadata)?.state === "pending"}
-                        title={imageSaveState(data.metadata)?.error || "图片已生成，正在保存到素材库"}
+                        title={imageSaveState(data.metadata)?.state === "failed" ? "图片已生成，保存未成功，请点击重试保存" : "图片已生成，正在保存到素材库"}
                         onPointerDown={(event) => event.stopPropagation()}
                         onClick={(event) => {
                             event.stopPropagation();

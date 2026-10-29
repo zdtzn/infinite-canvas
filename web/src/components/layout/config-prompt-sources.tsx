@@ -120,7 +120,7 @@ export function ConfigPromptSources() {
         <div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs text-stone-500">
-                    {PUBLIC_MODE ? (user?.admin ? "管理员可新增、编辑和删除共享来源；脚本仅配置你信任的公开数据源。" : "选择你喜欢的来源，开启后可在功法阁查看。") : "开启你喜欢的来源，也可以添加自己的提示词来源。"}
+                    {PUBLIC_MODE ? (user?.admin ? "管理员可新增、编辑和删除共享来源；脚本仅配置你信任的公开数据源。" : "选择你喜欢的来源，开启后可在功法楼查看。") : "开启你喜欢的来源，也可以添加自己的提示词来源。"}
                 </div>
                 {canManageSources ? <Button type="primary" icon={<Plus className="size-4" />} onClick={handleAdd}>新增来源</Button> : null}
             </div>

@@ -13,6 +13,7 @@ import { formatDuration } from "@/lib/image-utils";
 import { preloadRoute } from "@/lib/route-loaders";
 import { cancelServerJob, fetchServerJobs, retryServerJob, type ServerJob } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { modelOptionLabel, useEffectiveConfig } from "@/stores/use-config-store";
 import { taskProgressProps } from "./task-progress";
 import { useVideoTaskStore, videoTaskOwner, videoTasks } from "@/stores/use-video-task-store";
 import { isActiveVideoTask, videoTaskLabel, videoTaskPhase, type VideoGenerationLog } from "@/services/video-task-model";
@@ -299,6 +300,8 @@ function jobStatusLabel(job: ServerJob) {
 }
 
 export function VideoTaskItem({ job, onOpen, onStop, onResume, onDismiss }: { job: VideoGenerationLog; onOpen: () => void; onStop: () => void; onResume: () => void; onDismiss: () => void }) {
+    const config = useEffectiveConfig();
+    const modelLabel = modelOptionLabel(config, job.model || "") || "模型未记录";
     const phase = videoTaskPhase(job);
     const active = isActiveVideoTask(job);
     const resumable = phase === "paused" || phase === "canceled";
@@ -314,9 +317,9 @@ export function VideoTaskItem({ job, onOpen, onStop, onResume, onDismiss }: { jo
             <div className="flex items-start justify-between gap-3">
                 <button type="button" className="min-w-0 flex-1 text-left" onClick={onOpen}>
                     <div className="truncate text-sm font-medium">流光阁 · 视频</div>
-                    <div className="mt-1 truncate text-xs text-stone-500">{job.prompt || job.title}</div>
+                    <div className="mt-1 text-xs text-stone-500">{new Date(job.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })} · 1 段</div>
                     <div className="mt-1 truncate text-xs text-stone-400">
-                        {job.model} · {job.seconds}s · {job.resolution}p
+                        {modelLabel} · {job.seconds}s · {job.resolution}p
                     </div>
                 </button>
                 <Tag className="m-0 shrink-0" color={active ? "processing" : phase === "succeeded" ? "success" : "default"}>
@@ -350,6 +353,11 @@ export function VideoTaskItem({ job, onOpen, onStop, onResume, onDismiss }: { jo
                     </details>
                 </div>
             ) : null}
+            <details className="mt-2 text-xs leading-5 text-stone-500">
+                <summary className="min-h-11 cursor-pointer py-3">提示词与参数</summary>
+                <p className="max-h-32 overflow-y-auto break-words whitespace-pre-wrap">{job.prompt || job.title || "未记录提示词"}</p>
+                <p className="mt-2">{modelLabel} · {job.seconds}s · {job.resolution}p</p>
+            </details>
         </div>
     );
 }

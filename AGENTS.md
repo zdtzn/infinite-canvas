@@ -74,6 +74,7 @@
 - 每次 todo 事项完成后，先从 `docs/content/docs/progress/todo.mdx` 移到 `docs/content/docs/progress/pending-test.mdx`，不要直接写进正式功能说明；用户确认测试通过后再更新 `docs/content/docs/overview/features.mdx`。
 - 每次任务完成前，都要根据实际变更检查并更新 `docs/content/docs/progress/todo.mdx` 和 `docs/content/docs/progress/pending-test.mdx`；如果功能或待办没有变化，也要确认无需修改。
 - 文档不要写过期日期；除非用户明确要求记录具体时间。
+- 用户端版本说明维护在 `web/src/constant/release-notes.ts`，仅描述随当前构建交付的用户可见改进；不要直接渲染开发 `CHANGELOG.md` 或远端分支的未发布内容。
 
 ## 发版本流程
 

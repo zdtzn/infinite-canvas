@@ -1,7 +1,6 @@
 export const APP_VERSION = __APP_VERSION__ || "dev";
 
 export const REPOSITORY_URL = "https://github.com/zdtzn/infinite-canvas";
-export const RAW_REPOSITORY_URL = "https://raw.githubusercontent.com/zdtzn/infinite-canvas/main";
 
 export const DOCS_URL = import.meta.env.VITE_DOC_URL || "/docs";
 

@@ -1296,9 +1296,10 @@ export default function ImagePage() {
                                                             const pending = job.results.filter((result) => result.status === "pending");
                                                             const summary = summarizeImageTasks(job.results);
                                                             const taskModel = job.snapshot?.config.imageModel || job.snapshot?.config.model;
+                                                            const taskModelLabel = taskModel ? modelOptionLabel(effectiveConfig, taskModel) : "模型未记录";
                                                             const submittedAt = new Date(job.startedAt);
                                                             return (
-                                                                <div key={job.id} className={`flex items-center gap-2 rounded-md px-2 ${selected ? "bg-accent" : "hover:bg-accent/50"}`}>
+                                                                <div key={job.id} className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 ${selected ? "bg-accent" : "hover:bg-accent/50"}`}>
                                                                     <button
                                                                         type="button"
                                                                         aria-pressed={selected}
@@ -1309,10 +1310,10 @@ export default function ImagePage() {
                                                                             setTaskPanelOpen(false);
                                                                         }}
                                                                     >
-                                                                        <span className="block truncate text-sm" title={job.prompt}>{job.prompt || "图片生成"}</span>
+                                                                        <span className="block truncate text-sm">图片生成 · {summary.total} 张</span>
                                                                         <span className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                                                                            <time dateTime={submittedAt.toISOString()} title={submittedAt.toLocaleString("zh-CN")} className="shrink-0">{submittedAt.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}</time>
-                                                                            <span className="truncate" title={taskModel}>· {taskModel ? modelOptionLabel(effectiveConfig, taskModel) : "模型未记录"}</span>
+                                                                            <time dateTime={submittedAt.toISOString()} title={submittedAt.toLocaleString("zh-CN")} className="shrink-0">{submittedAt.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</time>
+                                                                            <span className="truncate" title={taskModelLabel}>· {taskModelLabel}</span>
                                                                         </span>
                                                                         <span className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                                                                             {job.status === "running" ? <LoaderCircle className="size-3 animate-spin" /> : null}
@@ -1326,9 +1327,14 @@ export default function ImagePage() {
                                                                         <Button size="small" type="text" disabled={!pending.length || pending.every((result) => result.cancelRequested)} onClick={() => cancelGeneration(undefined, job.id)}>取消</Button>
                                                                     ) : (
                                                                         <Tooltip title="移除任务，保留图片和太古遗迹记录">
-                                                                            <Button size="small" type="text" aria-label={`移除任务：${job.prompt}`} onClick={() => removeGenerationTasks(job.id)}>移除</Button>
+                                                                            <Button size="small" type="text" aria-label={`移除图片任务：${submittedAt.toLocaleString("zh-CN")}，${summary.total} 张`} onClick={() => removeGenerationTasks(job.id)}>移除</Button>
                                                                         </Tooltip>
                                                                     )}
+                                                                    <details className="col-span-2 min-w-0 pb-2 text-xs text-muted-foreground">
+                                                                        <summary className="min-h-11 cursor-pointer py-3">提示词与参数</summary>
+                                                                        <p className="max-h-32 overflow-y-auto break-words whitespace-pre-wrap">{job.prompt || "未记录提示词"}</p>
+                                                                        <p className="mt-2">{taskModelLabel} · {summary.total} 张{job.snapshot ? ` · ${imageSizeLabel(job.snapshot.config.size)}` : ""}</p>
+                                                                    </details>
                                                                 </div>
                                                             );
                                                         })}
@@ -1631,9 +1637,13 @@ function PendingImageCard({ result, onCancel }: { result: GenerationResult; onCa
                 <span role="status">{result.cancelRequested ? "正在取消…" : imageGenerationProgressLabel(result.progress, result.startedAt ? "生成中" : "排队中")}</span>
                 {result.progress?.reconnecting ? <p role="status" className="text-xs">{IMAGE_RECONNECT_NOTICE}</p> : null}
                 {result.cancelError ? (
-                    <p role="alert" className="text-xs text-red-500">
-                        {result.cancelError}
-                    </p>
+                    <details className="w-full min-w-0 text-xs">
+                        <summary className="min-h-11 cursor-pointer py-1">
+                            <span role="alert" className="text-red-500">取消未成功，任务仍在继续，请稍后重试</span>
+                            <span className="ml-1">查看详情</span>
+                        </summary>
+                        <p className="max-h-24 overflow-y-auto break-words whitespace-pre-wrap text-left">{result.cancelError}</p>
+                    </details>
                 ) : null}
                 <Button onClick={onCancel} disabled={result.cancelRequested}>
                     {result.cancelRequested ? "正在取消" : "取消这张"}

@@ -207,7 +207,10 @@ export function AgentToolCard({ title, text, detail, theme }: { title: string; t
     if (kind === "reasoning") return <AgentReasoningSummary text={text} detail={detail} theme={theme} />;
     if (kind === "command") return <AgentCommandSummary text={text} detail={detail} theme={theme} />;
     const state = toolCardState(title, text, detail);
-    const view = userDetail(detail);
+    const failed = ["failed", "error"].includes(String(objectField(detail, "status") || "").toLowerCase()) || state.label === "执行失败";
+    const uncertain = failed && /尚未确认|暂未确认|未能确认|无法确认|结果待确认|可能仍|仍可能/.test(text);
+    const detailView = userDetail(detail);
+    const view = failed ? { ...detailView, status: "failed", output: detailView?.output || text } : detailView;
     const showText = title !== "读取画布" || text !== "已读取当前画布内容";
     return (
         <details className="group min-w-0 rounded-xl border px-3 py-2.5 text-left" style={{ borderColor: theme.node.stroke, background: "transparent", color: theme.node.text }}>
@@ -220,7 +223,8 @@ export function AgentToolCard({ title, text, detail, theme }: { title: string; t
                 </div>
                 {showText ? (
                     <div className={`mt-1 whitespace-pre-wrap break-words pl-6 text-sm leading-5 ${kind === "command" ? "font-mono text-[12px]" : ""}`} style={{ color: state.isError ? state.color : theme.node.muted }}>
-                        {text}
+                        {failed ? uncertain ? "操作结果暂未确认，请先查看任务进度，避免重复提交。" : "这次操作未完成，请查看详情后再试。" : text}
+                        {uncertain && /计费|费用|扣费/.test(text) ? <p>已提交的任务可能仍在处理并产生费用。</p> : null}
                     </div>
                 ) : null}
             </summary>

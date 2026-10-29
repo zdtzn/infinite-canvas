@@ -190,7 +190,7 @@ export function videoResolutionLabel(value: string) {
 }
 
 export function videoModeLabel(mode: string | undefined) {
-    return mode === "frames" ? "首尾帧" : mode === "reference" ? "全能参考" : "默认接口";
+    return mode === "frames" ? "首尾帧" : mode === "reference" ? "全能参考" : "自动";
 }
 
 function VideoModeSetting({ config, onConfigChange, theme }: Pick<VideoSettingsPanelProps, "config" | "onConfigChange" | "theme">) {
@@ -204,7 +204,7 @@ function VideoModeSetting({ config, onConfigChange, theme }: Pick<VideoSettingsP
                 ))}
             </div>
             <p className="text-xs leading-5" style={{ color: theme.node.muted }}>
-                首尾帧按图片顺序指定起止画面；超过两图或添加视频／音频时自动使用全能参考。默认接口保留原有调用格式，具体输入以模型支持为准。
+                自动使用所选模型支持的参考输入；部分模型的自动模式仅支持图片。首尾帧按图片顺序指定起止画面；超过两图或添加视频／音频时自动使用全能参考，素材类型和数量以模型支持为准。
             </p>
         </SettingGroup>
     );

@@ -28,6 +28,7 @@ type ModelGroup = {
 type WebdavDomainProgress = {
     label: string;
     stage: string;
+    error?: string;
     current?: number;
     total?: number;
     status?: "active" | "success" | "exception";
@@ -67,6 +68,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
+    const [webdavSyncError, setWebdavSyncError] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
     const platformImageDefault = useConfigStore((state) => state.platformImageDefault);
@@ -197,13 +199,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     };
 
     const updateWebdavProgress = (event: AppSyncProgressEvent) => {
-        setWebdavSyncStatus(event.stage);
+        const stage = event.status === "exception" ? webdavSyncErrorMessage(event.stage, "这部分内容未能同步，请检查连接后重试") : event.stage;
+        setWebdavSyncStatus(stage);
         if (!event.domain) return;
         setWebdavDomainProgress((current) => ({
             ...current,
             [event.domain as AppSyncDomainKey]: {
                 label: event.label || webdavDomainLabels[event.domain as AppSyncDomainKey],
-                stage: event.stage,
+                stage,
+                error: event.status === "exception" ? event.stage : undefined,
                 current: event.current,
                 total: event.total,
                 status: event.status,
@@ -217,6 +221,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             return;
         }
         setSyncingWebdav(true);
+        setWebdavSyncError("");
         setWebdavDomainProgress(createWebdavDomainProgress());
         setWebdavSyncStatus("准备同步");
         try {
@@ -224,8 +229,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             updateWebdavConfig("lastSyncedAt", result.syncedAt);
             message.success(`同步完成：${result.projects} 个画布，${result.assets} 个资产，${result.imageLogs + result.videoLogs} 条记录，本次上传 ${result.uploadedFiles} 个文件 ${formatBytes(result.uploadedBytes)}`);
         } catch (error) {
-            const feedback = userFacingErrorMessage(error, "同步未完成，请检查连接后再试");
+            const detail = error instanceof Error ? error.message : String(error);
+            const feedback = webdavSyncErrorMessage(detail, "同步未完成，请检查连接后重试");
             setWebdavSyncStatus(feedback);
+            setWebdavSyncError(detail);
             message.error(feedback);
         } finally {
             setSyncingWebdav(false);
@@ -397,7 +404,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         <Form.Item label="WebDAV 地址" className="mb-4">
                                             <Input value={webdav.url} placeholder="https://nas.example.com/webdav" onChange={(event) => updateWebdavConfig("url", event.target.value)} />
                                         </Form.Item>
-                                        <Form.Item label="远程目录" extra={`会在该目录下按 users/账户/业务 保存，每个目录包含 ${WEBDAV_MANIFEST_FILE_NAME} 和 files/；原有未分账户的备份保留不动。`} className="mb-4">
+                                        <Form.Item label="远程目录" extra="当前账户的备份会在这个目录下单独保存。" className="mb-4">
                                             <Input value={webdav.directory} placeholder="infinite-canvas" onChange={(event) => updateWebdavConfig("directory", event.target.value)} />
                                         </Form.Item>
                                         <Form.Item label="用户名" className="mb-0">
@@ -407,6 +414,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                             <Input.Password value={webdav.password} autoComplete="current-password" onChange={(event) => updateWebdavConfig("password", event.target.value)} />
                                         </Form.Item>
                                     </div>
+                                    <details className="mt-2 text-xs text-stone-500">
+                                        <summary className="min-h-11 cursor-pointer py-3">高级说明</summary>
+                                        <p className="break-words">{`内容保存在远程目录的 users/账户/业务 下，每个目录包含 ${WEBDAV_MANIFEST_FILE_NAME} 和 files/；原有未分账户的备份保留不动。`}</p>
+                                    </details>
                                     <div className="mt-4 flex flex-wrap items-center gap-2">
                                         <Button icon={<Wifi className="size-4" />} disabled={!webdavReady || syncingWebdav} loading={testingWebdav} onClick={() => void testWebdav()}>
                                             测试连接
@@ -416,6 +427,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         </Button>
                                         {webdavSyncStatus ? <span className="text-xs text-stone-500">{webdavSyncStatus}</span> : null}
                                     </div>
+                                    {webdavSyncError ? (
+                                        <div className="mt-2 text-xs text-stone-500">
+                                            <p role="alert">部分内容可能已同步，请核对各项结果后重试。</p>
+                                            <details>
+                                                <summary className="min-h-11 cursor-pointer py-3">查看技术详情</summary>
+                                                <p className="whitespace-pre-wrap break-words">{webdavSyncError}</p>
+                                            </details>
+                                        </div>
+                                    ) : null}
                                     {syncingWebdav || webdavSyncStatus ? <WebdavProgressGrid progress={webdavDomainProgress} /> : null}
                                 </section>
                             </Form>
@@ -513,17 +533,33 @@ function WebdavProgressGrid({ progress }: { progress: Record<AppSyncDomainKey, W
                     <div key={key} className="rounded-md border border-stone-200 px-3 py-2 dark:border-stone-800">
                         <div className="mb-1 flex min-w-0 items-center justify-between gap-3 text-xs">
                             <span className="shrink-0 font-medium text-stone-700 dark:text-stone-200">{item.label}</span>
-                            <span className="min-w-0 truncate text-right text-stone-500">
+                            <span className={`min-w-0 text-right text-stone-500 ${item.status === "exception" ? "break-words" : "truncate"}`}>
                                 {item.stage}
                                 {count ? ` · ${count}` : ""}
                             </span>
                         </div>
                         <Progress percent={getWebdavProgressPercent(item)} size="small" status={getWebdavProgressStatus(item)} showInfo={false} />
+                        {item.error ? (
+                            <details className="text-xs text-stone-500">
+                                <summary className="min-h-11 cursor-pointer py-3">查看技术详情</summary>
+                                <p className="whitespace-pre-wrap break-words">{item.error}</p>
+                            </details>
+                        ) : null}
                     </div>
                 );
             })}
         </div>
     );
+}
+
+function webdavSyncErrorMessage(detail: string, fallback: string) {
+    if (/ETag|无法安全合并/i.test(detail)) return "为保护已有备份，已暂停同步，请检查远端服务设置后重试";
+    if (detail.includes("清单已被其他设备更新")) return "远端备份已被其他设备更新，请重新同步";
+    if (detail.includes("账户已切换")) return "账户已切换，请重新开始同步";
+    if (detail.includes("同步清单不是当前应用的数据")) return "远端备份与当前内容不匹配，请检查远程目录后重试";
+    if (detail.includes("认证失败")) return "同步身份验证失败，请检查用户名和密码后重试";
+    if (detail.includes("路径不存在")) return "同步目录无法访问，请检查地址和远程目录后重试";
+    return fallback;
 }
 
 function getWebdavProgressPercent(item: WebdavDomainProgress) {
