@@ -9,7 +9,8 @@ BIND_ADDRESS="${BIND_ADDRESS:-}"
 HOST_PORT="${HOST_PORT:-3000}"
 CONTAINER_PORT="${CONTAINER_PORT:-3000}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
-BACKUP_RETENTION_COUNT="${BACKUP_RETENTION_COUNT:-7}"
+BACKUP_RETENTION_COUNT="${BACKUP_RETENTION_COUNT:-2}"
+BACKUP_MIN_FREE_MB="${BACKUP_MIN_FREE_MB:-4096}"
 PIDS_LIMIT="${PIDS_LIMIT:-256}"
 LOG_MAX_SIZE="${LOG_MAX_SIZE:-10m}"
 LOG_MAX_FILE="${LOG_MAX_FILE:-5}"
@@ -48,13 +49,13 @@ case "$ENV_FILE" in
   /*) ;;
   *) echo "ENV_FILE must be an absolute host path" >&2; exit 1 ;;
 esac
-for numeric_value in "$HEALTH_TIMEOUT_SECONDS" "$BACKUP_RETENTION_COUNT" "$PIDS_LIMIT" "$LOG_MAX_FILE"; do
+for numeric_value in "$HEALTH_TIMEOUT_SECONDS" "$BACKUP_RETENTION_COUNT" "$BACKUP_MIN_FREE_MB" "$PIDS_LIMIT" "$LOG_MAX_FILE"; do
   case "$numeric_value" in
-    ''|*[!0-9]*) echo "Timeout, retention, PID and log limits must be positive integers" >&2; exit 1 ;;
+    ''|*[!0-9]*) echo "Timeout, retention, free-space, PID and log limits must be positive integers" >&2; exit 1 ;;
   esac
 done
-if [ "$HEALTH_TIMEOUT_SECONDS" -lt 1 ] || [ "$BACKUP_RETENTION_COUNT" -lt 1 ] || [ "$PIDS_LIMIT" -lt 32 ] || [ "$LOG_MAX_FILE" -lt 1 ]; then
-  echo "Timeout, retention, PID and log limits are outside the allowed range" >&2
+if [ "$HEALTH_TIMEOUT_SECONDS" -lt 1 ] || [ "$BACKUP_RETENTION_COUNT" -lt 1 ] || [ "$BACKUP_MIN_FREE_MB" -lt 512 ] || [ "$PIDS_LIMIT" -lt 32 ] || [ "$LOG_MAX_FILE" -lt 1 ]; then
+  echo "Timeout, retention, free-space, PID and log limits are outside the allowed range" >&2
   exit 1
 fi
 case "$FORCE_RECREATE" in
@@ -280,9 +281,37 @@ recover_on_failure() {
   fi
   exit "$status"
 }
+# Background archives are large (multi-gigabyte); keep only the newest ones so
+# a deployment cannot fill the disk and strand the volume mid-switch.
+prune_backups() {
+  keep_count="$1"
+  seen_count=0
+  for old_archive in $(ls -1t "$BACKUP_ROOT"/infinite-canvas-*.tar.gz 2>/dev/null || true); do
+    seen_count=$((seen_count + 1))
+    if [ "$seen_count" -gt "$keep_count" ]; then
+      rm -f "$old_archive" "${old_archive}.sha256"
+    fi
+  done
+}
+
+assert_backup_space() {
+  free_kb="$(df -Pk "$BACKUP_ROOT" | awk 'NR == 2 { print $4 }')"
+  required_kb=$((BACKUP_MIN_FREE_MB * 1024))
+  if [ "${free_kb:-0}" -lt "$required_kb" ]; then
+    echo "Not enough free space for a safe backup: ${free_kb:-0}KB available, ${required_kb}KB required. Prune ${BACKUP_ROOT} or run a fast deployment." >&2
+    exit 1
+  fi
+}
+
 mkdir -p "$BACKUP_ROOT"
 assert_no_active_jobs
 assert_live_revision
+# Retire older archives before writing a new one: a full disk breaks the new
+# container's database on startup, which no post-deploy cleanup can repair.
+if [ "$DEPLOY_MODE" = "safe" ]; then
+  prune_backups $((BACKUP_RETENTION_COUNT - 1))
+  assert_backup_space
+fi
 trap recover_on_failure EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -343,13 +372,7 @@ docker rm "$rollback_name" >/dev/null
 rm -f "$health_file"
 
 if [ "$DEPLOY_MODE" = "safe" ]; then
-  count=0
-  for old_archive in $(ls -1t "$BACKUP_ROOT"/infinite-canvas-*.tar.gz 2>/dev/null || true); do
-    count=$((count + 1))
-    if [ "$count" -gt "$BACKUP_RETENTION_COUNT" ]; then
-      rm -f "$old_archive" "${old_archive}.sha256"
-    fi
-  done
+  prune_backups "$BACKUP_RETENTION_COUNT"
 fi
 
 umask 077
