@@ -70,7 +70,7 @@ import {
     resolvePromptOptimizationTarget,
 } from "./lib/prompt-optimizer";
 import { isValidProjectPayload } from "./lib/project-payload";
-import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, sadaiImageBaseUrl } from "./lib/sadai-image";
+import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage26Channel, isSadaiImage2Channel, isSadaiUrlResultChannel, sadaiImageBaseUrl, sadaiUrl26Enabled } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { isUuAsyncUrlChannel, supportsUuAsyncRequest, uuAsyncCapabilityKey, uuTaskPollDelay } from "./lib/uu-image-async";
@@ -305,6 +305,8 @@ let shutdownPromise: Promise<void> | null = null;
 const geminiImageSemaphore = new AsyncSemaphore(GEMINI_IMAGE_CONCURRENCY);
 const uuImageChannelScheduler = new UuImageChannelScheduler();
 const uuAsyncCapabilityRegistry = new UuAsyncCapabilityRegistry();
+const sadaiUrl26Capability = new UuAsyncCapabilityRegistry();
+
 const promptAssetProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
 const promptThumbnailProxySemaphore = new AsyncSemaphore(PROMPT_THUMBNAIL_PROXY_CONCURRENCY);
 const promptOptimizeSemaphore = new AsyncSemaphore(PROMPT_OPTIMIZE_CONCURRENCY);
@@ -3368,7 +3370,7 @@ async function performJobImageRecovery(jobId: string): Promise<ImageRecoveryResu
     if (!hasServerRecoverableDeferredImages(job.result.images)) {
         return { recovered: 0, remaining: remainingBeforeRecovery, lastError: "等待浏览器完成结果归档" };
     }
-    const useSadaiUrlResult = job.input.apiFormat === "openai" && isSadaiImage25Channel(resolvePlatformChannel(state, job.input.channelId)?.baseUrl || "", job.input.model);
+    const useSadaiUrlResult = job.input.apiFormat === "openai" && (isSadaiImage25Channel(resolvePlatformChannel(state, job.input.channelId)?.baseUrl || "", job.input.model) || sadaiUrl26Enabled(job.input.apiFormat, sadaiUrl26Capability, job.input.channelId, resolvePlatformChannel(state, job.input.channelId)?.baseUrl || "", job.input.model));
     let lastError = "";
     const outcome = await recoverDeferredImageResults(job.result.images, async (image) => {
         const url = assertAllowedUpstreamUrl(image.dataUrl);
@@ -3522,7 +3524,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         imageJobPhases.set(job.id, "persisting");
         const images: ImageJobImage[] = [];
         const uuDimensions = useUuAsync && isUuAsyncGptImage2Channel(channel.baseUrl, input.model) ? resolveUuAsyncImageSize(input.size, input.quality) : undefined;
-        const useSadaiUrlResult = input.apiFormat === "openai" && isSadaiImage25Channel(channel.baseUrl, input.model);
+        const useSadaiUrlResult = input.apiFormat === "openai" && (isSadaiImage25Channel(channel.baseUrl, input.model) || sadaiUrl26Enabled(input.apiFormat, sadaiUrl26Capability, input.channelId, channel.baseUrl, input.model));
         for (const raw of rawImages) {
             if (signal.aborted || job.status === "canceled") throw abortError(signal);
             const durationMs = Date.now() - startedAt;
@@ -3638,13 +3640,14 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
     const imageBaseUrl = sadaiImageBaseUrl(dragonImageBaseUrl(channel.baseUrl, input.model), input.model);
     const size = resolveOpenAiImageSize(input.size, input.quality, input.model, channel.baseUrl);
     const prompt = dragonPromptWithSize(input.prompt, input.size, size, input.model, channel.baseUrl);
+    const sadaiUrl26 = sadaiUrl26Enabled("openai", sadaiUrl26Capability, input.channelId, channel.baseUrl, input.model);
     const requestOptions = buildOpenAiImageRequestOptions({
         count: input.count,
         quality: input.imageQuality,
         outputFormat: input.imageOutputFormat,
         size,
         background: input.background,
-        responseFormat: isDragonGptImageModel(channel.baseUrl, input.model) ? null : isUuAsyncUrlChannel(channel.baseUrl, input.model) || isSadaiImage25Channel(channel.baseUrl, input.model) ? "url" : undefined,
+        responseFormat: isDragonGptImageModel(channel.baseUrl, input.model) ? null : isUuAsyncUrlChannel(channel.baseUrl, input.model) || isSadaiImage25Channel(channel.baseUrl, input.model) || sadaiUrl26 ? "url" : undefined,
     });
     if (isDragonChatImageModel(channel.baseUrl, input.model)) {
         const outputs = await Promise.all(
@@ -3762,6 +3765,15 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         stage = "completed";
         outcome = "succeeded";
         return images;
+    } catch (error) {
+        // 2.6 的链接模式若被上游以参数/模型类错误拒绝（尚未开始生成、不产生扣费），
+        // 记住该组合并自动回退 base64 重发一次，避免整次任务失败。
+        if (sadaiUrl26 && responseStatus !== null && [400, 404, 422].includes(responseStatus)) {
+            sadaiUrl26Capability.disable(`sadai:${input.channelId}:${input.model.trim().toLowerCase()}`);
+            console.info(JSON.stringify({ event: "sadai_url_fallback", jobId: upstreamRequestId, channelId: input.channelId, model: input.model, status: responseStatus }));
+            return await generateOpenAiImages(channel, apiKey, input, signal, upstreamRequestId);
+        }
+        throw error;
     } finally {
         const finishedAt = Date.now();
         console.info(JSON.stringify({ event: "image_upstream_timing", jobId: upstreamRequestId, channelId: input.channelId, model: input.model,

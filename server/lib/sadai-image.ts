@@ -55,6 +55,44 @@ export function isSadaiImage2Channel(baseUrl: string, model: string) {
     }
 }
 
+/** SADAI 托管的渠道（标准域名或专用图片域名）。 */
+function isSadaiHostedChannel(baseUrl: string) {
+    try {
+        const { origin, hostname } = new URL(baseUrl);
+        return SADAI_STANDARD_API_ORIGINS.has(origin) || hostname.toLowerCase() === SADAI_IMAGE_API_HOST;
+    } catch {
+        return false;
+    }
+}
+
+export function isSadaiImage26Channel(baseUrl: string, model: string) {
+    return model.trim().toLowerCase() === "gpt-image-2.6-flare" && isSadaiHostedChannel(baseUrl);
+}
+
+/**
+ * 2.6 的链接模式开关：渠道与模型匹配、且能力注册表未禁用（上游拒绝过则回退 base64）。
+ * 与 2.5 的区别仅在后者无条件启用；参数校验失败时的自动降级由调用方负责。
+ */
+export function sadaiUrl26Enabled(
+    apiFormat: string,
+    capability: { canSubmit(key: string): boolean },
+    channelId: string,
+    baseUrl: string,
+    model: string,
+) {
+    return apiFormat === "openai" && isSadaiImage26Channel(baseUrl, model) &&
+        capability.canSubmit(`sadai:${channelId}:${model.trim().toLowerCase()}`);
+}
+
+/**
+ * 应当以图片链接（而非内嵌 base64）接收结果的 SADAI 渠道模型组合。
+ * 2.5 无条件启用；2.6 是否启用由调用方的能力注册表决定（上游拒绝时自动回退 base64）。
+ */
+export function isSadaiUrlResultChannel(baseUrl: string, model: string) {
+    if (SADAI_IMAGE_25_MODELS.has(model.trim().toLowerCase())) return isSadaiImage25Channel(baseUrl, model);
+    return isSadaiImage26Channel(baseUrl, model);
+}
+
 export function buildSadaiImageRequestOptions({ count, size, outputResolution, generationQuality, references }: SadaiImageRequestOptionsInput) {
     const aspectRatio = resolveSadaiAspectRatio(size);
     const resolution = SADAI_RESOLUTION_MAP[String(outputResolution || "").trim().toLowerCase()];

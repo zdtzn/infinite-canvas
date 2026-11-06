@@ -36,6 +36,10 @@ export class UuAsyncCapabilityRegistry {
         return !this.disabledChannels.has(this.channelKey(channelId));
     }
 
+    disable(channelId: string) {
+        this.disabledChannels.add(this.channelKey(channelId));
+    }
+
     async runWithFallback<T>(channelId: string, asyncOperation: () => Promise<T>, syncOperation: () => Promise<T>) {
         const key = this.channelKey(channelId);
         if (this.disabledChannels.has(key)) return syncOperation();
