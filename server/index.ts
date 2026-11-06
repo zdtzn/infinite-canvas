@@ -3967,7 +3967,15 @@ async function persistJobImage(
         if (!isAllowedImageMimeType(mimeType)) mimeType = detectImageMimeFromBytes(bytes);
     }
     const detectedMimeType = detectImageMimeFromBytes(bytes);
-    if (!isAllowedImageMimeType(detectedMimeType) || bytes.byteLength > MAX_UPSTREAM_IMAGE_BYTES) throw new Error("上游返回的图片格式或大小不受支持");
+    if (!isAllowedImageMimeType(detectedMimeType) || bytes.byteLength > MAX_UPSTREAM_IMAGE_BYTES) {
+        // 记录被拒载荷的特征，便于区分"上游返回错误页"与"输出了未支持格式（如动图）"。
+        console.info(JSON.stringify({
+            event: "image_payload_rejected", jobId, contentType: mimeType || null,
+            detectedMimeType: detectedMimeType || null, bytes: bytes.byteLength,
+            head: Buffer.from(bytes.slice(0, 24)).toString("hex"),
+        }));
+        throw new Error("上游返回的图片格式或大小不受支持");
+    }
     return persistJobImageBytes(userId, jobId, bytes, detectedMimeType, durationMs, signal);
 }
 
