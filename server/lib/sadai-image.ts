@@ -55,6 +55,25 @@ export function isSadaiImage2Channel(baseUrl: string, model: string) {
     }
 }
 
+// 2.6 与 2.5 同一套图生图接口：要图片链接而不是内嵌 base64，避免慢速正文传输把同步请求拖到超时。
+const SADAI_IMAGE_URL_RESULT_MODELS = new Set(["gpt-image-2.6-flare"]);
+
+/** SADAI 托管的渠道（标准域名或专用图片域名）。 */
+function isSadaiHostedChannel(baseUrl: string) {
+    try {
+        const { origin, hostname } = new URL(baseUrl);
+        return SADAI_STANDARD_API_ORIGINS.has(origin) || hostname.toLowerCase() === SADAI_IMAGE_API_HOST;
+    } catch {
+        return false;
+    }
+}
+
+export function isSadaiUrlResultChannel(baseUrl: string, model: string) {
+    const name = model.trim().toLowerCase();
+    if (SADAI_IMAGE_25_MODELS.has(name)) return isSadaiImage25Channel(baseUrl, name);
+    return SADAI_IMAGE_URL_RESULT_MODELS.has(name) && isSadaiHostedChannel(baseUrl);
+}
+
 export function buildSadaiImageRequestOptions({ count, size, outputResolution, generationQuality, references }: SadaiImageRequestOptionsInput) {
     const aspectRatio = resolveSadaiAspectRatio(size);
     const resolution = SADAI_RESOLUTION_MAP[String(outputResolution || "").trim().toLowerCase()];
