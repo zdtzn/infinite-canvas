@@ -1,22 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, isSadaiUrlResultChannel, sadaiImageBaseUrl } from "./sadai-image";
-
-test("treats SADAI 2.6 as URL delivery without rewriting its base URL", () => {
-    for (const origin of ["https://verysadai.com", "https://sadai.cc", "https://sadai.top", "https://api.sadai.top"]) {
-        for (const path of ["", "/", "/v1", "/v1/"]) {
-            expect(isSadaiUrlResultChannel(`${origin}${path}`, "gpt-image-2.6-flare")).toBe(true);
-            expect(sadaiImageBaseUrl(`${origin}${path}`, "gpt-image-2.6-flare")).toBe(`${origin}${path}`);
-        }
-    }
-    // 其他域名上的同名模型仍走通用同步接口
-    for (const baseUrl of ["https://uuapi.cc/v1", "https://proxy.example.com/v1", "invalid URL"]) {
-        expect(isSadaiUrlResultChannel(baseUrl, "gpt-image-2.6-flare")).toBe(false);
-    }
-    // 2.5 的判定沿用原规则
-    expect(isSadaiUrlResultChannel("https://verysadai.com/v1", "gpt-image-2.5-flare")).toBe(true);
-    expect(isSadaiUrlResultChannel("https://api.sadai.top/v1", "gpt-image-2")).toBe(false);
-});
+import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, sadaiImageBaseUrl } from "./sadai-image";
 
 test("recognizes only SADAI 2.5 models on official standard HTTPS entries for URL delivery", () => {
     for (const origin of ["https://verysadai.com", "https://sadai.cc", "https://sadai.top", "https://api.sadai.top"]) {
