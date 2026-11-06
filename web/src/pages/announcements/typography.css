@@ -11,12 +11,13 @@
 }
 .announcement-content {
     color: var(--announcement-body-color, #382d4d);
-    font-family: var(--announcement-body-font, "Songti SC", "SimSun", serif);
+    font-family: var(--announcement-body-font, Georgia, "Songti SC", "SimSun", serif);
     font-size: var(--announcement-body-size, 18px);
-    font-weight: var(--announcement-body-weight, 600);
-    line-height: var(--announcement-body-height, 2);
+    font-weight: var(--announcement-body-weight, 400);
+    line-height: var(--announcement-body-height, 1.8);
     letter-spacing: var(--announcement-body-spacing, 0.06em);
-    white-space: pre-wrap;
+    /* pre-line：作者输入的连续空行折叠为单一分段间隔，正文长度不再随空行数量膨胀 */
+    white-space: pre-line;
     overflow-wrap: anywhere;
 }
 @media (max-width: 600px) {
