@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { buildOpenAiImageRequestOptions, imageResponseItemValue, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./image-request";
 import { dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel } from "./dragon-image";
-import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, isSadaiUrlResultChannel, sadaiImageBaseUrl } from "./sadai-image";
+import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, sadaiImageBaseUrl } from "./sadai-image";
 import { isUuImage25Channel } from "./uu-image-async";
 import { assertAllowedUpstreamUrl, buildUpstreamUrl } from "./url-policy";
 import { createDeferredImageResult, hasDeferredImageResults, isRecoverableImageDownloadError, recoverDeferredImageResults } from "./image-result-recovery";
@@ -49,7 +49,7 @@ function harness(upstream: (setTime: (time: number) => void) => Promise<Response
         MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES: limit,
         buildOpenAiImageRequestOptions, imageResponseItemValue, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration,
         dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel,
-        buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, isSadaiUrlResultChannel, sadaiImageBaseUrl, isUuImage25Channel, buildUpstreamUrl,
+        buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, sadaiImageBaseUrl, isUuImage25Channel, buildUpstreamUrl,
         readUpstreamErrorMessage, readUpstreamNonJsonError,
         upstreamFetch: async (url: string, init: RequestInit, retryable: boolean) => {
             requests.push({ url, init, retryable });
@@ -166,7 +166,7 @@ function deliveryHarness(raw: string, persist: (raw: string) => Promise<unknown>
         materializeImageInput: async () => input,
         generateOpenAiImages: async () => { calls.generate++; return [raw]; },
         imageJobPhases: new Map(), isRelayEligibleResultUrl: () => false,
-        createDeferredImageResult, hasDeferredImageResults, assertAllowedUpstreamUrl, isRecoverableImageDownloadError, isSadaiImage25Channel, isSadaiUrlResultChannel,
+        createDeferredImageResult, hasDeferredImageResults, assertAllowedUpstreamUrl, isRecoverableImageDownloadError, isSadaiImage25Channel,
         randomUUID: () => "fixture-image", RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS: 8_000,
         persistJobImage: async (_user: string, _job: string, value: string) => { calls.persist++; return persist(value); },
         cleanupJobOutputFilesFor: () => {},
@@ -226,7 +226,7 @@ function recoveryHarness(baseUrl: string | null = "https://api.sadai.top/v1", mo
     const downloads: Array<{ url: string; options: { downloadTimeoutMs: number; downloadAttempts: number } }> = [];
     const calls = { touch: 0, generate: 0, settle: 0, refund: 0 };
     const context = {
-        AbortController, Error, assertAllowedUpstreamUrl, hasDeferredImageResults, recoverDeferredImageResults, resolvePlatformChannel, isSadaiImage25Channel, isSadaiUrlResultChannel, isRelayEligibleResultUrl,
+        AbortController, Error, assertAllowedUpstreamUrl, hasDeferredImageResults, recoverDeferredImageResults, resolvePlatformChannel, isSadaiImage25Channel, isRelayEligibleResultUrl,
         state: { auth: { adminUserId: "fixture-admin" }, channels: baseUrl ? { "fixture-admin:fixture-channel": { baseUrl } } : {} },
         RESULT_IMAGE_RELAY_CONFIG: options.relay ? {} : undefined, RESULT_IMAGE_RELAY_SERVER_DOWNLOAD: true,
         RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS: 8_000, RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS: 30_000,
