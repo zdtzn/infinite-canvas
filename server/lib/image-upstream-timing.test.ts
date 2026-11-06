@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { buildOpenAiImageRequestOptions, imageResponseItemValue, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./image-request";
 import { dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel } from "./dragon-image";
 import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, sadaiImageBaseUrl } from "./sadai-image";
-import { isUuImage25Channel } from "./uu-image-async";
+import { isUuAsyncUrlChannel } from "./uu-image-async";
 import { assertAllowedUpstreamUrl, buildUpstreamUrl } from "./url-policy";
 import { createDeferredImageResult, hasDeferredImageResults, isRecoverableImageDownloadError, recoverDeferredImageResults } from "./image-result-recovery";
 import { resolvePlatformChannel } from "./platform-channels";
@@ -49,7 +49,7 @@ function harness(upstream: (setTime: (time: number) => void) => Promise<Response
         MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES: limit,
         buildOpenAiImageRequestOptions, imageResponseItemValue, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration,
         dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel,
-        buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, sadaiImageBaseUrl, isUuImage25Channel, buildUpstreamUrl,
+        buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, sadaiImageBaseUrl, isUuAsyncUrlChannel, buildUpstreamUrl,
         readUpstreamErrorMessage, readUpstreamNonJsonError,
         upstreamFetch: async (url: string, init: RequestInit, retryable: boolean) => {
             requests.push({ url, init, retryable });

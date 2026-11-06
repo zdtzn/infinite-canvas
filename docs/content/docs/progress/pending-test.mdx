@@ -5,6 +5,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- 2.6 异步生图：`gpt-image-2.6-flare` 在 uuapi 渠道（uuapi.cc/uuapi.net）改为与 2.5 相同的异步任务链路——提交 `/images/{generations,edits}/async`（`response_format: "url"`）→ 轮询任务 → 拿图片链接先展示、后台归档，不再同步等待 base64 正文（此前 4.8MB 需约 5 分钟、16KB/s）。带参考图（≤16 张）与蒙版规则沿用 2.5。若上游返回"异步未启用/404"，能力注册表会记住该渠道并自动降级回同步，行为与之前一致。请在丹青台用该模型生成一张带参考图的 2:3，确认总耗时降到 1~2 分钟内、图片能展示并正常归档进藏卷阁；同时观察 `image_job_timing` 的 `mode` 是否变为 `async`。
+
 - 部署备份保留策略：`ops/deploy-pinned.sh` 的 `BACKUP_RETENTION_COUNT` 默认值由 7 改为 2，并在写入新备份**之前**先裁剪到 `保留数-1` 份、再校验 `BACKUP_MIN_FREE_MB`（默认 4096）以上可用空间，不足则直接失败退出、不动容器。非 `infinite-canvas-*.tar.gz` 命名的文件（如 `before-legacy-removal-*.tar.gz`）不会被清理。验证方式：safe 部署一次，确认 `/root/infinite-canvas-backups` 只剩最新 2 份、`last-deployment.txt` 正常更新、容器健康；再手动把 `BACKUP_MIN_FREE_MB` 调大跑一次，应看到空间不足报错且线上容器不受影响。
 
 - 顶部身份首屏显示：身份徽章不再等待导航的延迟挂载和额外组件下载；完整资料未返回时，使用本次登录已确认的境界展示斗帝身份，普通账号先显示“我的修炼”入口，不提前填充余额或额度。资料返回后以最新资料为准，原帝印、头像、配色、境界及计费规则保持原样。请确认刷新、弱网、手机及切换账号时的显示速度与身份一致性。

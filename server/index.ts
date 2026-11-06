@@ -73,7 +73,7 @@ import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage2Channel, sadaiImageBaseUrl } from "./lib/sadai-image";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
-import { isUuImage25Channel, supportsUuAsyncRequest, uuAsyncCapabilityKey, uuTaskPollDelay } from "./lib/uu-image-async";
+import { isUuAsyncUrlChannel, supportsUuAsyncRequest, uuAsyncCapabilityKey, uuTaskPollDelay } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -3514,7 +3514,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
             input.apiFormat === "gemini"
                 ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
                 : useUuAsync
-                  ? isUuImage25Channel(channel.baseUrl, input.model)
+                  ? isUuAsyncUrlChannel(channel.baseUrl, input.model)
                       ? await generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId)
                       : await uuImageChannelScheduler.run(input.channelId, signal, () => generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId))
                   : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
@@ -3644,7 +3644,7 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
         outputFormat: input.imageOutputFormat,
         size,
         background: input.background,
-        responseFormat: isDragonGptImageModel(channel.baseUrl, input.model) ? null : isUuImage25Channel(channel.baseUrl, input.model) || isSadaiImage25Channel(channel.baseUrl, input.model) ? "url" : undefined,
+        responseFormat: isDragonGptImageModel(channel.baseUrl, input.model) ? null : isUuAsyncUrlChannel(channel.baseUrl, input.model) || isSadaiImage25Channel(channel.baseUrl, input.model) ? "url" : undefined,
     });
     if (isDragonChatImageModel(channel.baseUrl, input.model)) {
         const outputs = await Promise.all(

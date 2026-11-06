@@ -1,4 +1,4 @@
-import { buildOpenAiImageRequestOptions, isGptImage25Model, normalizeImageResponseValue, resolveOpenAiImageSize } from "./image-request";
+import { buildOpenAiImageRequestOptions, normalizeImageResponseValue, resolveOpenAiImageSize } from "./image-request";
 import { imageEditReferenceField } from "./image-provider-protocol";
 import { AsyncSemaphore } from "./async-semaphore";
 import type { ImageJobInput } from "../types";
@@ -80,20 +80,27 @@ export function isUuAsyncGptImage2Channel(baseUrl: string, model: string) {
 }
 
 export function isUuImageAsyncChannel(baseUrl: string, model: string, referenceCount: number, hasMask: boolean) {
-    if (isUuImage25Channel(baseUrl, model)) return referenceCount <= 16 && (!hasMask || referenceCount > 0);
+    if (isUuAsyncUrlChannel(baseUrl, model)) return referenceCount <= 16 && (!hasMask || referenceCount > 0);
     return isUuAsyncGptImage2Channel(baseUrl, model) && referenceCount <= 1 && !hasMask;
 }
 
-export function isUuImage25Channel(baseUrl: string, model: string) {
-    return isGptImage25Model(model) && isUuAsyncGptImage2Channel(baseUrl, "gpt-image-2");
+// 这些模型走 uu 的异步任务接口并以图片链接返回结果：同类网关的 base64 内嵌响应回传只有十几 KB/s，会拖垮整次生成。
+const UU_ASYNC_URL_RESULT_MODELS = new Set(["gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.6-flare"]);
+
+export function isUuAsyncUrlResultModel(model: string) {
+    return UU_ASYNC_URL_RESULT_MODELS.has(model.toLowerCase().split("::").at(-1)?.trim() || "");
+}
+
+export function isUuAsyncUrlChannel(baseUrl: string, model: string) {
+    return isUuAsyncUrlResultModel(model) && isUuAsyncGptImage2Channel(baseUrl, "gpt-image-2");
 }
 
 export function uuAsyncCapabilityKey(channelId: string, model: string) {
-    return isGptImage25Model(model) ? `${channelId}:${model.trim().toLowerCase()}` : channelId;
+    return isUuAsyncUrlResultModel(model) ? `${channelId}:${model.trim().toLowerCase()}` : channelId;
 }
 
 export function supportsUuAsyncRequest(baseUrl: string, input: Pick<ImageJobInput, "model" | "references" | "mask" | "count">) {
-    return (input.count === 1 || isUuImage25Channel(baseUrl, input.model)) &&
+    return (input.count === 1 || isUuAsyncUrlChannel(baseUrl, input.model)) &&
         isUuImageAsyncChannel(baseUrl, input.model, input.references.length, Boolean(input.mask));
 }
 
@@ -140,7 +147,7 @@ export function buildUuAsyncImageSubmission({
     mask?: Blob;
     count?: number;
 }) {
-    if (isGptImage25Model(model)) {
+    if (isUuAsyncUrlResultModel(model)) {
         const options = buildOpenAiImageRequestOptions({ count, quality: generationQuality, outputFormat, background,
             size: resolveOpenAiImageSize(size || "1:1", resolution, model), responseFormat: "url" });
         if (mask && !references.length) throw new Error("蒙版编辑需要参考图");
