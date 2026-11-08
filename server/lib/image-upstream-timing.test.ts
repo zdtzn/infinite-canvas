@@ -166,6 +166,7 @@ function deliveryHarness(raw: string, persist: (raw: string) => Promise<unknown>
         hasUuAsyncTask: () => false, uuAsyncCapabilityRegistry: { canSubmit: () => false }, uuAsyncCapabilityKey: () => "fixture",
         materializeImageInput: async () => input,
         generateOpenAiImages: async () => { calls.generate++; return [raw]; },
+        generateSadaiAsyncImages: async () => { throw new Error("not expected in fixture"); },
         imageJobPhases: new Map(), isRelayEligibleResultUrl: () => false,
         createDeferredImageResult, hasDeferredImageResults, assertAllowedUpstreamUrl, isRecoverableImageDownloadError, isSadaiImage25Channel, isSadaiImage26Channel,
         sadaiUrl26Capability: { canSubmit: () => false, disable: () => undefined }, sadaiUrl26Enabled,

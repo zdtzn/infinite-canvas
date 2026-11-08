@@ -5,6 +5,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- SADAI 2.6 异步任务链路：渠道 2 文生图（无参考图、无蒙版）改走 `POST {api.sadai.top}/v1/images/tasks` 提交 → 轮询 `GET /v1/images/tasks/{id}`（2.5 秒间隔、上限 15 分钟，状态 QUEUED→IN_PROGRESS→SUCCESS 大写）→ `response.data[].url` 图片链接先展示、后台归档。探测确认端点存在（空 body 503 busy、GET 405），实测提交→SUCCESS 全程约 30 秒，结果链接有效期约 30 天。带参考图/蒙版仍走同步链接模式。提交遇 404（网关无此能力）时自动禁用并回退同步。验证方式：渠道 2 文生图一张，`image_job_timing` 的 `mode` 应为 `async`、总耗时应稳定在 1 分钟内；若日志出现 `sadai_async_unavailable` 则说明该网关移除了任务端点，属预期回退。
+
 - 2.6 在 SADAI 渠道的链接模式：`gpt-image-2.6-flare` 在 verysadai.com 等 SADAI 托管渠道上改走 `api.sadai.top/v1` 专用端点并请求 `response_format: "url"`，拿到链接先展示、后台归档（归档超时 180 秒），与 2.5 同待遇。若上游以 400/404/422 拒绝（未生成、不扣费），自动禁用该渠道+模型的链接模式并回退 base64 重发同一任务，日志出现 `sadai_url_fallback` 事件；此后该组合直接走 base64。验证方式：在渠道 2 上用 2.6 生成一张，成功则观察 `image_job_timing` 总耗时应明显低于此前的 5-10 分钟；若日志出现 `sadai_url_fallback` 且任务仍成功，说明上游暂不支持，属预期降级。
 
 - 2.6 异步生图：`gpt-image-2.6-flare` 在 uuapi 渠道（uuapi.cc/uuapi.net）改为与 2.5 相同的异步任务链路——提交 `/images/{generations,edits}/async`（`response_format: "url"`）→ 轮询任务 → 拿图片链接先展示、后台归档，不再同步等待 base64 正文（此前 4.8MB 需约 5 分钟、16KB/s）。带参考图（≤16 张）与蒙版规则沿用 2.5。若上游返回"异步未启用/404"，能力注册表会记住该渠道并自动降级回同步，行为与之前一致。请在丹青台用该模型生成一张带参考图的 2:3，确认总耗时降到 1~2 分钟内、图片能展示并正常归档进藏卷阁；同时观察 `image_job_timing` 的 `mode` 是否变为 `async`。

@@ -71,6 +71,7 @@ import {
 } from "./lib/prompt-optimizer";
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage26Channel, isSadaiImage2Channel, isSadaiUrlResultChannel, sadaiImageBaseUrl, sadaiUrl26Enabled } from "./lib/sadai-image";
+import { submitSadaiAsyncTask, waitForSadaiAsyncTask } from "./lib/sadai-async";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { isUuAsyncUrlChannel, supportsUuAsyncRequest, uuAsyncCapabilityKey, uuTaskPollDelay } from "./lib/uu-image-async";
@@ -3503,6 +3504,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
     const startedAt = Date.now();
     let upstreamFinishedAt: number | undefined;
     let outcome: ImagePerformanceOutcome = "failed";
+    let useSadaiAsync = false;
     const upstreamRequestId = input.retryOf || job.id;
     try {
         const channel = platformChannel(input.channelId);
@@ -3512,6 +3514,12 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
             (hasUuAsyncTask(input) ||
                 (uuAsyncCapabilityRegistry.canSubmit(uuAsyncCapabilityKey(input.channelId, input.model)) &&
                     supportsUuAsyncRequest(channel.baseUrl, input)));
+        useSadaiAsync =
+            input.apiFormat === "openai" &&
+            !input.mask &&
+            !input.references.length &&
+            isSadaiImage26Channel(channel.baseUrl, input.model) &&
+            sadaiUrl26Capability.canSubmit(`sadai:${input.channelId}:${input.model.trim().toLowerCase()}`);
         const rawImages =
             input.apiFormat === "gemini"
                 ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
@@ -3519,7 +3527,9 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                   ? isUuAsyncUrlChannel(channel.baseUrl, input.model)
                       ? await generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId)
                       : await uuImageChannelScheduler.run(input.channelId, signal, () => generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId))
-                  : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
+                  : useSadaiAsync
+                    ? await generateSadaiAsyncImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
+                    : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
         upstreamFinishedAt = Date.now();
         imageJobPhases.set(job.id, "persisting");
         const images: ImageJobImage[] = [];
@@ -3602,7 +3612,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         if (upstreamFinishedAt !== undefined) performanceMetrics.recordImage("image_job_persistence", outcome, timing.persistenceMs);
         performanceMetrics.recordImage("image_job_total", outcome, timing.totalMs);
         console.info(JSON.stringify({ event: "image_job_timing", jobId: job.id, channelId: input.channelId, model: input.model,
-            mode: hasUuAsyncTask(input) ? "async" : "sync", outcome, ...timing }));
+            mode: hasUuAsyncTask(input) || useSadaiAsync ? "async" : "sync", outcome, ...timing }));
     }
 }
 
@@ -3628,6 +3638,33 @@ type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & {
     references: string[];
     mask?: string;
 };
+
+async function generateSadaiAsyncImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal, upstreamRequestId: string) {
+    const imageBaseUrl = sadaiImageBaseUrl(dragonImageBaseUrl(channel.baseUrl, input.model), input.model);
+    const size = resolveOpenAiImageSize(input.size, input.quality, input.model, channel.baseUrl);
+    const capabilityKey = `sadai:${input.channelId}:${input.model.trim().toLowerCase()}`;
+    try {
+        const taskId = await submitSadaiAsyncTask(imageBaseUrl, apiKey, {
+            model: input.model,
+            prompt: dragonPromptWithSize(input.prompt, input.size, size, input.model, channel.baseUrl),
+            n: input.count,
+            size,
+            ...(input.imageQuality ? { quality: input.imageQuality } : {}),
+            ...(input.background ? { background: input.background } : {}),
+            ...(input.imageOutputFormat ? { output_format: input.imageOutputFormat } : {}),
+        }, signal);
+        const result = await waitForSadaiAsyncTask(imageBaseUrl, apiKey, taskId, signal);
+        return result.urls;
+    } catch (error) {
+        // 端点不存在（404）说明该网关未部署异步任务能力：记住并回退同步链接/base64 模式。
+        if (String((error as Error).message).includes("HTTP 404")) {
+            sadaiUrl26Capability.disable(capabilityKey);
+            console.info(JSON.stringify({ event: "sadai_async_unavailable", channelId: input.channelId, model: input.model }));
+            return generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
+        }
+        throw error;
+    }
+}
 
 async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal, upstreamRequestId: string) {
     const requestStartedAt = Date.now();
