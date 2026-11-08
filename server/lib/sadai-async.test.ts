@@ -6,12 +6,12 @@ const okResponse = (body: unknown, status = 200) => new Response(JSON.stringify(
 
 test("submits a SADAI async task and returns the task id", async () => {
     const bodies: unknown[] = [];
-    const result = await submitSadaiAsyncTask(base, "key", { model: "gpt-image-2.6-flare", prompt: "cat" }, new AbortController().signal, async (_url, init) => {
+    const result = await submitSadaiAsyncTask(base, "key", { model: "gpt-image-2.6-flare", prompt: "cat", images: ["data:image/png;base64,AAAA"] }, new AbortController().signal, async (_url, init) => {
         bodies.push(JSON.parse(String(init?.body)));
         return okResponse({ id: "task_abc", status: "QUEUED" });
     });
     expect(result).toBe("task_abc");
-    expect(bodies[0]).toMatchObject({ model: "gpt-image-2.6-flare" });
+    expect(bodies[0]).toMatchObject({ model: "gpt-image-2.6-flare", images: ["data:image/png;base64,AAAA"] });
 });
 
 test("surfaces submit errors from the gateway message", async () => {

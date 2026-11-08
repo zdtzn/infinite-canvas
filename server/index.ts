@@ -3517,7 +3517,6 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         useSadaiAsync =
             input.apiFormat === "openai" &&
             !input.mask &&
-            !input.references.length &&
             isSadaiImage26Channel(channel.baseUrl, input.model) &&
             sadaiUrl26Capability.canSubmit(`sadai:${input.channelId}:${input.model.trim().toLowerCase()}`);
         const rawImages =
@@ -3652,6 +3651,8 @@ async function generateSadaiAsyncImages(channel: ChannelRecord, apiKey: string, 
             ...(input.imageQuality ? { quality: input.imageQuality } : {}),
             ...(input.background ? { background: input.background } : {}),
             ...(input.imageOutputFormat ? { output_format: input.imageOutputFormat } : {}),
+            // 参考图走 JSON images 数组（base64 dataUrl），与 SADAI Image2 同步接口同款字段
+            ...(input.references.length ? { images: input.references } : {}),
         }, signal);
         const result = await waitForSadaiAsyncTask(imageBaseUrl, apiKey, taskId, signal);
         return result.urls;
