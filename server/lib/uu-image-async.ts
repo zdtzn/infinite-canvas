@@ -89,7 +89,7 @@ export function isUuImageAsyncChannel(baseUrl: string, model: string, referenceC
 }
 
 // 这些模型走 uu 的异步任务接口并以图片链接返回结果：同类网关的 base64 内嵌响应回传只有十几 KB/s，会拖垮整次生成。
-const UU_ASYNC_URL_RESULT_MODELS = new Set(["gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.6-flare"]);
+const UU_ASYNC_URL_RESULT_MODELS = new Set(["gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.6", "gpt-image-2.6-flare"]);
 
 export function isUuAsyncUrlResultModel(model: string) {
     return UU_ASYNC_URL_RESULT_MODELS.has(model.toLowerCase().split("::").at(-1)?.trim() || "");

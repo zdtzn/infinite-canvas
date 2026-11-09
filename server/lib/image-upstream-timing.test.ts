@@ -12,6 +12,7 @@ import { resolvePlatformChannel } from "./platform-channels";
 import { isRelayEligibleResultUrl } from "./result-image-relay";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./upstream-error";
 import { KeyedSerialExecutor } from "./keyed-serial-executor";
+import { hasSadaiAsyncTask } from "./sadai-async";
 
 // Execute the production request and reader functions without starting the server,
 // reading its database/environment, or making any external request.
@@ -163,13 +164,13 @@ function deliveryHarness(raw: string, persist: (raw: string) => Promise<unknown>
     const context = {
         Date, URL,
         platformChannel: () => ({ baseUrl }), decryptChannelApiKey: () => "fixture-key",
-        hasUuAsyncTask: () => false, uuAsyncCapabilityRegistry: { canSubmit: () => false }, uuAsyncCapabilityKey: () => "fixture",
+        hasUuAsyncTask: () => false, hasSadaiAsyncTask, uuAsyncCapabilityRegistry: { canSubmit: () => false }, uuAsyncCapabilityKey: () => "fixture",
         materializeImageInput: async () => input,
         generateOpenAiImages: async () => { calls.generate++; return [raw]; },
         generateSadaiAsyncImages: async () => { throw new Error("not expected in fixture"); },
         imageJobPhases: new Map(), isRelayEligibleResultUrl: () => false,
         createDeferredImageResult, hasDeferredImageResults, assertAllowedUpstreamUrl, isRecoverableImageDownloadError, isSadaiImage25Channel, isSadaiImage26Channel,
-        sadaiUrl26Capability: { canSubmit: () => false, disable: () => undefined }, sadaiUrl26Enabled,
+        sadaiUrl26Capability: { canSubmit: () => false, disable: () => undefined }, sadaiAsyncCapability: { canSubmit: () => false }, sadaiUrl26Enabled,
         randomUUID: () => "fixture-image", RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS: 8_000,
         persistJobImage: async (_user: string, _job: string, value: string) => { calls.persist++; return persist(value); },
         cleanupJobOutputFilesFor: () => {},

@@ -51,3 +51,103 @@ test("rejects unreachable result urls instead of passing them through", async ()
         okResponse({ status: "SUCCESS", response: { data: [{ url: "http://169.254.169.254/latest/meta-data" }] } }),
     )).rejects.toThrow();
 });
+
+test("preserves submission HTTP status separately from the upstream message", async () => {
+    await expect(submitSadaiAsyncTask(base, "key", {}, new AbortController().signal, async () =>
+        okResponse({ error: { message: "Not Found" } }, 404),
+    )).rejects.toMatchObject({ status: 404, stage: "submit", message: "Not Found" });
+});
+
+test("preserves an endpoint 404 even when its response is not JSON", async () => {
+    await expect(submitSadaiAsyncTask(base, "key", {}, new AbortController().signal, async () =>
+        new Response("404 page not found", { status: 404 }),
+    )).rejects.toMatchObject({ status: 404, stage: "submit" });
+});
+
+test("retries transient polling failures against the same accepted task", async () => {
+    const urls: string[] = [];
+    const result = await waitForSadaiAsyncTask(base, "key", "accepted-task", new AbortController().signal, undefined, async (url) => {
+        urls.push(String(url));
+        if (urls.length === 1) return okResponse({ error: { message: "busy" } }, 503);
+        if (urls.length === 2) throw new TypeError("connection reset");
+        if (urls.length === 3) return okResponse({}, 404);
+        return okResponse({ status: "SUCCESS", response: { data: [{ url: "https://images.example.com/result.png" }] } });
+    }, 1);
+    expect(result.urls).toEqual(["https://images.example.com/result.png"]);
+    expect(urls).toEqual(Array(4).fill(`${base}/images/tasks/accepted-task`));
+});
+
+test("does not retry authentication failures while polling", async () => {
+    let calls = 0;
+    await expect(waitForSadaiAsyncTask(base, "key", "task", new AbortController().signal, undefined, async () => {
+        calls++;
+        return okResponse({ error: { message: "invalid credentials" } }, 401);
+    }, 1)).rejects.toThrow("invalid credentials");
+    expect(calls).toBe(1);
+});
+
+for (const stage of ["headers", "body"] as const) {
+    test(`the total polling deadline aborts stalled ${stage}`, async () => {
+        let aborted = false;
+        const pending: typeof fetch = async (_url, init) => {
+            const signal = init!.signal!;
+            if (stage === "headers") return new Promise<Response>((_resolve, reject) => {
+                signal.addEventListener("abort", () => { aborted = true; reject(signal.reason); }, { once: true });
+            });
+            return new Response(new ReadableStream({ start(controller) {
+                signal.addEventListener("abort", () => { aborted = true; controller.error(signal.reason); }, { once: true });
+            } }));
+        };
+        await expect(waitForSadaiAsyncTask(base, "key", "task", new AbortController().signal, undefined, pending, 1,
+            { maxWaitMs: 25, requestTimeoutMs: 1_000 })).rejects.toThrow("等待超时");
+        expect(aborted).toBe(true);
+    });
+}
+
+test("bounds submission without replaying a possibly accepted paid request", async () => {
+    let calls = 0;
+    await expect(submitSadaiAsyncTask(base, "key", {}, new AbortController().signal, async (_url, init) => {
+        calls++;
+        expect(new Headers(init!.headers).get("Idempotency-Key")).toBe("fixture-request");
+        return new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true }));
+    }, { requestTimeoutMs: 20, idempotencyKey: "fixture-request" })).rejects.toThrow();
+    expect(calls).toBe(1);
+});
+
+test("persists provider terminal status before reporting its failure", async () => {
+    const statuses: string[] = [];
+    await expect(waitForSadaiAsyncTask(base, "key", "task", new AbortController().signal, undefined, async () =>
+        okResponse({ status: "FAILED", error: { message: "rejected" } }),
+    1, { onStatus: async (status) => { statuses.push(status); } })).rejects.toThrow("rejected");
+    expect(statuses).toEqual(["failed"]);
+});
+
+test("limits consecutive polling failures while keeping the accepted task unchanged", async () => {
+    let calls = 0;
+    await expect(waitForSadaiAsyncTask(base, "key", "accepted-task", new AbortController().signal, undefined, async (url) => {
+        expect(String(url)).toBe(`${base}/images/tasks/accepted-task`);
+        calls++;
+        return okResponse({ error: { message: "busy" } }, 503);
+    }, 1)).rejects.toThrow("busy");
+    expect(calls).toBe(5);
+});
+
+test("cancellation interrupts the polling delay without another request", async () => {
+    const controller = new AbortController();
+    const reason = new Error("fixture canceled");
+    let calls = 0;
+    const result = waitForSadaiAsyncTask(base, "key", "task", controller.signal, () => {
+        setTimeout(() => controller.abort(reason), 5);
+    }, async () => { calls++; return okResponse({ status: "QUEUED" }); }, 1_000);
+    await expect(result).rejects.toBe(reason);
+    expect(calls).toBe(1);
+});
+
+test("an already canceled submit makes no upstream request", async () => {
+    const controller = new AbortController();
+    const reason = new Error("fixture canceled before submit");
+    controller.abort(reason);
+    let calls = 0;
+    await expect(submitSadaiAsyncTask(base, "key", {}, controller.signal, async () => { calls++; return okResponse({ id: "unexpected" }); })).rejects.toBe(reason);
+    expect(calls).toBe(0);
+});

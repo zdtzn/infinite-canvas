@@ -74,6 +74,10 @@ jobs:
         working-directory: .
         run: bun run ops/job-replay-announcement-smoke.ts
 
+      - name: SADAI task recovery API smoke test
+        working-directory: .
+        run: bun run ops/sadai-reliability-smoke.ts
+
       - name: Type check
         run: bun run typecheck
 

@@ -40,6 +40,13 @@ test("Image 2.5 async submission preserves model, size, quality, format and coun
     expect(JSON.parse(defaultQuality.body as string).size).toBe("576x1024");
 });
 
+test("the model name published by UU for Image 2.6 uses async URL results", () => {
+    expect(supportsUuAsyncRequest("https://uuapi.cc/v1", { model: "gpt-image-2.6", count: 2, references: [] })).toBe(true);
+    const submission = buildUuAsyncImageSubmission({ model: "gpt-image-2.6", prompt: "fixture", count: 2, references: [], size: "9:16" });
+    expect(JSON.parse(submission.body as string)).toMatchObject({ model: "gpt-image-2.6", n: 2, response_format: "url" });
+    expect(isUuImageAsyncChannel("https://api.sadai.top/v1", "gpt-image-2.6", 0, false)).toBe(false);
+});
+
 test("Image 2.5 async edits keep every reference and the mask", () => {
     const references = [new Blob(["one"], { type: "image/png" }), new Blob(["two"], { type: "image/webp" })];
     const request = buildUuAsyncImageSubmission({ model: "gpt-image-2.5", prompt: "edit", references, mask: references[0], size: "1:1", outputFormat: "png" });

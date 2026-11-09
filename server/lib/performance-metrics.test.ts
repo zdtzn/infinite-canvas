@@ -117,7 +117,7 @@ test("persisting phase begins after upstream completes and clears in finally", a
     const source = await Bun.file(new URL("../index.ts", import.meta.url)).text();
     const worker = source.slice(source.indexOf("async function runImageJob("), source.indexOf("async function materializeImageInput("));
     expect(worker.indexOf('imageJobPhases.set(job.id, "persisting")')).toBeGreaterThan(worker.indexOf("upstreamFinishedAt = Date.now()"));
-    expect(worker).toContain("finally {\n        imageJobPhases.delete(job.id);");
+    expect(worker).toMatch(/finally \{\r?\n        imageJobPhases\.delete\(job\.id\);/);
     expect(source).toContain('job.status !== "running" ? "completed" : imageJobPhases.get(job.id)');
     expect(source).toContain('state.jobs[job.id]?.status !== job.status');
 });

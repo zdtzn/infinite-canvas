@@ -128,10 +128,12 @@ export class JobQueue<I, O> {
         this.active += 1;
         const controller = new AbortController();
         this.controllers.set(job.id, controller);
+        let workerStarted = false;
         try {
             job.status = "running";
             job.startedAt = Date.now();
             await this.changed(job);
+            workerStarted = true;
             const result = await this.options.worker(job.input, controller.signal, job);
             if (this.jobs.get(job.id)?.status === "canceled") return;
             job.status = "succeeded";
@@ -143,6 +145,13 @@ export class JobQueue<I, O> {
             job.status = "failed";
             job.error = error instanceof Error ? error.message : "任务失败";
             job.finishedAt = Date.now();
+            if (!workerStarted) {
+                try {
+                    await this.options.onInitializationFailure?.({ ...job }, error);
+                } catch {
+                    // Keep the original persistence error when reservation cleanup fails.
+                }
+            }
             this.completions.get(job.id)?.reject(new Error(job.error));
         } finally {
             this.controllers.delete(job.id);

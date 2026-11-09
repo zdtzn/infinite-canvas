@@ -71,7 +71,7 @@ import {
 } from "./lib/prompt-optimizer";
 import { isValidProjectPayload } from "./lib/project-payload";
 import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage26Channel, isSadaiImage2Channel, isSadaiUrlResultChannel, sadaiImageBaseUrl, sadaiUrl26Enabled } from "./lib/sadai-image";
-import { submitSadaiAsyncTask, waitForSadaiAsyncTask } from "./lib/sadai-async";
+import { hasSadaiAsyncTask, SadaiTaskHttpError, submitSadaiAsyncTask, waitForSadaiAsyncTask } from "./lib/sadai-async";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
 import { isUuAsyncUrlChannel, supportsUuAsyncRequest, uuAsyncCapabilityKey, uuTaskPollDelay } from "./lib/uu-image-async";
@@ -307,6 +307,7 @@ const geminiImageSemaphore = new AsyncSemaphore(GEMINI_IMAGE_CONCURRENCY);
 const uuImageChannelScheduler = new UuImageChannelScheduler();
 const uuAsyncCapabilityRegistry = new UuAsyncCapabilityRegistry();
 const sadaiUrl26Capability = new UuAsyncCapabilityRegistry();
+const sadaiAsyncCapability = new UuAsyncCapabilityRegistry();
 
 const promptAssetProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
 const promptThumbnailProxySemaphore = new AsyncSemaphore(PROMPT_THUMBNAIL_PROXY_CONCURRENCY);
@@ -338,13 +339,13 @@ const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
         if (job.status === "succeeded" && job.result?.recoveryPending) scheduleJobImageRecovery(job.id);
     },
     onInitializationFailure: (job) => {
-        if (!job.input.recoveryOnly) cultivation?.refundGeneration(job.id, "initial job persistence failed");
+        if (!job.input.recoveryOnly) cultivation?.refundGeneration(job.id, "job persistence failed before generation");
     },
 });
 
 for (const job of Object.values(state.jobs)) {
     if (job.status === "running") {
-        if (hasUuAsyncTask(job.input)) {
+        if (hasUuAsyncTask(job.input) || hasSadaiAsyncTask(job.input)) {
             job.status = "queued";
             job.error = undefined;
             job.finishedAt = undefined;
@@ -3260,7 +3261,7 @@ async function retryJob(request: Request, session: SessionPayload, id: string) {
     const existing = state.jobs[jobId];
     if (existing) return json({ job: publicJob(existing) }, 200);
     assertUnusedImageJobId(jobId);
-    const activeRetry = imageQueue.list().find((job) => job.input.userId === session.userId && job.input.retryOf === id && ["queued", "running"].includes(job.status));
+    const activeRetry = imageQueue.list().find((job) => job.input.userId === session.userId && job.input.retryOf === (source.input.retryOf || id) && ["queued", "running"].includes(job.status));
     if (activeRetry) return json({ job: publicJob(activeRetry) }, 200);
     const referenceBytes = imageJobReferenceTotalBytes(
         source.input.references.map((reference) => ({ bytes: storedImageReferenceBytes(reference) })),
@@ -3511,14 +3512,15 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         const apiKey = decryptChannelApiKey(channel);
         const useUuAsync =
             input.apiFormat === "openai" &&
+            !hasSadaiAsyncTask(input) &&
             (hasUuAsyncTask(input) ||
                 (uuAsyncCapabilityRegistry.canSubmit(uuAsyncCapabilityKey(input.channelId, input.model)) &&
                     supportsUuAsyncRequest(channel.baseUrl, input)));
         useSadaiAsync =
             input.apiFormat === "openai" &&
-            !input.mask &&
-            isSadaiImage26Channel(channel.baseUrl, input.model) &&
-            sadaiUrl26Capability.canSubmit(`sadai:${input.channelId}:${input.model.trim().toLowerCase()}`);
+            (hasSadaiAsyncTask(input) || (!input.mask &&
+                isSadaiImage26Channel(channel.baseUrl, input.model) &&
+                sadaiAsyncCapability.canSubmit(`sadai:${input.channelId}:${input.model.trim().toLowerCase()}`)));
         const rawImages =
             input.apiFormat === "gemini"
                 ? await generateGeminiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
@@ -3527,7 +3529,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                       ? await generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId)
                       : await uuImageChannelScheduler.run(input.channelId, signal, () => generateUuAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId))
                   : useSadaiAsync
-                    ? await generateSadaiAsyncImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId)
+                    ? await generateSadaiAsyncImages(channel, apiKey, input, job, signal, upstreamRequestId)
                     : await generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
         upstreamFinishedAt = Date.now();
         imageJobPhases.set(job.id, "persisting");
@@ -3638,33 +3640,43 @@ type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & {
     mask?: string;
 };
 
-async function generateSadaiAsyncImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal, upstreamRequestId: string) {
+async function generateSadaiAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal, upstreamRequestId: string) {
     const imageBaseUrl = sadaiImageBaseUrl(dragonImageBaseUrl(channel.baseUrl, input.model), input.model);
-    const size = resolveOpenAiImageSize(input.size, input.quality, input.model, channel.baseUrl);
     const capabilityKey = `sadai:${input.channelId}:${input.model.trim().toLowerCase()}`;
-    try {
-        const taskId = await submitSadaiAsyncTask(imageBaseUrl, apiKey, {
-            model: input.model,
-            prompt: dragonPromptWithSize(input.prompt, input.size, size, input.model, channel.baseUrl),
-            n: input.count,
-            size,
-            ...(input.imageQuality ? { quality: input.imageQuality } : {}),
-            ...(input.background ? { background: input.background } : {}),
-            ...(input.imageOutputFormat ? { output_format: input.imageOutputFormat } : {}),
-            // 参考图走 JSON images 数组（base64 dataUrl），与 SADAI Image2 同步接口同款字段
-            ...(input.references.length ? { images: input.references } : {}),
-        }, signal);
-        const result = await waitForSadaiAsyncTask(imageBaseUrl, apiKey, taskId, signal);
-        return result.urls;
-    } catch (error) {
-        // 端点不存在（404）说明该网关未部署异步任务能力：记住并回退同步链接/base64 模式。
-        if (String((error as Error).message).includes("HTTP 404")) {
-            sadaiUrl26Capability.disable(capabilityKey);
+    if (!hasSadaiAsyncTask(input)) {
+        const runtimeInput = await materializeImageInput(input);
+        const size = resolveOpenAiImageSize(input.size, input.quality, input.model, channel.baseUrl);
+        let taskId: string;
+        try {
+            taskId = await submitSadaiAsyncTask(imageBaseUrl, apiKey, {
+                model: input.model,
+                prompt: dragonPromptWithSize(input.prompt, input.size, size, input.model, channel.baseUrl),
+                n: input.count,
+                size,
+                ...(input.imageQuality ? { quality: input.imageQuality } : {}),
+                ...(input.background ? { background: input.background } : {}),
+                ...(input.imageOutputFormat ? { output_format: input.imageOutputFormat } : {}),
+                ...(runtimeInput.references.length ? { images: runtimeInput.references } : {}),
+            }, signal, undefined, { idempotencyKey: upstreamIdempotencyKey(job.id) });
+        } catch (error) {
+            // Only an explicit submission endpoint 404 can safely fall back. Polling must never generate again.
+            if (!(error instanceof SadaiTaskHttpError) || error.stage !== "submit" || error.status !== 404) throw error;
+            sadaiAsyncCapability.disable(capabilityKey);
             console.info(JSON.stringify({ event: "sadai_async_unavailable", channelId: input.channelId, model: input.model }));
-            return generateOpenAiImages(channel, apiKey, await materializeImageInput(input), signal, upstreamRequestId);
+            return generateOpenAiImages(channel, apiKey, runtimeInput, signal, upstreamRequestId);
         }
-        throw error;
+        input.upstream = { provider: "sadai-image", taskId, status: "pending" };
+        await imageQueue.touch(job.id);
     }
+    const upstream = input.upstream!;
+    const result = await waitForSadaiAsyncTask(imageBaseUrl, apiKey, upstream.taskId, signal, undefined, undefined, undefined, {
+        onStatus: async (status) => {
+            if (upstream.status === status) return;
+            upstream.status = status;
+            await imageQueue.touch(job.id);
+        },
+    });
+    return result.urls;
 }
 
 async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, input: RuntimeImageJobInput, signal: AbortSignal, upstreamRequestId: string) {

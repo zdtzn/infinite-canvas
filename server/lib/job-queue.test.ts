@@ -112,6 +112,33 @@ describe("persistent job queue runtime", () => {
         expect(initializationFailures).toEqual([job.id]);
     });
 
+    test("cleans up reservations when persisting the running state fails before submission", async () => {
+        let workerCalls = 0;
+        const refunds: string[] = [];
+        const queue = new JobQueue<number, number>({
+            concurrency: 1,
+            worker: async (value) => { workerCalls++; return value; },
+            onChange: (job) => { if (job.status === "running") throw new Error("storage unavailable"); },
+            onInitializationFailure: (job) => { refunds.push(job.id); },
+        });
+        const job = queue.add(1);
+        await expect(queue.wait(job.id)).rejects.toThrow("storage unavailable");
+        expect(workerCalls).toBe(0);
+        expect(refunds).toEqual([job.id]);
+    });
+
+    test("does not run initialization cleanup after the worker has started", async () => {
+        let refunds = 0;
+        const queue = new JobQueue<number, number>({
+            concurrency: 1,
+            worker: async () => { throw new Error("worker handles its own settlement"); },
+            onInitializationFailure: () => { refunds++; },
+        });
+        const job = queue.add(1);
+        await expect(queue.wait(job.id)).rejects.toThrow("worker handles its own settlement");
+        expect(refunds).toBe(0);
+    });
+
     test("stops accepting and starting work while preserving queued jobs", async () => {
         let release = () => undefined;
         const executed: number[] = [];

@@ -110,7 +110,7 @@ export type ImageJobInput = {
   retryOf?: string;
   recoveryOnly?: boolean;
   upstream?: {
-    provider: "uu-image";
+    provider: "uu-image" | "sadai-image";
     taskId: string;
     expiresAt?: string;
     status?: "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
