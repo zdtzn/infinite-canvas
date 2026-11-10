@@ -4,6 +4,29 @@ import { submitSadaiAsyncTask, waitForSadaiAsyncTask } from "./sadai-async";
 const base = "https://api.sadai.top/v1";
 const okResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
+for (const referenceCount of [1, 3]) {
+    test(`submits ${referenceCount} reference images to the SADAI edit-task endpoint in order`, async () => {
+        const images = Array.from({ length: referenceCount }, (_, index) => `data:image/png;base64,fixture-${index}`);
+        const result = await submitSadaiAsyncTask(base, "key", { model: "gpt-image-2.6-flare", prompt: "edit fixture", images }, new AbortController().signal, async (url, init) => {
+            expect(String(url)).toBe(`${base}/images/edit-tasks`);
+            expect(init?.method).toBe("POST");
+            expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
+            expect(JSON.parse(String(init?.body)).images).toEqual(images);
+            return okResponse({ id: "edit-task", status: "QUEUED" });
+        });
+        expect(result).toBe("edit-task");
+    });
+}
+
+test("submits text-only and empty-reference requests to the SADAI generation-task endpoint", async () => {
+    for (const references of [undefined, []]) {
+        await submitSadaiAsyncTask(base, "key", { model: "gpt-image-2.6-flare", prompt: "fixture", ...(references ? { images: references } : {}) }, new AbortController().signal, async (url) => {
+            expect(String(url)).toBe(`${base}/images/tasks`);
+            return okResponse({ id: "generation-task" });
+        });
+    }
+});
+
 test("submits a SADAI async task and returns the task id", async () => {
     const bodies: unknown[] = [];
     const result = await submitSadaiAsyncTask(base, "key", { model: "gpt-image-2.6-flare", prompt: "cat", images: ["data:image/png;base64,AAAA"] }, new AbortController().signal, async (_url, init) => {

@@ -31,7 +31,9 @@ export async function submitSadaiAsyncTask(
     options: { requestTimeoutMs?: number; idempotencyKey?: string } = {},
 ): Promise<string> {
     // A timeout may occur after acceptance: never automatically replay this POST.
-    const payload = await requestJson(`${endpointBase}/images/tasks`, {
+    // SADAI documents separate generation and edit submissions; /tasks ignores reference images.
+    const path = Array.isArray(body.images) && body.images.length ? "/images/edit-tasks" : "/images/tasks";
+    const payload = await requestJson(`${endpointBase}${path}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json",
             ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}) },

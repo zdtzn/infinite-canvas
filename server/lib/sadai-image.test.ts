@@ -33,6 +33,17 @@ test("routes documented SADAI 2.5 models from standard API entries to the dedica
     }
 });
 
+test("routes SADAI Image 2.6 from standard entries to its documented image API host", () => {
+    for (const origin of ["https://verysadai.com", "https://sadai.cc", "https://sadai.top"]) {
+        for (const path of ["", "/", "/v1", "/v1/"]) {
+            expect(sadaiImageBaseUrl(`${origin}${path}`, "gpt-image-2.6-flare")).toBe("https://api.sadai.top/v1");
+        }
+    }
+    for (const baseUrl of ["https://api.sadai.top/v1", "https://verysadai.com/custom/v1", "https://proxy.example.com/v1", "http://verysadai.com/v1"]) {
+        expect(sadaiImageBaseUrl(baseUrl, "gpt-image-2.6-flare")).toBe(baseUrl);
+    }
+});
+
 test("preserves SADAI legacy adapters, other models, proxies and customized API entries", () => {
     for (const model of ["gpt-image-2", "gpt-image-1.5", "gpt-image-2.5", "gpt-image-2.5-flare-custom", "gpt-5.4"]) {
         expect(sadaiImageBaseUrl("https://verysadai.com/v1", model)).toBe("https://verysadai.com/v1");

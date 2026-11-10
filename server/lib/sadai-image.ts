@@ -31,7 +31,8 @@ type SadaiImageRequestOptionsInput = {
 };
 
 export function sadaiImageBaseUrl(baseUrl: string, model: string) {
-    if (!SADAI_IMAGE_25_MODELS.has(model.trim().toLowerCase())) return baseUrl;
+    const name = model.trim().toLowerCase();
+    if (!SADAI_IMAGE_25_MODELS.has(name) && name !== "gpt-image-2.6-flare") return baseUrl;
     try {
         const { origin } = new URL(baseUrl);
         if (!SADAI_STANDARD_API_ORIGINS.has(origin) || !["", "/", "/v1", "/v1/"].some((path) => baseUrl === `${origin}${path}`)) return baseUrl;

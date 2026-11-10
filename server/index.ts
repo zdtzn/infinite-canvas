@@ -3651,6 +3651,7 @@ async function generateSadaiAsyncImages(channel: ChannelRecord, apiKey: string, 
             taskId = await submitSadaiAsyncTask(imageBaseUrl, apiKey, {
                 model: input.model,
                 prompt: dragonPromptWithSize(input.prompt, input.size, size, input.model, channel.baseUrl),
+                response_format: "url",
                 n: input.count,
                 size,
                 ...(input.imageQuality ? { quality: input.imageQuality } : {}),

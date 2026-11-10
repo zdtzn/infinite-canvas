@@ -18,7 +18,7 @@ try {
     state.auth.adminUserId = "admin";
     state.users.admin = { userId: "admin", displayName: "Fixture admin", admin: true, createdAt: 1 };
     state.users.member = { userId: "member", displayName: "Fixture member", createdAt: 1 };
-    state.channels["admin:sadai"] = { id: "sadai", userId: "admin", name: "Fixture SADAI", baseUrl: "https://api.sadai.top/v1",
+    state.channels["admin:sadai"] = { id: "sadai", userId: "admin", name: "Fixture SADAI", baseUrl: "https://verysadai.com/v1",
         apiFormat: "openai", apiKey: encryptSecret("fixture-key", state.auth.sessionSecret), updatedAt: 1,
         models: [{ name: "gpt-image-2.6-flare", capability: "image" }] };
     db.saveState(state);
@@ -48,13 +48,23 @@ globalThis.fetch = async (input, init) => {
     if (url.hostname !== "api.sadai.top" && url.hostname !== "images.example.com") throw new Error("Real outbound request blocked by fixture");
     appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ method, path: url.pathname, mode }) + "\\n");
     if (url.hostname === "images.example.com") return new Response(Buffer.from(${JSON.stringify(png)}, "base64"), { headers: { "Content-Type": "image/png" } });
-    if (method === "POST" && url.pathname === "/v1/images/tasks") {
+    if (method === "POST" && ["/v1/images/tasks", "/v1/images/edit-tasks"].includes(url.pathname)) {
+        const body = JSON.parse(init.body);
+        const isEdit = url.pathname === "/v1/images/edit-tasks";
+        if (Boolean(body.images?.length) !== isEdit) throw new Error("Reference images must use the dedicated edit-task endpoint");
+        if (body.response_format !== "url") throw new Error("Async image tasks must request URL results");
+        if (isEdit) {
+            const expected = Array(mode === "reference-many" ? 3 : 1).fill("data:image/png;base64," + ${JSON.stringify(png)});
+            if (JSON.stringify(body.images) !== JSON.stringify(expected)) throw new Error("Reference image bytes were lost or replaced");
+            const edits = readFileSync(${JSON.stringify(callsPath)}, "utf8").trim().split("\\n").map(JSON.parse).filter(item => item.method === "POST" && item.path === "/v1/images/edit-tasks").length;
+            return Response.json({ id: "fixture-edit-" + edits, status: "QUEUED" });
+        }
         if (mode === "submit404") return new Response("not found", { status: 404 });
         const submits = readFileSync(${JSON.stringify(callsPath)}, "utf8").trim().split("\\n").map(JSON.parse).filter(item => item.method === "POST" && item.path === "/v1/images/tasks").length;
         return Response.json({ id: "fixture-task-" + submits, status: "QUEUED" });
     }
     if (method === "GET" && url.pathname.startsWith("/v1/images/tasks/")) {
-        if (mode === "hold") return Response.json({ status: "QUEUED" });
+        if (mode === "hold" || mode === "reference-hold") return Response.json({ status: "QUEUED" });
         if (mode === "poll401") return Response.json({ error: { message: "fixture temporary credentials failure" } }, { status: 401 });
         if (mode === "flaky" && transientPolls++ < 2) return Response.json({}, { status: transientPolls === 1 ? 503 : 404 });
         return Response.json({ status: "SUCCESS", response: { data: [{ url: "https://images.example.com/fixture.png" }] } });
@@ -98,8 +108,9 @@ await import(${JSON.stringify(pathToFileURL(resolve(import.meta.dir, "../server/
     const calls = () => readFileSync(callsPath, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
     const submits = () => calls().filter(item => item.method === "POST" && item.path === "/v1/images/tasks").length;
     const syncs = () => calls().filter(item => item.method === "POST" && item.path === "/v1/images/generations").length;
-    const create = async (key: string, prompt = "fixture") => (await json(await request("POST", "/api/jobs/images", {
+    const create = async (key: string, prompt = "fixture", references: string[] = []) => (await json(await request("POST", "/api/jobs/images", {
         channelId: "sadai", model: "gpt-image-2.6-flare", prompt, count: 1,
+        references,
     }, key), 202)).job;
     const finished = async (id: string) => {
         let job: any;
@@ -159,6 +170,34 @@ await import(${JSON.stringify(pathToFileURL(resolve(import.meta.dir, "../server/
     assert.equal(syncs(), 1);
     assert.equal(cultivation.getWallet("member").balance, 2);
     console.log("PASS: only a submission 404 falls back once and preserves URL results");
+
+    child.kill("SIGKILL");
+    await child.exited;
+    await Bun.write(modePath, "reference-hold");
+    child = start();
+    await ready();
+    const reference = `data:image/png;base64,${png}`;
+    const edit = await create("single-reference", "fixture-reference", [reference]);
+    await until(async () => db.loadState().jobs[edit.id]?.input.upstream?.taskId === "fixture-edit-1");
+    assert.equal(submits(), 4);
+    assert.equal(cultivation.getWallet("member").balance, 1);
+    child.kill("SIGKILL");
+    await child.exited;
+    await Bun.write(modePath, "success");
+    child = start();
+    await ready();
+    assert.equal((await finished(edit.id)).status, "succeeded");
+    assert.equal(calls().filter(item => item.method === "POST" && item.path === "/v1/images/edit-tasks").length, 1);
+    assert.equal(cultivation.getWallet("member").balance, 1);
+    console.log("PASS: a stored reference reaches the dedicated image edit task unchanged and restart only polls that task");
+
+    await Bun.write(modePath, "reference-many");
+    const multiEdit = await create("multiple-references", "fixture-reference", [reference, reference, reference]);
+    assert.equal((await finished(multiEdit.id)).status, "succeeded");
+    assert.equal(calls().filter(item => item.method === "POST" && item.path === "/v1/images/edit-tasks").length, 2);
+    assert.equal(submits(), 4);
+    assert.equal(cultivation.getWallet("member").balance, 0);
+    console.log("PASS: all three persisted references reach the edit task; no text-only generation is submitted");
 } finally {
     child?.kill("SIGKILL");
     if (child) await child.exited;
