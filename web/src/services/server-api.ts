@@ -51,6 +51,7 @@ export type ServerJob = {
     size?: string;
     background?: string;
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
+    previewImages?: ServerJobImage[];
     result?: { images: ServerJobImage[]; successCount: number; failCount: number; durationMs: number; recoveryPending?: boolean };
 };
 
@@ -730,14 +731,15 @@ export async function updateAdminAnnouncement(id: string, input: Partial<Announc
     return serverRequest<{ item: SystemAnnouncement }>(`/api/admin/announcements/${encodeURIComponent(id)}`, { method: "PATCH", body: input });
 }
 
-export type ServerJobProgress = { jobId: string; phase?: ServerJob["phase"]; reconnecting: boolean };
+export type ServerJobProgress = { jobId: string; phase?: ServerJob["phase"]; reconnecting: boolean; previewImage?: ServerJobImage };
 
 export async function waitForServerJob(id: string, options?: { signal?: AbortSignal; onUpdate?: (job: ServerJob) => void; onProgress?: (progress: ServerJobProgress) => void; expectedUserId?: string }) {
     let connectionFailures = 0;
     let progress: ServerJobProgress | undefined;
-    const report = (phase: ServerJob["phase"], reconnecting: boolean) => {
-        if (options?.signal?.aborted || (progress && progress.phase === phase && progress.reconnecting === reconnecting)) return;
-        progress = { jobId: id, phase, reconnecting };
+    const report = (phase: ServerJob["phase"], reconnecting: boolean, previewImage?: ServerJobImage) => {
+        const next = { jobId: id, phase, reconnecting, ...(previewImage ? { previewImage } : {}) };
+        if (options?.signal?.aborted || JSON.stringify(progress) === JSON.stringify(next)) return;
+        progress = next;
         options?.onProgress?.(progress);
     };
     for (;;) {
@@ -750,13 +752,14 @@ export async function waitForServerJob(id: string, options?: { signal?: AbortSig
             if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             const temporary = error instanceof ServerTransportError || (error instanceof ServerRequestError && (error.status === 408 || error.status === 429 || error.status >= 500));
             if (!temporary) throw error;
-            report(progress?.phase, true);
+            report(progress?.phase, true, progress?.previewImage);
             // Retry only this read. A disconnected client must never resubmit paid work.
             await abortableSleep(Math.min(800 * 2 ** Math.min(connectionFailures++, 4), 10_000), options?.signal);
             continue;
         }
         options?.signal?.throwIfAborted();
-        report(job.phase ?? (job.status === "queued" ? "queued" : job.status === "succeeded" ? "completed" : undefined), false);
+        const previewImage = job.status === "queued" || job.status === "running" ? job.previewImages?.[0] || progress?.previewImage : undefined;
+        report(job.phase ?? (job.status === "queued" ? "queued" : job.status === "succeeded" ? "completed" : undefined), false, previewImage);
         options?.onUpdate?.(job);
         if (job.status === "succeeded") {
             void archiveDeferredServerJob(job, options?.expectedUserId).catch(() => undefined);

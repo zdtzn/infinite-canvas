@@ -156,6 +156,60 @@ test("progress reports only phase and connection changes, preserving the origina
         assert.deepEqual(next, [{ jobId: "next-job", phase: "completed", reconnecting: false }]);
     }));
 
+test("running image previews update without completing, archiving, or resubmitting the task", () =>
+    withTransport(async () => {
+        const preview = { id: "preview", dataUrl: "https://images.example.com/preview.png", bytes: 10, durationMs: 1000, mimeType: "image/png", persisted: false };
+        const sizedPreview = { ...preview, width: 1254, height: 1254 };
+        const finalImage = { ...sizedPreview, id: "final", dataUrl: "/api/job-files/preview-job/final.png", persisted: true };
+        const lastPoll = Promise.withResolvers<void>();
+        const finalResponse = Promise.withResolvers<Response>();
+        const calls: string[] = [];
+        const progress: ServerJobProgress[] = [];
+        globalThis.fetch = (async (url, init) => {
+            calls.push(`${init?.method || "GET"} ${url}`);
+            const attempt = calls.length;
+            if (attempt === 4) throw new TypeError("offline");
+            if (attempt === 6) {
+                lastPoll.resolve();
+                return finalResponse.promise;
+            }
+            return Response.json({ job: { id: "preview-job", status: "running", phase: "waiting_upstream", ...(attempt === 5 ? {} : { previewImages: [attempt === 3 ? sizedPreview : preview] }) } });
+        }) as typeof fetch;
+        let completed = false;
+        const pending = waitForServerJob("preview-job", { expectedUserId: "owner", onProgress: (value) => progress.push(value) }).then((job) => { completed = true; return job; });
+        await lastPoll.promise;
+        assert.equal(completed, false);
+        assert.deepEqual(progress.map(({ reconnecting, previewImage }) => [reconnecting, previewImage?.width]), [
+            [false, undefined], [false, 1254], [true, 1254], [false, 1254],
+        ]);
+        assert.equal(progress[0].previewImage?.dataUrl, preview.dataUrl);
+        assert.equal(progress.at(-1)?.previewImage?.dataUrl, preview.dataUrl);
+        assert.deepEqual(calls, Array(6).fill("GET /api/jobs/preview-job"));
+        finalResponse.resolve(Response.json({ job: { id: "preview-job", status: "succeeded", previewImages: [preview], result: { images: [finalImage] } } }));
+        const result = await pending;
+        assert.equal(completed, true);
+        assert.equal(result.result?.images[0].dataUrl, finalImage.dataUrl);
+        assert.equal(progress.at(-1)?.previewImage, undefined);
+        assert.deepEqual(calls, Array(6).fill("GET /api/jobs/preview-job"));
+    }));
+
+test("failed and canceled tasks discard previews without reporting a successful image", () =>
+    withTransport(async () => {
+        for (const status of ["failed", "canceled"]) {
+            const preview = { id: "preview", dataUrl: "https://images.example.com/unfinished.png", bytes: 1, durationMs: 1, mimeType: "image/png", persisted: false };
+            const progress: ServerJobProgress[] = [];
+            let calls = 0;
+            globalThis.fetch = (async (_url, init) => {
+                assert.equal(init?.method || "GET", "GET");
+                return Response.json({ job: { id: "unfinished", status: ++calls === 1 ? "running" : status, previewImages: [preview], error: "fixture failed" } });
+            }) as typeof fetch;
+            await assert.rejects(waitForServerJob("unfinished", { onProgress: (value) => progress.push(value) }), status === "canceled" ? { name: "AbortError" } : /fixture failed/);
+            assert.equal(calls, 2);
+            assert.equal(progress[0].previewImage?.dataUrl, preview.dataUrl);
+            assert.equal(progress.at(-1)?.previewImage, undefined);
+        }
+    }));
+
 test("an aborted response cannot emit a late progress update", () =>
     withTransport(async () => {
         const controller = new AbortController();

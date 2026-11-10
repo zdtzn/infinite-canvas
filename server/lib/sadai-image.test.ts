@@ -44,6 +44,11 @@ test("routes SADAI Image 2.6 from standard entries to its documented image API h
     }
 });
 
+test("uses the documented SADAI 2.6 tall ratio and URL response without changing legacy Image2", () => {
+    expect(buildSadaiImageRequestOptions({ model: "gpt-image-2.6-flare", count: 1, size: "9:21", outputResolution: "low", generationQuality: "low", references: [], responseFormat: "url" }))
+        .toEqual({ n: 1, aspect_ratio: "9:21", resolution: "1k", quality: "low", response_format: "url" });
+});
+
 test("preserves SADAI legacy adapters, other models, proxies and customized API entries", () => {
     for (const model of ["gpt-image-2", "gpt-image-1.5", "gpt-image-2.5", "gpt-image-2.5-flare-custom", "gpt-5.4"]) {
         expect(sadaiImageBaseUrl("https://verysadai.com/v1", model)).toBe("https://verysadai.com/v1");

@@ -174,3 +174,40 @@ test("an already canceled submit makes no upstream request", async () => {
     await expect(submitSadaiAsyncTask(base, "key", {}, controller.signal, async () => { calls++; return okResponse({ id: "unexpected" }); })).rejects.toBe(reason);
     expect(calls).toBe(0);
 });
+
+test("publishes available images before SUCCESS while continuing to query the same task", async () => {
+    const previews: any[] = [];
+    const first = { asset_id: "first", url: "https://images.example.com/first.png", width: 1254, height: 1254, mime_type: "image/png", size_bytes: 100 };
+    const second = { asset_id: "second", url: "https://images.example.com/second.png", width: 1280, height: 1280 };
+    let polls = 0;
+    const result = await waitForSadaiAsyncTask(base, "key", "same-task", new AbortController().signal, undefined, async (url, init) => {
+        expect(String(url)).toBe(`${base}/images/tasks/same-task`);
+        expect(init?.method || "GET").toBe("GET");
+        if (++polls === 1) return okResponse({ status: "IN_PROGRESS", response: { data: [first], metadata: { complete: false } } });
+        expect(previews).toHaveLength(1);
+        expect(previews[0][0]).toMatchObject({ id: "first", url: first.url, width: 1254, height: 1254, mimeType: "image/png", bytes: 100 });
+        return okResponse({ status: "SUCCESS", response: { data: [first, second] } });
+    }, 1, { onImages: (images) => { previews.push(images); } });
+    expect(polls).toBe(2);
+    expect(previews).toHaveLength(2);
+    expect(result.urls).toEqual([first.url, second.url]);
+});
+
+test("handles SADAI's documented FAILURE status immediately without polling until timeout", async () => {
+    let polls = 0;
+    const statuses: string[] = [];
+    await expect(waitForSadaiAsyncTask(base, "key", "failed-task", new AbortController().signal, undefined, async () => {
+        polls++;
+        return okResponse({ status: "FAILURE", error: "生成失败，请稍后再试" });
+    }, 1, { maxWaitMs: 20, onStatus: (status) => { statuses.push(status); } })).rejects.toThrow("生成失败，请稍后再试");
+    expect(polls).toBe(1);
+    expect(statuses).toEqual(["failed"]);
+});
+
+test("never exposes unsafe partial image URLs", async () => {
+    const previews: unknown[] = [];
+    await expect(waitForSadaiAsyncTask(base, "key", "unsafe-task", new AbortController().signal, undefined, async () =>
+        okResponse({ status: "IN_PROGRESS", response: { data: [{ url: "http://169.254.169.254/latest/meta-data" }] } }),
+    1, { maxWaitMs: 20, onImages: (images) => { previews.push(images); } })).rejects.toThrow();
+    expect(previews).toEqual([]);
+});

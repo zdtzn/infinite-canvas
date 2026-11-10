@@ -3497,6 +3497,7 @@ function publicJob(job: StoredImageJob) {
         size: job.input.size,
         background: job.input.background,
         source: job.input.source,
+        previewImages: ["queued", "running"].includes(job.status) ? job.input.upstream?.previewImages : undefined,
         result,
     };
 }
@@ -3541,8 +3542,9 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
             const durationMs = Date.now() - startedAt;
             if (isRelayEligibleResultUrl(raw) || (useSadaiUrlResult && /^https?:\/\//i.test(raw))) {
                 const url = assertAllowedUpstreamUrl(raw);
+                const preview = hasSadaiAsyncTask(input) ? input.upstream.previewImages?.find(image => image.dataUrl === url.toString()) : undefined;
                 images.push(
-                    createDeferredImageResult({
+                    preview ? { ...preview, durationMs } : createDeferredImageResult({
                         id: randomUUID(),
                         url: url.toString(),
                         durationMs,
@@ -3645,19 +3647,16 @@ async function generateSadaiAsyncImages(channel: ChannelRecord, apiKey: string, 
     const capabilityKey = `sadai:${input.channelId}:${input.model.trim().toLowerCase()}`;
     if (!hasSadaiAsyncTask(input)) {
         const runtimeInput = await materializeImageInput(input);
-        const size = resolveOpenAiImageSize(input.size, input.quality, input.model, channel.baseUrl);
         let taskId: string;
         try {
             taskId = await submitSadaiAsyncTask(imageBaseUrl, apiKey, {
                 model: input.model,
-                prompt: dragonPromptWithSize(input.prompt, input.size, size, input.model, channel.baseUrl),
-                response_format: "url",
-                n: input.count,
-                size,
+                prompt: input.prompt,
+                ...buildSadaiImageRequestOptions({ model: input.model, count: input.count, size: input.size, outputResolution: input.quality || "low",
+                    generationQuality: input.imageQuality, references: runtimeInput.references, responseFormat: "url" }),
                 ...(input.imageQuality ? { quality: input.imageQuality } : {}),
                 ...(input.background ? { background: input.background } : {}),
                 ...(input.imageOutputFormat ? { output_format: input.imageOutputFormat } : {}),
-                ...(runtimeInput.references.length ? { images: runtimeInput.references } : {}),
             }, signal, undefined, { idempotencyKey: upstreamIdempotencyKey(job.id) });
         } catch (error) {
             // Only an explicit submission endpoint 404 can safely fall back. Polling must never generate again.
@@ -3674,6 +3673,21 @@ async function generateSadaiAsyncImages(channel: ChannelRecord, apiKey: string, 
         onStatus: async (status) => {
             if (upstream.status === status) return;
             upstream.status = status;
+            await imageQueue.touch(job.id);
+        },
+        onImages: async (images) => {
+            if (signal.aborted || job.status !== "running") return;
+            const previous = upstream.previewImages || [];
+            const previews = images.map(image => {
+                const key = createHash("sha256").update(`${upstream.taskId}:${image.id || image.url}`).digest("hex");
+                const known = previous.find(item => item.id === key || (!image.id && item.dataUrl === image.url));
+                const id = known?.id || key;
+                const durationMs = known?.durationMs ?? Date.now() - (job.startedAt || Date.now());
+                return { ...createDeferredImageResult({ id, url: image.url, durationMs, width: image.width || known?.width, height: image.height || known?.height }),
+                    bytes: image.bytes || known?.bytes || 0, mimeType: image.mimeType || known?.mimeType || "image/png" };
+            });
+            if (JSON.stringify(previous) === JSON.stringify(previews)) return;
+            upstream.previewImages = previews;
             await imageQueue.touch(job.id);
         },
     });

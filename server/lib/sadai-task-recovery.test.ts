@@ -5,8 +5,9 @@ import vm from "node:vm";
 import { hasSadaiAsyncTask, SadaiTaskHttpError } from "./sadai-async";
 import { hasUuAsyncTask, UuAsyncCapabilityRegistry } from "./uu-image-async";
 import { resolveOpenAiImageSize } from "./image-request";
-import { sadaiImageBaseUrl } from "./sadai-image";
+import { buildSadaiImageRequestOptions, sadaiImageBaseUrl } from "./sadai-image";
 import { dragonImageBaseUrl, dragonPromptWithSize } from "./dragon-image";
+import { createDeferredImageResult } from "./image-result-recovery";
 
 const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
 function extract(start: string, end: string, after = 0) {
@@ -15,22 +16,28 @@ function extract(start: string, end: string, after = 0) {
     if (from < 0 || until < 0) throw new Error(`Missing production block: ${start}`);
     return new Bun.Transpiler({ loader: "ts" }).transformSync(source.slice(from, until));
 }
-function harness({ submitError, pollError }: { submitError?: Error; pollError?: Error } = {}) {
+function harness({ submitError, pollError, previews }: { submitError?: Error; pollError?: Error; previews?: any[] } = {}) {
     const input = { userId: "fixture-member", channelId: "fixture-channel", model: "gpt-image-2.6-flare", apiFormat: "openai", prompt: "fixture", count: 1,
         references: ["data:image/png;base64,AAAA"], size: "1:1", quality: "low" } as any;
-    const job = { id: "fixture-job", input, status: "running" };
+    const job = { id: "fixture-job", input, status: "running", startedAt: Date.now() - 1000 };
     const calls: string[] = [];
+    const bodies: any[] = [];
     const snapshots: any[] = [];
     const asyncRegistry = new UuAsyncCapabilityRegistry();
     const urlRegistry = new UuAsyncCapabilityRegistry();
     const context = {
-        hasSadaiAsyncTask, SadaiTaskHttpError, sadaiImageBaseUrl, dragonImageBaseUrl, dragonPromptWithSize, resolveOpenAiImageSize,
+        hasSadaiAsyncTask, SadaiTaskHttpError, sadaiImageBaseUrl, buildSadaiImageRequestOptions, createHash, createDeferredImageResult, dragonImageBaseUrl, dragonPromptWithSize, resolveOpenAiImageSize,
         sadaiAsyncCapability: asyncRegistry, sadaiUrl26Capability: urlRegistry,
         upstreamIdempotencyKey: (id: string) => `fixture:${id}`,
-        submitSadaiAsyncTask: async () => { calls.push("submit"); if (submitError) throw submitError; return "accepted-task"; },
+        submitSadaiAsyncTask: async (_base: string, _key: string, body: unknown) => { bodies.push(body); calls.push("submit"); if (submitError) throw submitError; return "accepted-task"; },
         waitForSadaiAsyncTask: async (...args: any[]) => {
             calls.push(`poll:${args[2]}`);
             if (pollError) throw pollError;
+            if (previews) {
+                await args[7]?.onStatus?.("running");
+                await args[7]?.onImages?.(previews);
+                await args[7]?.onImages?.(previews);
+            }
             await args[7]?.onStatus?.("succeeded");
             return { urls: ["https://images.example.com/result.png"], status: "SUCCESS" };
         },
@@ -40,7 +47,7 @@ function harness({ submitError, pollError }: { submitError?: Error; pollError?: 
         console: { info: () => {} },
     };
     const generate = vm.runInNewContext(`${extract("async function generateSadaiAsyncImages(", "async function generateOpenAiImages(")}\ngenerateSadaiAsyncImages;`, context);
-    return { input, calls, snapshots, asyncRegistry, urlRegistry,
+    return { input, calls, bodies, snapshots, job, asyncRegistry, urlRegistry,
         run: () => generate({ baseUrl: "https://api.sadai.top/v1" }, "fixture-key", input, job, new AbortController().signal, job.id) };
 }
 
@@ -51,6 +58,25 @@ test("persists accepted SADAI tasks before polling and preserves reference image
     expect(h.snapshots[0].upstream).toEqual({ provider: "sadai-image", taskId: "accepted-task", status: "pending" });
     expect(h.snapshots[0].references).toEqual(["data:image/png;base64,AAAA"]);
     expect(h.snapshots.at(-1).upstream.status).toBe("succeeded");
+});
+
+test("submits documented SADAI dimensions instead of an ignored OpenAI size parameter", async () => {
+    const h = harness();
+    h.input.imageQuality = "low";
+    await h.run();
+    expect(h.bodies).toHaveLength(1);
+    expect(h.bodies[0]).toMatchObject({ model: "gpt-image-2.6-flare", n: 1, aspect_ratio: "1:1", resolution: "1k", quality: "low", response_format: "url", images: ["data:image/png;base64,AAAA"] });
+    expect(h.bodies[0]).not.toHaveProperty("size");
+});
+
+test("persists preview metadata once without completing or resubmitting the accepted task", async () => {
+    const h = harness({ previews: [{ id: "provider-image", url: "https://images.example.com/result.png", width: 1254, height: 1254, bytes: 100, mimeType: "image/png" }] });
+    await h.run();
+    const previews = h.snapshots.filter(snapshot => snapshot.upstream.status === "running" && snapshot.upstream.previewImages?.length);
+    expect(previews).toHaveLength(1);
+    expect(previews[0].upstream.previewImages[0]).toMatchObject({ dataUrl: "https://images.example.com/result.png", width: 1254, height: 1254, bytes: 100, persisted: false });
+    expect(h.job.status).toBe("running");
+    expect(h.calls.filter(call => call === "submit")).toHaveLength(1);
 });
 
 test("polling 404 never falls back to a second paid generation", async () => {

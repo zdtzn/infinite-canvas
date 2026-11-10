@@ -96,6 +96,52 @@ try {
         assert.equal(reads, 2);
         assert.equal(runtime.getImageGenerationSnapshot()?.results[0].image?.dataUrl, "/api/job-files/one/image.png");
         console.log("archive session isolation passed");
+    } else if (scenario === "preview-session") {
+        const cachedPreview = { ...image("cached-preview"), mimeType: "image/png" };
+        const livePreview = { ...image("live-preview"), mimeType: "image/png" };
+        stored.set("image-jobs:v3:owner", { selectedJobId: "resuming", jobs: [{
+            id: "resuming", prompt: "test", references: [], status: "running", startedAt: 1, elapsedMs: 0, successCount: 0, failCount: 0,
+            snapshot: { text: "test", references: [], config: {} },
+            results: [{ id: "slot", status: "pending", serverJobId: "server", idempotencyKey: "existing-request-key",
+                progress: { jobId: "server", phase: "waiting_upstream", reconnecting: false, previewImage: cachedPreview } }],
+        }] });
+        const oldRead = deferred<Response>();
+        const finalRead = deferred<Response>();
+        let reads = 0;
+        globalThis.fetch = (async (input, init) => {
+            assert.equal(String(input), "/api/jobs/server");
+            assert.equal(init?.method || "GET", "GET", "preview recovery must not archive or submit paid work");
+            assert.equal(new Headers(init?.headers).get("X-Expected-User-Id"), "owner");
+            if (++reads === 1) return oldRead.promise;
+            if (reads === 2) return Response.json({ job: { id: "server", status: "running", phase: "waiting_upstream", previewImages: [livePreview] } });
+            assert.equal(reads, 3);
+            return finalRead.promise;
+        }) as typeof fetch;
+        session("owner");
+        await until(() => reads === 1);
+        let result = runtime.getImageGenerationSnapshot()!.results[0];
+        assert.equal(result.status, "pending");
+        assert.equal(result.image, undefined);
+        assert.equal(result.progress?.previewImage?.id, "cached-preview", "refresh must retain the cached preview while polling the same task");
+        session("other");
+        assert.equal(runtime.getImageGenerationJobsSnapshot().length, 0);
+        oldRead.resolve(Response.json({ job: { id: "server", status: "running", previewImages: [cachedPreview] } }));
+        await Bun.sleep(5);
+        assert.equal(runtime.getImageGenerationJobsSnapshot().length, 0, "late preview must not cross into another account");
+        session("owner");
+        await until(() => reads === 3);
+        result = runtime.getImageGenerationSnapshot()!.results[0];
+        assert.equal(result.status, "pending");
+        assert.equal(result.image, undefined);
+        assert.equal(result.progress?.previewImage?.id, "live-preview");
+        assert.equal(runtime.getImageGenerationSnapshot()?.successCount, 0);
+        finalRead.resolve(Response.json({ job: serverJob("server") }));
+        await until(() => runtime.getImageGenerationSnapshot()?.status === "succeeded");
+        result = runtime.getImageGenerationSnapshot()!.results[0];
+        assert.equal(result.progress, undefined);
+        assert.equal(result.image?.dataUrl, "/api/job-files/server/image.png");
+        assert.equal(reads, 3);
+        console.log("preview recovery and account isolation passed");
     } else if (scenario === "cancel") {
         const oldDelete = deferred<Response>(), currentDelete = deferred<Response>();
         let deletes = 0, reads = 0;

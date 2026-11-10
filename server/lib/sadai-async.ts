@@ -4,9 +4,10 @@ import type { ImageJobInput } from "../types";
 const SADAI_TASK_POLL_INTERVAL_MS = 2_500;
 const SADAI_TASK_MAX_WAIT_MS = 15 * 60_000;
 const SADAI_TASK_REQUEST_TIMEOUT_MS = 30_000;
-const SADAI_TASK_TERMINAL_STATUSES = new Set(["SUCCESS", "FAILED", "CANCELED", "CANCELLED"]);
+const SADAI_TASK_TERMINAL_STATUSES = new Set(["SUCCESS", "FAILED", "FAILURE", "CANCELED", "CANCELLED"]);
 
 export type SadaiAsyncTaskResult = { urls: string[]; status: string };
+export type SadaiTaskImage = { id?: string; url: string; width?: number; height?: number; bytes?: number; mimeType?: string };
 type TaskStatus = NonNullable<ImageJobInput["upstream"]>["status"];
 
 export class SadaiTaskHttpError extends Error {
@@ -56,7 +57,7 @@ export async function waitForSadaiAsyncTask(
     onQueued?: () => void,
     fetchImpl: typeof fetch = fetch,
     pollIntervalMs = SADAI_TASK_POLL_INTERVAL_MS,
-    options: { maxWaitMs?: number; requestTimeoutMs?: number; onStatus?: (status: TaskStatus) => void | Promise<void> } = {},
+    options: { maxWaitMs?: number; requestTimeoutMs?: number; onStatus?: (status: TaskStatus) => void | Promise<void>; onImages?: (images: SadaiTaskImage[]) => void | Promise<void> } = {},
 ): Promise<SadaiAsyncTaskResult> {
     const deadline = Date.now() + (options.maxWaitMs ?? SADAI_TASK_MAX_WAIT_MS);
     let failures = 0;
@@ -77,20 +78,40 @@ export async function waitForSadaiAsyncTask(
             continue;
         }
         failures = 0;
+        if (signal.aborted) throw abortError(signal);
         const status = String(payload?.status || "").toUpperCase();
-        const normalized: TaskStatus = status === "SUCCESS" ? "succeeded" : status === "FAILED" ? "failed" :
+        const normalized: TaskStatus = status === "SUCCESS" ? "succeeded" : ["FAILED", "FAILURE"].includes(status) ? "failed" :
             ["CANCELED", "CANCELLED"].includes(status) ? "canceled" : status === "QUEUED" ? "pending" : status === "IN_PROGRESS" ? "running" : "unknown";
         if (normalized !== "unknown") await options.onStatus?.(normalized);
         if (status === "QUEUED") onQueued?.();
+        if (SADAI_TASK_TERMINAL_STATUSES.has(status) && status !== "SUCCESS") {
+            const message = typeof payload.error === "string" ? payload.error : payload.error?.message;
+            throw new Error(String(message || `SADAI 异步任务${normalized === "failed" ? "失败" : "已取消"}`).slice(0, 200));
+        }
+        const images = sadaiTaskImages(payload.response?.data);
+        if (images.length) await options.onImages?.(images);
         if (SADAI_TASK_TERMINAL_STATUSES.has(status)) {
-            const data = Array.isArray(payload?.response?.data) ? payload.response.data : [];
-            const urls = data.map((item: { url?: unknown }) => (typeof item?.url === "string" ? item.url : "")).filter(Boolean);
-            if (status !== "SUCCESS") throw new Error(String(payload?.error?.message || `SADAI 异步任务${status === "FAILED" ? "失败" : "已取消"}`).slice(0, 200));
-            if (!urls.length) throw new Error("SADAI 异步任务完成但没有返回图片地址");
-            return { urls: urls.map((url: string) => assertAllowedUpstreamUrl(url).toString()), status };
+            if (!images.length) throw new Error("SADAI 异步任务完成但没有返回图片地址");
+            return { urls: images.map(image => image.url), status };
         }
         await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())), signal);
     }
+}
+
+function sadaiTaskImages(data: unknown): SadaiTaskImage[] {
+    if (!Array.isArray(data)) return [];
+    return data.flatMap(item => {
+        if (!item || typeof item.url !== "string" || !item.url) return [];
+        const positiveInteger = (value: unknown) => Number.isSafeInteger(value) && Number(value) > 0;
+        return [{
+            url: assertAllowedUpstreamUrl(item.url).toString(),
+            ...(typeof item.asset_id === "string" && item.asset_id.length <= 256 ? { id: item.asset_id } : {}),
+            ...(positiveInteger(item.width) ? { width: item.width as number } : {}),
+            ...(positiveInteger(item.height) ? { height: item.height as number } : {}),
+            ...(positiveInteger(item.size_bytes) ? { bytes: item.size_bytes as number } : {}),
+            ...(/^image\/(png|jpeg|webp|gif|avif)$/i.test(String(item.mime_type || "")) ? { mimeType: String(item.mime_type).toLowerCase() } : {}),
+        }];
+    });
 }
 
 async function requestJson(url: string, init: RequestInit, signal: AbortSignal, timeoutMs: number, fetchImpl: typeof fetch, stage: "submit" | "poll") {

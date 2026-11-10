@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-for (const scenario of ["archive", "archive-failure", "archive-session", "cancel"]) {
+for (const scenario of ["archive", "archive-failure", "archive-session", "preview-session", "cancel"]) {
     test(`public runtime recovery: ${scenario}`, async () => {
         const child = Bun.spawn([process.execPath, "--no-env-file", fileURLToPath(new URL("./__fixtures__/image-generation-recovery.ts", import.meta.url)), scenario], { stdout: "pipe", stderr: "pipe" });
         const timeout = setTimeout(() => child.kill(), 5000);

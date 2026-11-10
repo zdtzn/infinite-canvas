@@ -2,6 +2,7 @@ const SADAI_IMAGE_API_HOST = "api.sadai.top";
 const SADAI_STANDARD_API_ORIGINS = new Set(["https://verysadai.com", "https://sadai.cc", "https://sadai.top"]);
 const SADAI_IMAGE_25_MODELS = new Set(["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]);
 const SADAI_ASPECT_RATIOS = new Set(["1:1", "5:4", "9:16", "21:9", "16:9", "3:2", "4:3", "4:5", "3:4", "2:3"]);
+const SADAI_IMAGE_26_ASPECT_RATIOS = new Set([...SADAI_ASPECT_RATIOS, "9:21"]);
 
 const SADAI_RESOLUTION_MAP: Record<string, string> = {
     low: "1k",
@@ -23,10 +24,12 @@ const SADAI_QUALITY_MAP: Record<string, string> = {
 };
 
 type SadaiImageRequestOptionsInput = {
+    model?: string;
     count: number;
     size?: string;
     outputResolution?: string;
     generationQuality?: string;
+    responseFormat?: "url" | "b64_json";
     references: string[];
 };
 
@@ -94,8 +97,8 @@ export function isSadaiUrlResultChannel(baseUrl: string, model: string) {
     return isSadaiImage26Channel(baseUrl, model);
 }
 
-export function buildSadaiImageRequestOptions({ count, size, outputResolution, generationQuality, references }: SadaiImageRequestOptionsInput) {
-    const aspectRatio = resolveSadaiAspectRatio(size);
+export function buildSadaiImageRequestOptions({ model, count, size, outputResolution, generationQuality, references, responseFormat = "b64_json" }: SadaiImageRequestOptionsInput) {
+    const aspectRatio = resolveSadaiAspectRatio(size, model);
     const resolution = SADAI_RESOLUTION_MAP[String(outputResolution || "").trim().toLowerCase()];
     const quality = SADAI_QUALITY_MAP[String(generationQuality || "").trim().toLowerCase()];
     return {
@@ -103,12 +106,13 @@ export function buildSadaiImageRequestOptions({ count, size, outputResolution, g
         ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
         ...(resolution ? { resolution } : {}),
         ...(quality ? { quality } : {}),
-        response_format: "b64_json",
+        response_format: responseFormat,
         ...(references.length ? { images: [...references] } : {}),
     };
 }
 
-function resolveSadaiAspectRatio(size?: string) {
+function resolveSadaiAspectRatio(size?: string, model?: string) {
+    const ratios = model?.trim().toLowerCase() === "gpt-image-2.6-flare" ? SADAI_IMAGE_26_ASPECT_RATIOS : SADAI_ASPECT_RATIOS;
     const requestedValue = String(size || "").trim().toLowerCase();
     if (!requestedValue) return undefined;
     const value = requestedValue === "auto" ? "1:1" : requestedValue;
@@ -118,10 +122,10 @@ function resolveSadaiAspectRatio(size?: string) {
     const height = Number(match[2]);
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return undefined;
     const requestedRatio = `${width}:${height}`;
-    if (SADAI_ASPECT_RATIOS.has(requestedRatio)) return requestedRatio;
+    if (ratios.has(requestedRatio)) return requestedRatio;
     const divisor = greatestCommonDivisor(width, height);
     const aspectRatio = `${width / divisor}:${height / divisor}`;
-    if (!SADAI_ASPECT_RATIOS.has(aspectRatio)) throw new Error(`SADAI Image2 does not support aspect ratio ${aspectRatio}`);
+    if (!ratios.has(aspectRatio)) throw new Error(`SADAI Image2 does not support aspect ratio ${aspectRatio}`);
     return aspectRatio;
 }
 

@@ -403,7 +403,7 @@ async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGe
         const existingServerJobId = currentResult?.serverJobId;
         const idempotencyKey = currentResult?.idempotencyKey || nanoid();
         if (!currentResult?.idempotencyKey) updateResult(jobId, index, { idempotencyKey });
-        updateResult(jobId, index, { startedAt: currentResult.startedAt || Date.now(), progress: PUBLIC_MODE && !existingServerJobId ? { jobId: "", phase: "submitting", reconnecting: false } : undefined });
+        updateResult(jobId, index, { startedAt: currentResult.startedAt || Date.now(), progress: PUBLIC_MODE && !existingServerJobId ? { jobId: "", phase: "submitting", reconnecting: false } : currentResult.progress });
         await persistCurrentJob();
         signal.throwIfAborted();
         if (!isCurrent()) throw new DOMException("Aborted", "AbortError");
@@ -430,7 +430,7 @@ async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGe
             if (!isCurrent() || signal.aborted) return;
             const current = jobs.find((job) => job.id === jobId)?.results[index];
             if (current?.status !== "pending" || current.id !== currentResult.id || current.serverJobId !== progress.jobId) return;
-            if (current.progress?.phase === progress.phase && current.progress?.reconnecting === progress.reconnecting && current.progress?.jobId === progress.jobId) return;
+            if (JSON.stringify(current.progress) === JSON.stringify(progress)) return;
             updateResult(jobId, index, { progress });
         };
         const request = existingServerJobId

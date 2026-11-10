@@ -81,6 +81,76 @@ test("slot progress stays independent, emits only changes and ignores canceled o
     }
 });
 
+test("a live preview remains pending and yields to the actual final image", async () => {
+    const ready = deferred<void>();
+    const image = deferred<GeneratedImage>();
+    const complete = deferred<ImageGenerationCompletion>();
+    let progress: ((progress: ServerJobProgress) => void) | undefined;
+    const id = startImageGeneration(testSnapshot, 1, complete.resolve, async (_snapshot, _index, created, _owner, _key, _archived, _signal, onProgress) => {
+        created?.("preview-job");
+        progress = onProgress;
+        ready.resolve();
+        return image.promise;
+    })!;
+    await ready.promise;
+    const current = () => getImageGenerationJobsSnapshot().find((job) => job.id === id)!;
+    const preview = { id: "partial", dataUrl: "https://images.example.com/partial.png", bytes: 10, durationMs: 1000, mimeType: "image/png", persisted: false };
+    const update: ServerJobProgress = { jobId: "preview-job", phase: "waiting_upstream", reconnecting: false, previewImage: preview };
+    try {
+        progress?.(update);
+        assert.equal(current().results[0].status, "pending");
+        assert.equal(current().results[0].image, undefined);
+        assert.equal(current().successCount, 0);
+        assert.equal(current().results[0].progress?.previewImage?.dataUrl, preview.dataUrl);
+        const unchanged = getImageGenerationJobsSnapshot();
+        progress?.({ ...update, previewImage: { ...preview } });
+        assert.equal(getImageGenerationJobsSnapshot(), unchanged);
+        progress?.({ ...update, previewImage: { ...preview, width: 1254, height: 1254 } });
+        assert.equal(current().results[0].progress?.previewImage?.width, 1254);
+        progress?.({ ...update, reconnecting: true });
+        assert.equal(current().results[0].progress?.previewImage?.dataUrl, preview.dataUrl);
+        image.resolve({ ...testImage, id: "final", dataUrl: "/api/job-files/preview-job/final.png", persisted: true });
+        const completion = await complete.promise;
+        assert.equal(completion.successCount, 1);
+        assert.equal(completion.successImages[0].id, "final");
+        assert.equal(current().results[0].progress, undefined);
+        assert.equal(current().results[0].image?.dataUrl, "/api/job-files/preview-job/final.png");
+        progress?.(update);
+        assert.equal(current().results[0].progress, undefined);
+    } finally {
+        image.resolve(testImage);
+        await cancelImageGeneration(id);
+        selectImageGenerationJob(id);
+        clearImageGenerationJob();
+    }
+});
+
+test("an unfinished preview never survives failed or canceled generation as a result", async () => {
+    for (const outcome of ["failed", "canceled"]) {
+        const ready = deferred<void>();
+        const image = Promise.withResolvers<GeneratedImage>();
+        const complete = deferred<ImageGenerationCompletion>();
+        let progress: ((progress: ServerJobProgress) => void) | undefined;
+        const id = startImageGeneration(testSnapshot, 1, complete.resolve, async (_snapshot, _index, created, _owner, _key, _archived, _signal, onProgress) => {
+            created?.("unfinished"); progress = onProgress; ready.resolve(); return image.promise;
+        })!;
+        await ready.promise;
+        progress?.({ jobId: "unfinished", reconnecting: false, previewImage: { id: "partial", dataUrl: "https://images.example.com/unfinished.png", bytes: 1, durationMs: 1, mimeType: "image/png", persisted: false } });
+        if (outcome === "failed") image.reject(new Error("fixture failed"));
+        else await cancelImageGeneration(id);
+        const completion = await complete.promise;
+        const result = getImageGenerationJobsSnapshot().find((job) => job.id === id)!.results[0];
+        assert.equal(result.status, outcome);
+        assert.equal(result.progress, undefined);
+        assert.equal(result.image, undefined);
+        assert.equal(completion.successCount, 0);
+        assert.deepEqual(completion.successImages, []);
+        image.resolve(testImage);
+        selectImageGenerationJob(id);
+        clearImageGenerationJob();
+    }
+});
+
 test("waiting clock does not recreate task snapshots or notify all subscribers", async () => {
     const started = deferred<void>();
     const completion = deferred<ImageGenerationCompletion>();

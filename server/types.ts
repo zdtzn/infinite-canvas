@@ -114,6 +114,7 @@ export type ImageJobInput = {
     taskId: string;
     expiresAt?: string;
     status?: "pending" | "running" | "succeeded" | "failed" | "canceled" | "unknown";
+    previewImages?: ImageJobImage[];
   };
 };
 export type ImageJobImage = {

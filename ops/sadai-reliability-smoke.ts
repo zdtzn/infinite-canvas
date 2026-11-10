@@ -53,6 +53,7 @@ globalThis.fetch = async (input, init) => {
         const isEdit = url.pathname === "/v1/images/edit-tasks";
         if (Boolean(body.images?.length) !== isEdit) throw new Error("Reference images must use the dedicated edit-task endpoint");
         if (body.response_format !== "url") throw new Error("Async image tasks must request URL results");
+        if (body.resolution !== "1k" || "size" in body) throw new Error("SADAI tasks must use documented resolution fields");
         if (isEdit) {
             const expected = Array(mode === "reference-many" ? 3 : 1).fill("data:image/png;base64," + ${JSON.stringify(png)});
             if (JSON.stringify(body.images) !== JSON.stringify(expected)) throw new Error("Reference image bytes were lost or replaced");
@@ -65,6 +66,7 @@ globalThis.fetch = async (input, init) => {
     }
     if (method === "GET" && url.pathname.startsWith("/v1/images/tasks/")) {
         if (mode === "hold" || mode === "reference-hold") return Response.json({ status: "QUEUED" });
+        if (mode === "reference-many") return Response.json({ status: "IN_PROGRESS", response: { data: [{ url: "https://images.example.com/fixture.png", width: 1, height: 1, mime_type: "image/png", size_bytes: 70 }], metadata: { complete: false } } });
         if (mode === "poll401") return Response.json({ error: { message: "fixture temporary credentials failure" } }, { status: 401 });
         if (mode === "flaky" && transientPolls++ < 2) return Response.json({}, { status: transientPolls === 1 ? 503 : 404 });
         return Response.json({ status: "SUCCESS", response: { data: [{ url: "https://images.example.com/fixture.png" }] } });
@@ -193,11 +195,29 @@ await import(${JSON.stringify(pathToFileURL(resolve(import.meta.dir, "../server/
 
     await Bun.write(modePath, "reference-many");
     const multiEdit = await create("multiple-references", "fixture-reference", [reference, reference, reference]);
+    await until(async () => Boolean(db.loadState().jobs[multiEdit.id]?.input.upstream?.previewImages?.length));
+    const partial = (await json(await request("GET", `/api/jobs/${multiEdit.id}`))).job;
+    assert.equal(partial.status, "running");
+    assert.equal(partial.result, undefined);
+    assert.equal(partial.previewImages[0].width, 1);
+    assert.equal(cultivation.getGenerationUsage(multiEdit.id)?.status, "reserved");
+    child.kill("SIGKILL");
+    await child.exited;
+    assert.equal(db.loadState().jobs[multiEdit.id].input.upstream?.previewImages?.[0].id, partial.previewImages[0].id);
+    child = start();
+    await ready();
+    const restoredPreview = (await json(await request("GET", `/api/jobs/${multiEdit.id}`))).job;
+    assert.equal(restoredPreview.previewImages[0].id, partial.previewImages[0].id);
+    await Bun.write(modePath, "success");
     assert.equal((await finished(multiEdit.id)).status, "succeeded");
+    const final = (await json(await request("GET", `/api/jobs/${multiEdit.id}`))).job;
+    assert.equal(final.previewImages, undefined);
+    assert.equal(final.result.images[0].id, partial.previewImages[0].id);
+    assert.equal(final.result.images[0].width, 1);
     assert.equal(calls().filter(item => item.method === "POST" && item.path === "/v1/images/edit-tasks").length, 2);
     assert.equal(submits(), 4);
     assert.equal(cultivation.getWallet("member").balance, 0);
-    console.log("PASS: all three persisted references reach the edit task; no text-only generation is submitted");
+    console.log("PASS: multi-reference preview appears before completion, survives restart and settles the same task once");
 } finally {
     child?.kill("SIGKILL");
     if (child) await child.exited;
