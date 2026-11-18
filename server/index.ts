@@ -3657,8 +3657,10 @@ async function generateSadaiAsyncImages(channel: ChannelRecord, apiKey: string, 
                 ...(input.imageQuality ? { quality: input.imageQuality } : {}),
                 ...(input.background ? { background: input.background } : {}),
                 ...(input.imageOutputFormat ? { output_format: input.imageOutputFormat } : {}),
-            }, signal, undefined, { idempotencyKey: upstreamIdempotencyKey(job.id) });
+            }, signal, undefined, { idempotencyKey: upstreamIdempotencyKey(job.id), requestTimeoutMs: runtimeInput.references.length ? REQUEST_TIMEOUT_MS : undefined });
         } catch (error) {
+            if (!signal.aborted && error instanceof DOMException && error.name === "TimeoutError")
+                throw new Error("提交结果未确认，渠道可能已接收任务；请先在渠道查看结果，再决定是否重新生成");
             // Only an explicit submission endpoint 404 can safely fall back. Polling must never generate again.
             if (!(error instanceof SadaiTaskHttpError) || error.stage !== "submit" || error.status !== 404) throw error;
             sadaiAsyncCapability.disable(capabilityKey);
@@ -3879,8 +3881,12 @@ async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, inp
                         signal,
                     },
                     false,
-                    UU_ASYNC_REQUEST_TIMEOUT_MS,
-                );
+                    runtimeInput.references.length || runtimeInput.mask ? REQUEST_TIMEOUT_MS : UU_ASYNC_REQUEST_TIMEOUT_MS,
+                ).catch((error) => {
+                    if (!signal.aborted && error instanceof HttpError && error.status === 504)
+                        throw new Error("提交结果未确认，渠道可能已接收任务；请先在渠道查看结果，再决定是否重新生成");
+                    throw error;
+                });
                 const task = readUuAsyncTask(await parseUpstreamJson(response));
                 if (!task.taskId) throw new Error(task.message || "UU 异步任务创建成功，但没有返回任务 ID");
                 input.upstream = {

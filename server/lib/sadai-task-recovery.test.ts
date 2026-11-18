@@ -22,14 +22,15 @@ function harness({ submitError, pollError, previews }: { submitError?: Error; po
     const job = { id: "fixture-job", input, status: "running", startedAt: Date.now() - 1000 };
     const calls: string[] = [];
     const bodies: any[] = [];
+    const submitOptions: any[] = [];
     const snapshots: any[] = [];
     const asyncRegistry = new UuAsyncCapabilityRegistry();
     const urlRegistry = new UuAsyncCapabilityRegistry();
     const context = {
-        hasSadaiAsyncTask, SadaiTaskHttpError, sadaiImageBaseUrl, buildSadaiImageRequestOptions, createHash, createDeferredImageResult, dragonImageBaseUrl, dragonPromptWithSize, resolveOpenAiImageSize,
+        hasSadaiAsyncTask, SadaiTaskHttpError, sadaiImageBaseUrl, buildSadaiImageRequestOptions, createHash, createDeferredImageResult, dragonImageBaseUrl, dragonPromptWithSize, resolveOpenAiImageSize, DOMException, REQUEST_TIMEOUT_MS: 600_000,
         sadaiAsyncCapability: asyncRegistry, sadaiUrl26Capability: urlRegistry,
         upstreamIdempotencyKey: (id: string) => `fixture:${id}`,
-        submitSadaiAsyncTask: async (_base: string, _key: string, body: unknown) => { bodies.push(body); calls.push("submit"); if (submitError) throw submitError; return "accepted-task"; },
+        submitSadaiAsyncTask: async (_base: string, _key: string, body: unknown, _signal: unknown, _fetch: unknown, options: unknown) => { bodies.push(body); submitOptions.push(options); calls.push("submit"); if (submitError) throw submitError; return "accepted-task"; },
         waitForSadaiAsyncTask: async (...args: any[]) => {
             calls.push(`poll:${args[2]}`);
             if (pollError) throw pollError;
@@ -47,7 +48,7 @@ function harness({ submitError, pollError, previews }: { submitError?: Error; po
         console: { info: () => {} },
     };
     const generate = vm.runInNewContext(`${extract("async function generateSadaiAsyncImages(", "async function generateOpenAiImages(")}\ngenerateSadaiAsyncImages;`, context);
-    return { input, calls, bodies, snapshots, job, asyncRegistry, urlRegistry,
+    return { input, calls, bodies, submitOptions, snapshots, job, asyncRegistry, urlRegistry,
         run: () => generate({ baseUrl: "https://api.sadai.top/v1" }, "fixture-key", input, job, new AbortController().signal, job.id) };
 }
 
@@ -57,6 +58,7 @@ test("persists accepted SADAI tasks before polling and preserves reference image
     expect(h.calls).toEqual(["materialize", "submit", "persist", "poll:accepted-task", "persist"]);
     expect(h.snapshots[0].upstream).toEqual({ provider: "sadai-image", taskId: "accepted-task", status: "pending" });
     expect(h.snapshots[0].references).toEqual(["data:image/png;base64,AAAA"]);
+    expect(h.submitOptions[0].requestTimeoutMs).toBe(600_000);
     expect(h.snapshots.at(-1).upstream.status).toBe("succeeded");
 });
 
@@ -98,8 +100,28 @@ test("only submission endpoint 404 falls back and leaves URL capability enabled"
 test("submission timeout is never replayed or downgraded automatically", async () => {
     const error = new DOMException("submission outcome unknown", "TimeoutError");
     const h = harness({ submitError: error });
-    await expect(h.run()).rejects.toBe(error);
+    await expect(h.run()).rejects.toThrow("提交结果未确认");
     expect(h.calls).toEqual(["materialize", "submit"]);
+});
+
+test("UU reference upload has the longer submission window without replaying a timeout", async () => {
+    const timeouts: number[] = [];
+    let calls = 0;
+    class HttpError extends Error { constructor(readonly status: number, message: string) { super(message); } }
+    const input = { channelId: "uu", model: "gpt-image-2.6", references: ["fixture"], count: 1 };
+    const registry = new UuAsyncCapabilityRegistry();
+    const context = {
+        hasUuAsyncTask, uuAsyncCapabilityRegistry: registry, uuAsyncCapabilityKey: (id: string) => id,
+        materializeImageInput: async (value: unknown) => value, dataUrlBlob: () => new Blob(),
+        buildUuAsyncImageSubmission: () => ({ path: "/images/edits/async", body: new FormData() }),
+        buildUpstreamUrl: (_base: string, _format: string, path: string) => path,
+        upstreamIdempotencyKey: (id: string) => id, REQUEST_TIMEOUT_MS: 600_000, UU_ASYNC_REQUEST_TIMEOUT_MS: 30_000, HttpError,
+        upstreamFetch: async (_url: string, _init: unknown, _retry: boolean, timeout: number) => { calls++; timeouts.push(timeout); throw new HttpError(504, "超时"); },
+    };
+    const generate = vm.runInNewContext(`${extract("async function generateUuAsyncImages(", "async function pollUuImageTask(")}\ngenerateUuAsyncImages;`, context);
+    await expect(generate({ baseUrl: "https://uuapi.cc/v1" }, "key", input, { id: "job" }, new AbortController().signal, "job")).rejects.toThrow("提交结果未确认");
+    expect(timeouts).toEqual([600_000]);
+    expect(calls).toBe(1);
 });
 
 test("resuming a known SADAI task only queries and never materializes or submits again", async () => {
