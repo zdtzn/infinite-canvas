@@ -8,7 +8,7 @@ import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
 import { imageToDataUrl } from "@/services/image-storage";
-import { archiveDeferredServerJob, cancelServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput, type ServerJob, type ServerJobProgress } from "@/services/server-api";
+import { archiveDeferredServerJob, cancelServerJob, fetchServerJob, retryServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput, type ServerJob, type ServerJobProgress } from "@/services/server-api";
 import { deriveImageModelCapabilities, isUuAsyncGptImageModel, isUuImage25Model, validateImageRequest } from "@/stores/model-capabilities";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { useUserStore } from "@/stores/use-user-store";
@@ -1004,14 +1004,28 @@ async function requestServerImageJob(
         expectedUserId,
         options?.idempotencyKey,
     );
-    options?.onJobCreated?.(job.id);
+    return waitForServerImageJob(job.id, expectedUserId, options);
+}
+
+export async function retryServerImageJob(originalJobId: string, options: RequestOptions) {
+    options.signal?.throwIfAborted();
+    const expectedUserId = options.expectedUserId ?? useUserStore.getState().user?.id ?? "";
+    const { job: original } = await fetchServerJob(originalJobId, expectedUserId, options.signal);
+    const { job } = original.status === "failed" || original.status === "canceled"
+        ? await retryServerJob(originalJobId, expectedUserId, options.idempotencyKey)
+        : { job: original };
+    return waitForServerImageJob(job.id, expectedUserId, options);
+}
+
+async function waitForServerImageJob(jobId: string, expectedUserId: string, options?: RequestOptions) {
+    options?.onJobCreated?.(jobId);
     const abort = () => {
-        if (options?.cancelOnAbort !== false) void cancelServerJob(job.id, expectedUserId).catch(() => undefined);
+        if (options?.cancelOnAbort !== false) void cancelServerJob(jobId, expectedUserId).catch(() => undefined);
     };
     options?.signal?.addEventListener("abort", abort, { once: true });
     if (options?.signal?.aborted) abort();
     try {
-        const completed = await waitForServerJob(job.id, { signal: options?.signal, expectedUserId, onProgress: options?.onProgress });
+        const completed = await waitForServerJob(jobId, { signal: options?.signal, expectedUserId, onProgress: options?.onProgress });
         return completedServerImages(completed, expectedUserId, options);
     } finally {
         options?.signal?.removeEventListener("abort", abort);

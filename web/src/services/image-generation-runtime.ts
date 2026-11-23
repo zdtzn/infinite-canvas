@@ -3,7 +3,7 @@ import localforage from "localforage";
 
 import { requestEdit, requestGeneration } from "@/services/api/image";
 import { settleWithConcurrency } from "@/lib/async-pool";
-import { friendlyErrorMessage } from "@/lib/friendly-error";
+import { friendlyErrorMessage, isImageSubmissionUnconfirmed } from "@/lib/friendly-error";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { archiveDeferredServerJob, cancelServerJob, fetchServerJob, retryServerJob, waitForServerJob, type ServerJob, type ServerJobImage, type ServerJobProgress } from "@/services/server-api";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -192,6 +192,7 @@ export async function retryImageGeneration(index: number, snapshot: ImageGenerat
     const ownerUserId = runtimeOwnerUserId;
     const ownerVersion = hydrationVersion;
     const previous = job.results[index];
+    if (isImageSubmissionUnconfirmed(previous.error)) return null;
     // A lost submission response may already have created a paid job. Replay its key to recover it.
     const idempotencyKey = previous.status === "failed" && !previous.serverJobId ? previous.idempotencyKey || nanoid() : nanoid();
 

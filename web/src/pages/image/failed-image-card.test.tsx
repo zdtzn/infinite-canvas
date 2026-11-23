@@ -11,7 +11,7 @@ test("failed image card SSR scenarios run independently of suite module mocks", 
     try {
         const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
         expect({ code, stdout, stderr }).toMatchObject({ code: 0 });
-        expect(`${stdout}\n${stderr}`).toContain("2 pass");
+        expect(`${stdout}\n${stderr}`).toContain("3 pass");
     } finally {
         clearTimeout(timeout);
     }

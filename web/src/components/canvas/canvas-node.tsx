@@ -4,7 +4,7 @@ import { ChevronRight, Copy, Download, Group, Image as ImageIcon, LoaderCircle, 
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
-import { userFacingErrorMessage } from "@/lib/friendly-error";
+import { isImageSubmissionUnconfirmed, userFacingErrorMessage } from "@/lib/friendly-error";
 import { formatCanvasGenerationElapsed } from "@/lib/canvas/canvas-generation-time";
 import { IMAGE_RECONNECT_NOTICE, imageGenerationProgressLabel } from "@/lib/image-generation-progress";
 import { canvasImageDisplaySource, canvasImageLoadingAttributes } from "@/lib/canvas/canvas-image-loading";
@@ -626,20 +626,22 @@ function ErrorContent({ node, theme, onRetry, onDelete, isDouEmperor }: Pick<Nod
                 <div className="text-xs leading-5" style={{ color: theme.node.muted }}>{userFacingErrorMessage(node.metadata?.errorDetails, "未能完成这次创作，请稍后再试")}</div>
             )}
             <div className="flex items-center gap-2">
-            <button
-                type="button"
-                className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
-                style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
-                onClick={(event) => {
-                    event.stopPropagation();
-                    onRetry?.(node);
-                }}
-                onMouseDown={(event) => event.stopPropagation()}
-                onPointerDown={(event) => event.stopPropagation()}
-            >
-                <RefreshCw className="size-3.5" />
-                重试
-            </button>
+                {isImageCreation && isImageSubmissionUnconfirmed(node.metadata?.errorDetails) ? null : (
+                    <button
+                        type="button"
+                        className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onRetry?.(node);
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                    >
+                        <RefreshCw className="size-3.5" />
+                        重试
+                    </button>
+                )}
                 {node.metadata?.batchRootId && onDelete ? (
                     <button
                         type="button"

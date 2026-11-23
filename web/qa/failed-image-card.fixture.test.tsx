@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { IMAGE_SUBMISSION_UNCONFIRMED } from "@/lib/friendly-error";
 import { FailedImageCard } from "@/pages/image/failed-image-card";
 
 test("a failed image shows guidance first and keeps one support reference in closed details", () => {
@@ -24,4 +25,12 @@ test("a history failure can label a whole-group retry and disable it during gene
     expect(retryButton).toContain('disabled=""');
     expect(html).toContain("这一笔未能成卷");
     expect(html).not.toContain("再试一次");
+});
+
+test("an unconfirmed submission shows the channel warning without a retry action", () => {
+    const html = renderToStaticMarkup(<FailedImageCard id="uncertain" error={IMAGE_SUBMISSION_UNCONFIRMED} isDouEmperor={false} onRetry={() => {}} />);
+    const primary = html.split("<details")[0];
+    expect(primary).toContain("提交结果未确认");
+    expect(primary).toContain("请先到渠道查看结果");
+    expect(primary).not.toMatch(/再试一次|这张图没能生成/);
 });

@@ -220,6 +220,7 @@ test("navigation detaches without DELETE and keeps a recoverable job", async () 
         },
     });
     run(declaration("services/api/image.ts", "requestServerImageJob"));
+    run(declaration("services/api/image.ts", "waitForServerImageJob"));
     const controller = c.startGenerationRequest("same-node", "same-node");
     const options = c.imageRequestOptions("same-node", controller);
     const request = c.requestServerImageJob({ channelId: "fixture-channel", model: "fixture-model", quality: "low", apiFormat: "openai", size: "auto" }, "fixture", [], undefined, 1, options).catch((e: Error) => e.name);
@@ -234,6 +235,33 @@ test("navigation detaches without DELETE and keeps a recoverable job", async () 
     assert.equal(await request, "AbortError");
     assert.deepEqual(canceled, []);
     assert.equal(c.nodes[0].metadata.status, "loading");
+});
+
+test("retrying a failed canvas node with a job ID uses its retry endpoint even without local references", async () => {
+    const { c, run, install, node } = harness();
+    const paths: string[] = [];
+    install([node({ status: "error", jobId: "original-job", generationType: "edit", prompt: "fixture", model: "fixture-model" })]);
+    Object.assign(c, {
+        effectiveConfig: {}, imageSaveState: () => null, isImageSubmissionUnconfirmed: () => false,
+        findRetrySourceNode: () => c.nodes[0], applyCameraPrompt: (text: string) => text,
+        isAiConfigReady: () => assert.fail("The retry must use the original server model"),
+        resolveMetadataReferences: () => assert.fail("The retry must use the original server references"),
+        serverRequest: async (path: string) => {
+            paths.push(path);
+            if (path === "/api/jobs/original-job") return { job: { id: "original-job", status: "failed" } };
+            return { job: { id: "resumed-job" } };
+        },
+        waitForServerJob: async (id: string) => {
+            assert.equal(id, "resumed-job");
+            throw new DOMException("Aborted", "AbortError");
+        },
+    });
+    for (const operation of ["fetchServerJob", "retryServerJob"]) run(declaration("services/server-api.ts", operation));
+    run(declaration("services/api/image.ts", "retryServerImageJob"));
+    run(declaration("services/api/image.ts", "waitForServerImageJob"));
+    await c.handleRetryNode(c.nodes[0]);
+    assert.deepEqual(paths, ["/api/jobs/original-job", "/api/jobs/original-job/retry"]);
+    assert.equal(c.nodes[0].metadata.jobId, "resumed-job");
 });
 
 test("snapshot restore invalidates an old recovery completion", async () => {

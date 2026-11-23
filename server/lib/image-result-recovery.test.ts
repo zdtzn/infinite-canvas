@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 import {
   createDeferredImageResult,
   hasDeferredImageResults,
-  isCompletedUuResultRecovery,
   isRecoverableImageDownloadError,
   recoverDeferredImageResults,
 } from "./image-result-recovery";
@@ -70,32 +69,6 @@ describe("deferred upstream image recovery", () => {
     ).toBe(false);
     expect(
       isRecoverableImageDownloadError(new Error("下载生成图片失败：400")),
-    ).toBe(false);
-  });
-
-  test("recognizes a retry that only resumes an already completed UU task", () => {
-    expect(
-      isCompletedUuResultRecovery({
-        upstream: {
-          provider: "uu-image",
-          taskId: "uug_done",
-          status: "succeeded",
-        },
-      }),
-    ).toBe(true);
-    expect(
-      isCompletedUuResultRecovery({
-        upstream: {
-          provider: "uu-image",
-          taskId: "uug_running",
-          status: "running",
-        },
-      }),
-    ).toBe(false);
-    expect(
-      isCompletedUuResultRecovery({
-        upstream: { provider: "other", taskId: "done", status: "succeeded" },
-      }),
     ).toBe(false);
   });
 

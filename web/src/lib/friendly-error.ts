@@ -1,3 +1,7 @@
+import { IMAGE_SUBMISSION_UNCONFIRMED, isImageSubmissionUnconfirmed } from "../../../shared/image-submission";
+
+export { IMAGE_SUBMISSION_UNCONFIRMED, IMAGE_SUBMISSION_UNCONFIRMED_HINT, isImageSubmissionUnconfirmed } from "../../../shared/image-submission";
+
 const MAX_ERROR_LENGTH = 300;
 
 export function userFacingErrorMessage(value: unknown, fallback = "操作未完成，请稍后再试") {
@@ -17,6 +21,7 @@ export function friendlyErrorMessage(value: unknown, status?: number) {
     const supportReference = extractSupportReference(value);
     const withSupportReference = (message: string) => (supportReference && !message.includes(supportReference) ? `${message}（${supportReference}）` : message);
 
+    if (isImageSubmissionUnconfirmed(raw)) return withSupportReference(IMAGE_SUBMISSION_UNCONFIRMED);
     if (/(灵卷.*不足|付费生图次数不足|WALLET_INSUFFICIENT)/i.test(raw)) {
         return withSupportReference("灵卷不足，请联系管理员补充灵卷或减少生成数量");
     }

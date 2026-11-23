@@ -532,7 +532,7 @@ export function createCultivationService(
   function getGenerationUsage(jobId: string) {
     const usage = database
       .query(
-        "SELECT job_id, user_id, status, requested_count, created_at, settled_at FROM generation_usage WHERE job_id = ?",
+        "SELECT job_id, user_id, status, requested_count, success_count, created_at, settled_at FROM generation_usage WHERE job_id = ?",
       )
       .get(jobId) as Record<string, unknown> | null;
     return usage
@@ -541,6 +541,7 @@ export function createCultivationService(
           userId: String(usage.user_id),
           status: String(usage.status),
           requestedCount: Number(usage.requested_count),
+          successCount: Number(usage.success_count),
           createdAt: Number(usage.created_at),
           settledAt: usage.settled_at == null ? null : Number(usage.settled_at),
         }

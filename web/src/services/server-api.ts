@@ -482,7 +482,7 @@ export async function fetchServerJob(id: string, expectedUserId?: string, signal
 }
 
 export async function cancelServerJob(id: string, expectedUserId?: string) {
-    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
+    return serverRequest<{ job: ServerJob }>(`/api/jobs/${encodeURIComponent(id)}`, { method: "DELETE", timeoutMs: 35_000, expectedUserId });
 }
 
 export async function removeServerJob(id: string, expectedUserId?: string) {

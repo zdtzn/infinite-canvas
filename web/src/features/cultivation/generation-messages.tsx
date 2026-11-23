@@ -1,3 +1,5 @@
+import { IMAGE_SUBMISSION_UNCONFIRMED_HINT, isImageSubmissionUnconfirmed } from "@/lib/friendly-error";
+
 export type GenerationFailureKind = "common" | "system" | "imperial";
 
 export type GenerationFailureFeedback = {
@@ -73,10 +75,12 @@ export function generationFailureKind(error: unknown, { isDouEmperor = false }: 
 }
 
 export function generationFailureFeedback(error: unknown, options: GenerationFailureOptions = {}): GenerationFailureFeedback {
+    const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    if (isImageSubmissionUnconfirmed(detail))
+        return { kind: "system", title: "提交结果未确认", description: IMAGE_SUBMISSION_UNCONFIRMED_HINT, reference: failureSupportReference(error) };
     const kind = generationFailureKind(error, options);
     const messages = generationFailedMessages[kind];
     const message = messages[messageIndex(messages.length, options.seed)] || messages[0];
-    const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
     const description = /policy|safety|moderation|审核|违规|安全策略|内容限制/i.test(detail)
         ? "内容未通过审核，请调整提示词或参考图。"
         : /灵卷.*不足|付费生图次数不足|WALLET_INSUFFICIENT/i.test(detail)

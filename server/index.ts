@@ -4,6 +4,7 @@ import { isIP } from "node:net";
 import { createEmailRegistration, normalizeRegistrationEmail, smtpConfigured } from "./lib/email-registration";
 import { createPasswordReset, PasswordResetError, type PasswordResetInput } from "./lib/password-reset";
 import { extname, join, normalize, resolve, sep } from "node:path";
+import { IMAGE_SUBMISSION_UNCONFIRMED, isImageSubmissionUnconfirmed } from "../shared/image-submission";
 
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, personalPasswordIssue, readCookie, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./lib/asset-library";
@@ -40,7 +41,7 @@ import { resolveServerImageCapabilityProfile, validateServerImageCapabilityReque
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, imageResponseItemValue, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
 import { imageEditReferenceField, geminiImageGenerationConfig } from "./lib/image-provider-protocol";
-import { createDeferredImageResult, hasDeferredImageResults, isCompletedUuResultRecovery, isRecoverableImageDownloadError, recoverDeferredImageResults } from "./lib/image-result-recovery";
+import { createDeferredImageResult, hasDeferredImageResults, isRecoverableImageDownloadError, recoverDeferredImageResults } from "./lib/image-result-recovery";
 import { createResultImageRelayConfig, isRelayEligibleResultUrl, resultImageDownloadUrl } from "./lib/result-image-relay";
 import { KeyedSerialExecutor } from "./lib/keyed-serial-executor";
 import { buildDragonChatImageRequest, dragonChatImageUrls, dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel } from "./lib/dragon-image";
@@ -74,7 +75,7 @@ import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage26Cha
 import { hasSadaiAsyncTask, SadaiTaskHttpError, submitSadaiAsyncTask, waitForSadaiAsyncTask } from "./lib/sadai-async";
 import { createSqliteBackupManager } from "./lib/sqlite-backup";
 import { UuAsyncCapabilityRegistry, UuImageChannelScheduler, buildUuAsyncImageSubmission, buildUuAsyncTaskPath, hasUuAsyncTask, isUuAsyncGptImage2Channel, readUuAsyncTask, resolveUuAsyncImageSize } from "./lib/uu-image-async";
-import { isUuAsyncUrlChannel, supportsUuAsyncRequest, uuAsyncCapabilityKey, uuTaskPollDelay } from "./lib/uu-image-async";
+import { isUuAsyncTasksDisabledError, isUuAsyncUrlChannel, supportsUuAsyncRequest, uuAsyncCapabilityKey, uuTaskPollDelay } from "./lib/uu-image-async";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./lib/upstream-error";
 import { assetCacheControl, assetStorageFilename, legacyAssetStorageFilename, nextAssetVersion } from "./lib/storage-path";
 import { CONTENT_SECURITY_POLICY } from "./lib/security-policy";
@@ -327,6 +328,7 @@ const PROMPT_SOURCE_STALE_MS = 30 * 60_000;
 const performanceMetrics = new PerformanceMetrics();
 const performanceRateLimiter = new PerformanceRateLimiter();
 const imageJobPhases = new Map<string, "persisting">();
+const uuImageCancellations = new Map<string, Promise<void>>();
 const imageQueue = new JobQueue<ImageJobInput, ImageJobOutput>({
     concurrency: JOB_CONCURRENCY,
     worker: runImageJob,
@@ -351,7 +353,7 @@ for (const job of Object.values(state.jobs)) {
             job.finishedAt = undefined;
         } else {
             job.status = "failed";
-            job.error = "服务器重启时任务仍在运行，为避免重复扣费，请手动重试";
+            job.error = job.input.submissionUnconfirmed ? IMAGE_SUBMISSION_UNCONFIRMED : "服务器重启时任务仍在运行，为避免重复扣费，请手动重试";
             job.finishedAt = Date.now();
             cultivation?.refundGeneration(job.id, "server restarted while job was running");
             cleanupJobOutputFilesFor(job.input.userId, job.id);
@@ -3255,14 +3257,21 @@ function getJob(session: SessionPayload, id: string) {
 
 async function retryJob(request: Request, session: SessionPayload, id: string) {
     const source = ownedJob(session.userId, id);
-    if (["queued", "running"].includes(source.status)) throw new HttpError(409, "任务仍在运行");
+    if (source.status === "queued" || source.status === "running") throw new HttpError(409, "任务仍在运行");
     const idempotencyKey = requiredIdempotencyKey(request);
     const jobId = createHash("sha256").update(`${session.userId}:retry:${id}:${idempotencyKey}`).digest("hex");
     const existing = state.jobs[jobId];
     if (existing) return json({ job: publicJob(existing) }, 200);
     assertUnusedImageJobId(jobId);
-    const activeRetry = imageQueue.list().find((job) => job.input.userId === session.userId && job.input.retryOf === (source.input.retryOf || id) && ["queued", "running"].includes(job.status));
+    const originalId = source.input.retryOf || id;
+    const attempts = imageQueue.list().filter((job) => job.input.userId === session.userId && (job.id === originalId || job.input.retryOf === originalId));
+    const activeRetry = attempts.find((job) => job.status === "queued" || job.status === "running");
     if (activeRetry) return json({ job: publicJob(activeRetry) }, 200);
+    const upstream = reusableImageTask(source.input);
+    if (!upstream && (hasUnconfirmedImageSubmission(source) || attempts.some(hasUnconfirmedImageSubmission))) throw new HttpError(409, IMAGE_SUBMISSION_UNCONFIRMED);
+    const sameTask = upstream ? attempts.filter((job) => job.input.upstream?.provider === upstream.provider && job.input.upstream.taskId === upstream.taskId) : [];
+    const recovered = sameTask.find((job) => job.status === "succeeded" && job.result);
+    if (recovered) return json({ job: publicJob(recovered) }, 200);
     const referenceBytes = imageJobReferenceTotalBytes(
         source.input.references.map((reference) => ({ bytes: storedImageReferenceBytes(reference) })),
         source.input.mask ? { bytes: storedImageReferenceBytes(source.input.mask) } : undefined,
@@ -3270,7 +3279,8 @@ async function retryJob(request: Request, session: SessionPayload, id: string) {
     if (referenceBytes > MAX_IMAGE_REFERENCE_TOTAL_BYTES)
         throw new HttpError(413, `参考图与蒙版总大小不能超过 ${Math.floor(MAX_IMAGE_REFERENCE_TOTAL_BYTES / 1024 / 1024)} MB`);
     assertDiskCapacity(referenceBytes);
-    const recoveryOnly = source.status === "failed" && isCompletedUuResultRecovery(source.input);
+    // A result can have settled before the completed job was durably saved.
+    const recoveryOnly = sameTask.some((job) => (cultivation?.getGenerationUsage(job.id)?.successCount || 0) > 0);
     if (!recoveryOnly)
         cultivation?.reserveGeneration({
             jobId,
@@ -3408,12 +3418,21 @@ function storedImageReferenceBytes(reference: string | StoredImageReference) {
     return typeof reference === "string" ? assertSafeDataImage(reference) : reference.bytes;
 }
 
+function reusableImageTask(input: ImageJobInput) {
+    const upstream = input.upstream;
+    return upstream?.taskId && upstream.status !== "failed" && upstream.status !== "canceled" ? upstream : undefined;
+}
+
+function hasUnconfirmedImageSubmission(job: StoredImageJob) {
+    return !job.input.upstream?.taskId && (job.input.submissionUnconfirmed || isImageSubmissionUnconfirmed(job.error) || job.error === "The operation timed out.");
+}
+
 function copyImageJobInputForRetry(input: ImageJobInput, jobId: string, retryOf: string, recoveryOnly = false): ImageJobInput {
     const references: StoredImageReference[] = [];
     for (const [index, reference] of input.references.entries()) references.push(copyStoredImageReferenceForRetry(input.userId, jobId, index, reference));
     const mask = input.mask ? copyStoredImageReferenceForRetry(input.userId, jobId, 10_000, input.mask) : undefined;
-    const upstream = input.upstream && !["failed", "canceled", "unknown"].includes(input.upstream.status || "pending") ? { ...input.upstream } : undefined;
-    return { ...input, references, mask, retryOf: input.retryOf || retryOf, recoveryOnly: recoveryOnly || undefined, upstream };
+    const upstream = reusableImageTask(input);
+    return { ...input, references, mask, retryOf: input.retryOf || retryOf, recoveryOnly: recoveryOnly || undefined, submissionUnconfirmed: undefined, upstream: upstream && { ...upstream } };
 }
 
 function copyStoredImageReferenceForRetry(userId: string, jobId: string, index: number, reference: string | StoredImageReference) {
@@ -3431,23 +3450,17 @@ function copyStoredImageReferenceForRetry(userId: string, jobId: string, index: 
 async function deleteJob(url: URL, session: SessionPayload, id: string) {
     const job = ownedJob(session.userId, id);
     if (["queued", "running"].includes(job.status)) {
-        const previousStatus = job.status;
-        if (imageQueue.cancel(id)) {
-            if (!job.input.recoveryOnly) {
-                if (previousStatus === "queued") cultivation?.refundGeneration(id, "user canceled before submission");
-                else cultivation?.consumeGeneration(id, Math.max(0, Date.now() - (job.startedAt || Date.now())));
+        if (job.input.submissionUnconfirmed && !job.input.upstream?.taskId) throw new HttpError(409, "渠道还在确认提交，请等任务开始生成后再取消");
+        if (hasUuAsyncTask(job.input)) {
+            if (job.input.upstream.status === "succeeded") throw new HttpError(409, "图片已经生成，请等待结果保存");
+            let cancellation = uuImageCancellations.get(id);
+            if (!cancellation) {
+                cancellation = cancelUuImageJob(job).finally(() => uuImageCancellations.delete(id));
+                uuImageCancellations.set(id, cancellation);
             }
-            void cancelUuImageTask(job.input).catch((error) =>
-                console.warn(
-                    JSON.stringify({
-                        event: "uu_async_cancel_failed",
-                        jobId: id,
-                        message: error instanceof Error ? error.message : "unknown error",
-                    }),
-                ),
-            );
-        }
-        return json({ job: publicJob(imageQueue.get(id)!) });
+            await cancellation;
+        } else cancelImageJob(job);
+        return json({ job: publicJob(job) });
     }
     if (url.searchParams.get("remove") === "1") {
         if (!imageQueue.remove(id)) throw new HttpError(409, "任务仍在运行，无法移除");
@@ -3460,6 +3473,13 @@ async function deleteJob(url: URL, session: SessionPayload, id: string) {
     return json({ job: publicJob(job) });
 }
 
+function cancelImageJob(job: StoredImageJob, refundReason?: string) {
+    const previousStatus = job.status;
+    if (!imageQueue.cancel(job.id) || job.input.recoveryOnly) return;
+    if (refundReason || previousStatus === "queued") cultivation?.refundGeneration(job.id, refundReason || "user canceled before submission");
+    else cultivation?.consumeGeneration(job.id, Math.max(0, Date.now() - (job.startedAt || Date.now())));
+}
+
 function publicJob(job: StoredImageJob) {
     const channel = resolvePlatformChannel(state, job.input.channelId);
     const usesUuAsync =
@@ -3467,7 +3487,7 @@ function publicJob(job: StoredImageJob) {
         (hasUuAsyncTask(job.input) ||
             (uuAsyncCapabilityRegistry.canSubmit(uuAsyncCapabilityKey(job.input.channelId, job.input.model)) &&
                 Boolean(channel && supportsUuAsyncRequest(channel.baseUrl, job.input))));
-    const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : imageJobPhases.get(job.id) || (usesUuAsync && !hasUuAsyncTask(job.input) ? "submitting" : "waiting_upstream");
+    const phase = job.status === "queued" ? "queued" : job.status !== "running" ? "completed" : imageJobPhases.get(job.id) || (job.input.submissionUnconfirmed || (usesUuAsync && !hasUuAsyncTask(job.input)) ? "submitting" : "waiting_upstream");
     const result = job.result
         ? {
               ...job.result,
@@ -3486,7 +3506,7 @@ function publicJob(job: StoredImageJob) {
         createdAt: job.createdAt,
         startedAt: job.startedAt,
         finishedAt: job.finishedAt,
-        error: job.error,
+        error: (job.status === "failed" || job.status === "canceled") && hasUnconfirmedImageSubmission(job) ? IMAGE_SUBMISSION_UNCONFIRMED : job.error,
         prompt: job.input.prompt,
         model: job.input.model,
         count: job.input.count,
@@ -3642,33 +3662,66 @@ type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & {
     mask?: string;
 };
 
+async function recordImageSubmission(
+    job: StoredImageJob,
+    signal: AbortSignal,
+    submit: () => Promise<NonNullable<ImageJobInput["upstream"]>>,
+    rejected: (error: unknown) => boolean,
+) {
+    signal.throwIfAborted();
+    job.input.submissionUnconfirmed = true;
+    try {
+        await imageQueue.touch(job.id);
+    } catch (error) {
+        delete job.input.submissionUnconfirmed;
+        throw error;
+    }
+    try {
+        signal.throwIfAborted();
+        job.input.upstream = await submit();
+    } catch (error) {
+        if (rejected(error)) delete job.input.submissionUnconfirmed;
+        else if (!signal.aborted) throw new Error(IMAGE_SUBMISSION_UNCONFIRMED, { cause: error });
+        throw error;
+    }
+    delete job.input.submissionUnconfirmed;
+    await imageQueue.touch(job.id);
+}
+
+function isImageSubmissionRejection(status: number) {
+    return status >= 400 && status < 500 && ![408, 409, 425].includes(status);
+}
+
 async function generateSadaiAsyncImages(channel: ChannelRecord, apiKey: string, input: ImageJobInput, job: QueueJob<ImageJobInput, ImageJobOutput>, signal: AbortSignal, upstreamRequestId: string) {
     const imageBaseUrl = sadaiImageBaseUrl(dragonImageBaseUrl(channel.baseUrl, input.model), input.model);
     const capabilityKey = `sadai:${input.channelId}:${input.model.trim().toLowerCase()}`;
     if (!hasSadaiAsyncTask(input)) {
         const runtimeInput = await materializeImageInput(input);
-        let taskId: string;
+        const body = {
+            model: input.model,
+            prompt: input.prompt,
+            ...buildSadaiImageRequestOptions({ model: input.model, count: input.count, size: input.size, outputResolution: input.quality || "low",
+                generationQuality: input.imageQuality, references: runtimeInput.references, responseFormat: "url" }),
+            ...(input.imageQuality ? { quality: input.imageQuality } : {}),
+            ...(input.background ? { background: input.background } : {}),
+            ...(input.imageOutputFormat ? { output_format: input.imageOutputFormat } : {}),
+        };
         try {
-            taskId = await submitSadaiAsyncTask(imageBaseUrl, apiKey, {
-                model: input.model,
-                prompt: input.prompt,
-                ...buildSadaiImageRequestOptions({ model: input.model, count: input.count, size: input.size, outputResolution: input.quality || "low",
-                    generationQuality: input.imageQuality, references: runtimeInput.references, responseFormat: "url" }),
-                ...(input.imageQuality ? { quality: input.imageQuality } : {}),
-                ...(input.background ? { background: input.background } : {}),
-                ...(input.imageOutputFormat ? { output_format: input.imageOutputFormat } : {}),
-            }, signal, undefined, { idempotencyKey: upstreamIdempotencyKey(job.id), requestTimeoutMs: runtimeInput.references.length ? REQUEST_TIMEOUT_MS : undefined });
+            await recordImageSubmission(job, signal, async () => ({
+                provider: "sadai-image",
+                taskId: await submitSadaiAsyncTask(imageBaseUrl, apiKey, body, signal, undefined, {
+                    idempotencyKey: upstreamIdempotencyKey(job.id),
+                    requestTimeoutMs: runtimeInput.references.length ? REQUEST_TIMEOUT_MS : undefined,
+                }),
+                status: "pending",
+            }), (error) => error instanceof SadaiTaskHttpError && isImageSubmissionRejection(error.status));
         } catch (error) {
-            if (!signal.aborted && error instanceof DOMException && error.name === "TimeoutError")
-                throw new Error("提交结果未确认，渠道可能已接收任务；请先在渠道查看结果，再决定是否重新生成");
             // Only an explicit submission endpoint 404 can safely fall back. Polling must never generate again.
             if (!(error instanceof SadaiTaskHttpError) || error.stage !== "submit" || error.status !== 404) throw error;
             sadaiAsyncCapability.disable(capabilityKey);
             console.info(JSON.stringify({ event: "sadai_async_unavailable", channelId: input.channelId, model: input.model }));
             return generateOpenAiImages(channel, apiKey, runtimeInput, signal, upstreamRequestId);
         }
-        input.upstream = { provider: "sadai-image", taskId, status: "pending" };
-        await imageQueue.touch(job.id);
     }
     const upstream = input.upstream!;
     const result = await waitForSadaiAsyncTask(imageBaseUrl, apiKey, upstream.taskId, signal, undefined, undefined, undefined, {
@@ -3868,44 +3921,39 @@ async function generateUuAsyncImages(channel: ChannelRecord, apiKey: string, inp
                     background: input.background,
                     mask: runtimeInput.mask ? dataUrlBlob(runtimeInput.mask) : undefined,
                 });
-                const response = await upstreamFetch(
-                    buildUpstreamUrl(channel.baseUrl, "openai", submission.path),
-                    {
-                        method: "POST",
-                        headers: {
-                            Authorization: `Bearer ${apiKey}`,
-                            "Idempotency-Key": upstreamIdempotencyKey(upstreamRequestId),
-                            ...(submission.contentType ? { "Content-Type": submission.contentType } : {}),
+                const submissionUrl = buildUpstreamUrl(channel.baseUrl, "openai", submission.path);
+                let responseStatus: number | undefined;
+                await recordImageSubmission(job, signal, async () => {
+                    const response = await upstreamFetch(
+                        submissionUrl,
+                        {
+                            method: "POST",
+                            headers: {
+                                Authorization: `Bearer ${apiKey}`,
+                                "Idempotency-Key": upstreamIdempotencyKey(job.id),
+                                ...(submission.contentType ? { "Content-Type": submission.contentType } : {}),
+                            },
+                            body: submission.body,
+                            signal,
                         },
-                        body: submission.body,
-                        signal,
-                    },
-                    false,
-                    runtimeInput.references.length || runtimeInput.mask ? REQUEST_TIMEOUT_MS : UU_ASYNC_REQUEST_TIMEOUT_MS,
-                ).catch((error) => {
-                    if (!signal.aborted && error instanceof HttpError && error.status === 504)
-                        throw new Error("提交结果未确认，渠道可能已接收任务；请先在渠道查看结果，再决定是否重新生成");
-                    throw error;
-                });
-                const task = readUuAsyncTask(await parseUpstreamJson(response));
-                if (!task.taskId) throw new Error(task.message || "UU 异步任务创建成功，但没有返回任务 ID");
-                input.upstream = {
-                    provider: "uu-image",
-                    taskId: task.taskId,
-                    expiresAt: task.expiresAt,
-                    status: task.status,
-                };
-                await imageQueue.touch(job.id);
+                        false,
+                        runtimeInput.references.length || runtimeInput.mask ? REQUEST_TIMEOUT_MS : UU_ASYNC_REQUEST_TIMEOUT_MS,
+                    );
+                    responseStatus = response.status;
+                    const task = readUuAsyncTask(await parseUpstreamJson(response));
+                    if (!task.taskId) throw new Error(task.message || "UU 异步任务创建成功，但没有返回任务 ID");
+                    return { provider: "uu-image", taskId: task.taskId, expiresAt: task.expiresAt, status: task.status };
+                }, (error) => responseStatus !== undefined && (isImageSubmissionRejection(responseStatus) || (responseStatus >= 200 && responseStatus < 300 && isUuAsyncTasksDisabledError(error))));
                 return undefined;
             },
             () => generateOpenAiImages(channel, apiKey, runtimeInput, signal, `${upstreamRequestId}:uu-sync-fallback`),
         );
         if (fallbackImages) return fallbackImages;
     }
-    return pollUuImageTask(channel, apiKey, input, signal);
+    return pollUuImageTask(channel, apiKey, input, signal, job);
 }
 
-async function pollUuImageTask(channel: ChannelRecord, apiKey: string, input: ImageJobInput, signal: AbortSignal) {
+async function pollUuImageTask(channel: ChannelRecord, apiKey: string, input: ImageJobInput, signal: AbortSignal, job: StoredImageJob) {
     if (!hasUuAsyncTask(input)) throw new Error("UU 异步任务 ID 丢失");
     const taskUrl = buildUpstreamUrl(channel.baseUrl, "openai", buildUuAsyncTaskPath(input.upstream.taskId));
     const expiresAt = Date.parse(input.upstream.expiresAt || "");
@@ -3921,11 +3969,27 @@ async function pollUuImageTask(channel: ChannelRecord, apiKey: string, input: Im
             return task.imageUrls;
         }
         if (task.status === "failed") throw new Error(task.message || "UU 异步任务失败");
-        if (task.status === "canceled") throw new Error(task.message || "UU 异步任务已取消");
+        if (task.status === "canceled") {
+            cancelImageJob(job, uuImageCancellations.has(job.id) ? undefined : "UU 异步任务已取消");
+            throw abortError(signal);
+        }
         if (task.status === "unknown") throw new Error(task.message || "UU 异步任务返回了无法识别的状态");
         await waitForAbortableDelay(uuTaskPollDelay(response.headers.get("retry-after")), signal);
     }
     throw abortError(signal);
+}
+
+async function cancelUuImageJob(job: StoredImageJob) {
+    try {
+        await cancelUuImageTask(job.input);
+    } catch (error) {
+        console.warn(JSON.stringify({ event: "uu_async_cancel_failed", jobId: job.id, message: error instanceof Error ? error.message : "unknown error" }));
+        if (job.status === "queued" || job.status === "running") throw new HttpError(502, "渠道未确认取消，可继续查看任务进度或稍后重试取消");
+        return;
+    }
+    if ((job.status !== "queued" && job.status !== "running") || job.input.upstream?.status === "succeeded") return;
+    if (job.input.upstream) job.input.upstream.status = "canceled";
+    cancelImageJob(job);
 }
 
 async function cancelUuImageTask(input: ImageJobInput) {
@@ -3938,7 +4002,8 @@ async function cancelUuImageTask(input: ImageJobInput) {
         false,
         UU_ASYNC_REQUEST_TIMEOUT_MS,
     );
-    await response.body?.cancel();
+    await response.body?.cancel().catch(() => undefined);
+    if (!response.ok || response.status === 202) throw new Error(`UU 取消响应 HTTP ${response.status}`);
 }
 
 function waitForAbortableDelay(milliseconds: number, signal: AbortSignal) {

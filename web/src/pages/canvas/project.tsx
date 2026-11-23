@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import { useQueryClient } from "@tanstack/react-query";
 import { Group, ImagePlus, Sparkles, Type, Video } from "lucide-react";
 
-import { completedServerImages, requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
+import { completedServerImages, requestEdit, requestGeneration, requestImageQuestion, retryServerImageJob } from "@/services/api/image";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, pollVideoGenerationTask, storeGeneratedVideo } from "@/services/api/video";
 import { defaultConfig, modelOptionName, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -15,7 +15,7 @@ import { deleteStoredMedia, uploadMediaFile } from "@/services/file-storage";
 import { applyCameraPrompt, normalizeCameraSettings } from "@/lib/canvas/canvas-camera";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { friendlyErrorMessage, userFacingErrorMessage } from "@/lib/friendly-error";
+import { friendlyErrorMessage, isImageSubmissionUnconfirmed, userFacingErrorMessage } from "@/lib/friendly-error";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { collectMovableCanvasNodeIds } from "@/lib/canvas/canvas-interaction";
 import { canvasGroupShortcut } from "@/lib/canvas/canvas-shortcuts";
@@ -668,12 +668,14 @@ function InfiniteCanvasPage() {
     }, [finishGenerationRequest, isCurrentGeneration, message, setGenerationNodes]);
 
     const imageRequestOptions = useCallback(
-        (targetNodeId: string, controller: AbortController, config: AiConfig = effectiveConfigRef.current) => {
+        (targetNodeId: string, controller: AbortController, config: AiConfig = effectiveConfigRef.current, retryingServerJob = false) => {
             const expectedUserId = useUserStore.getState().user?.id || "";
             if (!isCurrentGeneration(controller) || stoppedGenerationControllersRef.current.has(controller)) throw new DOMException("Aborted", "AbortError");
             const request = generationRequestsRef.current.get(targetNodeId);
-            const requestConfig = resolveModelRequestConfig(config, config.imageModel || config.model);
-            if (request) request.submitting = Boolean(requestConfig.serverManaged && requestConfig.channelId);
+            if (request) {
+                const requestConfig = retryingServerJob ? undefined : resolveModelRequestConfig(config, config.imageModel || config.model);
+                request.submitting = retryingServerJob || Boolean(requestConfig?.serverManaged && requestConfig.channelId);
+            }
             const isCurrent = () => isCurrentGeneration(controller);
             setNodes((current) => isCurrent() ? current.map((node) => node.id === targetNodeId ? { ...node, metadata: { ...node.metadata, generationProgress: PUBLIC_MODE ? { jobId: "", phase: "submitting", reconnecting: false } : undefined } } : node) : current);
             return {
@@ -3564,6 +3566,7 @@ function InfiniteCanvasPage() {
     const handleRetryNode = useCallback(
         async (node: CanvasNodeData) => {
             const epoch = generationEpochRef.current;
+            if (isImageSubmissionUnconfirmed(node.metadata?.errorDetails)) return;
             const save = imageSaveState(node.metadata);
             if (save) {
                 if (save.state === "failed")
@@ -3581,6 +3584,7 @@ function InfiniteCanvasPage() {
             const sourceNode = findRetrySourceNode(node.id, nodesRef.current, connectionsRef.current) || node;
             const batchRoot = node.metadata?.batchRootId ? nodesRef.current.find((item) => item.id === node.metadata?.batchRootId) : null;
             const savedImageMetadata = node.type === CanvasNodeType.Image ? { ...batchRoot?.metadata, ...node.metadata } : undefined;
+            const serverJobId = PUBLIC_MODE && node.type === CanvasNodeType.Image ? node.metadata?.jobId : undefined;
             const hasSavedImageMetadata = Boolean(savedImageMetadata?.generationType);
             const generationConfig =
                 hasSavedImageMetadata && savedImageMetadata
@@ -3595,23 +3599,23 @@ function InfiniteCanvasPage() {
                           count: "1",
                       }
                     : { ...buildGenerationConfig(effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image"), count: "1" };
-            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+            if (!serverJobId && !isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
             }
 
-            const context = hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, sourceNode.metadata?.prompt || node.metadata?.prompt || ""));
+            const context = serverJobId || hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, sourceNode.metadata?.prompt || node.metadata?.prompt || ""));
             if (epoch !== generationEpochRef.current) return;
             const retryMode = node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Audio ? "audio" : node.type === CanvasNodeType.Video ? "video" : "image";
             const prompt = applyCameraPrompt((savedImageMetadata?.prompt || context?.prompt || "").trim(), node.metadata?.camera || sourceNode.metadata?.camera, retryMode);
-            if (!prompt) {
+            if (!serverJobId && !prompt) {
                 message.warning("找不到提示词，无法重试");
                 return;
             }
             const generationType = savedImageMetadata?.generationType;
-            const useReferenceImages = generationType ? generationType === "edit" : Boolean(context?.referenceImages.length);
+            const useReferenceImages = !serverJobId && (generationType ? generationType === "edit" : Boolean(context?.referenceImages.length));
             const retryReferenceImages =
-                hasSavedImageMetadata && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode)) : [];
+                !useReferenceImages ? [] : savedImageMetadata?.generationType ? await resolveMetadataReferences(savedImageMetadata) : context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode);
             if (epoch !== generationEpochRef.current) return;
             if (useReferenceImages && !retryReferenceImages) {
                 message.error("参考图片已丢失，无法继续重试");
@@ -3691,11 +3695,15 @@ function InfiniteCanvasPage() {
                     return;
                 }
 
-                const image = useReferenceImages
-                    ? await requestEdit(generationConfig, prompt, retryImages, undefined, imageRequestOptions(node.id, controller, generationConfig)).then((items) => items[0])
-                    : await requestGeneration(generationConfig, prompt, imageRequestOptions(node.id, controller, generationConfig)).then((items) => items[0]);
+                const options = imageRequestOptions(node.id, controller, generationConfig, Boolean(serverJobId));
+                const [image] = serverJobId
+                    ? await retryServerImageJob(serverJobId, options)
+                    : useReferenceImages
+                      ? await requestEdit(generationConfig, prompt, retryImages, undefined, options)
+                      : await requestGeneration(generationConfig, prompt, options);
                 if (!isCurrentGeneration(controller)) return;
-                const uploadedImage = await imageSaver.prepare(image, generationConfig.imageOutputFormat);
+                if (!image) throw new Error("任务没有返回图片");
+                const uploadedImage = await imageSaver.prepare(image, serverJobId ? savedImageMetadata?.imageOutputFormat : generationConfig.imageOutputFormat);
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                 const generationMetadata = {
@@ -3725,7 +3733,7 @@ function InfiniteCanvasPage() {
                                   type: CanvasNodeType.Image,
                                   width: imageSize.width,
                                   height: imageSize.height,
-                                  metadata: { ...item.metadata, ...imageMetadata(uploadedImage), prompt, ...generationMetadata },
+                                  metadata: { ...item.metadata, ...imageMetadata(uploadedImage), ...(serverJobId ? {} : { prompt, ...generationMetadata }) },
                               }
                             : item,
                     ),

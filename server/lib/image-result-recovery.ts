@@ -35,16 +35,6 @@ export function hasDeferredImageResults(images: ImageJobImage[]) {
   );
 }
 
-export function isCompletedUuResultRecovery(input: {
-  upstream?: { provider?: string; taskId?: string; status?: string };
-}) {
-  return (
-    input.upstream?.provider === "uu-image" &&
-    Boolean(input.upstream.taskId) &&
-    input.upstream.status === "succeeded"
-  );
-}
-
 export function isRecoverableImageDownloadError(error: unknown) {
   const status =
     error && typeof error === "object" && "status" in error

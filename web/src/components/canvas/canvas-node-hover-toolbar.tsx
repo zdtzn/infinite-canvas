@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CANVAS_NODE_TOOLBAR_ABOVE_THRESHOLD } from "@/lib/canvas/canvas-node-geometry";
+import { isImageSubmissionUnconfirmed } from "@/lib/friendly-error";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { preloadRoute } from "@/lib/route-loaders";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -148,7 +149,7 @@ export function CanvasNodeHoverToolbar({
     const isText = node.type === CanvasNodeType.Text;
     const isConfig = node.type === CanvasNodeType.Config;
     const canOpenDialog = isText || hasImage || isVideo;
-    const canRetry = node.metadata?.status === "error";
+    const canRetry = node.metadata?.status === "error" && !isImageSubmissionUnconfirmed(node.metadata.errorDetails);
     const quickImageToolIdSet = new Set(quickImageToolIds);
     const copyImagePrompt = (target: CanvasNodeData) => {
         const prompt = target.metadata?.prompt?.trim();

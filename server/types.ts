@@ -108,6 +108,7 @@ export type ImageJobInput = {
     label?: string;
   };
   retryOf?: string;
+  submissionUnconfirmed?: true;
   recoveryOnly?: boolean;
   upstream?: {
     provider: "uu-image" | "sadai-image";

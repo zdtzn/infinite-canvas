@@ -7,7 +7,7 @@ import { recentImageResults } from "./task-results";
 import { useNavigate } from "react-router-dom";
 
 import { PUBLIC_MODE } from "@/constant/runtime-config";
-import { friendlyErrorMessage, userFacingErrorMessage } from "@/lib/friendly-error";
+import { friendlyErrorMessage, isImageSubmissionUnconfirmed, userFacingErrorMessage } from "@/lib/friendly-error";
 import { generationFailureFeedback } from "@/features/cultivation/generation-messages";
 import { formatDuration } from "@/lib/image-utils";
 import { preloadRoute } from "@/lib/route-loaders";
@@ -239,7 +239,7 @@ function TaskItem({ job, loading, expanded, onOpen, onAction, onDismiss }: { job
                             <Button aria-label="取消生成" type="text" danger size="small" icon={<Ban className="size-3.5" />} loading={loading} onClick={() => onAction("cancel")} />
                         </Tooltip>
                     ) : null}
-                    {job.status === "failed" || job.status === "canceled" ? (
+                    {(job.status === "failed" || job.status === "canceled") && !isImageSubmissionUnconfirmed(job.error) ? (
                         <Tooltip title="重试">
                             <Button aria-label="重试" type="text" size="small" icon={<RotateCcw className="size-3.5" />} loading={loading} onClick={() => onAction("retry")} />
                         </Tooltip>
@@ -295,6 +295,7 @@ function jobStatusLabel(job: ServerJob) {
     if (job.status === "queued") return "排队中";
     if (job.status === "running") return job.phase === "waiting_upstream" ? "生成中" : "提交中";
     if (job.status === "succeeded") return "已完成";
+    if (isImageSubmissionUnconfirmed(job.error)) return "待确认";
     if (job.status === "failed") return "待重试";
     return "已取消";
 }
