@@ -615,6 +615,7 @@ async function route(request: Request, requestId: string) {
         if (assetMatch && request.method === "DELETE") return deleteAsset(session, decodeRouteSegment(assetMatch[1], "素材 ID"));
         if (url.pathname === "/api/jobs/images" && request.method === "POST") return heavyRequestSemaphore.run(request.signal, () => createImageJob(request, session));
         if (url.pathname === "/api/jobs" && request.method === "GET") return listJobs(session);
+        if (url.pathname === "/api/jobs/canvas-receipt" && request.method === "GET") return canvasJobReceipt(url, session);
         const retryMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/retry$/);
         if (retryMatch && request.method === "POST") return retryJob(request, session, retryMatch[1]);
         const recoverMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/recover$/);
@@ -3125,7 +3126,7 @@ type PreparedImageJobReference =
 
 async function createImageJob(request: Request, session: SessionPayload) {
     const idempotencyKey = requiredIdempotencyKey(request);
-    const jobId = createHash("sha256").update(`${session.userId}:${idempotencyKey}`).digest("hex");
+    const jobId = imageSubmissionJobId(session.userId, idempotencyKey);
     const existingBeforeRead = state.jobs[jobId];
     if (existingBeforeRead) return json({ job: publicJob(existingBeforeRead) }, 200);
     assertUnusedImageJobId(jobId);
@@ -3248,6 +3249,20 @@ function listJobs(session: SessionPayload) {
             .filter((job) => job.input.userId === session.userId && !hiddenJobIds.has(job.id))
             .map(publicJob),
     });
+}
+
+function canvasJobReceipt(url: URL, session: SessionPayload) {
+    const projectId = url.searchParams.get("projectId");
+    const nodeId = url.searchParams.get("nodeId");
+    const after = url.searchParams.get("after") || "";
+    if (!projectId || !nodeId || [projectId, nodeId, after].some((id) => id.length > 256)) throw new HttpError(400, "画布任务信息无效");
+    const idempotencyKey = createHash("sha256").update(JSON.stringify(["canvas-image-v1", projectId, nodeId, after])).digest("hex");
+    const jobId = imageSubmissionJobId(session.userId, idempotencyKey);
+    return json({ idempotencyKey, jobId: state.jobs[jobId]?.input.userId === session.userId ? jobId : null }, 200, { "Cache-Control": "private, no-store" });
+}
+
+function imageSubmissionJobId(userId: string, key: string) {
+    return createHash("sha256").update(`${userId}:${key}`).digest("hex");
 }
 
 function getJob(session: SessionPayload, id: string) {

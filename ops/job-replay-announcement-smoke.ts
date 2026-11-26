@@ -121,16 +121,24 @@ await import(${JSON.stringify(pathToFileURL(resolve(import.meta.dir, "../server/
         await read(await operation(), 409);
         assert.deepEqual(accounting(), before, "rejected replay makes no upstream call, reservation, refund or wallet entry");
     };
-    const duplicate = await Promise.all([create("create-once"), create("create-once"), create("create-once")]);
+    const receiptPath = "/api/jobs/canvas-receipt?projectId=project&nodeId=node";
+    const receipt = (owner = cookie, after = "") => request("GET", receiptPath + "&after=" + after, undefined, owner).then((response) => read(response));
+    const { idempotencyKey, jobId } = await receipt();
+    assert.equal(jobId, null);
+    assert.equal((await receipt()).idempotencyKey, idempotencyKey);
+    const duplicate = await Promise.all([create(idempotencyKey), create(idempotencyKey), create(idempotencyKey)]);
     assert.deepEqual(duplicate.map(response => response.status).sort(), [200, 200, 202]);
     const originals = await Promise.all(duplicate.map(response => response.json()));
     const originalId = originals[0].job.id;
     assert(originals.every(value => value.job.id === originalId));
+    assert.equal((await receipt()).jobId, originalId, "a lost submission response can be recovered without a new job");
+    assert.equal((await receipt(adminCookie)).jobId, null);
+    assert.notEqual((await receipt(cookie, originalId)).idempotencyKey, idempotencyKey);
     assert.equal((await waitJob(originalId, cookie)).status, "succeeded");
     assert.equal(calls(), 1);
     assert.equal(cultivation.getProfile("member").paidImages, 39);
     const beforeReplay = accounting();
-    await read(await create("create-once"), 200);
+    await read(await create(idempotencyKey), 200);
     assert.deepEqual(accounting(), beforeReplay, "existing task replay does not reserve or submit twice");
 
     const retryResponses = await Promise.all([retry(originalId, "retry-once"), retry(originalId, "retry-once")]);
@@ -148,7 +156,7 @@ await import(${JSON.stringify(pathToFileURL(resolve(import.meta.dir, "../server/
     assert.equal((await waitJob(newRetryId, cookie)).status, "succeeded");
     assert.equal(cultivation.getProfile("member").paidImages, 37);
     await removed(originalId);
-    await rejectedWithoutAccounting(() => create("create-once"));
+    await rejectedWithoutAccounting(() => create(idempotencyKey));
     const newOriginalId = (await read(await create("create-new-key"), 202)).job.id;
     assert.equal(cultivation.getGenerationUsage(newOriginalId)?.status, "reserved", "fresh create key reserves before calling upstream");
     assert.equal((await waitJob(newOriginalId, cookie)).status, "succeeded");
@@ -187,7 +195,7 @@ await import(${JSON.stringify(pathToFileURL(resolve(import.meta.dir, "../server/
     await child.exited;
     child = spawn();
     await ready();
-    await rejectedWithoutAccounting(() => create("create-once"));
+    await rejectedWithoutAccounting(() => create(idempotencyKey));
     await rejectedWithoutAccounting(() => create(failedCreateKey, referencedInput));
     await rejectedWithoutAccounting(() => retry(missingSourceId, failedRetryKey));
     // Keep a source task while removing its completed retry, then prove the guard survives restart.

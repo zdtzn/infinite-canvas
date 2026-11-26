@@ -48,6 +48,7 @@ export type CanvasNodeMetadata = {
     uploading?: boolean;
     errorDetails?: string;
     jobId?: string;
+    imageSubmissionParent?: string;
     videoTask?: VideoGenerationTask;
     videoTaskBinding?: { channelId: string; baseUrl: string; apiFormat: string; channelMode: string };
     fontSize?: number;

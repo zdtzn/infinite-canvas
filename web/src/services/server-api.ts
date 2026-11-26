@@ -451,6 +451,11 @@ export async function deleteProfileAvatar() {
     return serverRequest<{ avatarUrl: string }>("/api/profile/avatar", { method: "DELETE" });
 }
 
+export function fetchCanvasJobReceipt(projectId: string, nodeId: string, after: string, expectedUserId: string, signal?: AbortSignal) {
+    const query = new URLSearchParams({ projectId, nodeId, after });
+    return serverRequest<{ idempotencyKey: string; jobId: string | null }>(`/api/jobs/canvas-receipt?${query}`, { expectedUserId, signal });
+}
+
 export async function submitImageJob(
     input: {
         channelId: string;

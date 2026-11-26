@@ -68,6 +68,8 @@ function harness() {
         stoppedGenerationControllersRef: { current: new WeakSet() },
         toolSessionRef: { current: { active: true, projectId: "fixture-project", userId: "fixture-owner" } },
         PUBLIC_MODE: true,
+        NODE_DEFAULT_SIZE: { image: { width: 340, height: 240 } },
+        fetchCanvasJobReceipt: async () => ({ idempotencyKey: "fixture-receipt", jobId: null }),
         projectId: "fixture-project",
         projectLoaded: true,
         effectiveConfigRef: { current: { model: "fixture-model" } },
@@ -145,6 +147,8 @@ function harness() {
     );
     c.updateProject = c.store.getState().updateProject;
     c.restoreSnapshot = c.store.getState().restoreSnapshot;
+    for (const name of ["imageSaveState", "canvasImageResourceMetadata", "reconcileCanvasBatch"]) run(declaration("lib/canvas/canvas-generated-image.ts", name));
+    run(declaration("lib/canvas/canvas-node-size.ts", "fitNodeSize"));
     run(declaration("lib/canvas/canvas-generation-helpers.ts", "resetInterruptedGeneration"));
     run(declaration("lib/canvas/canvas-node-factory.ts", "imageMetadata"));
     c.storedImageMetadata = c.imageMetadata;
@@ -560,4 +564,145 @@ test("a running node saved in a snapshot resumes only that snapshot job", async 
     assert.deepEqual(jobs, ["snapshot-job"]);
     assert.equal(c.nodes[0].metadata.content, "snapshot-result");
     assert.equal(snapshot.nodes[0].metadata.status, "loading");
+});
+
+function batchFixture(limit = 2) {
+    const h = harness(), { c, run } = h;
+    const noop = () => {};
+    let sequence = 0;
+    const requests: Array<{ id: string; options: any; finish: () => void }> = [];
+    const canceled: string[] = [];
+    Object.assign(c, {
+        nanoid: () => `node-${++sequence}`, effectiveConfig: { model: "model", count: "2" }, buildGenerationConfig: (cfg: any) => cfg,
+        isAiConfigReady: () => true, getNodeDefinition: () => null, buildNodeGenerationContext: (_id: string, _ns: any, _cs: any, prompt: string) => ({ prompt, referenceImages: [] }),
+        hydrateNodeGenerationContext: async (ctx: any) => ctx, applyCameraPrompt: (p: string) => p,
+        resolveImageModelSettings: () => ({ capabilities: { maxReferences: 4 }, channel: { baseUrl: "fixture" } }),
+        buildImageGenerationMetadata: () => ({ generationType: "generation" }), normalizeCameraSettings: noop,
+        cultivationProfile: {}, resolveImageSlotConcurrency: () => limit, queryClient: { invalidateQueries: noop }, cultivationProfileQueryKey: [], isDouEmperor: false,
+        imageSaver: { prepare: async (img: any) => ({ url: img.dataUrl, storageKey: "asset", width: 2048, height: 1536 }) },
+        requestGeneration: (_cfg: any, _prompt: string, options: any) => {
+            const id = `job-${requests.length + 1}`, result = Promise.withResolvers<any[]>();
+            requests.push({ id, options, finish: () => result.resolve([{ dataUrl: id }]) });
+            options.onJobCreated(id);
+            return result.promise;
+        },
+        cancelServerJob: async (id: string) => { canceled.push(id); return { job: { id, status: "canceled" } }; },
+        referenceSelectionRef: { current: null }, cancelPendingConnectionCreate: noop, cleanupAssetImages: noop,
+    });
+    for (const name of ["setMaskEditNodeId", "setHoveredNodeId", "setEditingNodeId", "setInfoNodeId", "setCropNodeId", "setAngleNodeId", "setPreviewNodeId", "setClearConfirmOpen", "setSelectionBox"]) c[name] = noop;
+    for (const name of ["copiedCanvasMetadata", "remapCanvasNodeReferences", "copyInboundConnections"]) run(declaration("lib/canvas/canvas-clipboard.ts", name));
+    run(declaration("lib/async-pool.ts", "runWithConcurrency"));
+    run(declaration("lib/canvas/canvas-generation-helpers.ts", "getGenerationCount"));
+    h.install([h.node({ status: "idle" })]);
+    return { ...h, requests, canceled, start: () => c.handleGenerateNode("same-node", "image", "test") };
+}
+
+test("duplicating and deleting a batch leaves the original children and links intact", async () => {
+    const { c, requests, start } = batchFixture();
+    const done = start();
+    await flush();
+    requests.forEach((req) => req.finish());
+    await done;
+    const original = c.nodes.find((n: any) => n.metadata.isBatchRoot);
+    c.duplicateNode(original.id);
+    const copy = c.nodes.find((n: any) => n.metadata.isBatchRoot && n.id !== original.id);
+    assert.equal(copy.metadata.batchChildIds.length, 2);
+    assert.ok(copy.metadata.batchChildIds.every((id: string) => !original.metadata.batchChildIds.includes(id)));
+    c.deleteNodes(new Set([copy.id]));
+    assert.equal(c.nodes.length, 3);
+    assert.equal(c.connections.length, 2);
+    assert.ok(c.nodes.filter((n: any) => n.id !== original.id).every((n: any) => n.metadata.batchRootId === original.id && n.metadata.content));
+});
+
+test("clearing while the first slot runs cancels it and never dispatches the queued slot", async () => {
+    const { c, start, requests, canceled } = batchFixture(1);
+    const done = start();
+    await flush();
+    assert.equal(requests.length, 1);
+    c.clearCanvas();
+    requests[0].finish();
+    await done;
+    assert.deepEqual(canceled, ["job-1"]);
+    assert.equal(requests.length, 1);
+    assert.equal(c.nodes.length, 0);
+});
+
+test("deleting one running batch slot leaves its sibling live and shows its result", async () => {
+    const { c, start, requests, canceled } = batchFixture();
+    const done = start();
+    await flush();
+    c.deleteNodes(new Set([c.nodes.find((n: any) => n.metadata.jobId === "job-1").id]));
+    assert.equal(requests[1].options.signal.aborted, false);
+    requests.forEach((req) => req.finish());
+    await done;
+    assert.deepEqual(canceled, ["job-1"]);
+    assert.ok(c.nodes.every((n: any) => n.metadata.status === "success" && n.metadata.content === "job-2"));
+});
+
+test("reopening a submitted batch restores the cover and fits the result to the original layout", async () => {
+    const { c, start, requests } = batchFixture();
+    const done = start();
+    await flush();
+    const document = structuredClone(c.getDocumentNodes(c.nodes));
+    requests.forEach((req) => req.finish());
+    await done;
+    const reopened = batchFixture(), next = reopened.c;
+    next.waitForServerJob = async (id: string) => ({ result: { images: [{ dataUrl: id }] } });
+    next.completedServerImages = (job: any) => job.result.images;
+    reopened.install(next.resetInterruptedGeneration(document));
+    for (const node of next.nodes.filter((n: any) => n.metadata.jobId)) await next.resumeCanvasImageJob(node, new AbortController().signal);
+    for (const item of next.nodes) {
+        const original = c.nodes.find((n: any) => n.id === item.id);
+        assert.equal(item.metadata.status, "success");
+        assert.equal(item.metadata.content, original.metadata.content);
+        assert.deepEqual([item.width, item.height, item.position.x, item.position.y], [original.width, original.height, original.position.x, original.position.y]);
+    }
+});
+
+test("panorama completion releases its generate button", async () => {
+    const { c, start, requests } = batchFixture();
+    c.getNodeDefinition = () => ({ useBuiltinPanel: { mode: "image", writeBackToSelf: true } });
+    const done = start();
+    await flush();
+    requests[0].finish();
+    await done;
+    assert.equal(c.nodes[0].metadata.status, "success");
+    assert.equal(c.runningNodeId, null);
+});
+
+test("a submission accepted before refresh is recovered by its receipt without a second submit", async () => {
+    const first = batchFixture(), { c } = first;
+    const ledger = new Map<string, string>();
+    const receipt = async (project: string, node: string, parent: string) => {
+        const key = JSON.stringify([project, node, parent]);
+        return { idempotencyKey: key, jobId: ledger.get(key) || null };
+    };
+    c.fetchCanvasJobReceipt = receipt;
+    c.effectiveConfig.count = "1";
+    const response = Promise.withResolvers<void>();
+    let submissions = 0;
+    c.requestGeneration = async (_cfg: any, _p: string, options: any) => {
+        const { idempotencyKey } = await options.getCanvasReceipt();
+        ledger.set(idempotencyKey, "accepted");
+        submissions++;
+        await response.promise;
+        options.onJobCreated("accepted");
+        return [{ dataUrl: "result" }];
+    };
+    const done = first.start();
+    await flush();
+    c.saveEffect(); first.advance(200); await flush();
+    const document = first.writes.at(-1).state.projects[0].nodes;
+    assert.equal(document[0].metadata.jobId, undefined);
+    assert.equal(document[0].metadata.imageSubmissionParent, "");
+    c.cleanupEffect()();
+    response.resolve(); await done;
+    const next = batchFixture();
+    next.c.fetchCanvasJobReceipt = receipt;
+    next.c.waitForServerJob = async (id: string) => { assert.equal(id, "accepted"); return { result: { images: [{ dataUrl: "result" }] } }; };
+    next.c.completedServerImages = (job: any) => job.result.images;
+    next.install(next.c.resetInterruptedGeneration(document));
+    await next.c.resumeCanvasImageJob(next.c.nodes[0], new AbortController().signal);
+    assert.equal(next.c.nodes[0].metadata.content, "result");
+    assert.equal(submissions, 1);
 });

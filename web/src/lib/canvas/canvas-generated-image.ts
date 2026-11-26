@@ -30,6 +30,29 @@ export function canvasImageResourceMetadata(metadata: CanvasNodeMetadata) {
     };
 }
 
+// Rebuild the cover from its own children after independent job watchers settle.
+export function reconcileCanvasBatch(nodes: CanvasNodeData[], rootId?: string): CanvasNodeData[] {
+    if (!rootId) return nodes;
+    const root = nodes.find((node) => node.id === rootId);
+    if (!root?.metadata?.isBatchRoot) return nodes;
+    const children = nodes.filter((node) => node.metadata?.batchRootId === rootId);
+    if (!children.length) return nodes;
+    const ready = children.filter((node) => node.metadata?.status === "success" && node.metadata.content);
+    const cover = ready.find((node) => node.id === root.metadata?.primaryImageId) || ready[0];
+    const status = cover ? "success" : children.some((node) => node.metadata?.status === "loading") ? "loading"
+        : children.every((node) => node.metadata?.status === "idle") ? "idle" : "error";
+    return nodes.map((node) => {
+        if (node.id === root.metadata?.derivedFromNodeId && node.type === "config")
+            return { ...node, metadata: { ...node.metadata, status, errorDetails: status === "error" ? "全部图片生成失败" : undefined } };
+        if (node !== root) return node;
+        const size = cover && !node.metadata?.freeResize ? { width: cover.width, height: cover.height } : { width: node.width, height: node.height };
+        return { ...node, ...size, position: { x: node.position.x + (node.width - size.width) / 2, y: node.position.y + (node.height - size.height) / 2 },
+            metadata: { ...node.metadata, ...(cover?.metadata ? { ...canvasImageResourceMetadata(cover.metadata), primaryImageId: cover.id,
+                naturalWidth: cover.metadata.naturalWidth, naturalHeight: cover.metadata.naturalHeight } : {}),
+                status, errorDetails: status === "error" ? "全部图片生成失败" : undefined } };
+    });
+}
+
 // Run the session check inside React's functional update: a callback can be queued
 // before navigation/sign-out but execute afterwards. Only update the original save.
 export function applyCanvasImageSaveResult(nodes: CanvasNodeData[], save: CanvasImageSave, result: { uploaded: UploadedImage } | { error: string }, isCurrent: () => boolean) {

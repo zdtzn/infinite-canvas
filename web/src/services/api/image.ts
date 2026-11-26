@@ -129,6 +129,7 @@ export type RequestOptions = {
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
     expectedUserId?: string;
     idempotencyKey?: string;
+    getCanvasReceipt?: () => Promise<{ idempotencyKey: string; jobId: string | null }>;
 };
 
 const RESOLUTION_BASE: Record<string, number> = {
@@ -985,6 +986,9 @@ async function requestServerImageJob(
     const referenceData = await Promise.all(references.map((reference) => serverImageReferenceInput(reference, preferOptimizedReferences) || imageToDataUrl(reference, expectedUserId)));
     const maskData = mask ? serverImageReferenceInput(mask) || (await imageToDataUrl(mask, expectedUserId)) : undefined;
     options?.signal?.throwIfAborted();
+    const receipt = await options?.getCanvasReceipt?.();
+    options?.signal?.throwIfAborted();
+    if (receipt?.jobId) return waitForServerImageJob(receipt.jobId, expectedUserId, options);
     const { job } = await submitImageJob(
         {
             channelId: requestConfig.channelId,
@@ -1002,7 +1006,7 @@ async function requestServerImageJob(
             source: options?.source,
         },
         expectedUserId,
-        options?.idempotencyKey,
+        receipt?.idempotencyKey ?? options?.idempotencyKey,
     );
     return waitForServerImageJob(job.id, expectedUserId, options);
 }

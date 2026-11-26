@@ -1,3 +1,4 @@
+import { reconcileCanvasBatch } from "./canvas-generated-image";
 import { defaultConfig, normalizeImageSizeSelection, resolveModelForCapability, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -124,9 +125,11 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
-    return nodes.map((node) =>
-        node.metadata?.status === "loading" && !node.metadata.jobId && !node.metadata.videoTask ? { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新前任务尚未提交到服务端，请重新生成。" } } : node,
+    const restored = nodes.map((node) =>
+        node.metadata?.status === "loading" && !node.metadata.jobId && node.metadata.imageSubmissionParent === undefined && !node.metadata.isBatchRoot && !node.metadata.videoTask ? { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新时尚未收到任务编号，请先在任务中心核对结果。" } } : node,
     );
+    const activeRoots = nodes.filter((node) => node.metadata?.isBatchRoot && (node.metadata.status === "loading" || !node.metadata.content));
+    return activeRoots.reduce((current, root) => reconcileCanvasBatch(current, root.id), restored);
 }
 
 export function canvasVideoTaskBinding(config: AiConfig, model: string) {
