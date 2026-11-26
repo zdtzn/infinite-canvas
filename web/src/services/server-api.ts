@@ -364,7 +364,7 @@ export async function deleteServerAsset(storageKey: string, expectedUserId?: str
     await serverRequest(`/api/assets/${encodeURIComponent(storageKey)}`, { method: "DELETE", expectedUserId });
 }
 
-export async function fetchServerAssetLibrary(expectedUserId?: string, options: { page?: number; pageSize?: number; keyword?: string; kind?: string; category?: string; tags?: string[]; tag?: string; signal?: AbortSignal } = {}) {
+export async function fetchServerAssetLibrary(expectedUserId?: string, options: { page?: number; pageSize?: number; keyword?: string; kind?: string; category?: string; folderId?: string; tags?: string[]; tag?: string; signal?: AbortSignal } = {}) {
     const params = new URLSearchParams();
     if (options.page) params.set("page", String(options.page));
     if (options.pageSize) params.set("pageSize", String(options.pageSize));
@@ -372,9 +372,18 @@ export async function fetchServerAssetLibrary(expectedUserId?: string, options: 
     if (options.kind) params.set("kind", options.kind);
     if (options.tag) params.set("tag", options.tag);
     if (options.category !== undefined) params.set("category", options.category);
+    if (options.folderId !== undefined) params.set("folderId", options.folderId);
     for (const tag of options.tags || []) params.append("tag", tag);
     const query = params.toString();
-    return serverRequest<ServerAssetLibrary>(`/api/library-assets${query ? `?${query}` : ""}`, { timeoutMs: 20_000, expectedUserId, signal: options.signal });
+    return serverRequest<ServerAssetLibrary>(`/api/library-assets${query ? `?${query}` : ""}`, { timeoutMs: 20_000, expectedUserId, signal: options.signal, cache: "no-store" });
+}
+
+export async function fetchServerAssetFolders(expectedUserId: string, signal?: AbortSignal) {
+    return serverRequest<import("../../../shared/asset-folders").AssetFolderSnapshot>("/api/asset-folders", { expectedUserId, signal });
+}
+
+export async function saveServerAssetFolders(snapshot: import("../../../shared/asset-folders").AssetFolderSnapshot, expectedUserId: string) {
+    return serverRequest<import("../../../shared/asset-folders").AssetFolderSnapshot>("/api/asset-folders", { method: "PUT", body: snapshot, expectedUserId });
 }
 
 export async function replaceServerAssetLibrary(items: Asset[], initializeOnly = false, expectedUserId?: string) {

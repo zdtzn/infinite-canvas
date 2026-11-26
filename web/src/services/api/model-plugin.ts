@@ -4,10 +4,13 @@ import { buildApiUrl, type AiConfig, type ModelCapability } from "@/stores/use-c
 import { isServerManagedConfig, type ManagedAiConfig } from "./gateway";
 import { withLocalProxy } from "./local-proxy";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { CALL_SCRIPT_MARKER } from "./call-presets/template";
+import { runMainCallScript } from "./call-script-runtime";
 
 type RequestOptions = { signal?: AbortSignal };
 
 export type PluginHttpOptions = {
+    timeout?: number;
     headers?: Record<string, string>;
     params?: Record<string, unknown>;
     responseType?: "json" | "blob" | "text" | "arraybuffer";
@@ -33,6 +36,8 @@ export type RunPluginArgs = {
     params?: Record<string, unknown>;
     signal?: AbortSignal;
     onDelta?: (text: string) => void;
+    taskId?: string;
+    publicImages?: string[];
 };
 
 function pluginHeaders(extra?: Record<string, string>, hasJsonBody = false): Record<string, string> {
@@ -57,6 +62,7 @@ function createPluginHttp(config: AiConfig, options?: RequestOptions): PluginHtt
             params: opts?.params,
             headers: pluginHeaders({ Authorization: `Bearer ${config.apiKey}`, ...opts?.headers }, method === "post" && !isForm && body !== undefined),
             responseType: opts?.responseType || "json",
+            timeout: opts?.timeout,
             signal: options?.signal,
         });
         return response.data;
@@ -122,6 +128,9 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
     const http = createPluginHttp(config, { signal: args.signal });
     const request = createPluginRequest(config, { signal: args.signal });
     const poll = createPoll(args.signal);
+    if (args.script.trimStart().startsWith(CALL_SCRIPT_MARKER)) {
+        return runMainCallScript<T>(args, { http, request, poll, sleep: ms => sleep(ms, args.signal) });
+    }
     const runner = new Function(
         "prompt",
         "images",

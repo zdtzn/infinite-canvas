@@ -102,17 +102,35 @@ export async function captureVideoFrame(blob: Blob, position: FramePosition, cur
             const context = canvas.getContext("2d");
             if (!context) throw new Error("浏览器不支持截帧");
             context.drawImage(video, 0, 0);
-            const result = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => (value ? resolve(value) : reject(new Error("截帧失败"))), "image/png"));
+            const result = await new Promise<Blob>((resolve, reject) => {
+                signal.throwIfAborted();
+                const abort = () => reject(signal.reason);
+                signal.addEventListener("abort", abort, { once: true });
+                try {
+                    canvas.toBlob((value) => {
+                        signal.removeEventListener("abort", abort);
+                        if (signal.aborted) reject(signal.reason);
+                        else if (value) resolve(value);
+                        else reject(new Error("截帧失败"));
+                    }, "image/png");
+                } catch (error) {
+                    signal.removeEventListener("abort", abort);
+                    reject(error);
+                }
+            });
             signal.throwIfAborted();
             return new File([result], `视频截帧-${time.toFixed(3)}.png`, { type: "image/png" });
         } finally {
             canvas.width = canvas.height = 0;
         }
     } finally {
-        video.pause();
-        video.removeAttribute("src");
-        video.load();
-        URL.revokeObjectURL(url);
+        try {
+            video.pause();
+            video.removeAttribute("src");
+            video.load();
+        } finally {
+            URL.revokeObjectURL(url);
+        }
     }
 }
 

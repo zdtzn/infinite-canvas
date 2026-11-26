@@ -4,6 +4,7 @@ import { NODE_SPECS } from "@/constant/canvas";
 import { registerNodeDefinitions } from "@/lib/canvas/node-registry";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasNodeDefinition, CanvasNodeResource } from "@/types/canvas-plugin";
+import { directorNodeDefinition } from "@/features/director-desk/director-node";
 
 // 内置节点的可扩展元数据(尺寸/初始 metadata 复用 NODE_SPECS)。
 // 渲染仍由 canvas-node 内部渲染器负责,故不提供 Content。
@@ -34,4 +35,5 @@ export function registerBuiltinNodes() {
     if (registered) return;
     registered = true;
     registerNodeDefinitions(BUILTIN_DEFINITIONS, "builtin");
+    registerNodeDefinitions([directorNodeDefinition], "builtin-director");
 }

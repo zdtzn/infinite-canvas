@@ -1,5 +1,23 @@
 # Third-Party Notices
 
+## Infinite Canvas upstream
+
+The video-frame encoding cancellation and media URL cleanup in `web/src/lib/canvas/canvas-media-tools.ts` adapt the implementation from [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas/blob/4c67f1ece4f4edaef81e58e964eb78abb1e9809d/packages/workbench/src/lib/canvas/canvas-video-frame.ts), reviewed at commit `4c67f1ece4f4edaef81e58e964eb78abb1e9809d`.
+
+The native call presets under `web/src/services/api/call-presets` adapt the same upstream commit's `packages/model-runtime/src/call-scripts`. The host execution, task recovery, and configuration integration are adapted for this fork.
+
+- Copyright (c) 2026 basketikun.
+- The adapted upstream code is distributed under the MIT License. See [third_party/licenses/Infinite-Canvas-MIT.txt](third_party/licenses/Infinite-Canvas-MIT.txt).
+
+## 3D Director Desk
+
+The editor under `web/src/features/director-desk/studio` and its scene/layout contracts adapt `plugins/director-desk` from [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas/tree/4c67f1ece4f4edaef81e58e964eb78abb1e9809d/plugins/director-desk). The upstream editor is based on [jiguang132/storyai-3d-director-desk](https://github.com/jiguang132/storyai-3d-director-desk) and uses procedural characters.
+
+- The editor is distributed under the MIT License, copyright (c) 2026 YZ. The supplied license is preserved at [web/src/features/director-desk/LICENSE](web/src/features/director-desk/LICENSE).
+- The Infinite Canvas integration is distributed under the upstream MIT License, copyright (c) 2026 basketikun; see the upstream notice above.
+- The editor runs in a separate bundled document. This fork's host integration uses the existing account, project, and asset services.
+- Distribution copies of both MIT licenses are included under `web/public/licenses`; dependency legal comments are retained in the embedded editor bundle.
+
 ## Film-Luts
 
 The Color Alchemy film LUT library includes the `.cube` LUTs and preview thumbnails from [BigNerdCoding/Film-Luts](https://github.com/BigNerdCoding/Film-Luts), vendored under `web/public/film-luts` and loaded on demand.

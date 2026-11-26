@@ -56,6 +56,7 @@ export type AppDatabase = {
       keyword?: string;
       kind?: string;
       category?: string;
+      folderId?: string;
       tags?: string[];
     },
   ): {
@@ -1430,6 +1431,10 @@ function sqliteStore(database: Database): AppDatabase {
           "TRIM(COALESCE(json_extract(payload_json, '$.category'), '')) = ?",
         );
         params.push(options.category.trim());
+      }
+      if (options.folderId !== undefined) {
+        conditions.push("COALESCE(json_extract(payload_json, '$.folderId'), '') = ?");
+        params.push(options.folderId);
       }
       for (const tag of tags) {
         conditions.push(

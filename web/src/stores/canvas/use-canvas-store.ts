@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { nanoid } from "nanoid";
+import localforage from "localforage";
 import { localForageStorage } from "@/lib/localforage-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
@@ -82,16 +83,17 @@ let queuedPersistState: PersistedCanvasState | null = null;
 let queuedPersistValue: StorageValue<CanvasStore> | null = null;
 let queuedPersistName = CANVAS_STORE_KEY;
 
-async function flushCanvasPersistence() {
-    if (!queuedPersistValue) return;
+export async function flushCanvasPersistence(strict = false) {
+    const value = queuedPersistValue || (strict && queuedPersistState ? { state: queuedPersistState, version: useCanvasStore.persist.getOptions().version } : null);
+    if (!value) return;
     if (saveTimer) {
         clearTimeout(saveTimer);
         saveTimer = null;
     }
-    const value = queuedPersistValue;
     const name = queuedPersistName;
     queuedPersistValue = null;
-    await localForageStorage.setItem(name, JSON.stringify(value));
+    if (strict) await localforage.setItem(name, JSON.stringify(value));
+    else await localForageStorage.setItem(name, JSON.stringify(value));
 }
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {

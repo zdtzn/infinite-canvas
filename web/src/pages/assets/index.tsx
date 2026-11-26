@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { creativeImageTransferState } from "@/lib/creative-image-transfer";
 import { collectExportAssets } from "./export-library";
-import { App, Button, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
@@ -20,6 +20,9 @@ import { readAssetDownload } from "./asset-download";
 import { assetFacets, matchesAssetFilters } from "@/lib/asset-filters";
 import { AssetFilterControls } from "@/components/assets/asset-filter-controls";
 import StorageManager from "./storage-manager";
+import { useAssetFolders } from "./use-asset-folders";
+import { AssetFolderManager } from "./components/asset-folder-manager";
+import { assetFolderOptions, mergeAssetFolders } from "../../../../shared/asset-folders";
 import { AssetSyncStatus } from "@/components/assets/asset-sync-status";
 import { ASSET_SYNC_SUCCESS_EVENT, assetSaveMessage, pendingAssetUpserts, type AssetSyncSuccessDetail } from "@/stores/asset-sync-queue";
 
@@ -29,6 +32,7 @@ type AssetFormValues = {
     coverUrl: string;
     tags: string[];
     category?: string;
+    folderId?: string;
     source?: string;
     note?: string;
     content?: string;
@@ -130,6 +134,14 @@ export default function AssetsPage() {
     const [remoteResult, setRemoteLibrary] = useState<(ServerAssetLibrary & { owner: string }) | null>(null);
     const remoteLibrary = remoteResult?.owner === userId ? remoteResult : null;
     const [remoteRefresh, setRemoteRefresh] = useState(0);
+    const folderState = useAssetFolders(userId, () => setRemoteRefresh(value => value + 1));
+    const folderOptions = assetFolderOptions(folderState.folders);
+    const [folderId, setFolderId] = useState<string | undefined>();
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [moveTarget, setMoveTarget] = useState("");
+    const [moving, setMoving] = useState(false);
+    useEffect(() => { setSelectedIds([]); setFolderId(undefined); setMoveTarget(""); }, [userId]);
+    useEffect(() => { setSelectedIds([]); }, [page, pageSize, kindFilter, keyword, category, filterTags, folderId]);
     const [remoteStatus, setRemoteStatus] = useState<"loading" | "ready" | "error">("loading");
     const coverUrl = Form.useWatch("coverUrl", form) || "";
     const title = Form.useWatch("title", form) || "";
@@ -137,7 +149,7 @@ export default function AssetsPage() {
     const content = Form.useWatch("content", form) || "";
     const validAssets = useMemo(() => assets.filter((asset) => asset.kind === "text" || asset.kind === "image" || asset.kind === "video"), [assets]);
     const useRemoteLibrary = PUBLIC_MODE && Boolean(userId);
-    const pendingAssets = useMemo(() => useRemoteLibrary ? pendingAssetUpserts(syncOutbox, userId).filter(asset => matchesAssetFilters(asset, { keyword, kind: kindFilter, category, tags: filterTags })) : [], [syncOutbox, userId, useRemoteLibrary, keyword, kindFilter, category, filterTags]);
+    const pendingAssets = useMemo(() => useRemoteLibrary ? pendingAssetUpserts(syncOutbox, userId).filter(asset => matchesAssetFilters(asset, { keyword, kind: kindFilter, category, folderId, tags: filterTags })) : [], [syncOutbox, userId, useRemoteLibrary, keyword, kindFilter, category, folderId, filterTags]);
 
     useEffect(() => {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -156,8 +168,8 @@ export default function AssetsPage() {
     }, [searchInput]);
 
     const filteredAssets = useMemo(() => {
-        return validAssets.filter((asset) => matchesAssetFilters(asset, { keyword, kind: kindFilter, category, tags: filterTags }));
-    }, [validAssets, keyword, kindFilter, category, filterTags]);
+        return validAssets.filter((asset) => matchesAssetFilters(asset, { keyword, kind: kindFilter, category, folderId, tags: filterTags }));
+    }, [validAssets, keyword, kindFilter, category, folderId, filterTags]);
     const localFacets = useMemo(() => assetFacets(validAssets), [validAssets]);
 
     const visibleAssets = useMemo(() => {
@@ -179,6 +191,7 @@ export default function AssetsPage() {
             keyword,
             kind: kindFilter,
             category,
+            folderId,
             tags: filterTags,
             signal: controller.signal,
         })
@@ -198,7 +211,7 @@ export default function AssetsPage() {
             active = false;
             controller.abort();
         };
-    }, [kindFilter, keyword, category, filterTags, page, pageSize, remoteRefresh, useRemoteLibrary, userId]);
+    }, [kindFilter, keyword, category, folderId, filterTags, page, pageSize, remoteRefresh, useRemoteLibrary, userId]);
 
     const serverLibraryReady = Boolean(useRemoteLibrary && remoteLibrary?.initialized);
     const remoteBlocked = useRemoteLibrary && !remoteLibrary;
@@ -248,11 +261,28 @@ export default function AssetsPage() {
         };
     }, [validAssets]);
 
+    const moveSelected = async () => {
+        if (moving) return;
+        const owner = userId;
+        setMoving(true);
+        try {
+            const records = [...displayedAssets, ...pendingAssets].filter(asset => selectedIds.includes(asset.id));
+            for (const asset of records) {
+                if ((useUserStore.getState().user?.id || "") !== owner) throw new Error("账号已切换");
+                persistAsset({ ...asset, folderId: moveTarget || null, updatedAt: new Date().toISOString() });
+                await useAssetStore.getState().waitForAssetLocalSave(asset.id);
+            }
+            setSelectedIds([]); setRemoteRefresh(value => value + 1);
+            message.success(`已移动 ${records.length} 个素材`);
+        } catch (error) { message.error(userFacingErrorMessage(error, "素材移动失败，请重试")); }
+        finally { setMoving(false); }
+    };
+
     const openCreate = () => {
         setEditingAsset(null);
         setImageDraft(null);
         setFormKind("text");
-        form.setFieldsValue({ kind: "text", title: "", coverUrl: "", tags: [], category: "", source: "手动添加", note: "", content: "" });
+        form.setFieldsValue({ kind: "text", title: "", coverUrl: "", tags: [], category: "", folderId: folderId || "", source: "手动添加", note: "", content: "" });
         setIsAssetOpen(true);
     };
 
@@ -266,6 +296,7 @@ export default function AssetsPage() {
             coverUrl: asset.coverUrl,
             tags: asset.tags || [],
             category: asset.category || "",
+            folderId: asset.folderId || "",
             source: asset.source,
             note: asset.note,
             content: asset.kind === "text" ? asset.data.content : "",
@@ -280,6 +311,7 @@ export default function AssetsPage() {
             coverUrl: values.coverUrl?.trim() || (values.kind === "image" && imageDraft ? imageDraft.dataUrl : ""),
             tags: values.tags || [],
             category: (values.category || "").trim().slice(0, 80),
+            folderId: values.folderId || null,
             source: values.source?.trim(),
             note: values.note?.trim(),
             metadata: editingAsset?.metadata || { source: "manual" },
@@ -361,7 +393,7 @@ export default function AssetsPage() {
             const items = useRemoteLibrary ? await collectExportAssets((nextPage) => fetchServerAssetLibrary(userId, { page: nextPage, pageSize: 60 }), assertCurrent) : validAssets;
             if (!items.length) { message.warning("暂无资产可导出"); return; }
             const { exportAssets } = await import("./asset-transfer");
-            await exportAssets(items, userId, assertCurrent, (count) => setExportProgress(`打包 ${count}/${items.length}`));
+            await exportAssets(items, userId, assertCurrent, (count) => setExportProgress(`打包 ${count}/${items.length}`), folderState.folders);
             message.success(`已导出 ${items.length} 个资产`);
         } catch (error) {
             message.error(userFacingErrorMessage(error, "素材未能导出，请再试一次"));
@@ -374,7 +406,11 @@ export default function AssetsPage() {
         if (!file) return;
         try {
             const { readAssetPackage } = await import("./asset-transfer");
-            const importedAssets = await readAssetPackage(file);
+            const importedAssets = await readAssetPackage(file, async folders => {
+                const merged = mergeAssetFolders(folderState.folders, folders);
+                await folderState.save(merged.folders);
+                return merged.mapping;
+            });
             if (PUBLIC_MODE && useUserStore.getState().user?.id !== userId) return;
             const ids = importedAssets.map((asset) => {
                 const payload = { ...asset } as Record<string, unknown>;
@@ -470,6 +506,18 @@ export default function AssetsPage() {
                     </div>
 
                     <AssetSyncStatus className="mt-4" />
+                    <div className="mt-4 flex flex-wrap items-center gap-2" aria-label="素材文件夹">
+                        <Select aria-label="筛选文件夹" className="min-w-44" loading={folderState.loading} value={folderId === undefined ? "__all__" : folderId} onChange={value => { setFolderId(value === "__all__" ? undefined : value); setSelectedIds([]); setPage(1); }} options={[{ value: "__all__", label: "全部文件夹" }, { value: "", label: "未归档" }, ...folderOptions]} />
+                        <AssetFolderManager key={userId} folders={folderState.folders} busy={folderState.busy} disabled={folderState.loading || Boolean(folderState.error)} onSave={async folders => { await folderState.save(folders); setFolderId(undefined); setSelectedIds([]); }} />
+                        {folderState.error && <Button type="text" onClick={folderState.reload}>{folderState.error}</Button>}
+                        {selectedIds.length > 0 && <>
+                            <span className="text-sm text-muted-foreground">已选 {selectedIds.length} 项</span>
+                            <Select aria-label="移动到文件夹" className="min-w-40" value={moveTarget} onChange={setMoveTarget} options={[{ value: "", label: "根目录" }, ...folderOptions]} />
+                            <Button loading={moving} disabled={folderState.loading || Boolean(folderState.error)} onClick={() => void moveSelected()}>移动</Button>
+                            <Button type="text" onClick={() => setSelectedIds([])}>取消选择</Button>
+                        </>}
+                    </div>
+
 
                     <div className="mt-3 flex flex-wrap items-center gap-2 sm:mt-5 sm:gap-3">
                         <span className="text-xs tracking-[0.2em] text-[#8a8a96]">类型</span>
@@ -513,7 +561,10 @@ export default function AssetsPage() {
                     </section>}
                     <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {displayedAssets.filter(asset => !pendingAssets.some(pending => pending.id === asset.id)).map((asset) => (
-                            <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
+                            <div key={asset.id} className="relative">
+                                <Checkbox aria-label={`选择${asset.title}`} className="absolute left-3 top-3 z-20 rounded bg-background/90 p-1" checked={selectedIds.includes(asset.id)} onChange={event => setSelectedIds(previous => event.target.checked ? [...previous, asset.id] : previous.filter(id => id !== asset.id))} />
+                                <AssetScrollCard asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
+                            </div>
                         ))}
                     </div>
 
@@ -613,6 +664,9 @@ export default function AssetsPage() {
                                     上传
                                 </Button>
                             </Space.Compact>
+                        </Form.Item>
+                        <Form.Item name="folderId" label="文件夹">
+                            <Select loading={folderState.loading} options={[{ value: "", label: "根目录" }, ...folderOptions]} />
                         </Form.Item>
                         <Form.Item name="category" label="分类">
                             <Input maxLength={80} placeholder="如角色、场景、产品；留空为未分类" />

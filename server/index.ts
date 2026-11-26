@@ -8,6 +8,7 @@ import { IMAGE_SUBMISSION_UNCONFIRMED, isImageSubmissionUnconfirmed } from "../s
 
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, personalPasswordIssue, readCookie, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./lib/asset-library";
+import { readAssetFolders, saveAssetFolders, assertAssetFolder } from "./lib/asset-folders";
 import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
 import { buildStorageOverview, indexStorageReferences, planStorageCleanup, type StorageReferenceRoot } from "./lib/storage-overview";
 import { AsyncSemaphore } from "./lib/async-semaphore";
@@ -591,6 +592,8 @@ async function route(request: Request, requestId: string) {
             return saveColorAlchemyDocument(request, session, decodeRouteSegment(colorAlchemyDocumentMatch[1], "灵彩草稿 ID"));
         if (colorAlchemyDocumentMatch && request.method === "DELETE")
             return deleteColorAlchemyDocument(session, decodeRouteSegment(colorAlchemyDocumentMatch[1], "灵彩草稿 ID"));
+        if (url.pathname === "/api/asset-folders" && request.method === "GET") return json(readAssetFolders(appDatabase, session.userId), 200, { "Cache-Control": "no-store" });
+        if (url.pathname === "/api/asset-folders" && request.method === "PUT") return updateAssetFolders(request, session);
         if (url.pathname === "/api/library-assets" && request.method === "GET") return listLibraryAssets(url, session);
         if (url.pathname === "/api/storage" && request.method === "GET") return personalStorageOverview(url, session);
         if (url.pathname === "/api/storage/cleanup" && request.method === "POST") return cleanupPersonalStorage(request, session);
@@ -2537,6 +2540,15 @@ function jobImagePath(userId: string, jobId: string, dataUrl: string) {
     }
 }
 
+async function updateAssetFolders(request: Request, session: SessionPayload) {
+    const body = await readJson<{ folders?: unknown; revision?: number }>(request, 256 * 1024);
+    try {
+        return json(saveAssetFolders(appDatabase, session.userId, body.folders, body.revision ?? -1));
+    } catch (error) {
+        throw new HttpError((error as { status?: number }).status || 400, error instanceof Error ? error.message : "文件夹保存失败");
+    }
+}
+
 function listLibraryAssets(url: URL, session: SessionPayload) {
     const pageSize = Math.max(1, Math.min(100, Math.floor(Number(url.searchParams.get("pageSize") || 24)) || 24));
     const requestedPage = Math.max(1, Math.floor(Number(url.searchParams.get("page") || 1)) || 1);
@@ -2544,7 +2556,8 @@ function listLibraryAssets(url: URL, session: SessionPayload) {
     const kind = (url.searchParams.get("kind") || "").trim().toLowerCase();
     const tags = url.searchParams.getAll("tag").map((tag) => tag.trim()).filter(Boolean);
     const category = url.searchParams.has("category") ? url.searchParams.get("category")!.trim() : undefined;
-    const library = appDatabase.queryAssetLibrary(session.userId, { page: requestedPage, pageSize, keyword, kind, category, tags });
+    const folderId = url.searchParams.has("folderId") ? url.searchParams.get("folderId")! : undefined;
+    const library = appDatabase.queryAssetLibrary(session.userId, { page: requestedPage, pageSize, keyword, kind, category, folderId, tags });
     return json({
         initialized: library.initialized,
         items: library.items.map((item) => publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl)),
@@ -2567,6 +2580,8 @@ async function replaceLibraryAssets(request: Request, session: SessionPayload) {
             });
     }
     const items = normalizeAssetLibrary(body.items, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
+    const folderIds = new Set(readAssetFolders(appDatabase, session.userId).folders.map(folder => folder.id));
+    if (items.some(item => item.payload.folderId && !folderIds.has(String(item.payload.folderId)))) throw new AssetLibraryInputError("目标文件夹已移除，请重新选择文件夹");
     appDatabase.replaceAssetLibrary(session.userId, items);
     return json({ initialized: true, items: items.map((item) => publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl)) });
 }
@@ -2574,6 +2589,7 @@ async function replaceLibraryAssets(request: Request, session: SessionPayload) {
 async function saveLibraryAsset(request: Request, session: SessionPayload, id: string) {
     const body = await readJson<{ item?: unknown }>(request);
     const item = normalizeAssetLibraryItem(body.item, id, (storageKey) => state.assets[assetKey(session.userId, storageKey)]);
+    assertAssetFolder(appDatabase, session.userId, item.payload);
     appDatabase.upsertAssetLibraryItem(session.userId, item);
     return json({ item: publicAssetLibraryPayload(item.payload, (storageKey) => state.assets[assetKey(session.userId, storageKey)], assetUrl) });
 }

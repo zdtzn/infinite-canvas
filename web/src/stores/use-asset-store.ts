@@ -27,6 +27,7 @@ type AssetBase<T extends AssetKind> = {
     coverUrl: string;
     tags: string[];
     category?: string;
+    folderId?: string | null;
     source?: string;
     note?: string;
     createdAt: string;

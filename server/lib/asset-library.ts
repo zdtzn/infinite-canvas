@@ -57,6 +57,9 @@ export function normalizeAssetLibraryItem(
   const assetSource = optionalString(source.source, 120);
   const category = optionalString(source.category, 80);
   if (category) payload.category = category;
+  const folderId = optionalString(source.folderId, 100);
+  if (folderId && !/^[A-Za-z0-9_-]{1,100}$/.test(folderId)) throw new AssetLibraryInputError("文件夹标识无效");
+  if (folderId) payload.folderId = folderId;
   const note = optionalString(source.note, 2_000);
   if (assetSource) payload.source = assetSource;
   if (note) payload.note = note;

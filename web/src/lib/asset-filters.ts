@@ -1,8 +1,9 @@
 import type { Asset } from "../stores/use-asset-store";
 
-export type AssetFilters = { keyword: string; kind: string; category?: string; tags: string[] };
+export type AssetFilters = { keyword: string; kind: string; category?: string; folderId?: string; tags: string[] };
 
 export function matchesAssetFilters(asset: Asset, filters: AssetFilters) {
+    if (filters.folderId !== undefined && (asset.folderId || "") !== filters.folderId) return false;
     if (filters.kind !== "all" && filters.kind !== asset.kind) return false;
     if (filters.category !== undefined && (asset.category || "").trim() !== filters.category) return false;
     if (!filters.tags.every((tag) => (asset.tags || []).some((value) => value.toLowerCase() === tag.trim().toLowerCase()))) return false;

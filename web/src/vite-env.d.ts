@@ -2,6 +2,11 @@
 
 declare const __APP_VERSION__: string;
 
+declare module "virtual:director-studio" {
+    const html: string;
+    export default html;
+}
+
 interface ImportMetaEnv {
     // 逗号分隔的本地开发插件 URL,每次启动重新拉取(不缓存、不落库)
     readonly VITE_DEV_PLUGINS?: string;

@@ -25,6 +25,7 @@
 - [安全公网部署](./SECURE_PUBLIC_DEPLOYMENT.md)
 - [漏洞提交](/docs/support/security)
 - [更新日志](/docs/progress/changelog)
+- [上游 1.0 变更对比与移植取舍](/docs/progress/upstream-v1-review)
 - [待测试](/docs/progress/pending-test)
 
 ## 授权与贡献

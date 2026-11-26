@@ -1,11 +1,12 @@
 import { javascript } from "@codemirror/lang-javascript";
 import CodeMirror from "@uiw/react-codemirror";
-import { Button, Modal } from "antd";
+import { Button, Modal, Select } from "antd";
 import { useEffect, useState } from "react";
 
 import { getPluginAuthoringPrompt, PLUGIN_RETURNS, PLUGIN_TEMPLATES, PLUGIN_VARIABLES } from "@/services/api/model-plugin";
 import { useCopyText } from "@/hooks/use-copy-text";
 import type { ModelCapability } from "@/stores/use-config-store";
+import { CALL_PRESETS } from "@/services/api/call-presets";
 
 const capabilityLabels: Record<ModelCapability, string> = { image: "生图", video: "视频", text: "文本", audio: "音频" };
 
@@ -42,6 +43,7 @@ export function ModelScriptEditor({ open, capability, modelName, value, onSave, 
             footer={
                 <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
+                        <Select aria-label="插入协议预设" className="w-52" placeholder="选择上游调用预设" value={undefined} options={CALL_PRESETS.filter(item => item.capability === capability).map(item => ({ value: item.id, label: item.name }))} onChange={id => { const preset = CALL_PRESETS.find(item => item.id === id); if (preset) setDraft(preset.source); }} />
                         {PLUGIN_TEMPLATES[capability].map((template) => (
                             <Button key={template.label} size="small" onClick={() => setDraft(template.script)}>
                                 插入{template.label}模板

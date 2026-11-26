@@ -49,7 +49,14 @@
         "tailwind-merge": "^3.6.0",
         "tailwindcss": "^4",
         "tw-animate-css": "^1.4.0",
-        "zustand": "^5.0.12"
+        "zustand": "^5.0.12",
+        "@react-three/fiber": "^9.4.0",
+        "@react-three/drei": "^10.7.0",
+        "three": "0.180.0",
+        "three-stdlib": "^2.36.0",
+        "zod": "^3.25.76",
+        "eventsource-parser": "^3.1.0",
+        "marked": "18.1.0"
     },
     "devDependencies": {
         "@tailwindcss/postcss": "^4",
@@ -62,6 +69,8 @@
         "@vitejs/plugin-react": "^5.2.0",
         "prettier": "^3.8.3",
         "typescript": "^5",
-        "vite": "^7.3.0"
+        "vite": "^7.3.0",
+        "@types/three": "^0.180.0",
+        "esbuild": "^0.25.0"
     }
 }
