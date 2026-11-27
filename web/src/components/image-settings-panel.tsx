@@ -272,33 +272,35 @@ export function ImageSettingsPanel({ config, selectedModel, onConfigChange, them
                                 </div>
                             )}
                         </div>
-                        <div className="flex items-center justify-between gap-3">
-                            <div className="space-y-0.5">
-                                <SettingTitle color={theme.node.muted}>透明背景</SettingTitle>
-                                <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                                    开启后生成无背景的透明图像(仅部分模型可用)
-                                </div>
-                            </div>
-                            <span onMouseDown={(event) => event.stopPropagation()}>
-                                <Switch size="small" checked={transparentBackground && capabilities.transparentBackground} disabled={!capabilities.transparentBackground} onChange={updateTransparentBackground} />
-                            </span>
-                        </div>
                     </>
                 ) : null}
                 {section !== "advanced" ? (
-                    <div className="space-y-2.5">
-                        <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
-                        <div className="grid grid-cols-4 gap-2">
-                            {[1, 2, 4]
-                                .filter((value) => value <= Math.min(quickCount, effectiveMaxCount))
-                                .map((value) => (
-                                    <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
-                                        {value} 张
-                                    </OptionPill>
-                                ))}
-                            <CountInput value={count} max={effectiveMaxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
+                    <>
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="space-y-0.5">
+                                <SettingTitle color={theme.node.muted}>透明背景</SettingTitle>
+                                {!capabilities.transparentBackground ? (
+                                    <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>当前模型不支持</div>
+                                ) : null}
+                            </div>
+                            <span onMouseDown={(event) => event.stopPropagation()}>
+                                <Switch aria-label="透明背景" size="small" checked={transparentBackground && capabilities.transparentBackground} disabled={!capabilities.transparentBackground} onChange={updateTransparentBackground} />
+                            </span>
                         </div>
-                    </div>
+                        <div className="space-y-2.5">
+                            <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
+                            <div className="grid grid-cols-4 gap-2">
+                                {[1, 2, 4]
+                                    .filter((value) => value <= Math.min(quickCount, effectiveMaxCount))
+                                    .map((value) => (
+                                        <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
+                                            {value} 张
+                                        </OptionPill>
+                                    ))}
+                                <CountInput value={count} max={effectiveMaxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
+                            </div>
+                        </div>
+                    </>
                 ) : null}
             </div>
         </ImageSettingsTheme>
