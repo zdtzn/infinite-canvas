@@ -1,4 +1,13 @@
+import { alignedEditOffset, findImageEditAlignments, OPAQUE_CORE_ALPHA } from "./image-edit-alignment";
+
 type Pixels = Uint8Array | Uint8ClampedArray;
+
+function hasTransparency(pixels: Pixels) {
+    for (let offset = 3; offset < pixels.length; offset += 4) {
+        if (pixels[offset] !== 255) return true;
+    }
+    return false;
+}
 
 function softenSelectionEdges(width: number, height: number, keep: Pixels, channels: 1 | 4) {
     const radius = Math.min(16, Math.round(Math.min(width, height) / 64));
@@ -31,18 +40,26 @@ function softenSelectionEdges(width: number, height: number, keep: Pixels, chann
 /** The mask's alpha is the proportion of the original pixel to keep. */
 export function mergeImageEditPixels(original: Pixels, edited: Pixels, keep: Pixels, maskChannels: 1 | 4, width: number, height: number, preserveSourceTransparency = false) {
     const feather = softenSelectionEdges(width, height, keep, maskChannels);
+    const flattenedEdit = preserveSourceTransparency && !hasTransparency(edited);
+    const alignments = preserveSourceTransparency && !flattenedEdit && hasTransparency(original)
+        ? findImageEditAlignments(original, edited, keep, maskChannels, width, height)
+        : [];
     for (let offset = 0, alpha = maskChannels - 1; offset < original.length; offset += 4, alpha += maskChannels) {
         const strength = Math.max(keep[alpha], feather?.[offset / 4] ?? 0);
         if (strength === 255) continue;
         const originalAlpha = original[offset + 3];
-        const generatedAlpha = edited[offset + 3];
-        // Use the source color where the result has no visible color to blend.
-        if (preserveSourceTransparency && (originalAlpha === 0 || generatedAlpha === 0)) continue;
+        const alignedOffset = alignedEditOffset(offset, width, alignments);
+        const keepTranslucentColors = flattenedEdit || (alignments.length > 0 && (alignedOffset === undefined || originalAlpha < OPAQUE_CORE_ALPHA));
+        // Keep the source shadow if the result flattened the image or moved its subject.
+        if (preserveSourceTransparency && (originalAlpha === 0 || (keepTranslucentColors && originalAlpha < 255))) continue;
+        const editOffset = alignedOffset ?? offset;
+        const generatedAlpha = edited[editOffset + 3];
+        if (preserveSourceTransparency && generatedAlpha === 0) continue;
         const editedAlpha = preserveSourceTransparency ? originalAlpha : generatedAlpha;
         if (strength === 0) {
-            original[offset] = edited[offset];
-            original[offset + 1] = edited[offset + 1];
-            original[offset + 2] = edited[offset + 2];
+            original[offset] = edited[editOffset];
+            original[offset + 1] = edited[editOffset + 1];
+            original[offset + 2] = edited[editOffset + 2];
             original[offset + 3] = editedAlpha;
             continue;
         }
@@ -52,7 +69,7 @@ export function mergeImageEditPixels(original: Pixels, edited: Pixels, keep: Pix
         const alphaSum = before + after;
         for (let channel = 0; channel < 3; channel++) {
             const index = offset + channel;
-            original[index] = alphaSum ? Math.round((original[index] * before + edited[index] * after) / alphaSum) : 0;
+            original[index] = alphaSum ? Math.round((original[index] * before + edited[editOffset + channel] * after) / alphaSum) : 0;
         }
         original[offset + 3] = Math.round(alphaSum / 255);
     }
