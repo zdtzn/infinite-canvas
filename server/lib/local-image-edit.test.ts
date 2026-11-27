@@ -43,21 +43,21 @@ test("transparent edits preserve every source alpha and use the source color whe
     expect(defaultPixels[19]).toBe(0);
 });
 
-test("a flattened edit changes the opaque subject and keeps the original translucent shadow colors", async () => {
+test("a flattened edit recolors the translucent subject edge and keeps the original shadow", async () => {
     const original = await png([
-        238, 173, 41, 255, 17, 24, 39, 104, 17, 25, 38, 100, 0, 0, 0, 0, 92, 80, 61, 72,
-    ], 5, 1);
+        238, 173, 41, 255, 233, 168, 44, 146, 17, 24, 39, 104, 17, 25, 38, 100, 0, 0, 0, 0, 92, 80, 61, 72,
+    ], 6, 1);
     const selection = await png([
-        255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 128, 255, 255, 255, 0, 255, 255, 255, 255,
-    ], 5, 1);
+        255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 128, 255, 255, 255, 0, 255, 255, 255, 255,
+    ], 6, 1);
     const flattened = await sharp(Buffer.from([
-        124, 225, 66, 81, 81, 80, 59, 58, 57, 236, 235, 235, 233, 232, 231,
-    ]), { raw: { width: 5, height: 1, channels: 3 } }).png().toBuffer();
+        124, 225, 66, 216, 216, 216, 81, 81, 80, 59, 58, 57, 236, 235, 235, 233, 232, 231,
+    ]), { raw: { width: 6, height: 1, channels: 3 } }).png().toBuffer();
 
     const output = await finalizeLocalEdit(original, selection, flattened, new AbortController().signal, true);
 
     expect(Array.from(await sharp(output).raw().toBuffer())).toEqual([
-        124, 225, 66, 255, 17, 24, 39, 104, 17, 25, 38, 100, 0, 0, 0, 0, 92, 80, 61, 72,
+        124, 225, 66, 255, 124, 225, 66, 146, 17, 24, 39, 104, 17, 25, 38, 100, 0, 0, 0, 0, 92, 80, 61, 72,
     ]);
 });
 
@@ -81,6 +81,8 @@ test.each([
     const shadow = [17, 24, 39, 104];
     fill(original, [16, 24, 48, 48], [238, 173, 41, 255]);
     fill(original, [100, 82, 128, 110], [57, 126, 210, 255]);
+    fill(original, [15, 28, 16, 44], [234, 171, 40, 115]);
+    fill(original, [128, 84, 129, 100], [56, 123, 208, 188]);
     fill(original, [16, 48, 48, 54], shadow);
     fill(original, [100, 110, 128, 116], shadow);
     fill(original, [68, 28, 78, 40], [255, 0, 0, 255]);
@@ -98,6 +100,8 @@ test.each([
     const pixel = (x: number, y: number) => Array.from(original.subarray((y * width + x) * 4, (y * width + x + 1) * 4));
     expect(pixel(19, 29)).toEqual(green);
     expect(pixel(102, 84)).toEqual(pink);
+    expect(pixel(15, 34)).toEqual([83, 190, 27, 115]);
+    expect(pixel(128, 92)).toEqual([226, 53, 172, 188]);
     expect(pixel(30, 50)).toEqual(shadow);
     expect(pixel(108, 112)).toEqual(shadow);
     expect(pixel(70, 35)).toEqual([255, 0, 0, 255]);
