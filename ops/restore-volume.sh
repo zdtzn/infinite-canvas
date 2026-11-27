@@ -6,8 +6,8 @@ CONTAINER_NAME="${CONTAINER_NAME:-infinite-canvas}"
 IMAGE_REF="${IMAGE_REF:-}"
 ARCHIVE="${ARCHIVE:-}"
 
-if [ -z "$ARCHIVE" ] || [ ! -f "$ARCHIVE" ]; then
-  echo "Set ARCHIVE to an existing full-volume .tar.gz backup" >&2
+if [ -z "$ARCHIVE" ] || { [ ! -f "$ARCHIVE" ] && [ ! -d "$ARCHIVE" ]; }; then
+  echo "Set ARCHIVE to an existing full-volume .tar.gz backup or deployment .snapshot directory" >&2
   exit 1
 fi
 if [ -z "$IMAGE_REF" ]; then
@@ -22,28 +22,38 @@ fi
 
 backup_dir="$(cd "$(dirname "$ARCHIVE")" && pwd)"
 archive_name="$(basename "$ARCHIVE")"
+snapshot_data=""
 was_running=0
 restore_succeeded=0
 
-if [ ! -f "${ARCHIVE}.sha256" ]; then
-  if [ "${ALLOW_UNVERIFIED_RESTORE:-}" != "1" ]; then
-    echo "Missing checksum file: ${ARCHIVE}.sha256" >&2
-    echo "Use a verified backup, or explicitly set ALLOW_UNVERIFIED_RESTORE=1 for a trusted legacy archive." >&2
+if [ -d "$ARCHIVE" ]; then
+  snapshot_data="$backup_dir/$archive_name/data"
+  if [ ! -f "$snapshot_data/app.sqlite" ] || [ ! -s "$snapshot_data/../SHA256SUMS" ]; then
+    echo "Deployment snapshot is missing app.sqlite or its checksums" >&2
     exit 1
   fi
-  echo "WARNING: restoring a legacy archive without a checksum" >&2
+  (cd "$snapshot_data" && sha256sum -c --quiet --strict ../SHA256SUMS)
 else
-  (cd "$backup_dir" && sha256sum -c "${archive_name}.sha256")
-fi
-if ! docker run --rm -v "${backup_dir}:/backup:ro" alpine sh -c '
+  if [ ! -f "${ARCHIVE}.sha256" ]; then
+    if [ "${ALLOW_UNVERIFIED_RESTORE:-}" != "1" ]; then
+      echo "Missing checksum file: ${ARCHIVE}.sha256" >&2
+      echo "Use a verified backup, or explicitly set ALLOW_UNVERIFIED_RESTORE=1 for a trusted legacy archive." >&2
+      exit 1
+    fi
+    echo "WARNING: restoring a legacy archive without a checksum" >&2
+  else
+    (cd "$backup_dir" && sha256sum -c "${archive_name}.sha256")
+  fi
+  if ! docker run --rm -v "${backup_dir}:/backup:ro" alpine sh -c '
   tar -tzf "$1" | awk "
     /(^|\/)\.\.(\/|$)|^\// { unsafe = 1 }
     \$0 == \"app.sqlite\" || \$0 == \"./app.sqlite\" { database = 1 }
     END { exit (unsafe || !database) }
   "
-' sh "/backup/${archive_name}"; then
-  echo "Backup archive is unsafe or does not contain app.sqlite" >&2
-  exit 1
+  ' sh "/backup/${archive_name}"; then
+    echo "Backup archive is unsafe or does not contain app.sqlite" >&2
+    exit 1
+  fi
 fi
 
 if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1 && [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME")" = "true" ]; then
@@ -86,10 +96,14 @@ if [ "$volume_existed" = "1" ]; then
 fi
 
 docker run --rm -v "${VOLUME_NAME}:/target" alpine sh -c 'find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'
-docker run --rm \
-  -v "${VOLUME_NAME}:/target" \
-  -v "${backup_dir}:/backup:ro" \
-  alpine tar -xzf "/backup/${archive_name}" -C /target
+if [ -n "$snapshot_data" ]; then
+  docker run --rm -v "${VOLUME_NAME}:/target" -v "${snapshot_data}:/backup:ro" alpine cp -a /backup/. /target/
+else
+  docker run --rm \
+    -v "${VOLUME_NAME}:/target" \
+    -v "${backup_dir}:/backup:ro" \
+    alpine tar -xzf "/backup/${archive_name}" -C /target
+fi
 docker run --rm --user root --entrypoint sh \
   -v "${VOLUME_NAME}:/data" \
   "$IMAGE_REF" \

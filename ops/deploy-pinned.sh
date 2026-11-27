@@ -9,7 +9,6 @@ BIND_ADDRESS="${BIND_ADDRESS:-}"
 HOST_PORT="${HOST_PORT:-3000}"
 CONTAINER_PORT="${CONTAINER_PORT:-3000}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
-BACKUP_RETENTION_COUNT="${BACKUP_RETENTION_COUNT:-2}"
 BACKUP_MIN_FREE_MB="${BACKUP_MIN_FREE_MB:-4096}"
 PIDS_LIMIT="${PIDS_LIMIT:-256}"
 LOG_MAX_SIZE="${LOG_MAX_SIZE:-10m}"
@@ -49,13 +48,13 @@ case "$ENV_FILE" in
   /*) ;;
   *) echo "ENV_FILE must be an absolute host path" >&2; exit 1 ;;
 esac
-for numeric_value in "$HEALTH_TIMEOUT_SECONDS" "$BACKUP_RETENTION_COUNT" "$BACKUP_MIN_FREE_MB" "$PIDS_LIMIT" "$LOG_MAX_FILE"; do
+for numeric_value in "$HEALTH_TIMEOUT_SECONDS" "$BACKUP_MIN_FREE_MB" "$PIDS_LIMIT" "$LOG_MAX_FILE"; do
   case "$numeric_value" in
-    ''|*[!0-9]*) echo "Timeout, retention, free-space, PID and log limits must be positive integers" >&2; exit 1 ;;
+    ''|*[!0-9]*) echo "Timeout, free-space, PID and log limits must be positive integers" >&2; exit 1 ;;
   esac
 done
-if [ "$HEALTH_TIMEOUT_SECONDS" -lt 1 ] || [ "$BACKUP_RETENTION_COUNT" -lt 1 ] || [ "$BACKUP_MIN_FREE_MB" -lt 512 ] || [ "$PIDS_LIMIT" -lt 32 ] || [ "$LOG_MAX_FILE" -lt 1 ]; then
-  echo "Timeout, retention, free-space, PID and log limits are outside the allowed range" >&2
+if [ "$HEALTH_TIMEOUT_SECONDS" -lt 1 ] || [ "$BACKUP_MIN_FREE_MB" -lt 512 ] || [ "$PIDS_LIMIT" -lt 32 ] || [ "$LOG_MAX_FILE" -lt 1 ]; then
+  echo "Timeout, free-space, PID and log limits are outside the allowed range" >&2
   exit 1
 fi
 case "$FORCE_RECREATE" in
@@ -198,10 +197,11 @@ if [ -n "$EXPECTED_COMMIT" ] && [ "$image_revision" != "$EXPECTED_COMMIT" ]; the
 fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-archive=""
+backup_stage=""
 backup_record="not-created-fast-deploy"
 rollback_name="${CONTAINER_NAME}-rollback-${timestamp}"
 health_file="/tmp/${CONTAINER_NAME}-deploy-health-$$.json"
+switch_started=0
 renamed=0
 deployment_complete=0
 readiness_state="healthy"
@@ -250,7 +250,10 @@ recover_on_failure() {
   status=$?
   trap - EXIT INT TERM
   rm -f "$health_file"
-  if [ "$deployment_complete" != "1" ]; then
+  if [ -n "$backup_stage" ]; then
+    rm -rf -- "$backup_stage" || echo "Could not remove incomplete backup at $backup_stage" >&2
+  fi
+  if [ "$switch_started" = "1" ] && [ "$deployment_complete" != "1" ]; then
     echo "Deployment failed; restoring the previous container" >&2
     restore_started=0
     if [ "$renamed" = "1" ]; then
@@ -282,51 +285,82 @@ recover_on_failure() {
   fi
   exit "$status"
 }
-# Background archives are large (multi-gigabyte); keep only the newest ones so
-# a deployment cannot fill the disk and strand the volume mid-switch.
-prune_backups() {
-  keep_count="$1"
-  seen_count=0
-  for old_archive in $(ls -1t "$BACKUP_ROOT"/infinite-canvas-*.tar.gz 2>/dev/null || true); do
-    seen_count=$((seen_count + 1))
-    if [ "$seen_count" -gt "$keep_count" ]; then
-      rm -f "$old_archive" "${old_archive}.sha256"
-    fi
-  done
-}
-
 assert_backup_space() {
+  copy_kb="$1"
   free_kb="$(df -Pk "$BACKUP_ROOT" | awk 'NR == 2 { print $4 }')"
-  required_kb=$((BACKUP_MIN_FREE_MB * 1024))
+  required_kb=$((copy_kb + BACKUP_MIN_FREE_MB * 1024))
   if [ "${free_kb:-0}" -lt "$required_kb" ]; then
-    echo "Not enough free space for a safe backup: ${free_kb:-0}KB available, ${required_kb}KB required. Prune ${BACKUP_ROOT} or run a fast deployment." >&2
+    echo "Not enough free space for a safe backup: ${free_kb:-0} KiB available, ${required_kb} KiB required. Free space or use a larger backup filesystem." >&2
     exit 1
   fi
 }
 
-mkdir -p "$BACKUP_ROOT"
-assert_no_active_jobs
-assert_live_revision
-# Retire older archives before writing a new one: a full disk breaks the new
-# container's database on startup, which no post-deploy cleanup can repair.
-if [ "$DEPLOY_MODE" = "safe" ]; then
-  prune_backups $((BACKUP_RETENTION_COUNT - 1))
-  assert_backup_space
-fi
 trap recover_on_failure EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+umask 077
+if [ "$DEPLOY_MODE" = "safe" ]; then
+  command -v rsync >/dev/null || { echo "Safe deployment requires rsync on the Docker host" >&2; exit 1; }
+  live_volume="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}:{{.Name}}{{end}}{{end}}' "$CONTAINER_NAME")"
+  if [ "$live_volume" != "volume:$VOLUME_NAME" ]; then
+    echo "The running container does not use $VOLUME_NAME at /data" >&2
+    exit 1
+  fi
+  volume_path="$(docker volume inspect -f '{{.Mountpoint}}' "$VOLUME_NAME")"
+  case "$volume_path" in
+    /?*) volume_path="$(cd "$volume_path" && pwd -P)" ;;
+    *) echo "Unable to locate the Docker data volume on the deployment host" >&2; exit 1 ;;
+  esac
+  BACKUP_ROOT="$(realpath -m -- "$BACKUP_ROOT")"
+  case "$BACKUP_ROOT/" in
+    "$volume_path/"*) echo "BACKUP_ROOT must be outside the live data volume" >&2; exit 1 ;;
+  esac
+  mkdir -p "$BACKUP_ROOT"
+  volume_kb="$(du -sk "$volume_path" | awk '{ print $1 }')"
+  case "$volume_kb" in
+    ''|*[!0-9]*) echo "Unable to estimate the full data volume size" >&2; exit 1 ;;
+  esac
+  assert_backup_space "$volume_kb"
+  backup_record="$BACKUP_ROOT/infinite-canvas-${timestamp}.snapshot"
+  if [ -e "$backup_record" ] || [ -L "$backup_record" ]; then
+    echo "Backup already exists at $backup_record" >&2
+    exit 1
+  fi
+  backup_stage="$(mktemp -d "$BACKUP_ROOT/.infinite-canvas-${timestamp}.XXXXXX")"
+  mkdir "$backup_stage/data"
+  echo "Copying the data volume while the current application is running"
+  # The stopped pass will capture SQLite and any files written or removed during this copy.
+  nice -n 10 rsync -aHS --numeric-ids --exclude='/app.sqlite' --exclude='/app.sqlite-wal' --exclude='/app.sqlite-shm' \
+    "$volume_path/" "$backup_stage/data/" || [ "$?" -eq 24 ]
+  assert_backup_space 0
+else
+  mkdir -p "$BACKUP_ROOT"
+fi
+
+assert_no_active_jobs
+assert_live_revision
+switch_started=1
 docker stop -t 30 "$CONTAINER_NAME" >/dev/null
 if [ "$DEPLOY_MODE" = "safe" ]; then
-  archive="infinite-canvas-${timestamp}.tar.gz"
-  backup_record="${BACKUP_ROOT}/${archive}"
-  docker run --rm \
-    -v "${VOLUME_NAME}:/source:ro" \
-    -v "${BACKUP_ROOT}:/backup" \
-    alpine sh -c "cd /source && tar -czf '/backup/${archive}' ."
-  (cd "$BACKUP_ROOT" && sha256sum "$archive" > "${archive}.sha256" && sha256sum -c "${archive}.sha256")
-  docker run --rm -v "${BACKUP_ROOT}:/backup:ro" alpine sh -c "tar -tzf '/backup/${archive}' | grep -Eq '^(\./)?app\.sqlite$'"
+  echo "Finalizing the backup from the stopped data volume"
+  rsync -aHS --numeric-ids --delete --checksum "$volume_path/" "$backup_stage/data/"
+  assert_backup_space 0
+  docker run --rm --network none -v "$backup_stage/data:/snapshot:ro" "$IMAGE_REF" bun -e '
+    import { Database } from "bun:sqlite";
+    const db = new Database("/snapshot/app.sqlite", { readonly: true });
+    try {
+      const rows = db.query("PRAGMA quick_check").all();
+      if (rows.length !== 1 || rows[0].quick_check !== "ok") throw new Error("Backup SQLite integrity check failed");
+    } finally {
+      db.close();
+    }
+  '
+  (cd "$backup_stage/data" && find . -type f -exec sha256sum -- {} + > "$backup_stage/SHA256SUMS")
+  mv -T --no-clobber -- "$backup_stage" "$backup_record"
+  [ ! -e "$backup_stage" ] || { echo "Backup already exists at $backup_record" >&2; exit 1; }
+  backup_stage=""
+  echo "Verified full-volume backup: $backup_record"
 else
   echo "Fast deployment: full-volume backup skipped"
 fi
@@ -372,11 +406,6 @@ trap - EXIT INT TERM
 docker rm "$rollback_name" >/dev/null
 rm -f "$health_file"
 
-if [ "$DEPLOY_MODE" = "safe" ]; then
-  prune_backups "$BACKUP_RETENTION_COUNT"
-fi
-
-umask 077
 cat >"${BACKUP_ROOT}/last-deployment.txt" <<EOF
 deployed_at=${timestamp}
 deploy_mode=${DEPLOY_MODE}

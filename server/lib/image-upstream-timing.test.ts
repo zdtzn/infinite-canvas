@@ -7,7 +7,7 @@ import { dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDra
 import { buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage26Channel, isSadaiImage2Channel, sadaiImageBaseUrl, sadaiUrl26Enabled } from "./sadai-image";
 import { isUuAsyncUrlChannel } from "./uu-image-async";
 import { assertAllowedUpstreamUrl, buildUpstreamUrl } from "./url-policy";
-import { createDeferredImageResult, hasDeferredImageResults, isRecoverableImageDownloadError, recoverDeferredImageResults } from "./image-result-recovery";
+import { createDeferredImageResult, hasDeferredImageResults, isRecoverableImageResultError, recoverDeferredImageResults } from "./image-result-recovery";
 import { resolvePlatformChannel } from "./platform-channels";
 import { isRelayEligibleResultUrl } from "./result-image-relay";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./upstream-error";
@@ -205,7 +205,7 @@ function deliveryHarness(raw: string, persist: (raw: string) => Promise<unknown>
         generateOpenAiImages: async () => { calls.generate++; return [raw]; },
         generateSadaiAsyncImages: async () => { throw new Error("not expected in fixture"); },
         imageJobPhases: new Map(), isRelayEligibleResultUrl: () => false,
-        createDeferredImageResult, hasDeferredImageResults, assertAllowedUpstreamUrl, isRecoverableImageDownloadError, isSadaiImage25Channel, isSadaiImage26Channel,
+        createDeferredImageResult, hasDeferredImageResults, assertAllowedUpstreamUrl, isRecoverableImageResultError, isSadaiImage25Channel, isSadaiImage26Channel,
         sadaiUrl26Capability: { canSubmit: () => false, disable: () => undefined }, sadaiAsyncCapability: { canSubmit: () => false }, sadaiUrl26Enabled,
         randomUUID: () => "fixture-image", RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS: 8_000,
         persistJobImage: async (_user: string, _job: string, value: string) => { calls.persist++; return persist(value); },
@@ -284,6 +284,45 @@ function recoveryHarness(baseUrl: string | null = "https://api.sadai.top/v1", mo
     const recovery = vm.runInNewContext(`${recoveryExecutable}\n({ perform: performJobImageRecovery, recover: recoverJobImages });`, context);
     return { job, archived, url, downloads, calls, run: () => recovery.perform(job.id), recover: () => recovery.recover(job.id) };
 }
+
+test("disk pressure keeps the generated URL and retries only the original result with the local edit settings", async () => {
+    const baseUrl = "https://proxy.example.com/v1";
+    const model = "gpt-image-2.5-flare";
+    for (const diskError of [new HttpError(507, "服务器磁盘可用空间不足"), Object.assign(new Error("disk full"), { code: "ENOSPC" })]) {
+        let diskHasSpace = false;
+        const recovery = recoveryHarness(baseUrl, model, {
+            persist: async () => {
+                if (!diskHasSpace) throw diskError;
+                return { id: "permanent", dataUrl: "/api/job-files/fixture-job/image.png", bytes: 8, durationMs: 42, mimeType: "image/png" };
+            },
+        });
+        const localEdit = { preserveOutsideMask: true, background: "transparent", references: ["source"], mask: "mask" };
+        Object.assign(recovery.job.input, localEdit);
+        const delivery = deliveryHarness(recovery.url, async () => { throw diskError; }, baseUrl, model);
+        const result = await delivery.run();
+        expect(result).toMatchObject({ images: [{ id: "fixture-image", dataUrl: recovery.url, persisted: false }], recoveryPending: true, successCount: 1 });
+        expect(delivery.calls).toEqual({ generate: 1, persist: 1, settle: 1, refund: 0 });
+
+        // Simulate reloading the result metadata before retrying persistence.
+        Object.assign(recovery.job.result, JSON.parse(JSON.stringify(result)));
+        expect(await recovery.run()).toMatchObject({ recovered: 0, remaining: 1 });
+        expect(recovery.job.result.images).toEqual(result.images);
+
+        diskHasSpace = true;
+        expect(await recovery.run()).toEqual({ recovered: 1, remaining: 0 });
+        expect(recovery.job.result.images[0]).toMatchObject({ id: "fixture-image", dataUrl: "/api/job-files/fixture-job/image.png", persisted: true });
+        expect(recovery.downloads).toHaveLength(2);
+        expect(recovery.downloads[1]).toMatchObject({ url: recovery.url, options: { input: localEdit, downloadAttempts: 1 } });
+        expect(recovery.calls).toEqual({ touch: 1, generate: 0, settle: 0, refund: 0 });
+    }
+});
+
+test("an inline result without a retrievable URL keeps the disk error", async () => {
+    const diskError = new HttpError(507, "服务器磁盘可用空间不足");
+    const h = deliveryHarness("data:image/png;base64,iVBORw0KGgo=", async () => { throw diskError; });
+    await expect(h.run()).rejects.toBe(diskError);
+    expect(h.calls).toEqual({ generate: 1, persist: 1, settle: 0, refund: 1 });
+});
 
 test("only official SADAI 2.5 background downloads get 180 seconds and still attempt each GET once", async () => {
     for (const [baseUrl, model, relay, timeout] of [

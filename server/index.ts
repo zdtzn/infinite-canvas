@@ -43,7 +43,7 @@ import { resolveImageModelCapabilityProfile, validateImageRequest } from "../sha
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, imageResponseItemValue, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
 import { imageEditReferenceField, geminiImageGenerationConfig } from "./lib/image-provider-protocol";
-import { createDeferredImageResult, hasDeferredImageResults, isRecoverableImageDownloadError, recoverDeferredImageResults } from "./lib/image-result-recovery";
+import { createDeferredImageResult, hasDeferredImageResults, isRecoverableImageResultError, recoverDeferredImageResults } from "./lib/image-result-recovery";
 import { createResultImageRelayConfig, isRelayEligibleResultUrl, resultImageDownloadUrl } from "./lib/result-image-relay";
 import { KeyedSerialExecutor } from "./lib/keyed-serial-executor";
 import { buildDragonChatImageRequest, dragonChatImageUrls, dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel } from "./lib/dragon-image";
@@ -3689,7 +3689,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                     ),
                 );
             } catch (error) {
-                if (!isRecoverableImageDownloadError(error)) throw error;
+                if (!/^https:\/\//i.test(raw) || !isRecoverableImageResultError(error)) throw error;
                 const url = assertAllowedUpstreamUrl(raw);
                 if (url.protocol !== "https:") throw error;
                 images.push(
@@ -4205,6 +4205,7 @@ async function persistJobImage(
         mimeType = parsed.mimeType;
     } else {
         assertAllowedUpstreamUrl(value);
+        assertDiskCapacity();
         const downloadUrl = resultImageDownloadUrl(value, RESULT_IMAGE_RELAY_CONFIG);
         const response = await upstreamFetch(downloadUrl, { signal }, false, options.downloadTimeoutMs ?? REQUEST_TIMEOUT_MS, options.downloadAttempts);
         if (!response.ok) throw new Error(`下载生成图片失败：${response.status}`);
@@ -4248,8 +4249,8 @@ async function persistJobImageBytes(userId: string, jobId: string, bytes: Uint8A
     const filename = `${randomUUID()}${extension}`;
     const directory = join(JOB_FILE_ROOT, safeSegment(userId), safeSegment(jobId));
     const outputPath = join(directory, filename);
-    mkdirSync(directory, { recursive: true });
     assertDiskCapacity(bytes.byteLength);
+    mkdirSync(directory, { recursive: true });
     reserveJobOutputBytes(userId, jobId, bytes.byteLength);
     let persisted = false;
     try {

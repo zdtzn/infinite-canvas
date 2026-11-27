@@ -35,12 +35,11 @@ export function hasDeferredImageResults(images: ImageJobImage[]) {
   );
 }
 
-export function isRecoverableImageDownloadError(error: unknown) {
-  const status =
-    error && typeof error === "object" && "status" in error
-      ? Number(error.status)
-      : 0;
-  if ([502, 503, 504, 524].includes(status)) return true;
+export function isRecoverableImageResultError(error: unknown) {
+  if (error && typeof error === "object") {
+    if ("code" in error && error.code === "ENOSPC") return true;
+    if ("status" in error && [502, 503, 504, 507, 524].includes(Number(error.status))) return true;
+  }
   const message = error instanceof Error ? error.message : String(error || "");
   return /无法连接上游接口|上游接口响应超时|下载生成图片失败[：:]\s*(?:502|503|504|524)|timed?\s*out|timeout|connection (?:reset|refused)|fetch failed/i.test(
     message,

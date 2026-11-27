@@ -88,6 +88,6 @@ docker logs --tail=100 infinite-canvas
 
 ## 恢复失败时的处理
 
-`ops/restore-volume.sh` 要求明确传入已验证的 `IMAGE_REF`，并会先校验校验和、试读压缩包，确认可读取后才停止应用。覆盖数据前还会在原备份目录自动创建 `pre-restore-*.tar.gz` 安全备份。旧备份缺少 `.sha256` 文件时默认拒绝恢复；只有确认归档可信时才可显式设置 `ALLOW_UNVERIFIED_RESTORE=1`，恢复后应立即重新创建带校验和的备份。
+`ops/restore-volume.sh` 要求明确传入已验证的 `IMAGE_REF`。使用 `ARCHIVE` 指定安全部署生成的 `.snapshot` 目录或手动创建的 `.tar.gz`。脚本在停服前验证备份内容，覆盖数据前会在备份所在目录自动创建 `pre-restore-*.tar.gz` 安全备份。恢复可信的旧归档时，如果缺少 `.sha256` 文件，需要显式设置 `ALLOW_UNVERIFIED_RESTORE=1`，恢复后应立即创建带校验和的备份。
 
 如果清空、解压或权限修复任一步失败，脚本会让应用保持停止，避免在不完整数据上启动。先检查错误；需要撤回时，把刚生成的 `pre-restore-*.tar.gz` 作为 `ARCHIVE` 再执行恢复。恢复成功并通过 `/health`、登录、项目和素材抽查后，才能删除这份安全备份。

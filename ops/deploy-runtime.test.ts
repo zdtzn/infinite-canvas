@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -19,7 +19,11 @@ const posix = (path: string) => path.replace(/\\/g, "/").replace(/^([A-Za-z]):/,
 function fixture() {
     const root = mkdtempSync(join(tmpdir(), "canvas-release-test-"));
     mkdirSync(join(root, "bin"));
-    for (const name of ["deploy-runtime.sh", "deploy-commit.sh", "deploy-pinned.sh"]) {
+    mkdirSync(join(root, "data", "job-files"), { recursive: true });
+    writeFileSync(join(root, "data", "app.sqlite"), "SQLite fixture");
+    writeFileSync(join(root, "data", "job-files", "result.png"), "old color");
+    writeFileSync(join(root, "data", "job-files", "removed.png"), "obsolete copy");
+    for (const name of ["deploy-runtime.sh", "deploy-commit.sh", "deploy-pinned.sh", "restore-volume.sh"]) {
         writeFileSync(join(root, name), readFileSync(new URL(name, import.meta.url), "utf8").replace(/\r/g, ""));
         chmodSync(join(root, name), 0o755);
     }
@@ -44,8 +48,11 @@ case "$1 $2" in
       *State.Health*)
         if [ -f "$TEST_ROOT/switched" ]; then echo healthy; else echo "$CURRENT_HEALTH"; fi ;;
       *State.Running*) echo true ;;
+      *Mounts*) echo "volume:$VOLUME_NAME" ;;
       *) printf '%s\\n' "$CURRENT_REVISION" ;;
     esac ;;
+  'volume inspect')
+    if [ "$3" = "-f" ]; then printf '%s\\n' "$TEST_ROOT/data"; fi ;;
   'image inspect')
     if [ "$3" = '-f' ]; then
       case "$4" in
@@ -63,10 +70,27 @@ case "$1 $2" in
     if [ "$5" = "$UNAVAILABLE_IMAGE" ]; then exit 1; fi ;;
   'ps -aq')
     if [ "$4" = "ancestor=$USED_IMAGE_ID" ]; then echo stopped-container; fi ;;
+  'stop '*)
+    if [ "$SCENARIO" = "changes-during-copy" ]; then
+      for staged in "$TEST_ROOT/backups"/.infinite-canvas-*/data; do
+        cmp "$staged/job-files/result.png" "$TEST_ROOT/data/job-files/result.png" || exit 1
+        [ ! -e "$staged/app.sqlite" ] || exit 1
+      done
+      printf '%s' 'new color' > "$TEST_ROOT/data/job-files/result.png"
+      touch -r "$staged/job-files/result.png" "$TEST_ROOT/data/job-files/result.png"
+      rm "$TEST_ROOT/data/job-files/removed.png"
+      printf '%s' 'new result' > "$TEST_ROOT/data/job-files/added.png"
+      printf '%s' 'committed at stop' > "$TEST_ROOT/data/app.sqlite"
+    fi ;;
+  'run --rm')
+    case "$*" in
+      *:/snapshot:ro*) if [ "$SCENARIO" = "invalid-snapshot" ]; then exit 1; fi ;;
+    esac ;;
   'run -d') touch "$TEST_ROOT/switched" ;;
   'exec '*) echo 0 ;;
 esac
 exit 0`);
+    executable("df", `printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' "/dev/test 20000000 1000000 $TEST_FREE_KB 10% /"`);
     executable("flock", hasSystemFlock
         ? 'if [ "$SCENARIO" = "lock-busy" ]; then exit 1; fi\nexec /usr/bin/flock "$@"'
         : '[ "$SCENARIO" != "lock-busy" ]');
@@ -80,10 +104,11 @@ exit 0`);
         IMAGE_REF: image, EXPECTED_COMMIT: sha, EXPECTED_LIVE_COMMIT: "",
         CURRENT_REVISION: sha, IMAGE_REVISION: sha, CURRENT_IMAGE: "old-image",
         CURRENT_IMAGE_ID: previousImageId, DEPLOYED_IMAGE_ID: deployedImageId, CURRENT_HEALTH: "healthy",
-        UNAVAILABLE_IMAGE: "", USED_IMAGE_ID: "",
+        UNAVAILABLE_IMAGE: "", USED_IMAGE_ID: "", TEST_FREE_KB: "10485760",
         DEPLOY_LOCK_FILE: `${posix(root)}/release.lock`, BACKUP_ROOT: `${posix(root)}/backups`,
         ENV_FILE: `${posix(root)}/absent.env`, DEPLOY_MODE: "fast", BIND_ADDRESS: "127.0.0.1",
         REQUIRE_HTTPS: "0", FORCE_RECREATE: "0", ALLOW_ACTIVE_JOBS: "0",
+        VOLUME_NAME: "canvas-test-data",
         CONTAINER_NAME: `canvas-test-${root.split(/[\\/]/).pop()}`, IMAGE_WAIT_SECONDS: "2", POLL_INTERVAL_SECONDS: "1",
     };
     async function run(overrides: Record<string, string> = {}) {
@@ -177,6 +202,88 @@ test("stalled health HTTP is bounded and enters rollback", async () => {
 function healthyApp() {
     return Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({ status: "ok", commit: sha }) });
 }
+
+function protectPreviousBackups(root: string) {
+    const directory = join(root, "backups");
+    mkdirSync(directory);
+    const files = ["infinite-canvas-20261101T000000Z.tar.gz", "infinite-canvas-20261102T000000Z.tar.gz"];
+    for (const name of files) {
+        writeFileSync(join(directory, name), name);
+        writeFileSync(join(directory, `${name}.sha256`), `checksum for ${name}`);
+    }
+    return () => {
+        for (const name of files) {
+            expect(readFileSync(join(directory, name), "utf8")).toBe(name);
+            expect(readFileSync(join(directory, `${name}.sha256`), "utf8")).toBe(`checksum for ${name}`);
+        }
+    };
+}
+
+test("safe deployment needs space for the full copy and reserve before stopping or changing backups", async () => {
+    const f = fixture();
+    const checkBackups = protectPreviousBackups(f.root);
+    try {
+        const result = await f.run({ DEPLOY_MODE: "safe", TEST_FREE_KB: "4194304" });
+        expect(result.code).not.toBe(0);
+        expect(result.output).toContain("Not enough free space for a safe backup");
+        expect(result.log).not.toMatch(/^(stop|start|rename) /m);
+        expect(readdirSync(join(f.root, "backups"))).toHaveLength(4);
+        checkBackups();
+    } finally { f.cleanup(); }
+});
+
+test("safe deployment stages data online, captures last writes and preserves existing backups", async () => {
+    const f = fixture();
+    const checkBackups = protectPreviousBackups(f.root);
+    const server = healthyApp();
+    try {
+        const result = await f.run({ DEPLOY_MODE: "safe", SCENARIO: "changes-during-copy", HOST_PORT: String(server.port) });
+        expect(result.code).toBe(0);
+        expect(result.output).toContain("Verified full-volume backup");
+        const backups = join(f.root, "backups");
+        const names = readdirSync(backups);
+        const snapshots = names.filter((name) => name.endsWith(".snapshot"));
+        expect(snapshots).toHaveLength(1);
+        expect(names.some((name) => name.startsWith(".infinite-canvas-"))).toBe(false);
+        const snapshot = join(backups, snapshots[0]);
+        expect(readFileSync(join(snapshot, "data", "app.sqlite"), "utf8")).toBe("committed at stop");
+        expect(readFileSync(join(snapshot, "data", "job-files", "result.png"), "utf8")).toBe("new color");
+        expect(readFileSync(join(snapshot, "data", "job-files", "added.png"), "utf8")).toBe("new result");
+        expect(existsSync(join(snapshot, "data", "job-files", "removed.png"))).toBe(false);
+        expect(readFileSync(join(snapshot, "SHA256SUMS"), "utf8")).toContain("./app.sqlite");
+        expect(readFileSync(join(backups, "last-deployment.txt"), "utf8")).toContain(snapshots[0]);
+        checkBackups();
+    } finally { server.stop(true); f.cleanup(); }
+});
+
+test("a failed snapshot integrity check starts the previous app and preserves earlier backups", async () => {
+    const f = fixture();
+    const checkBackups = protectPreviousBackups(f.root);
+    const server = healthyApp();
+    try {
+        const result = await f.run({ DEPLOY_MODE: "safe", SCENARIO: "invalid-snapshot", HOST_PORT: String(server.port) });
+        expect(result.code).not.toBe(0);
+        expect(result.output).toContain("Previous container restored and healthy");
+        expect(result.log).toContain("start canvas-test-");
+        expect(result.log).not.toMatch(/^(rename|run -d) /m);
+        expect(readdirSync(join(f.root, "backups"))).toHaveLength(4);
+        checkBackups();
+    } finally { server.stop(true); f.cleanup(); }
+});
+
+test("a corrupt snapshot stops restore before touching a Docker volume", async () => {
+    const f = fixture();
+    try {
+        const snapshot = join(f.root, "damaged.snapshot");
+        mkdirSync(join(snapshot, "data"), { recursive: true });
+        writeFileSync(join(snapshot, "data", "app.sqlite"), "changed content");
+        writeFileSync(join(snapshot, "SHA256SUMS"), `${"0".repeat(64)}  ./app.sqlite\n`);
+        const result = await f.run({ TEST_SCRIPT: "restore-volume.sh", ARCHIVE: posix(snapshot), CONFIRM_RESTORE: f.env.VOLUME_NAME });
+        expect(result.code).not.toBe(0);
+        expect(result.output).toContain("checksum did NOT match");
+        expect(result.log).toBe("");
+    } finally { f.cleanup(); }
+});
 
 test("healthy deployment clears only older, remotely available, unused project images", async () => {
     const f = fixture();

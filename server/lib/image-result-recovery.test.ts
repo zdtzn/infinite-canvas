@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createDeferredImageResult,
   hasDeferredImageResults,
-  isRecoverableImageDownloadError,
+  isRecoverableImageResultError,
   recoverDeferredImageResults,
 } from "./image-result-recovery";
 
@@ -50,25 +50,28 @@ describe("deferred upstream image recovery", () => {
     expect(hasDeferredImageResults([image])).toBe(true);
   });
 
-  test("treats only connection and timeout failures as recoverable", () => {
-    expect(isRecoverableImageDownloadError({ status: 502 })).toBe(true);
-    expect(isRecoverableImageDownloadError({ status: 503 })).toBe(true);
-    expect(isRecoverableImageDownloadError({ status: 504 })).toBe(true);
+  test("treats connection, timeout and disk-space failures as recoverable", () => {
+    expect(isRecoverableImageResultError({ status: 502 })).toBe(true);
+    expect(isRecoverableImageResultError({ status: 503 })).toBe(true);
+    expect(isRecoverableImageResultError({ status: 504 })).toBe(true);
+    expect(isRecoverableImageResultError({ status: 507 })).toBe(true);
+    expect(isRecoverableImageResultError({ code: "ENOSPC" })).toBe(true);
+    expect(isRecoverableImageResultError({ status: 413 })).toBe(false);
     expect(
-      isRecoverableImageDownloadError(new Error("下载生成图片失败：524")),
+      isRecoverableImageResultError(new Error("下载生成图片失败：524")),
     ).toBe(true);
     expect(
-      isRecoverableImageDownloadError(
+      isRecoverableImageResultError(
         new Error("无法连接上游接口，请检查渠道地址、网络或接口状态"),
       ),
     ).toBe(true);
     expect(
-      isRecoverableImageDownloadError(
+      isRecoverableImageResultError(
         new Error("上游返回的图片格式或大小不受支持"),
       ),
     ).toBe(false);
     expect(
-      isRecoverableImageDownloadError(new Error("下载生成图片失败：400")),
+      isRecoverableImageResultError(new Error("下载生成图片失败：400")),
     ).toBe(false);
   });
 
