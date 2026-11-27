@@ -47,6 +47,7 @@ export type ImageGenerationSnapshot = {
     text: string;
     config: AiConfig;
     references: ReferenceImage[];
+    mask?: ReferenceImage;
 };
 
 export type ImageGenerationJob = {
@@ -461,8 +462,8 @@ async function runGenerationSlot(jobId: string, index: number, snapshot: ImageGe
 
 async function requestImageSlot(snapshot: ImageGenerationSnapshot, _index?: number, onServerJobCreated?: (jobId: string) => void, expectedUserId?: string, idempotencyKey?: string, onServerJobArchived?: (job: ServerJob) => void, signal?: AbortSignal, onProgress?: (progress: ServerJobProgress) => void) {
     const itemStartedAt = Date.now();
-    const options = { signal, onProgress, cancelOnAbort: false, onJobCreated: onServerJobCreated, onJobArchived: onServerJobArchived, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey };
-    const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, options) : await requestGeneration(snapshot.config, snapshot.text, options);
+    const options = { signal, onProgress, cancelOnAbort: false, onJobCreated: onServerJobCreated, onJobArchived: onServerJobArchived, source: { route: "/image", label: "生图工作台" }, expectedUserId, idempotencyKey, preserveOutsideMask: Boolean(snapshot.mask) };
+    const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, snapshot.mask, options) : await requestGeneration(snapshot.config, snapshot.text, options);
     const image = result[0];
     if (!image) throw new Error("接口没有返回图片");
     const meta = await resolveGeneratedImageMeta(image);
@@ -598,7 +599,11 @@ function hydrateRuntime() {
             const restored = await Promise.all(saved.jobs.filter((job) => !jobs.some((item) => item.id === job.id)).map(async (job) => PUBLIC_MODE ? job : {
                 ...job,
                 references: await Promise.all(job.references.map(restoreStoredImage)),
-                snapshot: job.snapshot ? { ...job.snapshot, references: await Promise.all(job.snapshot.references.map(restoreStoredImage)) } : undefined,
+                snapshot: job.snapshot ? {
+                    ...job.snapshot,
+                    references: await Promise.all(job.snapshot.references.map(restoreStoredImage)),
+                    mask: job.snapshot.mask ? await restoreStoredImage(job.snapshot.mask) : undefined,
+                } : undefined,
                 results: await Promise.all(job.results.map(async (result) => result.image ? { ...result, image: await restoreStoredImage(result.image) } : result)),
             }));
             if (version !== hydrationVersion || ownerUserId !== runtimeOwnerUserId) return;
@@ -640,6 +645,7 @@ async function persistCurrentJob() {
                     ? {
                           ...job.snapshot,
                           references: job.snapshot.references.map(stripReferenceData),
+                          mask: job.snapshot.mask ? stripReferenceData(job.snapshot.mask) : undefined,
                           config: {
                               ...job.snapshot.config,
                               apiKey: "",

@@ -49,6 +49,7 @@ let retryCalls = 0;
 let submissionMode: "delay" | "lost-response" | "complete" = "delay";
 const submissionResponse = deferred<Response>();
 const submissionKeys: string[] = [];
+const submittedImages: Array<{ references?: Array<{ assetKey: string }>; mask?: { assetKey: string }; background?: string; preserveOutsideMask?: true }> = [];
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     assert.equal(new Headers(init?.headers).get("X-Expected-User-Id"), "public-a");
@@ -63,6 +64,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     }
     if (init?.method === "POST" && url === "/api/jobs/images") {
         submissionKeys.push(new Headers(init.headers).get("Idempotency-Key") || "");
+        submittedImages.push(JSON.parse(String(init.body)));
         if (submissionMode === "lost-response") throw new Error("submission response lost after server acceptance");
         if (submissionMode === "delay") return submissionResponse.promise;
         return Response.json({ job: { id: "api-created", status: "running" } });
@@ -187,9 +189,16 @@ try {
     assert.equal((await apiComplete.promise).canceledCount, 1);
     assert.equal(deletes.filter((url) => url === "/api/jobs/api-created").length, 1, "only the runtime should send DELETE");
 
+    const localEdit = {
+        ...managedSnapshot,
+        references: [{ id: "photo", storageKey: "image:photo", dataUrl: "blob:original", name: "photo.png", type: "image/png" },
+            { id: "guide", storageKey: "image:guide", dataUrl: "blob:guide", name: "guide.png", type: "image/png" }],
+        mask: { id: "mask", storageKey: "image:mask", dataUrl: "blob:mask", name: "mask.png", type: "image/png" },
+        config: { ...managedSnapshot.config, background: "transparent" },
+    };
     submissionMode = "lost-response";
     const lostComplete = deferred<ImageGenerationCompletion>();
-    runtime.startImageGeneration(managedSnapshot, 1, lostComplete.resolve);
+    runtime.startImageGeneration(localEdit, 1, lostComplete.resolve);
     assert.equal((await lostComplete.promise).failCount, 1);
     const lostKey = submissionKeys.at(-1);
     submissionMode = "complete";
@@ -198,13 +207,20 @@ try {
         const progress = runtime.getImageGenerationSnapshot()?.results[0].progress;
         if (progress) apiPhases.push(progress.phase);
     });
-    const recovered = await runtime.retryImageGeneration(0, managedSnapshot);
+    const recovered = await runtime.retryImageGeneration(0, localEdit);
     unsubscribeProgress();
     assert.ok(apiPhases.includes("submitting"));
     assert.ok(apiPhases.includes("completed"), "actual image API must forward polling progress");
     assert.equal(runtime.getImageGenerationSnapshot()?.results[0].progress, undefined);
     assert.equal(recovered?.serverJobId, "api-created");
     assert.equal(submissionKeys.at(-1), lostKey, "unknown submission outcome must replay its key, not create another paid job");
+    assert.deepEqual(submittedImages.at(-1), submittedImages.at(-2), "a local edit retries its original body");
+    assert.deepEqual(submittedImages.at(-1)?.references, [{ assetKey: "image:photo" }, { assetKey: "image:guide" }]);
+    assert.deepEqual(submittedImages.at(-1)?.mask, { assetKey: "image:mask" });
+    assert.equal(submittedImages.at(-1)?.preserveOutsideMask, true);
+    assert.equal(submittedImages.at(-1)?.background, "transparent");
+    await until(() => JSON.stringify(stored.get("image-jobs:v3:public-a")).includes('"storageKey":"image:mask"'));
+    assert.ok(!JSON.stringify(stored.get("image-jobs:v3:public-a")).includes("blob:mask"));
 
     const old = start("old-owner", false);
     await old.started.promise;

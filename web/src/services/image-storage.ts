@@ -6,6 +6,7 @@ import { readImageMeta } from "@/lib/image-utils";
 import { deleteServerAsset, fetchServerAssetBlob, fetchServerResource, promoteServerJobAsset, uploadServerAsset } from "@/services/server-api";
 import { assertImageUploadAllowed, assertStorageQuotaAvailable } from "@/services/upload-policy";
 import { useUserStore } from "@/stores/use-user-store";
+import { mergeImageEditPixels } from "../../../shared/image-edit-pixels";
 
 export type UploadedImage = {
     url: string;
@@ -228,6 +229,42 @@ export async function convertImageOutput(input: string | Blob, outputFormat?: st
         return converted;
     } finally {
         source.dispose();
+    }
+}
+
+export async function finalizeDirectImageEdit(original: string, mask: string, edited: string, expectedUserId?: string, signal?: AbortSignal) {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("当前浏览器无法保存局部编辑图片");
+    try {
+        const readLayer = async (url: string, kind: "original" | "mask" | "edited") => {
+            const layer = await loadCanvasSource(await readImageBlob(url, expectedUserId, { signal }));
+            try {
+                signal?.throwIfAborted();
+                if (kind === "original") {
+                    canvas.width = layer.width;
+                    canvas.height = layer.height;
+                }
+                if (kind === "mask" && (layer.width !== canvas.width || layer.height !== canvas.height)) throw new Error("选区蒙版和原图尺寸不一致");
+                context.clearRect(0, 0, canvas.width, canvas.height);
+                context.drawImage(layer.image, 0, 0, canvas.width, canvas.height);
+                return context.getImageData(0, 0, canvas.width, canvas.height);
+            } finally {
+                layer.dispose();
+            }
+        };
+        const source = await readLayer(original, "original");
+        const selection = await readLayer(mask, "mask");
+        const result = await readLayer(edited, "edited");
+        mergeImageEditPixels(source.data, result.data, selection.data, 4, source.width, source.height);
+        context.putImageData(source, 0, 0);
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+        if (!blob) throw new Error("局部编辑图片无法保存");
+        signal?.throwIfAborted();
+        return { dataUrl: await blobToDataUrl(blob), width: source.width, height: source.height, bytes: blob.size, mimeType: blob.type };
+    } finally {
+        canvas.width = 1;
+        canvas.height = 1;
     }
 }
 

@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, RotateCcw, Scan, Search, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -12,7 +12,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { friendlyErrorMessage, userFacingErrorMessage } from "@/lib/friendly-error";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imageGenerationQualityLabel, imageOutputFormatLabel, imageResolutionLabel, imageSizeLabel } from "@/lib/image-setting-labels";
-import { modelOptionLabel, normalizeImageSizeSelection, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, normalizeImageSizeSelection, resolveModelRequestConfig, resolveModelScript, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatDuration } from "@/lib/image-utils";
@@ -33,6 +33,7 @@ import {
     subscribeImageGeneration,
     type GeneratedImage,
     type GenerationResult,
+    type ImageGenerationSnapshot,
 } from "@/services/image-generation-runtime";
 import { IMAGE_WORKBENCH_ASSET_SOURCE } from "@/stores/asset-source";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -58,6 +59,7 @@ import type { ResultContinueAction } from "./result-image-card";
 import { summarizeImageTasks } from "./task-summary";
 import { imageHistorySummary } from "./history-summary";
 import { PendingImageCard } from "./pending-image-card";
+import { localEditRatio, type LocalImageEdit } from "./local-image-edit";
 
 const loadPromptSelectDialog = () => import("@/components/prompts/prompt-select-dialog").then((module) => ({ default: module.PromptSelectDialog }));
 const loadAssetPickerModal = () => import("@/components/canvas/asset-picker-modal").then((module) => ({ default: module.AssetPickerModal }));
@@ -65,6 +67,7 @@ const PromptSelectDialog = lazyRoute(loadPromptSelectDialog);
 const AssetPickerModal = lazyRoute(loadAssetPickerModal);
 const ResultImageCard = lazyRoute(() => import("./result-image-card").then((module) => ({ default: module.ResultImageCard })));
 const FailedImageCard = lazyRoute(() => import("./failed-image-card").then((module) => ({ default: module.FailedImageCard })));
+const LocalImageEditDialog = lazyRoute(() => import("./local-image-edit-dialog").then((module) => ({ default: module.LocalImageEditDialog })));
 const ImageSettingsPanel = lazyRoute(() => import("@/components/image-settings-panel").then((module) => ({ default: module.ImageSettingsPanel })));
 
 const preloadPromptSelectDialog = () => void loadPromptSelectDialog().catch(() => undefined);
@@ -84,6 +87,8 @@ type GenerationLog = {
     model: string;
     config: GenerationLogConfig;
     references: ReferenceImage[];
+    mask?: ReferenceImage;
+    hasMask?: boolean;
     durationMs: number;
     successCount: number;
     failCount: number;
@@ -172,6 +177,7 @@ export default function ImagePage() {
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [previewReference, setPreviewReference] = useState<ReferenceImage | null>(null);
+    const [localEditSource, setLocalEditSource] = useState<{ reference: ReferenceImage; ownerUserId: string } | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [deletingLogs, setDeletingLogs] = useState(false);
     const [logsLoading, setLogsLoading] = useState(false);
@@ -215,7 +221,6 @@ export default function ImagePage() {
     const running = generationJob?.status === "running";
     const activeJobCount = generationJobs.filter((job) => job.status === "running").length;
     const activeTaskSummary = summarizeImageTasks(generationJobs.flatMap((job) => job.results)).activeText;
-    const concurrencyLimit = resolveImageSlotConcurrency(resolvedImageSettings.channel.baseUrl, model, cultivationProfile?.maxConcurrency || 10);
     const generateButtonLabel = activeJobCount ? (isDouEmperor ? "再起一卷 · 继续生成" : "继续生成下一组") : isDouEmperor ? "执笔天地" : "开始生成";
     const results: GenerationResult[] = previewLog
         ? previewLog.images.length
@@ -345,12 +350,18 @@ export default function ImagePage() {
             return;
         }
 
+        queueImageGeneration(snapshot, generationCount, agentTaskId);
+    };
+
+    const queueImageGeneration = (snapshot: ImageGenerationSnapshot, count: number, agentTaskId?: string) => {
+        const request = resolveModelRequestConfig(snapshot.config, snapshot.config.imageModel || snapshot.config.model);
+        const concurrencyLimit = resolveImageSlotConcurrency(request.baseUrl, request.model, cultivationProfile?.maxConcurrency || 10);
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
         setResultView("results");
         setPreviewLog(null);
         const jobId = startImageGeneration(
             snapshot,
-            generationCount,
+            count,
             async ({ successImages, serverJobIds, successCount, failCount, canceledCount = 0, error, durationMs }) => {
                 void queryClient.invalidateQueries({ queryKey: cultivationProfileQueryKey });
                 void queryClient.invalidateQueries({ queryKey: ["wallet"] });
@@ -383,10 +394,11 @@ export default function ImagePage() {
                 logImages.forEach(replaceImageGenerationResult);
                 saveLog(
                     buildLog({
-                        prompt: text,
-                        model: requestImageConfig.imageModel,
-                        config: { ...snapshot.config, count: String(generationCount) },
+                        prompt: snapshot.text,
+                        model: snapshot.config.imageModel,
+                        config: { ...snapshot.config, count: String(count) },
                         references: snapshot.references,
+                        mask: snapshot.mask,
                         durationMs,
                         successCount,
                         failCount,
@@ -410,6 +422,7 @@ export default function ImagePage() {
             concurrencyLimit,
         );
         if (!jobId && agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生成数量无效" });
+        return jobId;
     };
 
     const removeGenerationTasks = (jobId?: string) => {
@@ -523,6 +536,74 @@ export default function ImagePage() {
         };
     };
 
+    const localEditBlockReasonFor = (config: AiConfig) => {
+        const selected = config.imageModel || config.model;
+        const request = resolveModelRequestConfig(config, selected);
+        if (request.apiFormat !== "openai" || !/^(?:gpt-image(?:-|$)|chatgpt-image-latest$)/i.test(request.model) || resolveModelScript(config, selected))
+            return "请切换到使用标准接口并支持蒙版编辑的 GPT Image 模型";
+        if (!isAiConfigReady(config, selected)) return "请先完成生图模型配置";
+        if (PUBLIC_MODE && !historyUserId) return "请登录后进行局部编辑";
+        return cultivationProfile ? cultivationGenerationBlockReason({
+            remainingToday: cultivationProfile.remainingToday,
+            dailyLimit: cultivationProfile.dailyLimit,
+            paidImages: cultivationProfile.paidImages,
+            unlimited: cultivationProfile.unlimited,
+            maxConcurrency: cultivationProfile.maxConcurrency,
+            capabilities: cultivationProfile.capabilities,
+            requestedCount: 1,
+            requiredCapabilities: requiredCultivationCapabilities({ model: selected, quality: config.quality, referenceCount: 1, hasMask: true }),
+        }) : null;
+    };
+
+    const openLocalEdit = (reference: ReferenceImage) => {
+        if (!reference.dataUrl) {
+            message.warning("原图还未载入，请稍后再试");
+            return;
+        }
+        setPreviewReference(null);
+        setLocalEditSource({ reference, ownerUserId: historyUserId });
+    };
+
+    const submitLocalEdit = async (source: ReferenceImage, edit: LocalImageEdit, signal: AbortSignal) => {
+        const operation = beginResultTransfer();
+        const size = localEditRatio(edit.size.width, edit.size.height, activeImageCapabilities.sizes);
+        const config = { ...requestImageConfig, size, count: "1", imageOutputFormat: "auto" };
+        const blocked = localEditBlockReasonFor(config);
+        if (blocked) throw new Error(blocked);
+        if (activeImageCapabilities.maxReferences < (edit.guide ? 2 : 1)) throw new Error("当前模型可用的参考图数量不足");
+        const storeImage = async (input: string | Blob, name: string, outputFormat?: string): Promise<ReferenceImage> => {
+            const asset = await uploadImage(input, { expectedUserId: operation.ownerUserId, signal, createThumbnail: false, outputFormat });
+            return { id: nanoid(), name, type: asset.mimeType, dataUrl: asset.url, storageKey: asset.storageKey };
+        };
+        const supportedSource = /^image\/(png|jpeg|webp)$/i.test(source.type);
+        const [original, mask, guide] = await Promise.all([
+            source.storageKey && supportedSource ? source : storeImage(source.dataUrl, source.name, supportedSource ? undefined : "png"),
+            storeImage(edit.mask, "选区蒙版.png"),
+            edit.guide ? storeImage(edit.guide, "选区编号.png") : undefined,
+        ]);
+        signal.throwIfAborted();
+        if (!operation.isCurrent()) return;
+        imperialGenerationCue.trigger();
+        if (!queueImageGeneration({ text: edit.text, config, references: guide ? [original, guide] : [original], mask }, 1))
+            throw new Error("局部编辑未能加入队列，请重试");
+        setLocalEditSource(null);
+    };
+
+    const requeueLocalEdit = (snapshot: Pick<ImageGenerationSnapshot, "text" | "references" | "mask">, config: GenerationLogConfig) => {
+        if (!snapshot.mask?.dataUrl || !snapshot.references[0]?.dataUrl) {
+            message.warning("原选区暂不可用，请打开图片重新标注");
+            return;
+        }
+        const selected = config.imageModel || config.model;
+        const restored = resolveImageModelSettings({ ...effectiveConfig, ...config, count: "1", imageOutputFormat: "auto" }, selected, 1);
+        const blocked = localEditBlockReasonFor(restored.config);
+        if (blocked || snapshot.references.length > restored.capabilities.maxReferences) {
+            message.warning(blocked || "当前模型可用的参考图数量不足");
+            return;
+        }
+        queueImageGeneration({ ...snapshot, config: restored.config }, 1);
+    };
+
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
         if (references.length >= activeImageCapabilities.maxReferences) {
             message.warning(`当前模型最多支持 ${activeImageCapabilities.maxReferences} 张参考图`);
@@ -593,6 +674,10 @@ export default function ImagePage() {
 
     const repeatOriginalGeneration = () => {
         if (previewLog) {
+            if (previewLog.hasMask || previewLog.mask) {
+                requeueLocalEdit({ text: generationUserPrompt(previewLog.prompt), references: previewLog.references, mask: previewLog.mask }, previewLog.config);
+                return;
+            }
             continueFromGenerationLog(previewLog);
             setAutoRunToken((value) => value + 1);
             message.info("正在按太古遗迹中的原参数再次生成");
@@ -601,6 +686,10 @@ export default function ImagePage() {
         const snapshot = generationJob?.snapshot;
         if (!snapshot) {
             message.warning("未找到本次生成参数");
+            return;
+        }
+        if (snapshot.mask) {
+            requeueLocalEdit(snapshot, snapshot.config);
             return;
         }
         const selectedModel = snapshot.config.imageModel || snapshot.config.model;
@@ -623,7 +712,14 @@ export default function ImagePage() {
 
     const continueFromResult = async (action: ResultContinueAction, image: GeneratedImage, index: number) => {
         try {
-            if (action === "restart") await restartFromResult(image, index);
+            if (action === "local-edit") openLocalEdit({
+                id: image.id,
+                name: `生成结果 ${index + 1}`,
+                type: image.mimeType || "image/*",
+                dataUrl: image.dataUrl,
+                storageKey: image.storageKey,
+            });
+            else if (action === "restart") await restartFromResult(image, index);
             else if (action === "append-reference") await addResultToReferences(image, index);
             else if (action === "canvas") await sendResultToCanvas(image, index);
             else if (action === "color-alchemy") await sendResultToColorAlchemy(image, index);
@@ -899,6 +995,7 @@ export default function ImagePage() {
     const continueFromGenerationLog = (log: GenerationLog) => {
         setPreviewLog(log);
         setResultView("results");
+        if (log.hasMask || log.mask) return;
         setPrompt(generationUserPrompt(log.prompt));
         setReferences(log.references || []);
         const selectedModel = log.config.imageModel || log.model;
@@ -913,7 +1010,7 @@ export default function ImagePage() {
         message.success("已恢复提示词与生成参数");
     };
 
-    const buildRequestSnapshot = () => {
+    const buildRequestSnapshot = (): ImageGenerationSnapshot | null => {
         if (referenceUploadsRef.current) {
             message.warning("参考图正在处理中，请稍候");
             return null;
@@ -961,6 +1058,10 @@ export default function ImagePage() {
                 okText: `生成 ${retryCount} 张`,
                 cancelText: "取消",
                 onOk: () => {
+                    if (log.hasMask || log.mask) {
+                        requeueLocalEdit({ text: generationUserPrompt(log.prompt), references: log.references, mask: log.mask }, log.config);
+                        return;
+                    }
                     continueFromGenerationLog({ ...log, config: { ...log.config, count: String(retryCount) } });
                     setAutoRunToken((value) => value + 1);
                 },
@@ -973,8 +1074,9 @@ export default function ImagePage() {
         }
         const snapshot = generationJob?.snapshot || buildRequestSnapshot();
         if (!snapshot) return;
-        if (generationBlockReason) {
-            message.warning(generationBlockReason);
+        const blocked = snapshot.mask ? localEditBlockReasonFor(snapshot.config) : generationBlockReason;
+        if (blocked) {
+            message.warning(blocked);
             return;
         }
         setResultView("results");
@@ -1004,6 +1106,7 @@ export default function ImagePage() {
                     model: snapshot.config.imageModel || snapshot.config.model,
                     config: { ...snapshot.config, count: "1" },
                     references: snapshot.references,
+                    mask: snapshot.mask,
                     durationMs: Date.now() - retryStartedAt,
                     successCount: 1,
                     failCount: 0,
@@ -1543,25 +1646,38 @@ export default function ImagePage() {
                 title={previewReference?.name || "参考图预览"}
                 open={Boolean(previewReference)}
                 onCancel={() => setPreviewReference(null)}
-                footer={
-                    previewReferenceIndex >= 0 ? (
-                        <Button
-                            icon={<RefreshCw className="size-3.5" />}
-                            onClick={() => {
+                footer={previewReference && (
+                    <div className="flex justify-end gap-2">
+                        {previewReferenceIndex >= 0 && (
+                            <Button icon={<RefreshCw className="size-3.5" />} onClick={() => {
                                 setPreviewReference(null);
                                 openReferenceReplacement(previewReferenceIndex);
-                            }}
-                        >
-                            替换此图
-                        </Button>
-                    ) : null
-                }
+                            }}>替换此图</Button>
+                        )}
+                        <Button type="primary" icon={<Scan className="size-3.5" />} onClick={() => openLocalEdit(previewReference)}>局部编辑</Button>
+                    </div>
+                )}
                 width={960}
             >
                 <div className="flex max-h-[72vh] min-h-40 items-center justify-center overflow-auto rounded-lg bg-stone-100 p-3 dark:bg-stone-900">
                     {previewReference ? <img src={previewReference.dataUrl} alt={previewReference.name} className="max-h-[68vh] max-w-full object-contain" /> : null}
                 </div>
             </Modal>
+            {localEditSource && localEditSource.ownerUserId === historyUserId ? (
+                <Suspense fallback={<DeferredDialogLoading title="局部编辑" />}>
+                    <LocalImageEditDialog
+                        key={localEditSource.reference.id}
+                        source={localEditSource.reference}
+                        ownerUserId={historyUserId}
+                        modelLabel={modelOptionLabel(effectiveConfig, model)}
+                        quotaLabel={cultivationProfile?.unlimited === false ? (cultivationProfile.dailyLimit === 0 ? "本次占用 1 灵卷" : "本次占用 1 次生图额度") : "本次生成 1 张"}
+                        blockReason={localEditBlockReasonFor(requestImageConfig)}
+                        allowGuide={activeImageCapabilities.maxReferences >= 2}
+                        onClose={() => setLocalEditSource(null)}
+                        onSubmit={(edit, signal) => submitLocalEdit(localEditSource.reference, edit, signal)}
+                    />
+                </Suspense>
+            ) : null}
         </div>
     );
 }
@@ -1911,6 +2027,8 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         model: log.model || config.imageModel || "",
         config,
         references,
+        mask: log.mask ? { ...log.mask, dataUrl: await resolveImageUrl(log.mask.storageKey, log.mask.dataUrl) } : undefined,
+        hasMask: Boolean(log.hasMask || log.mask) || undefined,
         durationMs: log.durationMs || 0,
         successCount: log.successCount ?? (log.status === "失败" ? 0 : log.images?.length || log.imageCount || 0),
         failCount: log.failCount || 0,
@@ -1955,6 +2073,7 @@ function serializeLog(log: GenerationLog): GenerationLog {
     return {
         ...log,
         references: log.references.map((item) => ({ ...item, dataUrl: item.storageKey ? "" : item.dataUrl })),
+        mask: log.mask ? { ...log.mask, dataUrl: log.mask.storageKey ? "" : log.mask.dataUrl } : undefined,
         images: log.images.map((image) => ({ ...image, dataUrl: image.storageKey ? "" : image.dataUrl })),
         thumbnails: [],
     };
@@ -1962,7 +2081,8 @@ function serializeLog(log: GenerationLog): GenerationLog {
 
 function buildLogFromServerJob(job: ServerJob): GenerationLog {
     const prompt = generationUserPrompt(job.prompt);
-    const images: GeneratedImage[] = (job.result?.images || []).map((image) => ({
+    const results = job.result?.images || [];
+    const images: GeneratedImage[] = (job.preserveOutsideMask ? results.filter((image) => image.persisted !== false) : results).map((image) => ({
         id: image.id,
         dataUrl: image.dataUrl,
         durationMs: image.durationMs || job.result?.durationMs || 0,
@@ -1996,6 +2116,7 @@ function buildLogFromServerJob(job: ServerJob): GenerationLog {
         model,
         config,
         references: [],
+        hasMask: job.hasMask,
         durationMs: job.result?.durationMs || Math.max(0, Number(job.finishedAt || job.createdAt) - Number(job.startedAt || job.createdAt)),
         successCount: job.result?.successCount || 0,
         failCount: job.result?.failCount || (job.status === "succeeded" ? 0 : job.count || 1),
@@ -2081,6 +2202,7 @@ function buildLog({
     model,
     config,
     references,
+    mask,
     durationMs,
     successCount,
     failCount,
@@ -2092,6 +2214,7 @@ function buildLog({
     model: string;
     config: GenerationLogConfig;
     references: ReferenceImage[];
+    mask?: ReferenceImage;
     durationMs: number;
     successCount: number;
     failCount: number;
@@ -2120,6 +2243,8 @@ function buildLog({
         model,
         config: logConfig,
         references,
+        mask,
+        hasMask: Boolean(mask) || undefined,
         durationMs,
         successCount,
         failCount,

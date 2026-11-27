@@ -1,5 +1,5 @@
 import { Button, Dropdown, Image, Tooltip, type MenuProps } from "antd";
-import { ChevronDown, Download, FolderPlus, ImagePlus, LoaderCircle, Maximize2, Palette, RefreshCw, RotateCcw } from "lucide-react";
+import { ChevronDown, Download, FolderPlus, ImagePlus, LoaderCircle, Maximize2, Palette, RefreshCw, RotateCcw, Scan } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -7,9 +7,10 @@ import type { GeneratedImage } from "@/services/image-generation-runtime";
 
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 whitespace-nowrap px-1.5 [&_.ant-btn-icon]:shrink-0";
 
-export type ResultContinueAction = "restart" | "append-reference" | "canvas" | "color-alchemy" | "repeat";
+export type ResultContinueAction = "local-edit" | "restart" | "append-reference" | "canvas" | "color-alchemy" | "repeat";
 
 const CONTINUE_ACTIONS: MenuProps["items"] = [
+    { key: "local-edit", icon: <Scan className="size-3.5" />, label: "局部编辑" },
     { key: "restart", icon: <RotateCcw className="size-3.5" />, label: "以此图重新开始" },
     { key: "append-reference", icon: <ImagePlus className="size-3.5" />, label: "追加为参考图" },
     { type: "divider" },

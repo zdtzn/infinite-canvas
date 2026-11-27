@@ -101,6 +101,7 @@ export type ImageJobInput = {
   background?: string;
   references: Array<string | StoredImageReference>;
   mask?: string | StoredImageReference;
+  preserveOutsideMask?: true;
   source?: {
     route?: string;
     projectId?: string;

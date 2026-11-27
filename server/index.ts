@@ -12,6 +12,7 @@ import { readAssetFolders, saveAssetFolders, assertAssetFolder, moveLibraryAsset
 import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
 import { buildStorageOverview, indexStorageReferences, planStorageCleanup, type StorageReferenceRoot } from "./lib/storage-overview";
 import { AsyncSemaphore } from "./lib/async-semaphore";
+import { assertLocalEditInputs, finalizeLocalEdit } from "./lib/local-image-edit";
 import { PerformanceMetrics, PerformanceRateLimiter, PerformanceInputError, PERFORMANCE_BODY_BYTES, parsePerformanceSamples, type ImagePerformanceOutcome } from "./lib/performance-metrics";
 import { createSharedTasks } from "./lib/shared-task";
 import { createPromptCacheMaintenance } from "./lib/prompt-cache-maintenance";
@@ -315,6 +316,7 @@ const promptAssetProxySemaphore = new AsyncSemaphore(PROMPT_PROXY_CONCURRENCY);
 const promptThumbnailProxySemaphore = new AsyncSemaphore(PROMPT_THUMBNAIL_PROXY_CONCURRENCY);
 const promptOptimizeSemaphore = new AsyncSemaphore(PROMPT_OPTIMIZE_CONCURRENCY);
 const heavyRequestSemaphore = new AsyncSemaphore(HEAVY_REQUEST_CONCURRENCY);
+const localEditSemaphore = new AsyncSemaphore(1);
 const promptSourceRuntimeCache = new Map<string, {
     signature: string;
     items: ServerPromptSourceItem[];
@@ -3159,6 +3161,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
     const references = Array.isArray(body.references) ? body.references.map((reference) => prepareImageJobReference(session.userId, reference)) : [];
     if (references.length > 16) throw new HttpError(400, "参考图最多 16 张");
     const mask = body.mask ? prepareImageJobReference(session.userId, body.mask) : undefined;
+    const preserveOutsideMask = body.preserveOutsideMask === true ? true : undefined;
     const referenceBytes = imageJobReferenceTotalBytes(references, mask);
     if (referenceBytes > MAX_IMAGE_REFERENCE_TOTAL_BYTES)
         throw new HttpError(413, `参考图与蒙版总大小不能超过 ${Math.floor(MAX_IMAGE_REFERENCE_TOTAL_BYTES / 1024 / 1024)} MB`);
@@ -3191,6 +3194,18 @@ async function createImageJob(request: Request, session: SessionPayload) {
     } catch (error) {
         throw new HttpError(400, error instanceof Error ? error.message : "生图参数超出渠道能力范围");
     }
+    if (preserveOutsideMask) {
+        if (!references[0] || !mask || count !== 1) throw new HttpError(400, "局部编辑需要原图和选区蒙版，每次生成一张");
+        const file = (reference: PreparedImageJobReference) => reference.kind === "asset" ? reference.sourcePath : Buffer.from(parseDataUrl(reference.dataUrl).base64, "base64");
+        try {
+            await assertLocalEditInputs(file(references[0]), file(mask));
+        } catch {
+            throw new HttpError(400, "请选择可读取的原图和同尺寸的透明选区蒙版");
+        }
+        const existingAfterValidation = state.jobs[jobId];
+        if (existingAfterValidation) return json({ job: publicJob(existingAfterValidation) }, 200);
+        assertUnusedImageJobId(jobId);
+    }
     const imageQuality = requestedImageQuality;
     const imageOutputFormat = isUuGptImage2 ? undefined : requestedImageOutputFormat;
     cultivation?.reserveGeneration({
@@ -3220,6 +3235,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
             background,
             references: references.map((reference, index) => persistPreparedImageJobReference(session.userId, jobId, index, reference)),
             mask: mask ? persistPreparedImageJobReference(session.userId, jobId, 10_000, mask) : undefined,
+            preserveOutsideMask,
             source: normalizeJobSource(body.source),
         };
         const job = imageQueue.add(input, jobId);
@@ -3296,6 +3312,7 @@ async function retryJob(request: Request, session: SessionPayload, id: string) {
     const source = ownedJob(session.userId, id);
     if (source.status === "queued" || source.status === "running") throw new HttpError(409, "任务仍在运行");
     const idempotencyKey = requiredIdempotencyKey(request);
+    if (source.input.preserveOutsideMask && source.status === "succeeded") return json({ job: publicJob(source) }, 200);
     const jobId = createHash("sha256").update(`${session.userId}:retry:${id}:${idempotencyKey}`).digest("hex");
     const existing = state.jobs[jobId];
     if (existing) return json({ job: publicJob(existing) }, 200);
@@ -3372,7 +3389,7 @@ async function archiveJobResultImage(request: Request, session: SessionPayload, 
         if (!isRelayEligibleResultUrl(current.dataUrl)) throw new HttpError(409, "该图片不支持浏览器归档");
 
         clearJobImageRecovery(job.id);
-        const persisted = await persistJobImageBlob(session.userId, job.id, file, current.durationMs, request.signal);
+        const persisted = await persistJobImageBlob(session.userId, job.id, file, current.durationMs, request.signal, job.input);
         const archived = { ...persisted, id: current.id, persisted: true, expiresAt: undefined };
         job.result = {
             ...job.result,
@@ -3430,6 +3447,7 @@ async function performJobImageRecovery(jobId: string): Promise<ImageRecoveryResu
             return await persistJobImage(job.input.userId, job.id, url.toString(), image.durationMs, new AbortController().signal, {
                 downloadTimeoutMs: usesRelay ? RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS : useSadaiUrlResult ? 180_000 : RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
                 downloadAttempts: 1,
+                input: job.input,
             });
         } catch (error) {
             lastError = error instanceof Error ? error.message : "结果图片仍无法连接";
@@ -3553,6 +3571,8 @@ function publicJob(job: StoredImageJob) {
         imageOutputFormat: job.input.imageOutputFormat,
         size: job.input.size,
         background: job.input.background,
+        hasMask: job.input.mask ? true : undefined,
+        preserveOutsideMask: job.input.preserveOutsideMask,
         source: job.input.source,
         previewImages: ["queued", "running"].includes(job.status) ? job.input.upstream?.previewImages : undefined,
         result,
@@ -3594,7 +3614,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
         const images: ImageJobImage[] = [];
         const uuDimensions = useUuAsync && isUuAsyncGptImage2Channel(channel.baseUrl, input.model) ? resolveUuAsyncImageSize(input.size, input.quality) : undefined;
         const useSadaiUrlResult = input.apiFormat === "openai" && (isSadaiImage25Channel(channel.baseUrl, input.model) || sadaiUrl26Enabled(input.apiFormat, sadaiUrl26Capability, input.channelId, channel.baseUrl, input.model));
-        for (const raw of rawImages) {
+        for (const raw of input.preserveOutsideMask ? rawImages.slice(0, 1) : rawImages) {
             if (signal.aborted || job.status === "canceled") throw abortError(signal);
             const durationMs = Date.now() - startedAt;
             if (isRelayEligibleResultUrl(raw) || (useSadaiUrlResult && /^https?:\/\//i.test(raw))) {
@@ -3619,7 +3639,7 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                         raw,
                         durationMs,
                         signal,
-                        raw.startsWith("data:") ? undefined : { downloadTimeoutMs: RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS, downloadAttempts: 1 },
+                        { downloadTimeoutMs: RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS, downloadAttempts: 1, input },
                     ),
                 );
             } catch (error) {
@@ -3688,10 +3708,14 @@ async function materializeImageInput(input: ImageJobInput): Promise<RuntimeImage
 
 async function materializeStoredImage(reference: string | StoredImageReference) {
     if (typeof reference === "string") return reference;
+    const bytes = Buffer.from(await Bun.file(storedImageReferencePath(reference)).arrayBuffer());
+    return `data:${reference.mimeType};base64,${bytes.toString("base64")}`;
+}
+
+function storedImageReferencePath(reference: StoredImageReference) {
     const path = resolve(DATA_DIR, reference.path);
     if (!(path === DATA_DIR || path.startsWith(`${DATA_DIR}${sep}`)) || !existsSync(path)) throw new HttpError(404, "参考图文件不存在");
-    const bytes = Buffer.from(await Bun.file(path).arrayBuffer());
-    return `data:${reference.mimeType};base64,${bytes.toString("base64")}`;
+    return path;
 }
 
 type RuntimeImageJobInput = Omit<ImageJobInput, "references" | "mask"> & {
@@ -4121,7 +4145,7 @@ async function persistJobImage(
     value: string,
     durationMs: number,
     signal: AbortSignal,
-    options: { downloadTimeoutMs?: number; downloadAttempts?: number } = {},
+    options: { downloadTimeoutMs?: number; downloadAttempts?: number; input?: ImageJobInput } = {},
 ): Promise<ImageJobImage> {
     if (signal.aborted) throw abortError(signal);
     let bytes: Uint8Array;
@@ -4149,19 +4173,28 @@ async function persistJobImage(
         }));
         throw new Error("上游返回的图片格式或大小不受支持");
     }
-    return persistJobImageBytes(userId, jobId, bytes, detectedMimeType, durationMs, signal);
+    return persistJobImageBytes(userId, jobId, bytes, detectedMimeType, durationMs, signal, options.input);
 }
 
-async function persistJobImageBlob(userId: string, jobId: string, file: Blob, durationMs: number, signal: AbortSignal) {
+async function persistJobImageBlob(userId: string, jobId: string, file: Blob, durationMs: number, signal: AbortSignal, input: ImageJobInput) {
     if (signal.aborted) throw abortError(signal);
     const bytes = new Uint8Array(await file.arrayBuffer());
     const mimeType = detectImageMimeFromBytes(bytes);
     if (!isAllowedImageMimeType(mimeType) || !bytes.byteLength || bytes.byteLength > MAX_UPSTREAM_IMAGE_BYTES) throw new HttpError(400, "归档图片格式或大小不受支持");
-    return persistJobImageBytes(userId, jobId, bytes, mimeType, durationMs, signal);
+    return persistJobImageBytes(userId, jobId, bytes, mimeType, durationMs, signal, input);
 }
 
-async function persistJobImageBytes(userId: string, jobId: string, bytes: Uint8Array, mimeType: string, durationMs: number, signal: AbortSignal): Promise<ImageJobImage> {
+async function persistJobImageBytes(userId: string, jobId: string, bytes: Uint8Array, mimeType: string, durationMs: number, signal: AbortSignal, input?: ImageJobInput): Promise<ImageJobImage> {
     if (signal.aborted) throw abortError(signal);
+    if (input?.preserveOutsideMask && input.mask && input.references[0]) {
+        const file = (reference: string | StoredImageReference) => typeof reference === "string" ? Buffer.from(parseDataUrl(reference).base64, "base64") : storedImageReferencePath(reference);
+        const source = file(input.references[0]);
+        const mask = file(input.mask);
+        bytes = await localEditSemaphore.run(signal, () => finalizeLocalEdit(source, mask, bytes, signal));
+        mimeType = "image/png";
+        signal.throwIfAborted();
+        if (bytes.byteLength > MAX_UPSTREAM_IMAGE_BYTES) throw new Error("局部编辑结果超过 32 MB，请使用体积更小的原图");
+    }
     const extension = imageExtension(mimeType);
     const filename = `${randomUUID()}${extension}`;
     const directory = join(JOB_FILE_ROOT, safeSegment(userId), safeSegment(jobId));

@@ -204,6 +204,7 @@ function TaskItem({ job, loading, expanded, onOpen, onAction, onDismiss }: { job
     const active = isActiveJob(job);
     const progress = taskProgressProps(job.status);
     const duration = (job.finishedAt || Date.now()) - (job.startedAt || job.createdAt);
+    const images = job.result?.images.filter((image) => !job.preserveOutsideMask || image.persisted !== false) || [];
 
     return (
         <div className="py-3">
@@ -252,9 +253,9 @@ function TaskItem({ job, loading, expanded, onOpen, onAction, onDismiss }: { job
                 </div>
             </div>
             {expanded && job.status === "succeeded" ? <div className="mt-3 space-y-3" aria-label="已生成的图片">
-                {job.result?.recoveryPending ? <p role="status" className="text-xs text-muted-foreground">图片已生成，正在保存。可先预览，请勿重复生成。</p> : null}
-                {job.result?.images.length ? <Image.PreviewGroup>
-                    {job.result.images.map((image, index) => <div key={image.id} className="space-y-1">
+                {job.result?.recoveryPending ? <p role="status" className="text-xs text-muted-foreground">{job.preserveOutsideMask ? "局部编辑已生成，正在保存。" : "图片已生成，正在保存。可先预览，请勿重复生成。"}</p> : null}
+                {images.length ? <Image.PreviewGroup>
+                    {images.map((image, index) => <div key={image.id} className="space-y-1">
                         <Image src={image.persisted === false ? image.recoveryUrl || image.dataUrl : image.dataUrl} alt={`生成结果 ${index + 1}`} width="100%" style={{ maxHeight: 280, objectFit: "contain" }} loading="lazy" />
                         <a className="inline-flex min-h-10 items-center text-sm text-primary hover:underline" href={image.persisted === false ? image.recoveryUrl || image.dataUrl : image.dataUrl} target="_blank" rel="noopener noreferrer" download={image.persisted === false ? undefined : `生成结果-${index + 1}.${image.mimeType === "image/jpeg" ? "jpg" : image.mimeType === "image/webp" ? "webp" : "png"}`}>
                             {image.persisted === false ? "查看原图" : "下载图片"}

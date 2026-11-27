@@ -50,6 +50,8 @@ export type ServerJob = {
     imageOutputFormat?: string;
     size?: string;
     background?: string;
+    hasMask?: boolean;
+    preserveOutsideMask?: true;
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
     previewImages?: ServerJobImage[];
     result?: { images: ServerJobImage[]; successCount: number; failCount: number; durationMs: number; recoveryPending?: boolean };
@@ -483,6 +485,7 @@ export async function submitImageJob(
         background?: string;
         references: ServerImageReferenceInput[];
         mask?: ServerImageReferenceInput;
+        preserveOutsideMask?: true;
         source?: ServerJob["source"];
     },
     expectedUserId?: string,
@@ -780,6 +783,15 @@ export async function waitForServerJob(id: string, options?: { signal?: AbortSig
         report(job.phase ?? (job.status === "queued" ? "queued" : job.status === "succeeded" ? "completed" : undefined), false, previewImage);
         options?.onUpdate?.(job);
         if (job.status === "succeeded") {
+            if (job.preserveOutsideMask && job.result?.recoveryPending) {
+                report("persisting", false);
+                try {
+                    return await archiveDeferredServerJob(job, options?.expectedUserId, options?.signal);
+                } catch (error) {
+                    options?.signal?.throwIfAborted();
+                    throw new Error("局部编辑已生成，暂未完成保存。再试一次可继续保存原任务。", { cause: error });
+                }
+            }
             void archiveDeferredServerJob(job, options?.expectedUserId).catch(() => undefined);
             return job;
         }

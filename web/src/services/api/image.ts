@@ -7,7 +7,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { extractApiErrorMessage } from "@/lib/friendly-error";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { resolveImageRequestSize } from "@/lib/image-request-size";
-import { imageToDataUrl } from "@/services/image-storage";
+import { finalizeDirectImageEdit, imageToDataUrl } from "@/services/image-storage";
 import { archiveDeferredServerJob, cancelServerJob, fetchServerJob, retryServerJob, submitImageJob, testServerChannel, waitForServerJob, type ServerImageReferenceInput, type ServerJob, type ServerJobProgress } from "@/services/server-api";
 import { deriveImageModelCapabilities, isUuAsyncGptImageModel, isUuImage25Model, validateImageRequest } from "@/stores/model-capabilities";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
@@ -129,6 +129,7 @@ export type RequestOptions = {
     source?: { route?: string; projectId?: string; nodeId?: string; label?: string };
     expectedUserId?: string;
     idempotencyKey?: string;
+    preserveOutsideMask?: boolean;
     getCanvasReceipt?: () => Promise<{ idempotencyKey: string; jobId: string | null }>;
 };
 
@@ -878,11 +879,14 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => formData.append(files.length > 1 ? "image[]" : "image", file));
-    if (mask) formData.set("mask", dataUrlToFile(mask));
+    if (mask) formData.set("mask", dataUrlToFile({ ...mask, dataUrl: await imageToDataUrl(mask, options?.expectedUserId) }));
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal, timeout: DIRECT_IMAGE_REQUEST_TIMEOUT_MS });
         const images = parseImagePayload(response.data, imageOutputFormatMimeType(imageOutputFormat));
+        if (options?.preserveOutsideMask && mask && references[0]) {
+            return await Promise.all(images.slice(0, 1).map(async (image) => ({ ...image, ...await finalizeDirectImageEdit(references[0].dataUrl, mask.dataUrl, image.dataUrl, options.expectedUserId, options.signal) })));
+        }
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
@@ -1003,6 +1007,7 @@ async function requestServerImageJob(
             background: normalizeBackground(requestConfig.background),
             references: referenceData,
             mask: maskData,
+            preserveOutsideMask: options?.preserveOutsideMask ? true : undefined,
             source: options?.source,
         },
         expectedUserId,

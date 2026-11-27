@@ -3,6 +3,7 @@
     "private": true,
     "type": "module",
     "dependencies": {
-        "nodemailer": "^10.0.1"
+        "nodemailer": "^10.0.1",
+        "sharp": "0.35.5"
     }
 }
