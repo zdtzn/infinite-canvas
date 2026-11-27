@@ -147,6 +147,18 @@ textarea:focus-visible {
 .panel-toggle { gap: 4px; font-size: 12px; }
 .save-action { gap: 6px; font-size: 12px; white-space: nowrap; }
 
+.orbit-layout {
+  width: min(360px, calc(100% - 24px));
+  padding: 18px;
+  color: rgb(var(--text-rgb));
+}
+.orbit-layout::backdrop { background: rgb(var(--bg-rgb) / .55); }
+.orbit-layout h2 { margin: 0 0 12px; font-size: 15px; }
+.orbit-layout form { display: grid; gap: 9px; }
+.orbit-layout label { display: grid; gap: 3px; }
+.orbit-layout .ui-field { min-height: 35px; padding: 6px 9px; }
+.orbit-layout-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
 .ui-panel,
 .panel-card {
   border: 1px solid rgb(var(--border-rgb) / 0.42);

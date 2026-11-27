@@ -3,7 +3,6 @@ import type { Attachment, DeskAction, Scene } from "../../../lib/desk-messages";
 import type { DirectorProject } from "../schema/directorProject";
 import { useDirectorStore, type DirectorStore } from "../store/directorStore";
 import { finishRecording } from "./recording";
-import { getSceneSummary } from "../schema/cameraLayouts";
 import { readPanoramaFile } from "../loaders/panoramaImport";
 
 let port: MessagePort;
@@ -168,7 +167,6 @@ export async function importBackground() {
 }
 export async function openSession(channel: MessagePort) {
     port = channel;
-    let sceneId: string;
     ready = false;
     channel.onmessage = ({ data }) => {
         if (data.theme) {
@@ -185,28 +183,12 @@ export async function openSession(channel: MessagePort) {
             }
             return;
         }
-        if (data.requestId) {
-            try {
-                if (!ready || data.sceneId !== sceneId) throw new Error("SCENE_CLOSED");
-                const state = useDirectorStore.getState();
-                let value;
-                if (data.action === "summary") value = getSceneSummary(state.project, state.selectedObjectIds, sceneId);
-                else if (data.action === "apply-layout" && data.result.sceneId === sceneId) state.applyCameraLayout(data.result);
-                else throw new Error("LAYOUT_REQUEST_INVALID");
-                port.postMessage({ requestId: data.requestId, sceneId, ok: true, value });
-            } catch (error) {
-                console.error("[plugins] director-desk layout message", data.action, error);
-                port.postMessage({ requestId: data.requestId, sceneId, ok: false });
-            }
-            return;
-        }
         const waiter = pending.get(data.id);
         pending.delete(data.id);
         if (data.ok) waiter?.resolve(data.value);
         else waiter?.reject();
     };
-    const saved = await request<{ scene: Scene | null; files: Attachment[]; sceneId: string }>({ action: "load" });
-    sceneId = saved.sceneId;
+    const saved = await request<{ scene: Scene | null; files: Attachment[] }>({ action: "load" });
     if (saved.scene) {
         const urls = new Map(saved.files.map(item => [item.key, attach(item)]));
         for (const item of saved.files) sent.add(item.key);
@@ -222,5 +204,5 @@ export async function openSession(channel: MessagePort) {
         for (const url of referencedUrls(before)) if (!kept.has(url)) release(url);
     });
     ready = true;
-    port.postMessage({ ready: true, sceneId });
+    port.postMessage({ ready: true });
 }

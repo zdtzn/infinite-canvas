@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { Check, PanelLeftClose, PanelLeftOpen, Save, X } from "lucide-react";
 import { DirectorDeskShell } from "./app/layout/DirectorDeskShell";
 import { DirectorCanvas } from "./editor/canvas/DirectorCanvas";
+import { OrbitLayout } from "./editor/panels/OrbitLayout";
 import { holdAutosave, saveAndClose, useStatus, retrySave } from "./editor/io/session";
 import { useMotionClock } from "./editor/store/motionPlayback";
 import { useDirectorStore } from "./editor/store/directorStore";
@@ -102,6 +103,7 @@ export default function App() {
           </div>
         </div>
         <div className="top-bar-actions">
+          <OrbitLayout />
           <button type="button" className="save-action" aria-label="保存场景" title="保存场景" onClick={() => void retrySave()}>
             {status === "已保存" ? <Check size={15} /> : <Save size={15} />}<span>{status === "已保存" ? "已保存" : "保存"}</span>
           </button>
