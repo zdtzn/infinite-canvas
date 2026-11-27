@@ -13,6 +13,8 @@ import { isRelayEligibleResultUrl } from "./result-image-relay";
 import { readUpstreamErrorMessage, readUpstreamNonJsonError } from "./upstream-error";
 import { KeyedSerialExecutor } from "./keyed-serial-executor";
 import { hasSadaiAsyncTask } from "./sadai-async";
+import { decodeImageDataUrl } from "./image-mime";
+import { imageEditReferenceField } from "./image-provider-protocol";
 
 // Execute the production request and reader functions without starting the server,
 // reading its database/environment, or making any external request.
@@ -30,6 +32,8 @@ const executable = new Bun.Transpiler({ loader: "ts" }).transformSync([
     extract("async function readResponseBytes(", "function clientIp("),
     extract("function upstreamIdempotencyKey(", "function enforceSameOrigin("),
     extract("function imageOutputFormatMimeType(", "function normalizeJobSource("),
+    extract("function parseDataUrl(", "function normalizeAspectRatio("),
+    extract("function imageExtension(", "function safeSegment("),
 ].join("\n"));
 
 class HttpError extends Error {
@@ -41,13 +45,17 @@ function harness(upstream: (setTime: (time: number) => void) => Promise<Response
     const logs: Array<Record<string, unknown>> = [];
     const requests: Array<{ url: string; init: RequestInit; retryable: boolean }> = [];
     const setTime = (next: number) => { time = next; };
-    const input = { channelId: "fixture-channel", model: "gpt-image-2.5-flare", prompt: "do-not-log-prompt", count: 1, quality: "low", size: "9:16", references: [] };
+    const input = {
+        channelId: "fixture-channel", model: "gpt-image-2.5-flare", prompt: "do-not-log-prompt", count: 1, quality: "low", size: "9:16",
+        references: [] as string[], mask: undefined as string | undefined, background: undefined as string | undefined, preserveOutsideMask: false,
+    };
     const channel = { baseUrl: "https://verysadai.com/v1" };
     const context = {
-        Date: { now: () => time }, TextDecoder, Uint8Array, FormData, createHash, HttpError,
+        Date: { now: () => time }, TextDecoder, Uint8Array, Blob, Buffer, FormData, createHash, HttpError,
         console: { info: (line: string) => logs.push(JSON.parse(line)) },
         MAX_UPSTREAM_JSON_BYTES: 2 * 1024 * 1024,
         MAX_UPSTREAM_INLINE_IMAGE_JSON_BYTES: limit,
+        MAX_UPSTREAM_IMAGE_BYTES: 16 * 1024 * 1024, decodeImageDataUrl, imageEditReferenceField,
         buildOpenAiImageRequestOptions, imageResponseItemValue, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration,
         dragonImageBaseUrl, dragonPromptWithSize, isDragonChatImageModel, isDragonGptImageModel,
         buildSadaiImageRequestOptions, isSadaiImage25Channel, isSadaiImage26Channel, isSadaiImage2Channel, sadaiImageBaseUrl, isUuAsyncUrlChannel, buildUpstreamUrl,
@@ -139,6 +147,33 @@ test("SADAI 2.5 accepts inline image data from the same URL request without a se
     h.onlyLog();
 });
 
+test("SADAI annotated local edits use the explicit deadline and send the full multipart edit once", async () => {
+    const url = "https://image.invalid/result.png";
+    const h = harness(async () => Response.json({ data: [{ url }] }));
+    const pngSignature = Buffer.from("iVBORw0KGgo=", "base64");
+    const [original, guide, mask] = [1, 2, 3].map((id) => Buffer.concat([pngSignature, Buffer.of(id)]));
+    const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString("base64")}`;
+    const prompt = "1. 左杯改绿\n2. 右杯改洋红";
+    Object.assign(h.input, {
+        model: "gpt-image-2.6-flare", prompt, references: [dataUrl(original), dataUrl(guide)], mask: dataUrl(mask),
+        preserveOutsideMask: true, background: "transparent",
+    });
+    const { signal } = new AbortController();
+
+    expect(await h.run(signal)).toEqual([url]);
+    expect(h.onlyLog()).toMatchObject({ stage: "completed" });
+    const request = h.requests[0];
+    expect(request.url).toBe("https://api.sadai.top/v1/images/edits");
+    expect(request.init).toMatchObject({ method: "POST", signal, timeout: false });
+    const body = request.init.body as FormData;
+    expect(body.get("model")).toBe("gpt-image-2.6-flare");
+    expect(body.get("background")).toBe("transparent");
+    expect(body.get("prompt")).toBe(prompt);
+    const files = [...body.getAll("image[]"), body.get("mask")] as File[];
+    expect(files.map((file) => file.name)).toEqual(["reference-1.png", "reference-2.png", "mask.png"]);
+    expect(await Promise.all(files.map(async (file) => Buffer.from(await file.arrayBuffer())))).toEqual([original, guide, mask]);
+});
+
 test("legacy SADAI Image2 and custom or unrelated channels keep their Base64 request format", async () => {
     for (const [baseUrl, model] of [
         ["https://api.sadai.top/v1", "gpt-image-2"],
@@ -151,6 +186,7 @@ test("legacy SADAI Image2 and custom or unrelated channels keep their Base64 req
         h.input.model = model;
         await h.run();
         expect(JSON.parse(String(h.requests[0].init.body)).response_format).toBe("b64_json");
+        expect(h.requests[0].init).not.toHaveProperty("timeout");
         h.onlyLog();
     }
 });

@@ -186,8 +186,12 @@ test("retrying a failed recovery joins an already active retry of the original t
     expect(await retry({}, { userId: "member" }, failed.id)).toEqual({ body: { job: active }, status: 200 });
 });
 
-test.each(["提交结果未确认", "The operation timed out."])("uncertain submissions cannot be retried through the API: %s", async (error) => {
-    const failed = { id: "failed", status: "failed", error, input: { userId: "member" } };
+test.each([
+    { error: "提交结果未确认", edit: {} },
+    { error: "The operation timed out.", edit: {} },
+    { error: "上游接口响应超时", edit: { preserveOutsideMask: true, mask: "fixture-mask", references: ["fixture-source", "fixture-guide"] } },
+])("uncertain submissions cannot be retried through the API: $error", async ({ error, edit }) => {
+    const failed = { id: "failed", status: "failed", error, input: { userId: "member", ...edit } };
     const retry = vm.runInNewContext(`${retryHelpers}\n${extract("async function retryJob(", "function assertUnusedImageJobId(")}\nretryJob;`, {
         ownedJob: () => failed, requiredIdempotencyKey: () => "fresh-key", createHash, HttpError,
         state: { jobs: {} }, assertUnusedImageJobId: () => {}, imageQueue: { list: () => [failed] },

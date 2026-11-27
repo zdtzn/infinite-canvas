@@ -3479,7 +3479,8 @@ function reusableImageTask(input: ImageJobInput) {
 }
 
 function hasUnconfirmedImageSubmission(job: StoredImageJob) {
-    return !job.input.upstream?.taskId && (job.input.submissionUnconfirmed || isImageSubmissionUnconfirmed(job.error) || job.error === "The operation timed out.");
+    const localEditTimedOut = job.error === "上游接口响应超时" && job.input.preserveOutsideMask && Boolean(job.input.mask);
+    return !job.input.upstream?.taskId && (job.input.submissionUnconfirmed || isImageSubmissionUnconfirmed(job.error) || job.error === "The operation timed out." || localEditTimedOut);
 }
 
 function copyImageJobInputForRetry(input: ImageJobInput, jobId: string, retryOf: string, recoveryOnly = false): ImageJobInput {
@@ -3917,7 +3918,10 @@ async function generateOpenAiImages(channel: ChannelRecord, apiKey: string, inpu
                 const mask = dataUrlBlob(input.mask);
                 form.set("mask", mask, `mask${imageExtension(mask.type)}`);
             }
-            response = await upstreamFetch(buildUpstreamUrl(imageBaseUrl, "openai", "/images/edits"), { method: "POST", headers, body: form, signal }, retryPaidRequest);
+            const init: UpstreamFetchInit = { method: "POST", headers, body: form, signal };
+            // A masked SADAI edit can take longer than Bun's idle timeout. upstreamFetch applies the configured deadline.
+            if (input.mask && input.preserveOutsideMask && isSadaiImage26Channel(channel.baseUrl, input.model)) init.timeout = false;
+            response = await upstreamFetch(buildUpstreamUrl(imageBaseUrl, "openai", "/images/edits"), init, retryPaidRequest);
         } else {
             response = await upstreamFetch(
                 buildUpstreamUrl(imageBaseUrl, "openai", "/images/generations"),
@@ -4578,7 +4582,9 @@ function deleteProject(url: URL, session: SessionPayload, id: string) {
     return new Response(null, { status: 204 });
 }
 
-async function upstreamFetch(url: string, init: RequestInit, retryable: boolean, timeoutMs = REQUEST_TIMEOUT_MS, attemptLimit?: number) {
+type UpstreamFetchInit = RequestInit & { timeout?: false };
+
+async function upstreamFetch(url: string, init: UpstreamFetchInit, retryable: boolean, timeoutMs = REQUEST_TIMEOUT_MS, attemptLimit?: number) {
     const attempts = attemptLimit ?? (retryable || ["GET", "HEAD"].includes(init.method || "GET") ? 3 : 1);
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -4600,7 +4606,7 @@ async function upstreamFetch(url: string, init: RequestInit, retryable: boolean,
     throw new HttpError(502, "无法连接上游接口，请检查渠道地址、网络或接口状态");
 }
 
-async function fetchAllowedRedirects(url: string, init: RequestInit) {
+async function fetchAllowedRedirects(url: string, init: UpstreamFetchInit) {
     let current = assertAllowedUpstreamUrl(url);
     const method = String(init.method || "GET").toUpperCase();
     const headers = new Headers(init.headers);
