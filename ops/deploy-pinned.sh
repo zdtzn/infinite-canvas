@@ -94,7 +94,7 @@ if ! flock -n 9; then
   exit 75
 fi
 
-# The lock covers preflight, container switching, and rollback; never delete its file.
+# Keep the lock through preflight, switching, rollback, and image cleanup.
 current_ref="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME")"
 current_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$CONTAINER_NAME")"
 current_revision="$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CONTAINER_NAME")"
@@ -103,6 +103,7 @@ if [ "$FORCE_RECREATE" != "1" ] && [ "$current_ref" = "$IMAGE_REF" ] && [ "$curr
   echo "Already running healthy image: $IMAGE_REF"
   exit 0
 fi
+rollback_image_id="$(timeout --kill-after=1s 6s docker inspect -f '{{.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)"
 assert_live_revision
 
 docker volume inspect "$VOLUME_NAME" >/dev/null
@@ -393,3 +394,12 @@ echo "Backup: ${backup_record}"
 # turn a completed deployment into an apparent container-switch failure.
 printf '%s\n' "$deployment_health"
 printf '\n'
+
+# A cleanup failure must not turn a healthy deployment into a rollback.
+if [ "$current_health" = "healthy" ]; then
+  deployed_image_id="$(timeout --kill-after=1s 6s docker inspect -f '{{.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+  cleanup_old_deployment_images "$IMAGE_REF" "$deployed_image_id" "$rollback_image_id" ||
+    echo "Image cleanup did not complete. Deployment remains healthy." >&2
+else
+  echo "Image cleanup skipped because the previous container was not confirmed healthy."
+fi
