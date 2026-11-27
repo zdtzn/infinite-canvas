@@ -6,6 +6,7 @@ import { FileText, FolderOpen, Image as ImageIcon, Music2, Video, X } from "luci
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { flattenGenerationInputs, type NodeGenerationInput } from "./canvas-node-generation";
+import { deleteAdjacentEditorReference, insertEditorReference, readReferenceMention, serializeReferenceEditor } from "./reference-editor";
 
 type CanvasConfigComposerProps = {
     value: string;
@@ -22,7 +23,7 @@ type MentionState = {
     query: string;
 };
 
-export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]/g;
+const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]/g;
 
 export function CanvasConfigComposer({ value, inputs, onChange, onClose }: CanvasConfigComposerProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -51,26 +52,25 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
                 return;
             }
             const input = referenceById.get(token.nodeId);
-            if (input) editor.append(createReferenceChip(input, inputs, theme, setImagePreview));
+            if (input) editor.append(createReferenceChip(input, theme, setImagePreview));
         });
-    }, [inputs, referenceById, theme, tokens]);
+    }, [referenceById, theme, tokens]);
 
     const syncFromEditor = () => {
         const editor = editorRef.current;
         if (!editor) return;
-        const next = serializeEditor(editor);
-        onChange(next);
+        onChange(serializeReferenceEditor(editor));
         syncMention();
     };
 
     const syncMention = () => {
-        const text = textBeforeCaret();
-        const match = /@([^\s@]*)$/.exec(text);
-        if (!match || !inputs.length) {
+        const editor = editorRef.current;
+        const query = editor && readReferenceMention(editor);
+        if (query === null || !inputs.length) {
             closeMention();
             return;
         }
-        setMention({ query: match[1] || "" });
+        setMention({ query });
         setActiveIndex(0);
     };
 
@@ -82,24 +82,9 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
     const insertReference = (input: NodeGenerationInput) => {
         const editor = editorRef.current;
         if (!editor) return;
-        removeActiveMention();
-        const chip = createReferenceChip(input, inputs, theme, setImagePreview);
-        const space = document.createTextNode(" ");
-        const selection = window.getSelection();
-        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-        if (range) {
-            range.insertNode(space);
-            range.insertNode(chip);
-            range.setStartAfter(space);
-            range.collapse(true);
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-        } else {
-            editor.append(chip, space);
-            placeCaretAtEnd(editor);
-        }
+        insertEditorReference(editor, createReferenceChip(input, theme, setImagePreview));
         closeMention();
-        onChange(serializeEditor(editor));
+        onChange(serializeReferenceEditor(editor));
     };
 
     const stopCanvasInteraction = (event: PointerEvent | MouseEvent) => event.stopPropagation();
@@ -162,7 +147,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
                                 return;
                             }
                         }
-                        if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentReference(event.key)) {
+                        if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentEditorReference(event.currentTarget, event.key)) {
                             event.preventDefault();
                             requestAnimationFrame(syncFromEditor);
                             return;
@@ -230,10 +215,10 @@ function ResourcePreview({ input }: { input: NodeGenerationInput }) {
     );
 }
 
-function createReferenceChip(input: NodeGenerationInput, inputs: NodeGenerationInput[], theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void) {
+function createReferenceChip(input: NodeGenerationInput, theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void) {
     const wrapper = document.createElement("span");
     wrapper.contentEditable = "false";
-    wrapper.dataset.referenceNodeId = input.nodeId;
+    wrapper.dataset.referenceValue = `@[node:${input.nodeId}]`;
     wrapper.className = "mx-px inline-flex h-7 max-w-40 items-center justify-center overflow-hidden rounded-md border px-1 text-xs leading-none align-middle";
     Object.assign(wrapper.style, chipStyle(theme));
     if (input.type === "image" && input.image) {
@@ -256,92 +241,6 @@ function createReferenceChip(input: NodeGenerationInput, inputs: NodeGenerationI
         wrapper.appendChild(text);
     }
     return wrapper;
-}
-
-function serializeEditor(editor: HTMLElement) {
-    return serializeNodes(editor.childNodes).replace(/\uFEFF/g, "");
-}
-
-function serializeNodes(nodes: NodeListOf<ChildNode>) {
-    let result = "";
-    nodes.forEach((node) => {
-        if (node.nodeType === Node.TEXT_NODE) result += node.textContent || "";
-        if (!(node instanceof HTMLElement)) return;
-        const nodeId = node.dataset.referenceNodeId;
-        if (nodeId) result += `@[node:${nodeId}]`;
-        else if (node.tagName === "BR") result += "\n";
-        else result += serializeNodes(node.childNodes);
-    });
-    return result;
-}
-
-function removeActiveMention() {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return;
-    const range = selection.getRangeAt(0);
-    const text = textBeforeCaret();
-    const match = /@([^\s@]*)$/.exec(text);
-    if (!match) return;
-    range.setStart(range.startContainer, Math.max(0, range.startOffset - (match[1] || "").length - 1));
-    range.deleteContents();
-}
-
-function deleteAdjacentReference(key: string) {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount || !selection.isCollapsed) return false;
-    const range = selection.getRangeAt(0);
-    const target = adjacentReferenceNode(range, key);
-    if (!target) return false;
-    const nextCaretNode = document.createTextNode("");
-    target.replaceWith(nextCaretNode);
-    range.setStart(nextCaretNode, 0);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return true;
-}
-
-function adjacentReferenceNode(range: Range, key: string) {
-    const container = range.startContainer;
-    const offset = range.startOffset;
-    const previous = key === "Backspace";
-    if (container.nodeType === Node.TEXT_NODE) {
-        const text = container.textContent || "";
-        if ((previous && offset > 0) || (!previous && offset < text.length)) return null;
-        return findReferenceSibling(container, previous);
-    }
-    const children = Array.from(container.childNodes);
-    return findReferenceSibling(children[previous ? offset - 1 : offset] || container, previous, true);
-}
-
-function findReferenceSibling(node: Node, previous: boolean, includeSelf = false): HTMLElement | null {
-    let current: Node | null = includeSelf ? node : previous ? node.previousSibling : node.nextSibling;
-    while (current && current.nodeType === Node.TEXT_NODE && !(current.textContent || "").trim()) current = previous ? current.previousSibling : current.nextSibling;
-    return current instanceof HTMLElement && current.dataset.referenceNodeId ? current : null;
-}
-
-function textBeforeCaret() {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return "";
-    const range = selection.getRangeAt(0).cloneRange();
-    const editor = closestEditor(range.startContainer);
-    if (!editor) return "";
-    range.setStart(editor, 0);
-    return range.toString();
-}
-
-function closestEditor(node: Node) {
-    const element = node instanceof Element ? node : node.parentElement;
-    return element?.closest("[contenteditable='true']") || null;
-}
-
-function placeCaretAtEnd(element: HTMLElement) {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
 }
 
 function parseComposerTokens(value: string): Token[] {

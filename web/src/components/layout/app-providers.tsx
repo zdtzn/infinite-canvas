@@ -9,6 +9,7 @@ import { AccountSessionController } from "@/components/layout/account-session-co
 import { imperialModeChangeEvent, ImperialModeProvider } from "@/features/cultivation/imperial-mode";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { lazyRoute } from "@/lib/lazy-route";
+import { PROMPT_LIBRARY_UPDATED_EVENT } from "@/lib/prompt-library-events";
 import { useThemeStore } from "@/stores/use-theme-store";
 
 const ClientRootInit = lazyRoute(() => import("@/components/layout/client-root-init").then(({ ClientRootInit: Component }) => ({ default: Component })));
@@ -29,6 +30,12 @@ export function AppProviders({ children }: { children: ReactNode }) {
     const theme = useThemeStore((state) => state.theme);
     const [imperialModeActive, setImperialModeActive] = useState(false);
     const dark = theme === "dark" || imperialModeActive;
+
+    useEffect(() => {
+        const refresh = () => void queryClient.invalidateQueries({ queryKey: ["prompts"] });
+        window.addEventListener(PROMPT_LIBRARY_UPDATED_EVENT, refresh);
+        return () => window.removeEventListener(PROMPT_LIBRARY_UPDATED_EVENT, refresh);
+    }, []);
 
     useEffect(() => {
         const syncImperialMode = () => setImperialModeActive(document.documentElement.dataset.imperialMode === "true");

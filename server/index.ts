@@ -39,7 +39,7 @@ import { decryptSecret, encryptSecret, normalizeEncryptionSecret } from "./lib/c
 import { generationHistoryJobIdsForDeletion, GenerationHistoryInputError, normalizeGenerationHistory, normalizeGenerationHistoryDeletion, normalizeGenerationHistoryItem } from "./lib/generation-history";
 import { parseSingleByteRange } from "./lib/http-range";
 import { ImageJobReferenceInputError, imageJobReferenceTotalBytes, parseClientImageJobReference } from "./lib/image-job-reference";
-import { resolveServerImageCapabilityProfile, validateServerImageCapabilityRequest } from "./lib/image-capabilities";
+import { resolveImageModelCapabilityProfile, validateImageRequest } from "../shared/image-model-capabilities";
 import { decodeImageDataUrl, detectImageMimeFromBytes, isAllowedImageMimeType, readImageDimensions, resolveImageMimeType } from "./lib/image-mime";
 import { buildOpenAiImageRequestOptions, imageResponseItemValue, imageResponseItems, resolveOpenAiImageSize, usesJsonReferenceGeneration } from "./lib/image-request";
 import { imageEditReferenceField, geminiImageGenerationConfig } from "./lib/image-provider-protocol";
@@ -3223,7 +3223,7 @@ async function createImageJob(request: Request, session: SessionPayload) {
     const size = optionalString(body.size);
     const background = optionalString(body.background);
     try {
-        validateServerImageCapabilityRequest(resolveServerImageCapabilityProfile(model, channel.apiFormat, channel.baseUrl, configuredModel.imageCapabilities).capabilities, {
+        validateImageRequest(resolveImageModelCapabilityProfile(model, channel.apiFormat, channel.baseUrl, configuredModel.imageCapabilities).capabilities, {
             resolution,
             imageQuality: requestedImageQuality,
             imageOutputFormat: requestedImageOutputFormat,

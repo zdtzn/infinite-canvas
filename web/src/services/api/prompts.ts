@@ -5,6 +5,7 @@ import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "./prompt-source-presets";
 import { classifyPromptTags, isPromptTaxonomyTag, sortPromptTaxonomyTags } from "./prompt-taxonomy";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
+import { notifyPromptLibraryUpdated } from "@/lib/prompt-library-events";
 import { serverRequest } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { getPromptUsage, mergeCrossSourcePrompts, searchLocalPrompts, tokenizePromptKeyword, type PromptMedia, type PromptOrder, type PromptOrigin, type PromptUsage } from "../../../../shared/prompt-library";
@@ -41,7 +42,6 @@ export type PromptSourceStatus = {
 
 export const PROMPT_SOURCE_CACHE_TTL_MS = 1000 * 60 * 60;
 const PROMPT_INITIAL_LOAD_BUDGET_MS = 2_500;
-export const PROMPT_LIBRARY_UPDATED_EVENT = "infinite-canvas:prompt-library-updated";
 const promptCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "prompt_cache" });
 
 type SourceCache = PromptSourceStatus & { items: Prompt[]; fetchedAt: number; signature: string };
@@ -104,7 +104,7 @@ async function runSource(source: PromptSource): Promise<Prompt[]> {
         lastError: "",
         signature: sourceSignature(source),
     });
-    notifyPromptLibraryUpdated(source.id);
+    notifyPromptLibraryUpdated();
     return prompts;
 }
 
@@ -172,30 +172,26 @@ export async function fetchHomepagePromptCovers(): Promise<PromptCover[]> {
     const sources = enabledSources();
     if (!sources.length) return [];
     if (PUBLIC_MODE) {
-        try {
-            const requests = [];
-            for (let offset = 0; offset < sources.length; offset += 100) {
-                const params = new URLSearchParams();
-                sources.slice(offset, offset + 100).forEach((source) => params.append("sourceId", source.id));
-                requests.push(serverRequest<{ items: Array<Omit<PromptCover, "category"> & { sourceId: string }>; indexedSourceIds: string[]; enabledSourceIds: string[] }>(`/api/prompt-index/covers?${params}`, { timeoutMs: 2_500, expectedUserId: useUserStore.getState().user?.id }));
-            }
-            const responses = await Promise.all(requests);
-            const enabled = new Set(responses.flatMap((response) => response.enabledSourceIds ?? []));
-            const indexed = new Set(responses.flatMap((response) => response.indexedSourceIds));
-            const bySource = new Map<string, PromptCover[]>();
-            const currentSources = sources.filter((source) => enabled.has(source.id));
-            const sourceById = new Map(currentSources.map((source) => [source.id, source]));
-            for (const item of responses.flatMap((response) => response.items)) {
-                const source = sourceById.get(item.sourceId);
-                if (!source) continue;
-                const group = bySource.get(source.id) || [];
-                group.push({ id: item.id, title: item.title, coverUrl: normalizePromptAssets({ coverUrl: item.coverUrl, preview: "" }).coverUrl, category: source.name });
-                bySource.set(source.id, group);
-            }
-            return (await Promise.all(currentSources.map(async (source) => indexed.has(source.id) ? bySource.get(source.id) || [] : (await loadSourceWithinBudget(source)).map(toPromptCover)))).flat();
-        } catch {
-            return [];
+        const requests = [];
+        for (let offset = 0; offset < sources.length; offset += 100) {
+            const params = new URLSearchParams();
+            sources.slice(offset, offset + 100).forEach((source) => params.append("sourceId", source.id));
+            requests.push(serverRequest<{ items: Array<Omit<PromptCover, "category"> & { sourceId: string }>; indexedSourceIds: string[]; enabledSourceIds: string[] }>(`/api/prompt-index/covers?${params}`, { timeoutMs: 2_500, expectedUserId: useUserStore.getState().user?.id }));
         }
+        const responses = await Promise.all(requests);
+        const enabled = new Set(responses.flatMap((response) => response.enabledSourceIds ?? []));
+        const indexed = new Set(responses.flatMap((response) => response.indexedSourceIds));
+        const bySource = new Map<string, PromptCover[]>();
+        const currentSources = sources.filter((source) => enabled.has(source.id));
+        const sourceById = new Map(currentSources.map((source) => [source.id, source]));
+        for (const item of responses.flatMap((response) => response.items)) {
+            const source = sourceById.get(item.sourceId);
+            if (!source) continue;
+            const group = bySource.get(source.id) || [];
+            group.push({ id: item.id, title: item.title, coverUrl: normalizePromptAssets({ coverUrl: item.coverUrl, preview: "" }).coverUrl, category: source.name });
+            bySource.set(source.id, group);
+        }
+        return (await Promise.all(currentSources.map(async (source) => indexed.has(source.id) ? bySource.get(source.id) || [] : (await loadSourceWithinBudget(source)).map(toPromptCover)))).flat();
     }
     return (await getAllPrompts()).map(toPromptCover);
 }
@@ -254,19 +250,6 @@ async function fetchPromptIndex(options: PromptIndexRequest) {
     }
 }
 
-/** Load the complete prompt library across every enabled source. */
-export async function fetchAllPrompts(): Promise<Prompt[]> {
-    if (PUBLIC_MODE) {
-        const items: Prompt[] = [];
-        for (let page = 1; ; page += 1) {
-            const result = await fetchPrompts({ page, pageSize: 100 });
-            items.push(...result.items);
-            if (!result.items.length || items.length >= result.total) return items;
-        }
-    }
-    return (await getAllPrompts()).map(withPromptTaxonomy);
-}
-
 /** Load a single source's prompts (used by the source content table). Throws so the caller can show the error. */
 export async function fetchSourcePrompts(sourceId: string): Promise<Prompt[]> {
     const source = usePromptSourceStore.getState().sources.find((item) => item.id === sourceId);
@@ -285,11 +268,6 @@ export async function fetchSourcePrompts(sourceId: string): Promise<Prompt[]> {
     return (await getSourcePrompts(source)).map(withPromptTaxonomy);
 }
 
-export async function fetchPromptIndexStatuses(): Promise<PromptSourceStatus[]> {
-    const response = await serverRequest<{ items: PromptSourceStatus[] }>("/api/admin/prompt-index/status", { timeoutMs: 12_000, expectedUserId: useUserStore.getState().user?.id });
-    return response.items;
-}
-
 type PromptSourceRefreshResult = PromptSourceStatus & { name: string; success: boolean };
 type PromptRefreshSummary = { count: number; succeeded: number; failed: number };
 
@@ -303,16 +281,12 @@ async function requestPromptIndexRefresh(sourceId?: string) {
     return response.results;
 }
 
-export function notifyPromptLibraryUpdated(sourceId?: string) {
-    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(PROMPT_LIBRARY_UPDATED_EVENT, { detail: { sourceId } }));
-}
-
 /** Force a single enabled source to refresh and return its newly indexed count. */
 export async function refreshSource(sourceId: string): Promise<number> {
     if (PUBLIC_MODE) {
         const [result] = await requestPromptIndexRefresh(sourceId);
         if (!result?.success) throw new Error(result?.lastError || "提示词来源刷新失败");
-        notifyPromptLibraryUpdated(sourceId);
+        notifyPromptLibraryUpdated();
         return result.count;
     }
     const source = enabledSources().find((item) => item.id === sourceId);
@@ -334,7 +308,10 @@ export async function refreshAllSources(): Promise<PromptRefreshSummary> {
 }
 
 export async function fetchPromptSourceStatuses(): Promise<Record<string, PromptSourceStatus>> {
-    if (PUBLIC_MODE) return Object.fromEntries((await fetchPromptIndexStatuses()).map((status) => [status.sourceId, status]));
+    if (PUBLIC_MODE) {
+        const { items } = await serverRequest<{ items: PromptSourceStatus[] }>("/api/admin/prompt-index/status", { timeoutMs: 12_000, expectedUserId: useUserStore.getState().user?.id });
+        return Object.fromEntries(items.map((status) => [status.sourceId, status]));
+    }
     const entries = await Promise.all(
         usePromptSourceStore.getState().sources.map(async (source) => {
             const cached = await promptCacheStore.getItem<SourceCache>(promptSourceCacheKey(source.id));

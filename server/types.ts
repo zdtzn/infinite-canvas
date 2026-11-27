@@ -1,20 +1,10 @@
 import type { QueueJob } from "./lib/job-queue";
 import type { EncryptedSecret } from "./lib/crypto-store";
 import type { ProviderProtocol } from "./lib/url-policy";
+import type { ChannelImageCapabilityConfig } from "../shared/image-model-capabilities";
 
 export type UserStatus = "NORMAL" | "DISABLED" | "BANNED";
 export type ChannelCapability = "image" | "video" | "text" | "audio";
-export type ChannelImageCapabilityConfig = {
-  mode: "auto" | "conservative" | "custom";
-  resolutions?: string[];
-  generationQualities?: string[];
-  outputFormats?: string[];
-  sizes?: string[];
-  customSize?: boolean;
-  transparentBackground?: boolean;
-  maxReferences?: number;
-  maxOutputs?: number;
-};
 export type ChannelModelRecord = {
   name: string;
   capability: ChannelCapability;

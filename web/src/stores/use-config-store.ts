@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
-import type { ChannelImageCapabilityConfig } from "@/stores/model-capabilities";
+import { normalizeChannelImageCapabilities, type ChannelImageCapabilityConfig } from "../../../shared/image-model-capabilities";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -680,31 +680,6 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         result.push({ name, capability, script, imageCapabilities });
     }
     return result;
-}
-
-export function normalizeChannelImageCapabilities(input: ChannelImageCapabilityConfig | undefined): ChannelImageCapabilityConfig | undefined {
-    if (!input || !["auto", "conservative", "custom"].includes(input.mode)) return undefined;
-    if (input.mode !== "custom") return { mode: input.mode };
-    const ratios = Array.from(new Set((input.sizes || []).map((value) => String(value).trim()).filter((value) => /^\d{1,3}:\d{1,3}$/.test(value)))).slice(0, 30);
-    const options = (values: string[] | undefined, allowed: string[], fallback: string[]) => {
-        const normalized = Array.from(new Set((values || []).map((value) => String(value).trim().toLowerCase()).filter((value) => allowed.includes(value))));
-        return normalized.length ? normalized : fallback;
-    };
-    const integer = (value: number | undefined, minimum: number, maximum: number, fallback: number) => {
-        const parsed = Math.floor(Number(value));
-        return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
-    };
-    return {
-        mode: "custom",
-        resolutions: options(input.resolutions, ["auto", "low", "medium", "high"], ["auto"]),
-        generationQualities: options(input.generationQualities, ["auto", "low", "medium", "high", "standard", "hd"], ["auto"]),
-        outputFormats: options(input.outputFormats, ["auto", "png", "jpeg", "webp"], ["auto"]),
-        sizes: ratios.length ? ratios : ["1:1"],
-        customSize: Boolean(input.customSize),
-        transparentBackground: Boolean(input.transparentBackground),
-        maxReferences: integer(input.maxReferences, 0, 16, 1),
-        maxOutputs: integer(input.maxOutputs, 1, 10, 1),
-    };
 }
 
 export function createModelChannel(channel?: Partial<ModelChannel>): ModelChannel {

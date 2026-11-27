@@ -8,6 +8,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { deleteAdjacentEditorReference, insertEditorReference, readReferenceMention, serializeReferenceEditor } from "./reference-editor";
 
 type Props = {
     value: string;
@@ -80,18 +81,18 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     const syncFromEditor = () => {
         const editor = editorRef.current;
         if (!editor) return;
-        emit(serializeEditor(editor));
+        emit(serializeReferenceEditor(editor));
         syncMention();
     };
 
     const syncMention = () => {
-        const text = textBeforeCaret();
-        const match = /@([^\s@]*)$/.exec(text);
-        if (!match || !activeReferences.length) {
+        const editor = editorRef.current;
+        const query = editor && readReferenceMention(editor);
+        if (query === null || !activeReferences.length) {
             closeMention();
             return;
         }
-        setMention({ query: match[1] || "", rect: caretRect() });
+        setMention({ query, rect: caretRect(editor) });
         setActiveIndex(0);
     };
 
@@ -103,24 +104,9 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     const insertReference = (reference: CanvasResourceReference) => {
         const editor = editorRef.current;
         if (!editor) return;
-        removeActiveMention();
-        const chip = createReferenceChip(reference, theme, setImagePreview);
-        const space = document.createTextNode(" ");
-        const selection = window.getSelection();
-        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-        if (range) {
-            range.insertNode(space);
-            range.insertNode(chip);
-            range.setStartAfter(space);
-            range.collapse(true);
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-        } else {
-            editor.append(chip, space);
-            placeCaretAtEnd(editor);
-        }
+        insertEditorReference(editor, createReferenceChip(reference, theme, setImagePreview));
         closeMention();
-        emit(serializeEditor(editor));
+        emit(serializeReferenceEditor(editor));
     };
 
     const showPlaceholder = !value.trim();
@@ -175,7 +161,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                             return;
                         }
                     }
-                    if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentReference(event.key)) {
+                    if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentEditorReference(event.currentTarget, event.key)) {
                         event.preventDefault();
                         requestAnimationFrame(syncFromEditor);
                         return;
@@ -274,7 +260,7 @@ function ReferencePreview({ reference }: { reference: CanvasResourceReference })
 function createReferenceChip(reference: CanvasResourceReference, theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void) {
     const wrapper = document.createElement("span");
     wrapper.contentEditable = "false";
-    wrapper.dataset.refLabel = reference.label;
+    wrapper.dataset.referenceValue = reference.label;
     if (reference.kind === "image" && reference.previewUrl) {
         const image = document.createElement("img");
         image.src = reference.previewUrl;
@@ -299,80 +285,7 @@ function createReferenceChip(reference: CanvasResourceReference, theme: (typeof 
     return wrapper;
 }
 
-function serializeEditor(editor: HTMLElement) {
-    return serializeNodes(editor.childNodes).replace(/﻿/g, "");
-}
-
-function serializeNodes(nodes: NodeListOf<ChildNode>) {
-    let result = "";
-    nodes.forEach((node) => {
-        if (node.nodeType === Node.TEXT_NODE) result += node.textContent || "";
-        if (!(node instanceof HTMLElement)) return;
-        const label = node.dataset.refLabel;
-        if (label) result += label;
-        else if (node.tagName === "BR") result += "\n";
-        else result += serializeNodes(node.childNodes);
-    });
-    return result;
-}
-
-function removeActiveMention() {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return;
-    const range = selection.getRangeAt(0);
-    const text = textBeforeCaret();
-    const match = /@([^\s@]*)$/.exec(text);
-    if (!match) return;
-    range.setStart(range.startContainer, Math.max(0, range.startOffset - (match[1] || "").length - 1));
-    range.deleteContents();
-}
-
-// chip 是 contentEditable="false" 的原子块,光标紧邻它按 Backspace/Delete 时整块删除。
-function deleteAdjacentReference(key: string) {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount || !selection.isCollapsed) return false;
-    const range = selection.getRangeAt(0);
-    const target = adjacentReferenceNode(range, key);
-    if (!target) return false;
-    const nextCaretNode = document.createTextNode("");
-    target.replaceWith(nextCaretNode);
-    range.setStart(nextCaretNode, 0);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return true;
-}
-
-function adjacentReferenceNode(range: Range, key: string) {
-    const container = range.startContainer;
-    const offset = range.startOffset;
-    const previous = key === "Backspace";
-    if (container.nodeType === Node.TEXT_NODE) {
-        const text = container.textContent || "";
-        if ((previous && offset > 0) || (!previous && offset < text.length)) return null;
-        return findReferenceSibling(container, previous);
-    }
-    const children = Array.from(container.childNodes);
-    return findReferenceSibling(children[previous ? offset - 1 : offset] || container, previous, true);
-}
-
-function findReferenceSibling(node: Node, previous: boolean, includeSelf = false): HTMLElement | null {
-    let current: Node | null = includeSelf ? node : previous ? node.previousSibling : node.nextSibling;
-    while (current && current.nodeType === Node.TEXT_NODE && !(current.textContent || "").trim()) current = previous ? current.previousSibling : current.nextSibling;
-    return current instanceof HTMLElement && current.dataset.refLabel ? current : null;
-}
-
-function textBeforeCaret() {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return "";
-    const range = selection.getRangeAt(0).cloneRange();
-    const editor = closestEditor(range.startContainer);
-    if (!editor) return "";
-    range.setStart(editor, 0);
-    return range.toString();
-}
-
-function caretRect(): DOMRect | null {
+function caretRect(editor: HTMLElement | null): DOMRect | null {
     const selection = window.getSelection();
     if (!selection?.rangeCount) return null;
     const range = selection.getRangeAt(0).cloneRange();
@@ -380,22 +293,7 @@ function caretRect(): DOMRect | null {
     const rect = range.getBoundingClientRect();
     if (rect.width || rect.height || rect.left || rect.top) return rect;
     // 空行/空编辑器时 range 无尺寸,退回到编辑器盒子。
-    const editor = closestEditor(range.startContainer);
-    return editor ? editor.getBoundingClientRect() : null;
-}
-
-function closestEditor(node: Node) {
-    const element = node instanceof Element ? node : node.parentElement;
-    return element?.closest("[contenteditable='true']") || null;
-}
-
-function placeCaretAtEnd(element: HTMLElement) {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    return editor?.getBoundingClientRect() ?? null;
 }
 
 // 按 active label(已按长度降序)把 value 文本切成「文本片段 + 命中的引用 label」。

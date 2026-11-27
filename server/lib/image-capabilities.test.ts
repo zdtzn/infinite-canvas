@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { resolveServerImageCapabilityProfile, validateServerImageCapabilityRequest } from "./image-capabilities";
+import { resolveImageModelCapabilityProfile as resolveServerImageCapabilityProfile, validateImageRequest as validateServerImageCapabilityRequest } from "../../shared/image-model-capabilities";
 
 describe("server image channel capabilities", () => {
   test("Gemini aliases require declared resolution support and explicit limits take priority", () => {

@@ -29,11 +29,7 @@ export function usePromptSourceScheduler() {
             try {
                 const { succeeded } = await refreshAllSources();
                 if (succeeded) updateSchedule("lastFetchedAt", new Date().toISOString());
-                await Promise.all([
-                    queryClient.invalidateQueries({ queryKey: ["prompts"] }),
-                    queryClient.invalidateQueries({ queryKey: ["side-panel-prompts"] }),
-                    queryClient.invalidateQueries({ queryKey: ["prompt-source-statuses"] }),
-                ]);
+                await queryClient.invalidateQueries({ queryKey: ["prompt-source-statuses"] });
             } catch {
                 // Keep the last successful time when the refresh request fails.
             } finally {

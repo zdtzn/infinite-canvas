@@ -6,7 +6,8 @@ import { Suspense, useState } from "react";
 import { lazyRoute } from "@/lib/lazy-route";
 import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { PromptSourceContentModal } from "./prompt-source-content-modal";
-import { fetchPromptSourceStatuses, notifyPromptLibraryUpdated, refreshAllSources, refreshSource } from "@/services/api/prompts";
+import { fetchPromptSourceStatuses, refreshAllSources, refreshSource } from "@/services/api/prompts";
+import { notifyPromptLibraryUpdated } from "@/lib/prompt-library-events";
 import { deleteServerPromptSource, saveServerPromptSource } from "@/services/server-api";
 import { isBuiltInPromptSource, PROMPT_SOURCE_INTERVAL_OPTIONS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
@@ -44,13 +45,6 @@ export function ConfigPromptSources() {
     const editingSource = sources.find((item) => item.id === editingId) || null;
     const viewingSource = sources.find((item) => item.id === viewingId && (!PUBLIC_MODE || item.enabled)) || null;
 
-    const invalidatePromptQueries = () =>
-        Promise.all([
-            queryClient.invalidateQueries({ queryKey: ["prompts"] }),
-            queryClient.invalidateQueries({ queryKey: ["side-panel-prompts"] }),
-            queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY }),
-        ]);
-
     const handleAdd = () => {
         if (!canManageSources) return;
         const source = addSource();
@@ -61,7 +55,8 @@ export function ConfigPromptSources() {
         try {
             const saved = PUBLIC_MODE ? (await saveServerPromptSource(source)).source : source;
             saveSource(saved);
-            await invalidatePromptQueries();
+            notifyPromptLibraryUpdated();
+            await queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY });
             message.success("提示词来源已保存");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "提示词来源保存失败");
@@ -74,7 +69,8 @@ export function ConfigPromptSources() {
         try {
             if (PUBLIC_MODE) await deleteServerPromptSource(source.id);
             removeSource(source.id);
-            await invalidatePromptQueries();
+            notifyPromptLibraryUpdated();
+            await queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY });
             message.success("提示词来源已删除");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "提示词来源删除失败");
@@ -85,15 +81,15 @@ export function ConfigPromptSources() {
         if (!canManageSources) return;
         if (!PUBLIC_MODE) {
             toggleSource(source.id, enabled);
-            notifyPromptLibraryUpdated(source.id);
+            notifyPromptLibraryUpdated();
             return;
         }
         setTogglingId(source.id);
         try {
             const saved = (await saveServerPromptSource({ ...source, enabled })).source;
             saveSource(isBuiltInPromptSource(source) ? { ...saved, script: source.script } : saved);
-            notifyPromptLibraryUpdated(source.id);
-            await invalidatePromptQueries();
+            notifyPromptLibraryUpdated();
+            await queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY });
         } catch (error) {
             message.error(userFacingErrorMessage(error, "提示词来源状态保存失败"));
         } finally {
@@ -105,13 +101,12 @@ export function ConfigPromptSources() {
         setRefreshingId(source.id);
         try {
             const count = await refreshSource(source.id);
-            await invalidatePromptQueries();
             message.success(`「${source.name}」已更新，共 ${count} 条`);
         } catch (error) {
-            await queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY });
             message.error(userFacingErrorMessage(error, "暂时无法更新"));
         } finally {
             setRefreshingId("");
+            await queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY });
         }
     };
 
@@ -120,7 +115,6 @@ export function ConfigPromptSources() {
         try {
             const { count, succeeded, failed } = await refreshAllSources();
             if (succeeded) updateSchedule("lastFetchedAt", new Date().toISOString());
-            await invalidatePromptQueries();
             if (!succeeded && !failed) message.info("没有启用的来源");
             else if (!succeeded) message.error(`${failed} 个来源更新失败，请查看各来源状态`);
             else if (failed) message.warning(`${succeeded} 个来源已更新，共 ${count} 条，${failed} 个来源更新失败`);
@@ -129,6 +123,7 @@ export function ConfigPromptSources() {
             message.error(userFacingErrorMessage(error, "暂时无法更新提示词，请稍后再试"));
         } finally {
             setRefreshingAll(false);
+            await queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY });
         }
     };
 

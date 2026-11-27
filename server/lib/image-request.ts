@@ -245,10 +245,6 @@ function isGptImage2Model(model: string) {
     return model.toLowerCase().split("::").at(-1)?.trim() === "gpt-image-2";
 }
 
-export function isGptImage25Model(model: string) {
-    return /^gpt-image-2\.5(?:-flare)?$/.test(model.toLowerCase().split("::").at(-1)?.trim() || "");
-}
-
 function isLegacyGptImageModel(model: string) {
     const name = model.toLowerCase().split("::").at(-1)?.trim() || "";
     return /^gpt-image-1(?:$|[.-])/.test(name);

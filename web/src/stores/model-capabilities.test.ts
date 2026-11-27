@@ -2,18 +2,15 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { deriveImageModelCapabilities, resolveImageModelCapabilityProfile, resolveImageSlotConcurrency, validateImageRequest } from "./model-capabilities";
-import { resolveServerImageCapabilityProfile } from "../../../server/lib/image-capabilities";
 
-test("Image 2.5 capabilities remain consistent across frontend, server and providers", () => {
+test("Image 2.5 capabilities remain consistent across providers", () => {
     for (const host of ["https://uuapi.cc", "https://gguuai.com", "https://api.sadai.top", "https://dragtokens.com", "https://other-provider.test"]) {
         for (const model of ["gpt-image-2.5", "gpt-image-2.5-flare"]) {
-            const client = resolveImageModelCapabilityProfile(model, "openai", host);
-            const server = resolveServerImageCapabilityProfile(model, "openai", host);
-            assert.deepEqual(client.capabilities, server.capabilities);
-            assert.match(client.label, /2\.5/);
-            assert(client.capabilities.sizes.includes("9:16"));
-            assert.equal(client.capabilities.maxReferences, 16);
-            assert(client.capabilities.outputFormats.includes("webp"));
+            const profile = resolveImageModelCapabilityProfile(model, "openai", host);
+            assert.match(profile.label, /2\.5/);
+            assert(profile.capabilities.sizes.includes("9:16"));
+            assert.equal(profile.capabilities.maxReferences, 16);
+            assert(profile.capabilities.outputFormats.includes("webp"));
             assert.equal(resolveImageSlotConcurrency(host, model, 3), 3);
         }
     }

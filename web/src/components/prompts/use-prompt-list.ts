@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 
-import { ALL_PROMPTS_OPTION, fetchPrompts, PROMPT_LIBRARY_UPDATED_EVENT } from "@/services/api/prompts";
+import { ALL_PROMPTS_OPTION, fetchPrompts } from "@/services/api/prompts";
 import { PROMPT_TAXONOMY } from "@/services/api/prompt-taxonomy";
 import type { PromptMedia, PromptOrder } from "../../../../shared/prompt-library";
 
@@ -27,16 +27,10 @@ type PromptListOptions = {
 
 export function usePromptList({ sourceId = "", keyword, tags, category, media, pageSize = PROMPT_PAGE_SIZE, enabled = true, order = "relevance", browseOrder = "desc" }: PromptListOptions) {
     const [debouncedKeyword, setDebouncedKeyword] = useState(keyword);
-    const queryClient = useQueryClient();
     useEffect(() => {
         const timer = window.setTimeout(() => setDebouncedKeyword(keyword), 300);
         return () => window.clearTimeout(timer);
     }, [keyword]);
-    useEffect(() => {
-        const refresh = () => void queryClient.invalidateQueries({ queryKey: ["prompts"] });
-        window.addEventListener(PROMPT_LIBRARY_UPDATED_EVENT, refresh);
-        return () => window.removeEventListener(PROMPT_LIBRARY_UPDATED_EVENT, refresh);
-    }, [queryClient]);
     const requestOrder = order === "relevance" && !debouncedKeyword.trim() ? browseOrder : order;
     const query = useInfiniteQuery({
         queryKey: ["prompts", sourceId, debouncedKeyword, tags, category, media, pageSize, requestOrder],
