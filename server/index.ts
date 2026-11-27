@@ -4194,7 +4194,7 @@ async function persistJobImageBytes(userId: string, jobId: string, bytes: Uint8A
         const file = (reference: string | StoredImageReference) => typeof reference === "string" ? Buffer.from(parseDataUrl(reference).base64, "base64") : storedImageReferencePath(reference);
         const source = file(input.references[0]);
         const mask = file(input.mask);
-        bytes = await localEditSemaphore.run(signal, () => finalizeLocalEdit(source, mask, bytes, signal));
+        bytes = await localEditSemaphore.run(signal, () => finalizeLocalEdit(source, mask, bytes, signal, input.background === "transparent"));
         mimeType = "image/png";
         signal.throwIfAborted();
         if (bytes.byteLength > MAX_UPSTREAM_IMAGE_BYTES) throw new Error("局部编辑结果超过 32 MB，请使用体积更小的原图");

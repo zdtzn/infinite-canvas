@@ -16,13 +16,14 @@ type Props = {
     ownerUserId: string;
     modelLabel: string;
     quotaLabel: string;
+    transparentBackground: boolean;
     blockReason: string | null;
     allowGuide: boolean;
     onClose: () => void;
     onSubmit: (edit: LocalImageEdit, signal: AbortSignal) => Promise<void>;
 };
 
-export function LocalImageEditDialog({ source, ownerUserId, modelLabel, quotaLabel, blockReason, allowGuide, onClose, onSubmit }: Props) {
+export function LocalImageEditDialog({ source, ownerUserId, modelLabel, quotaLabel, transparentBackground, blockReason, allowGuide, onClose, onSubmit }: Props) {
     const [imageUrl, setImageUrl] = useState("");
     const [size, setSize] = useState<{ width: number; height: number } | null>(null);
     const [regions, setRegions] = useState<EditRegion[]>([]);
@@ -236,7 +237,7 @@ export function LocalImageEditDialog({ source, ownerUserId, modelLabel, quotaLab
                     </div>
                     <div className="mt-auto space-y-1.5 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">
                         <p className="break-words">{modelLabel} · {quotaLabel}</p>
-                        <p>以原尺寸生成 PNG，选区外保留原图像素。</p>
+                        <p>以原尺寸生成 PNG，选区外保留原图像素。{transparentBackground && "透明背景已开启，选区内的原有透明区域也会保留。"}</p>
                         {blockReason || error ? <p role="alert" className="text-destructive">{blockReason || error}</p> : null}
                     </div>
                 </section>

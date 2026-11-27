@@ -884,8 +884,10 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal, timeout: DIRECT_IMAGE_REQUEST_TIMEOUT_MS });
         const images = parseImagePayload(response.data, imageOutputFormatMimeType(imageOutputFormat));
-        if (options?.preserveOutsideMask && mask && references[0]) {
-            return await Promise.all(images.slice(0, 1).map(async (image) => ({ ...image, ...await finalizeDirectImageEdit(references[0].dataUrl, mask.dataUrl, image.dataUrl, options.expectedUserId, options.signal) })));
+        if (options?.preserveOutsideMask && mask && references[0] && images[0]) {
+            const image = images[0];
+            const edited = await finalizeDirectImageEdit(references[0].dataUrl, mask.dataUrl, image.dataUrl, options.expectedUserId, options.signal, background === "transparent");
+            return [{ ...image, ...edited }];
         }
         return images;
     } catch (error) {

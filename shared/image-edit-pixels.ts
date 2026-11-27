@@ -29,21 +29,25 @@ function softenSelectionEdges(width: number, height: number, keep: Pixels, chann
 }
 
 /** The mask's alpha is the proportion of the original pixel to keep. */
-export function mergeImageEditPixels(original: Pixels, edited: Pixels, keep: Pixels, maskChannels: 1 | 4, width: number, height: number) {
+export function mergeImageEditPixels(original: Pixels, edited: Pixels, keep: Pixels, maskChannels: 1 | 4, width: number, height: number, preserveSourceTransparency = false) {
     const feather = softenSelectionEdges(width, height, keep, maskChannels);
     for (let offset = 0, alpha = maskChannels - 1; offset < original.length; offset += 4, alpha += maskChannels) {
         const strength = Math.max(keep[alpha], feather?.[offset / 4] ?? 0);
         if (strength === 255) continue;
+        const originalAlpha = original[offset + 3];
+        if (preserveSourceTransparency && originalAlpha === 0) continue;
+        // Transparent local edits can remove opacity, but keep the source's existing transparent background and edges.
+        const editedAlpha = preserveSourceTransparency ? Math.min(edited[offset + 3], originalAlpha) : edited[offset + 3];
         if (strength === 0) {
             original[offset] = edited[offset];
             original[offset + 1] = edited[offset + 1];
             original[offset + 2] = edited[offset + 2];
-            original[offset + 3] = edited[offset + 3];
+            original[offset + 3] = editedAlpha;
             continue;
         }
 
-        const before = original[offset + 3] * strength;
-        const after = edited[offset + 3] * (255 - strength);
+        const before = originalAlpha * strength;
+        const after = editedAlpha * (255 - strength);
         const alphaSum = before + after;
         for (let channel = 0; channel < 3; channel++) {
             const index = offset + channel;

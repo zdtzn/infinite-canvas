@@ -1670,6 +1670,7 @@ export default function ImagePage() {
                         source={localEditSource.reference}
                         ownerUserId={historyUserId}
                         modelLabel={modelOptionLabel(effectiveConfig, model)}
+                        transparentBackground={requestImageConfig.background === "transparent"}
                         quotaLabel={cultivationProfile?.unlimited === false ? (cultivationProfile.dailyLimit === 0 ? "本次占用 1 灵卷" : "本次占用 1 次生图额度") : "本次生成 1 张"}
                         blockReason={localEditBlockReasonFor(requestImageConfig)}
                         allowGuide={activeImageCapabilities.maxReferences >= 2}

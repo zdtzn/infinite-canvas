@@ -232,7 +232,7 @@ export async function convertImageOutput(input: string | Blob, outputFormat?: st
     }
 }
 
-export async function finalizeDirectImageEdit(original: string, mask: string, edited: string, expectedUserId?: string, signal?: AbortSignal) {
+export async function finalizeDirectImageEdit(original: string, mask: string, edited: string, expectedUserId?: string, signal?: AbortSignal, preserveSourceTransparency = false) {
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) throw new Error("当前浏览器无法保存局部编辑图片");
@@ -256,7 +256,7 @@ export async function finalizeDirectImageEdit(original: string, mask: string, ed
         const source = await readLayer(original, "original");
         const selection = await readLayer(mask, "mask");
         const result = await readLayer(edited, "edited");
-        mergeImageEditPixels(source.data, result.data, selection.data, 4, source.width, source.height);
+        mergeImageEditPixels(source.data, result.data, selection.data, 4, source.width, source.height, preserveSourceTransparency);
         context.putImageData(source, 0, 0);
         const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
         if (!blob) throw new Error("局部编辑图片无法保存");

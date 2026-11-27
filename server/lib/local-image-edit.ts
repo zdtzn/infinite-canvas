@@ -13,7 +13,7 @@ export async function assertLocalEditInputs(original: ImageInput, mask: ImageInp
     return size;
 }
 
-export async function finalizeLocalEdit(original: ImageInput, mask: ImageInput, edited: Uint8Array, signal: AbortSignal) {
+export async function finalizeLocalEdit(original: ImageInput, mask: ImageInput, edited: Uint8Array, signal: AbortSignal, preserveSourceTransparency = false) {
     const { width, height } = await assertLocalEditInputs(original, mask);
     signal.throwIfAborted();
     const [source, selection, result] = await Promise.all([
@@ -22,6 +22,6 @@ export async function finalizeLocalEdit(original: ImageInput, mask: ImageInput, 
         sharp(edited, decodeOptions).autoOrient().resize(width, height, { fit: "fill" }).toColourspace("srgb").ensureAlpha().raw().toBuffer(),
     ]);
     signal.throwIfAborted();
-    mergeImageEditPixels(source, result, selection, 1, width, height);
+    mergeImageEditPixels(source, result, selection, 1, width, height, preserveSourceTransparency);
     return sharp(source, { raw: { width, height, channels: 4 } }).png().toBuffer();
 }
