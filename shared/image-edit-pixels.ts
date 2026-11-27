@@ -1,4 +1,4 @@
-import { alignedEditOffset, findImageEditAlignments, OPAQUE_CORE_ALPHA } from "./image-edit-alignment";
+import { alignedEditOffset, findImageEditAlignments, imageEditAlignmentAt, OPAQUE_CORE_ALPHA } from "./image-edit-alignment";
 
 type Pixels = Uint8Array | Uint8ClampedArray;
 
@@ -48,9 +48,10 @@ export function mergeImageEditPixels(original: Pixels, edited: Pixels, keep: Pix
         const strength = Math.max(keep[alpha], feather?.[offset / 4] ?? 0);
         if (strength === 255) continue;
         const originalAlpha = original[offset + 3];
-        const alignedOffset = alignedEditOffset(offset, width, alignments);
-        const keepTranslucentColors = flattenedEdit || (alignments.length > 0 && (alignedOffset === undefined || originalAlpha < OPAQUE_CORE_ALPHA));
-        // Keep the source shadow if the result flattened the image or moved its subject.
+        const alignment = imageEditAlignmentAt(offset, width, alignments);
+        const alignedOffset = alignedEditOffset(offset, width, alignment);
+        const keepTranslucentColors = flattenedEdit || (alignment && (alignedOffset === undefined || originalAlpha < OPAQUE_CORE_ALPHA));
+        // Keep the source shadow around a matched subject, including one already in place.
         if (preserveSourceTransparency && (originalAlpha === 0 || (keepTranslucentColors && originalAlpha < 255))) continue;
         const editOffset = alignedOffset ?? offset;
         const generatedAlpha = edited[editOffset + 3];

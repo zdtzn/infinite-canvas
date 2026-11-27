@@ -61,7 +61,10 @@ test("a flattened edit changes the opaque subject and keeps the original translu
     ]);
 });
 
-test("a shifted transparent edit aligns each selected subject while retaining the source shadows", () => {
+test.each([
+    { name: "shifted", shifted: true },
+    { name: "already aligned", shifted: false },
+])("a transparent edit with $name subjects recolors them and retains the source shadows", ({ shifted }) => {
     const width = 160;
     const height = 144;
     const original = new Uint8Array(width * height * 4);
@@ -81,11 +84,14 @@ test("a shifted transparent edit aligns each selected subject while retaining th
     fill(original, [16, 48, 48, 54], shadow);
     fill(original, [100, 110, 128, 116], shadow);
     fill(original, [68, 28, 78, 40], [255, 0, 0, 255]);
+    fill(original, [70, 55, 78, 64], [92, 50, 73, 112]);
     fill(keep, [9, 15, 61, 66], [0]);
     fill(keep, [91, 71, 140, 125], [0]);
-    fill(generated, [23, 19, 59, 48], green);
-    fill(generated, [94, 87, 128, 120], pink);
+    fill(keep, [67, 52, 83, 67], [0]);
+    fill(generated, shifted ? [23, 19, 59, 48] : [16, 24, 48, 48], green);
+    fill(generated, shifted ? [94, 87, 128, 120] : [100, 82, 128, 110], pink);
     fill(generated, [23, 48, 59, 56], [56, 56, 56, 95]);
+    fill(generated, [70, 55, 78, 64], [40, 180, 190, 90]);
 
     mergeImageEditPixels(original, generated, keep, 1, width, height, true);
 
@@ -95,6 +101,7 @@ test("a shifted transparent edit aligns each selected subject while retaining th
     expect(pixel(30, 50)).toEqual(shadow);
     expect(pixel(108, 112)).toEqual(shadow);
     expect(pixel(70, 35)).toEqual([255, 0, 0, 255]);
+    expect(pixel(74, 59)).toEqual([40, 180, 190, 112]);
 });
 
 test("rejects an invalid selection before an edit can run", async () => {

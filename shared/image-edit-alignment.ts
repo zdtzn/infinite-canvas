@@ -1,6 +1,6 @@
 type Pixels = Uint8Array | Uint8ClampedArray;
 type Bounds = { left: number; top: number; right: number; bottom: number };
-type Alignment = { source: Bounds; result: Bounds };
+type Alignment = { selection: Bounds; source: Bounds; result: Bounds };
 
 // Work with the opaque core to avoid matching a drop shadow or an antialiased fringe.
 export const OPAQUE_CORE_ALPHA = 240;
@@ -68,14 +68,14 @@ function mappedOffset(x: number, y: number, width: number, { source, result }: A
     return (mappedY * width + mappedX) * 4;
 }
 
-function improvesOverlap(original: Pixels, edited: Pixels, keep: Pixels, channels: number, width: number, alignment: Alignment) {
+function matchSubject(original: Pixels, edited: Pixels, keep: Pixels, channels: number, width: number, alignment: Alignment) {
     const { source } = alignment;
     let currentMatch = 0, currentUnion = 0, alignedMatch = 0, alignedUnion = 0;
     for (let y = source.top; y < source.bottom; y++) {
         for (let x = source.left; x < source.right; x++) {
             const pixel = y * width + x;
             const inSource = original[pixel * 4 + 3] >= OPAQUE_CORE_ALPHA;
-            if (inSource && keep[(pixel + 1) * channels - 1] === 255) return false;
+            if (inSource && keep[(pixel + 1) * channels - 1] === 255) return undefined;
             const inResult = edited[pixel * 4 + 3] >= OPAQUE_CORE_ALPHA;
             const inAlignedResult = edited[mappedOffset(x, y, width, alignment) + 3] >= OPAQUE_CORE_ALPHA;
             currentMatch += Number(inSource && inResult);
@@ -84,11 +84,13 @@ function improvesOverlap(original: Pixels, edited: Pixels, keep: Pixels, channel
             alignedUnion += Number(inSource || inAlignedResult);
         }
     }
+    const currentOverlap = currentMatch / currentUnion;
     const alignedOverlap = alignedMatch / alignedUnion;
-    return alignedOverlap >= .9 && alignedOverlap - currentMatch / currentUnion >= .08;
+    if (alignedOverlap >= .9 && alignedOverlap - currentOverlap >= .08) return alignment;
+    if (currentOverlap >= .9) return { ...alignment, result: source };
 }
 
-/** Realign a recognizable fully selected silhouette when its returned position or size changed. */
+/** Match a fully selected silhouette and correct its position or size when necessary. */
 export function findImageEditAlignments(original: Pixels, edited: Pixels, keep: Pixels, channels: 1 | 4, width: number, height: number) {
     const matches: Alignment[] = [];
     for (const strip of selectedWindows(keep, channels, width, height)) {
@@ -104,16 +106,22 @@ export function findImageEditAlignments(original: Pixels, edited: Pixels, keep: 
         const scaleX = (result.right - result.left) / w;
         const scaleY = (result.bottom - result.top) / h;
         if (scaleX < .75 || scaleX > 4 / 3 || scaleY < .75 || scaleY > 4 / 3) continue;
-        const alignment = { source, result };
-        if (improvesOverlap(original, edited, keep, channels, width, alignment)) matches.push(alignment);
+        const match = matchSubject(original, edited, keep, channels, width, { selection: window, source, result });
+        if (match) matches.push(match);
     }
     return matches;
 }
 
-export function alignedEditOffset(offset: number, width: number, matches: Alignment[]) {
+export function imageEditAlignmentAt(offset: number, width: number, matches: Alignment[]) {
     if (!matches.length) return undefined;
     const x = offset / 4 % width;
     const y = Math.floor(offset / 4 / width);
-    const alignment = matches.find(({ source }) => inside(source, x, y));
-    if (alignment) return mappedOffset(x, y, width, alignment);
+    return matches.find(({ selection }) => inside(selection, x, y));
+}
+
+export function alignedEditOffset(offset: number, width: number, alignment: Alignment | undefined) {
+    if (!alignment) return undefined;
+    const x = offset / 4 % width;
+    const y = Math.floor(offset / 4 / width);
+    if (inside(alignment.source, x, y)) return mappedOffset(x, y, width, alignment);
 }
