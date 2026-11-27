@@ -1,4 +1,5 @@
 import { App, Button, Empty, Modal, Space, Table, Tag } from "antd";
+import { useQueryClient } from "@tanstack/react-query";
 import { Copy, FolderPlus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -11,8 +12,9 @@ import { assetSaveMessage } from "@/stores/asset-sync-queue";
 import { fetchSourcePrompts, refreshSource, type Prompt } from "@/services/api/prompts";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
-export function PromptSourceContentModal({ source, onClose }: { source: PromptSource | null; onClose: () => void }) {
+export function PromptSourceContentModal({ source, canRefresh, onClose }: { source: PromptSource | null; canRefresh: boolean; onClose: () => void }) {
     const { message } = App.useApp();
+    const queryClient = useQueryClient();
     const [items, setItems] = useState<Prompt[]>([]);
     const [loading, setLoading] = useState(false);
     const [detail, setDetail] = useState<Prompt | null>(null);
@@ -21,17 +23,18 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
 
     const load = useCallback(
         async (force: boolean) => {
-            if (!source) return;
+            if (!source || (force && !canRefresh)) return;
             setLoading(true);
             try {
                 setItems(force ? await refreshSourceItems(source.id) : await fetchSourcePrompts(source.id));
             } catch (error) {
                 message.error(userFacingErrorMessage(error, "暂时无法读取提示词，请稍后刷新"));
             } finally {
+                if (force) void queryClient.invalidateQueries({ queryKey: ["prompt-source-statuses"] });
                 setLoading(false);
             }
         },
-        [source, message],
+        [source, message, canRefresh, queryClient],
     );
 
     useEffect(() => {
@@ -62,9 +65,11 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                             <div className="text-base font-semibold">{source?.name || ""} · 提示词内容</div>
                             <div className="mt-0.5 text-xs font-normal text-stone-500">共 {items.length} 条</div>
                         </div>
-                        <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={loading} onClick={() => void load(true)}>
-                            刷新
-                        </Button>
+                        {canRefresh && (
+                            <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={loading} onClick={() => void load(true)}>
+                                刷新
+                            </Button>
+                        )}
                     </div>
                 }
             >

@@ -15,10 +15,10 @@ const defaultSchedule: PromptSourceSchedule = {
     lastFetchedAt: "",
 };
 
-const defaultSourceIds = new Set(DEFAULT_PROMPT_SOURCES.map((source) => source.id));
+const defaultSourceById = new Map(DEFAULT_PROMPT_SOURCES.map((source) => [source.id, source]));
 
 export function isBuiltInPromptSource(source: Pick<PromptSource, "id">) {
-    return defaultSourceIds.has(source.id);
+    return defaultSourceById.has(source.id);
 }
 
 function mergePromptSources(candidates: PromptSource[]) {
@@ -71,7 +71,7 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
                 return source;
             },
             saveSource: (source) => set((state) => ({ sources: state.sources.map((item) => (item.id === source.id ? source : item)) })),
-            setSharedSources: (sources) => set({ sources: mergePromptSources(sources) }),
+            setSharedSources: (sources) => set({ sources: mergePromptSources(sources.map((source) => ({ ...source, script: defaultSourceById.get(source.id)?.script ?? source.script }))) }),
             removeSource: (id) => set((state) => ({ sources: state.sources.filter((item) => item.id !== id) })),
             toggleSource: (id, enabled) => set((state) => ({ sources: state.sources.map((item) => (item.id === id ? { ...item, enabled } : item)) })),
             updateSchedule: (key, value) => set((state) => ({ schedule: { ...state.schedule, [key]: value } })),

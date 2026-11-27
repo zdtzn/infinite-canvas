@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
 import { promptImageCandidates, promptOriginalCandidates, PromptCover } from "@/components/prompts/prompt-cover";
+import { promptDisplayTags } from "@/components/prompts/prompt-labels";
 import { userFacingErrorMessage } from "@/lib/friendly-error";
 
 const DOWNLOAD_TIMEOUT_MS = 8_000;
@@ -70,7 +71,7 @@ export function PromptDetailDialog({
         downloadAbortRef.current = null;
         setDownloading(false);
         return () => downloadAbortRef.current?.abort();
-    }, [prompt?.id]);
+    }, [prompt?.id, prompt?.sourceId]);
 
     const handleDownload = async () => {
         if (!prompt || downloading) return;
@@ -118,7 +119,7 @@ export function PromptDetailDialog({
                             </div>
                             <div className="min-w-0">
                                 <div className="flex flex-wrap gap-1.5">
-                                    {prompt.tags.map((tag) => (
+                                    {promptDisplayTags(prompt).map((tag) => (
                                         <Tag key={tag} className="m-0">
                                             {tag}
                                         </Tag>
@@ -128,12 +129,18 @@ export function PromptDetailDialog({
                                 <div className="mt-4 text-xs text-stone-500 dark:text-stone-400">
                                     创建：{formatPromptDate(prompt.createdAt)} · 更新：{formatPromptDate(prompt.updatedAt)}
                                 </div>
-                                {prompt.githubUrl ? (
-                                    <a className="mt-2 inline-flex items-center gap-1 text-xs text-stone-500 transition hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100" href={prompt.githubUrl} target="_blank" rel="noreferrer">
-                                        <ExternalLink className="size-3.5" />
-                                        来源：{prompt.category}
-                                    </a>
-                                ) : null}
+                                <ul aria-label="来源" className="mt-2 space-y-1 text-xs text-stone-500 dark:text-stone-400">
+                                    {(prompt.sources?.length ? prompt.sources : [prompt]).map((source) => (
+                                        <li key={JSON.stringify([source.sourceId, source.category, source.title, source.githubUrl])}>
+                                            {/^https?:\/\//i.test(source.githubUrl) ? (
+                                                <a className="inline-flex items-center gap-1 transition hover:text-stone-950 dark:hover:text-stone-100" href={source.githubUrl} target="_blank" rel="noreferrer">
+                                                    <ExternalLink className="size-3.5 shrink-0" />
+                                                    {source.category}{source.title !== prompt.title ? ` · ${source.title}` : ""}
+                                                </a>
+                                            ) : source.category}
+                                        </li>
+                                    ))}
+                                </ul>
                                 <Space wrap className="mt-5">
                                     {prompt.coverUrl ? (
                                         <Button icon={<Download className="size-4" />} loading={downloading} onClick={() => void handleDownload()}>

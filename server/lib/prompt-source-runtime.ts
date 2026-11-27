@@ -1,22 +1,20 @@
 import vm from "node:vm";
 
+import { runTrustedPromptSource, type RawPrompt } from "../../shared/trusted-prompt-sources";
 import { assertResolvedPublicUpstreamUrl, resolveAllowedRedirect } from "./url-policy";
 
-export type ServerPromptSourceItem = {
-  id: string;
-  title: string;
-  coverUrl: string;
-  prompt: string;
-  tags: string[];
-  preview: string;
-  createdAt: string;
-  updatedAt: string;
-};
+export type ServerPromptSourceItem = RawPrompt;
 
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
-const MAX_SOURCE_ITEMS = 2_000;
+const MAX_SOURCE_ITEMS = 20_000;
 const SOURCE_TIMEOUT_MS = 12_000;
 const SCRIPT_TIMEOUT_MS = 15_000;
+
+export function runBuiltInPromptSource(sourceId: string, signal?: AbortSignal) {
+  const timeout = AbortSignal.timeout(SCRIPT_TIMEOUT_MS);
+  const combinedSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  return runTrustedPromptSource(sourceId, (url) => fetchPromptSourceText(url, combinedSignal));
+}
 
 export async function runPromptSourceScript(script: string, signal?: AbortSignal) {
   const body = String(script || "").trim();
@@ -131,14 +129,16 @@ async function readResponseBytes(response: Response, signal: AbortSignal) {
 function normalizePromptItems(value: unknown[]) {
   const seen = new Set<string>();
   const items: ServerPromptSourceItem[] = [];
-  for (const raw of value.slice(0, MAX_SOURCE_ITEMS)) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+  if (value.length > MAX_SOURCE_ITEMS) throw new Error(`提示词来源超过 ${MAX_SOURCE_ITEMS} 条上限`);
+  for (const [index, raw] of value.entries()) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`第 ${index + 1} 条提示词格式无效`);
     const record = raw as Record<string, unknown>;
     const title = String(record.title || "").trim().slice(0, 400);
     const prompt = String(record.prompt || "").trim().slice(0, 20_000);
-    if (!title || !prompt) continue;
+    if (!title || !prompt) throw new Error(`第 ${index + 1} 条提示词缺少标题或内容`);
     const id = String(record.id || `prompt-${items.length + 1}`).trim().slice(0, 128);
-    if (!id || seen.has(id)) continue;
+    if (!id) throw new Error(`第 ${index + 1} 条提示词 ID 无效`);
+    if (seen.has(id)) continue;
     seen.add(id);
     items.push({
       id,

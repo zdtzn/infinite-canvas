@@ -3,12 +3,15 @@ import { Button, Tooltip } from "antd";
 import { BookOpen } from "lucide-react";
 
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
+import { usePromptAdoption } from "@/hooks/use-prompt-adoption";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
+import type { PromptMedia } from "../../../../shared/prompt-library";
 
-export function CanvasPromptLibrary({ onSelect }: { onSelect: (prompt: string) => void }) {
+export function CanvasPromptLibrary({ draft, owner, media, onSelect }: { draft: string; owner: string; media?: PromptMedia; onSelect: (prompt: string) => void }) {
     const [open, setOpen] = useState(false);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const adoptPrompt = usePromptAdoption(draft, onSelect, owner);
 
     return (
         <>
@@ -22,7 +25,7 @@ export function CanvasPromptLibrary({ onSelect }: { onSelect: (prompt: string) =
                     aria-label="提示词库"
                 />
             </Tooltip>
-            <PromptSelectDialog open={open} onOpenChange={setOpen} onSelect={onSelect} />
+            <PromptSelectDialog open={open} onOpenChange={setOpen} onSelect={adoptPrompt} media={media} />
         </>
     );
 }

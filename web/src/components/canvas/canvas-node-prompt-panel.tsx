@@ -87,7 +87,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <Tooltip title="展开提示词编辑器">
                         <Button type="text" className="!h-8 !w-8 !min-w-8 shrink-0 !rounded-full !bg-transparent !p-0" style={{ color: theme.node.text }} icon={<Maximize2 className="size-3.5" />} onClick={() => setExpanded(true)} aria-label="展开提示词编辑器" />
                     </Tooltip>
-                    <CanvasPromptLibrary onSelect={updatePrompt} />
+                    <CanvasPromptLibrary draft={prompt} owner={node.id} media={mode === "image" || mode === "video" ? mode : undefined} onSelect={updatePrompt} />
                     {mode === "image" ? (
                         <>
                             <ImagePromptOptimizer

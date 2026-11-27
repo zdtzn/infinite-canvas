@@ -1,18 +1,21 @@
 import localforage from "localforage";
 
-import { normalizePromptAssets, runPromptSource, runTrustedPromptSource, type RawPrompt } from "./prompt-source-runtime";
-import { isBuiltInPromptSource, usePromptSourceStore } from "@/stores/use-prompt-source-store";
+import { normalizePromptAssets, runPromptSource, type RawPrompt } from "./prompt-source-runtime";
+import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "./prompt-source-presets";
 import { classifyPromptTags, isPromptTaxonomyTag, sortPromptTaxonomyTags } from "./prompt-taxonomy";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { serverRequest } from "@/services/server-api";
 import { useUserStore } from "@/stores/use-user-store";
+import { getPromptUsage, mergeCrossSourcePrompts, searchLocalPrompts, tokenizePromptKeyword, type PromptMedia, type PromptOrder, type PromptOrigin, type PromptUsage } from "../../../../shared/prompt-library";
 
 export type Prompt = RawPrompt & {
     sourceId?: string;
     category: string;
     githubUrl: string;
     sourceTags?: string[];
+    usage?: PromptUsage;
+    sources?: PromptOrigin[];
 };
 export type PromptCover = Pick<Prompt, "id" | "title" | "coverUrl" | "category">;
 
@@ -33,6 +36,7 @@ export type PromptSourceStatus = {
     count: number;
     lastSuccessAt: string;
     lastError: string;
+    refreshing?: boolean;
 };
 
 export const PROMPT_SOURCE_CACHE_TTL_MS = 1000 * 60 * 60;
@@ -44,7 +48,6 @@ type SourceCache = PromptSourceStatus & { items: Prompt[]; fetchedAt: number; si
 export type PromptSourceCacheState = "missing" | "invalid" | "fresh" | "stale";
 
 const loadingSources = new Map<string, Promise<Prompt[]>>();
-let promptIndexWarmupTask: Promise<void> | null = null;
 
 const sourceCacheRevisions: Record<string, string> = {
     "youmind-gpt-image-2": "html-content-images-v1",
@@ -86,11 +89,10 @@ function withSourceMeta(source: PromptSource, items: RawPrompt[]): Prompt[] {
 }
 
 async function runSource(source: PromptSource): Promise<Prompt[]> {
-    const items = PUBLIC_MODE && !isBuiltInPromptSource(source)
+    const items = PUBLIC_MODE
         ? (await serverRequest<{ items: RawPrompt[] }>(`/api/prompt-sources/${encodeURIComponent(source.id)}/items`, { timeoutMs: 20_000, expectedUserId: useUserStore.getState().user?.id })).items
-        : PUBLIC_MODE
-          ? await runTrustedPromptSource(source.id)
-          : await runPromptSource(source.script);
+        : await runPromptSource(source.script);
+    if (!items.length) throw new Error("提示词来源未返回有效条目");
     const prompts = withSourceMeta(source, items);
     const fetchedAt = Date.now();
     await promptCacheStore.setItem<SourceCache>(promptSourceCacheKey(source.id), {
@@ -102,7 +104,7 @@ async function runSource(source: PromptSource): Promise<Prompt[]> {
         lastError: "",
         signature: sourceSignature(source),
     });
-    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(PROMPT_LIBRARY_UPDATED_EVENT, { detail: { sourceId: source.id } }));
+    notifyPromptLibraryUpdated(source.id);
     return prompts;
 }
 
@@ -169,24 +171,30 @@ async function loadSourceWithinBudget(source: PromptSource): Promise<Prompt[]> {
 export async function fetchHomepagePromptCovers(): Promise<PromptCover[]> {
     const sources = enabledSources();
     if (!sources.length) return [];
-    if (PUBLIC_MODE && sources.length <= 100) {
+    if (PUBLIC_MODE) {
         try {
-            const params = new URLSearchParams();
-            sources.forEach((source) => params.append("sourceId", source.id));
-            const response = await serverRequest<{ items: Array<Omit<PromptCover, "category"> & { sourceId: string }>; indexedSourceIds: string[] }>(`/api/prompt-index/covers?${params}`, { timeoutMs: 2_500, expectedUserId: useUserStore.getState().user?.id });
-            const indexed = new Set(response.indexedSourceIds);
+            const requests = [];
+            for (let offset = 0; offset < sources.length; offset += 100) {
+                const params = new URLSearchParams();
+                sources.slice(offset, offset + 100).forEach((source) => params.append("sourceId", source.id));
+                requests.push(serverRequest<{ items: Array<Omit<PromptCover, "category"> & { sourceId: string }>; indexedSourceIds: string[]; enabledSourceIds: string[] }>(`/api/prompt-index/covers?${params}`, { timeoutMs: 2_500, expectedUserId: useUserStore.getState().user?.id }));
+            }
+            const responses = await Promise.all(requests);
+            const enabled = new Set(responses.flatMap((response) => response.enabledSourceIds ?? []));
+            const indexed = new Set(responses.flatMap((response) => response.indexedSourceIds));
             const bySource = new Map<string, PromptCover[]>();
-            const sourceById = new Map(sources.map((source) => [source.id, source]));
-            for (const item of response.items) {
+            const currentSources = sources.filter((source) => enabled.has(source.id));
+            const sourceById = new Map(currentSources.map((source) => [source.id, source]));
+            for (const item of responses.flatMap((response) => response.items)) {
                 const source = sourceById.get(item.sourceId);
                 if (!source) continue;
                 const group = bySource.get(source.id) || [];
                 group.push({ id: item.id, title: item.title, coverUrl: normalizePromptAssets({ coverUrl: item.coverUrl, preview: "" }).coverUrl, category: source.name });
                 bySource.set(source.id, group);
             }
-            return (await Promise.all(sources.map(async (source) => indexed.has(source.id) ? bySource.get(source.id) || [] : (await loadSourceWithinBudget(source)).map(toPromptCover)))).flat();
+            return (await Promise.all(currentSources.map(async (source) => indexed.has(source.id) ? bySource.get(source.id) || [] : (await loadSourceWithinBudget(source)).map(toPromptCover)))).flat();
         } catch {
-            // Older servers or unavailable indexes retain the existing source fallback.
+            return [];
         }
     }
     return (await getAllPrompts()).map(toPromptCover);
@@ -196,16 +204,26 @@ function toPromptCover(item: Prompt): PromptCover {
     return { id: item.id, title: item.title, coverUrl: item.coverUrl, category: item.category };
 }
 
-export async function fetchPrompts({ sourceId = "", keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20, order = "desc" }: { sourceId?: string; keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number; order?: "asc" | "desc" } = {}) {
-    const serverResult = await fetchPromptIndex({ sourceId, keyword, tag, category, page, pageSize, order });
-    if (serverResult) return { ...serverResult, items: serverResult.items.map(withPromptTaxonomy), tags: sortPromptTaxonomyTags(serverResult.tags.filter(isPromptTaxonomyTag)) };
+function normalizeIndexedPrompt(item: Prompt): Prompt {
+    return normalizePromptAssets({
+        ...item,
+        usage: item.usage ?? getPromptUsage({ ...item, tags: [...(item.sourceTags ?? []), ...item.tags] }),
+    });
+}
+
+export async function fetchPrompts({ sourceId = "", keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20, order = keyword.trim() ? "relevance" : "desc", media }: { sourceId?: string; keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number; order?: PromptOrder; media?: PromptMedia } = {}): Promise<PromptListResponse> {
+    const serverResult = await fetchPromptIndex({ sourceId, keyword, tag, category, page, pageSize, order, media });
+    if (serverResult) return { ...serverResult, items: serverResult.items.map(normalizeIndexedPrompt), tags: sortPromptTaxonomyTags(serverResult.tags.filter(isPromptTaxonomyTag)) };
+    if (PUBLIC_MODE) throw new Error("提示词库暂不可用，请稍后重试");
     const items = (await getAllPrompts()).map(withPromptTaxonomy);
-    const normalizedKeyword = keyword.trim().toLowerCase();
+    const terms = tokenizePromptKeyword(keyword);
     const normalizedPage = Math.max(1, page);
     const normalizedPageSize = Math.max(1, Math.min(100, pageSize));
-    const withoutTagFilter = filterPrompts(items, { sourceId, keyword: normalizedKeyword, category, tags: [] });
-    const filtered = filterPrompts(items, { sourceId, keyword: normalizedKeyword, category, tags: tag });
-    if (order === "desc") filtered.reverse();
+    const filter = { sourceId, category, terms, media, order };
+    const withoutTagFilter = searchLocalPrompts(items, { ...filter, tags: [] });
+    const matches = tag.length ? searchLocalPrompts(items, { ...filter, tags: tag }) : withoutTagFilter;
+    const sourceScope = terms.length || tag.length ? searchLocalPrompts(items, { ...filter, tags: [], terms: [] }) : matches;
+    const filtered = mergeCrossSourcePrompts(matches, sourceScope);
 
     return {
         items: filtered.slice((normalizedPage - 1) * normalizedPageSize, normalizedPage * normalizedPageSize),
@@ -217,15 +235,18 @@ export async function fetchPrompts({ sourceId = "", keyword = "", tag = [], cate
     };
 }
 
-export function buildPromptIndexQuery({ sourceId = "", keyword, tag, category, page, pageSize, order }: { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number; order?: "asc" | "desc" }) {
+type PromptIndexRequest = { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number; order?: PromptOrder; media?: PromptMedia };
+
+export function buildPromptIndexQuery({ sourceId = "", keyword, tag, category, page, pageSize, order, media }: PromptIndexRequest) {
     const params = new URLSearchParams({ sourceId, keyword, category, page: String(page), pageSize: String(pageSize) });
     for (const value of tag) params.append("tag", value);
     if (order) params.set("order", order);
+    if (media) params.set("media", media);
     return params;
 }
 
-async function fetchPromptIndex({ sourceId = "", keyword, tag, category, page, pageSize, order }: { sourceId?: string; keyword: string; tag: string[]; category: string; page: number; pageSize: number; order?: "asc" | "desc" }) {
-    const params = buildPromptIndexQuery({ sourceId, keyword, tag, category, page, pageSize, order });
+async function fetchPromptIndex(options: PromptIndexRequest) {
+    const params = buildPromptIndexQuery(options);
     try {
         return await serverRequest<PromptListResponse>(`/api/prompt-index?${params.toString()}`, { timeoutMs: 5_000, expectedUserId: useUserStore.getState().user?.id });
     } catch {
@@ -235,25 +256,33 @@ async function fetchPromptIndex({ sourceId = "", keyword, tag, category, page, p
 
 /** Load the complete prompt library across every enabled source. */
 export async function fetchAllPrompts(): Promise<Prompt[]> {
+    if (PUBLIC_MODE) {
+        const items: Prompt[] = [];
+        for (let page = 1; ; page += 1) {
+            const result = await fetchPrompts({ page, pageSize: 100 });
+            items.push(...result.items);
+            if (!result.items.length || items.length >= result.total) return items;
+        }
+    }
     return (await getAllPrompts()).map(withPromptTaxonomy);
 }
 
 /** Load a single source's prompts (used by the source content table). Throws so the caller can show the error. */
-export async function fetchSourcePrompts(sourceId: string, force = false): Promise<Prompt[]> {
+export async function fetchSourcePrompts(sourceId: string): Promise<Prompt[]> {
     const source = usePromptSourceStore.getState().sources.find((item) => item.id === sourceId);
     if (!source) throw new Error("提示词来源不存在");
     if (PUBLIC_MODE) {
         const items: Prompt[] = [];
-        for (let page = 1; page <= 20; page += 1) {
+        for (let page = 1; ; page += 1) {
             const result = await fetchPromptIndex({ sourceId: source.id, keyword: "", tag: [], category: ALL_PROMPTS_OPTION, page, pageSize: 100 });
             if (!result) throw new Error("提示词索引暂不可用，请稍后重试");
             if (!result.indexed) return [];
-            items.push(...result.items.map(withPromptTaxonomy));
+            items.push(...result.items.map(normalizeIndexedPrompt));
             if (!result.items.length || items.length >= result.total) break;
         }
         return items;
     }
-    return (await getSourcePrompts(source, force)).map(withPromptTaxonomy);
+    return (await getSourcePrompts(source)).map(withPromptTaxonomy);
 }
 
 export async function fetchPromptIndexStatuses(): Promise<PromptSourceStatus[]> {
@@ -261,62 +290,51 @@ export async function fetchPromptIndexStatuses(): Promise<PromptSourceStatus[]> 
     return response.items;
 }
 
-export async function ensurePromptIndexReady() {
-    if (!PUBLIC_MODE || !useUserStore.getState().user?.admin || promptIndexWarmupTask) return promptIndexWarmupTask || undefined;
-    const sources = enabledSources();
-    if (!sources.length || hasPromptIndexWarmupMarker()) return undefined;
-    promptIndexWarmupTask = (async () => {
-        const statuses = await fetchPromptIndexStatuses();
-        const statusById = new Map(statuses.map((status) => [status.sourceId, status]));
-        if (sources.every((source) => Boolean(statusById.get(source.id)?.lastSuccessAt))) return;
-        setPromptIndexWarmupMarker();
-        await refreshAllSources();
-    })()
-        .catch(() => undefined)
-        .finally(() => {
-            promptIndexWarmupTask = null;
-        });
-    return promptIndexWarmupTask;
+type PromptSourceRefreshResult = PromptSourceStatus & { name: string; success: boolean };
+type PromptRefreshSummary = { count: number; succeeded: number; failed: number };
+
+async function requestPromptIndexRefresh(sourceId?: string) {
+    const response = await serverRequest<{ results: PromptSourceRefreshResult[] }>("/api/admin/prompt-index/refresh", {
+        method: "POST",
+        body: sourceId ? { sourceId } : {},
+        timeoutMs: sourceId ? 30_000 : 225_000,
+        expectedUserId: useUserStore.getState().user?.id,
+    });
+    return response.results;
 }
 
-/** Force refetch one source and refresh its cache; returns the fetched count. */
+export function notifyPromptLibraryUpdated(sourceId?: string) {
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(PROMPT_LIBRARY_UPDATED_EVENT, { detail: { sourceId } }));
+}
+
+/** Force a single enabled source to refresh and return its newly indexed count. */
 export async function refreshSource(sourceId: string): Promise<number> {
-    const items = await fetchSourcePrompts(sourceId, true);
-    await syncPromptIndex(sourceId, items);
-    return items.length;
-}
-
-/** Force refetch every enabled source; returns the total prompt count. */
-export async function refreshAllSources(): Promise<number> {
-    const settled = await Promise.all(
-        enabledSources().map(async (source) => {
-            try {
-                const items = (await getSourcePrompts(source, true)).map((item) => ({ ...item, category: source.name, githubUrl: source.githubUrl }));
-                await syncPromptIndex(source.id, items);
-                return items;
-            } catch {
-                return [];
-            }
-        }),
-    );
-    return settled.reduce((total, items) => total + items.length, 0);
-}
-
-async function syncPromptIndex(sourceId: string, items: Prompt[]) {
-    if (!useUserStore.getState().user?.admin) return;
-    try {
-        await serverRequest(`/api/prompt-index`, {
-            method: "PUT",
-            body: { sourceId, items },
-            timeoutMs: 30_000,
-            expectedUserId: useUserStore.getState().user?.id,
-        });
-    } catch {
-        // The browser cache remains the fallback if the server index is unavailable.
+    if (PUBLIC_MODE) {
+        const [result] = await requestPromptIndexRefresh(sourceId);
+        if (!result?.success) throw new Error(result?.lastError || "提示词来源刷新失败");
+        notifyPromptLibraryUpdated(sourceId);
+        return result.count;
     }
+    const source = enabledSources().find((item) => item.id === sourceId);
+    if (!source) throw new Error("提示词来源不存在或已停用");
+    return (await getSourcePrompts(source, true)).length;
+}
+
+/** Force every enabled source to refresh and report the actual outcomes. */
+export async function refreshAllSources(): Promise<PromptRefreshSummary> {
+    if (PUBLIC_MODE) {
+        const results = await requestPromptIndexRefresh();
+        const succeeded = results.filter((result) => result.success);
+        if (succeeded.length) notifyPromptLibraryUpdated();
+        return { count: succeeded.reduce((total, result) => total + result.count, 0), succeeded: succeeded.length, failed: results.length - succeeded.length };
+    }
+    const results = await Promise.allSettled(enabledSources().map((source) => getSourcePrompts(source, true)));
+    const succeeded = results.filter((result) => result.status === "fulfilled");
+    return { count: succeeded.reduce((total, result) => total + result.value.length, 0), succeeded: succeeded.length, failed: results.length - succeeded.length };
 }
 
 export async function fetchPromptSourceStatuses(): Promise<Record<string, PromptSourceStatus>> {
+    if (PUBLIC_MODE) return Object.fromEntries((await fetchPromptIndexStatuses()).map((status) => [status.sourceId, status]));
     const entries = await Promise.all(
         usePromptSourceStore.getState().sources.map(async (source) => {
             const cached = await promptCacheStore.getItem<SourceCache>(promptSourceCacheKey(source.id));
@@ -334,43 +352,15 @@ export async function fetchPromptSourceStatuses(): Promise<Record<string, Prompt
     return Object.fromEntries(entries);
 }
 
-function filterPrompts(items: Prompt[], options: { sourceId: string; keyword: string; category: string; tags: string[] }) {
-    return items.filter((item) => {
-        if (options.sourceId && item.sourceId !== options.sourceId) return false;
-        if (isActiveOption(options.category) && item.category !== options.category) return false;
-        if (options.tags.length && !options.tags.some((tag) => item.tags.includes(tag))) return false;
-        if (!options.keyword) return true;
-        return [item.title, item.prompt, item.category, ...item.tags, ...(item.sourceTags || [])].join(" ").toLowerCase().includes(options.keyword);
-    });
-}
-
 function collectTags(items: Prompt[]) {
     return sortPromptTaxonomyTags(Array.from(new Set(items.flatMap((item) => item.tags).filter(Boolean))));
 }
 
 function withPromptTaxonomy(item: Prompt): Prompt {
     const sourceTags = item.sourceTags?.length ? item.sourceTags : item.tags;
-    return { ...item, sourceTags, tags: classifyPromptTags({ title: item.title, prompt: item.prompt, tags: sourceTags }) };
-}
-
-function isActiveOption(value: string) {
-    return value && value !== "全部" && value !== "all";
-}
-
-function hasPromptIndexWarmupMarker() {
-    try {
-        return window.sessionStorage.getItem("infinite-canvas:prompt-index-warmup:v1") === "1";
-    } catch {
-        return false;
-    }
-}
-
-function setPromptIndexWarmupMarker() {
-    try {
-        window.sessionStorage.setItem("infinite-canvas:prompt-index-warmup:v1", "1");
-    } catch {
-        // Storage is optional; a failed marker only allows another harmless check.
-    }
+    const tags = classifyPromptTags({ title: item.title, prompt: item.prompt, tags: sourceTags });
+    const usage = item.usage ?? getPromptUsage({ ...item, tags: [...sourceTags, ...tags] });
+    return { ...item, sourceTags, tags, usage };
 }
 
 export function formatPromptDate(value: string) {

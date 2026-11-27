@@ -23,4 +23,9 @@ describe("server prompt source runtime", () => {
   test("rejects access to server globals", async () => {
     await expect(runPromptSourceScript("return [{ id: process.env.SECRET, title: 'x', prompt: 'y' }];")).rejects.toThrow(/执行失败/);
   });
+  test("accepts complete lists over 2,000 rows and rejects oversized lists", async () => {
+    const script = (count: number) => `return Array.from({ length: ${count} }, (_, id) => ({id: String(id), title: "Title", prompt: "Content"}));`;
+    await expect(runPromptSourceScript(script(2_001))).resolves.toHaveLength(2_001);
+    await expect(runPromptSourceScript(script(20_001))).rejects.toThrow(/超过 20000 条/);
+  });
 });

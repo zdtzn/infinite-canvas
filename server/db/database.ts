@@ -15,6 +15,7 @@ import {
   queryImageHistoryRecovery,
   type ImageHistoryRecoveryJob,
 } from "../lib/image-history-recovery";
+import { backfillPromptIndexMetadata } from "../lib/prompt-index";
 import { LEGACY_PRODUCT_CAPABILITIES } from "../modules/cultivation/defaults";
 import type {
   GenerationHistoryKind,
@@ -1208,6 +1209,18 @@ function runMigrations(database: Database) {
         CREATE INDEX idx_chat_turn_requests_conversation ON chat_turn_requests(user_id, conversation_id);
       `);
       database.query("INSERT INTO schema_migrations(version, applied_at) VALUES (29, ?)").run(Date.now());
+    })();
+  if (!database.query("SELECT 1 FROM schema_migrations WHERE version = 30").get())
+    database.transaction(() => {
+      database.exec(`
+        ALTER TABLE prompt_index ADD COLUMN source_tags_json TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE prompt_index ADD COLUMN media TEXT NOT NULL DEFAULT 'general';
+        ALTER TABLE prompt_index ADD COLUMN requires_reference INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE prompt_index ADD COLUMN search_title TEXT;
+        ALTER TABLE prompt_index ADD COLUMN search_text TEXT;
+      `);
+      backfillPromptIndexMetadata(database);
+      database.query("INSERT INTO schema_migrations(version, applied_at) VALUES (30, ?)").run(Date.now());
     })();
 }
 

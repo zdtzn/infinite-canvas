@@ -1,18 +1,19 @@
 import { FolderPlus, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Suspense, type UIEvent, useEffect, useRef, useState } from "react";
-import { App, Button, Empty, Input, Select, Spin, Tag } from "antd";
+import { App, Button, Empty, Input, Select, Spin } from "antd";
 
 import { PromptCard } from "@/components/prompts/prompt-card";
+import { PromptFilter } from "@/components/prompts/prompt-filter";
 import { PromptWindowGrid } from "@/components/prompts/prompt-window-grid";
-import { usePromptList } from "@/components/prompts/use-prompt-list";
+import { promptSortOptions, usePromptList } from "@/components/prompts/use-prompt-list";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { lazyRoute } from "@/lib/lazy-route";
-import { cn } from "@/lib/utils";
 import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { assetSaveMessage } from "@/stores/asset-sync-queue";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
+import type { PromptOrder } from "../../../../shared/prompt-library";
 
 const PromptDetailDialog = lazyRoute(() => import("./components/prompt-detail-dialog").then(({ PromptDetailDialog: Component }) => ({ default: Component })));
 
@@ -20,14 +21,15 @@ export default function PromptsPage() {
     const navigate = useNavigate();
     const { message } = App.useApp();
     const [titleKeyword, setTitleKeyword] = useState("");
-    const [order, setOrder] = useState<"asc" | "desc">("asc");
+    const [order, setOrder] = useState<PromptOrder>("relevance");
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const [selectedCategory, setSelectedCategory] = useState(ALL_PROMPTS_OPTION);
     const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
     const listRef = useRef<HTMLElement>(null);
     const addAsset = useAssetStore((state) => state.addAsset);
     const copyText = useCopyText();
-    const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts, indexed } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory, order });
+    const { query, items: promptItems, themes, categories: promptCategoryOptions, total: totalPrompts, indexed } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory, order, browseOrder: "asc" });
+    const hasFilters = selectedCategory !== ALL_PROMPTS_OPTION || selectedTags.length > 0;
 
     useEffect(() => {
         if (listRef.current) listRef.current.scrollTop = 0;
@@ -65,7 +67,7 @@ export default function PromptsPage() {
                     <div className="relative mx-auto max-w-7xl px-6 pb-6 pt-8 text-center lg:pb-10 lg:pt-14">
                         <p className="shj-hero-eyebrow inline-flex">Gong Fa Lou</p>
                         <h1 className="font-brush mt-4 text-5xl text-[#edede6] [text-shadow:0_2px_24px_rgb(0_0_0/0.6)] sm:text-6xl">功法楼</h1>
-                        <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">楼藏功法 {totalPrompts} 卷 · 每一卷,皆可助你落笔成象</p>
+                        <p className="font-display mt-3 text-sm tracking-[0.15em] text-[#edede6]/70">{query.isSuccess ? `${hasFilters || titleKeyword.trim() ? "匹配功法" : "楼藏功法"} ${totalPrompts} 卷 · ` : ""}每一卷,皆可助你落笔成象</p>
                     </div>
                 </section>
 
@@ -77,7 +79,7 @@ export default function PromptsPage() {
                             aria-label="搜索功法"
                             prefix={<Search className="size-4 text-stone-400" />}
                             value={titleKeyword}
-                            placeholder="搜索标题、内容或主分类"
+                            placeholder="搜索标题、内容或主题"
                             onChange={(event) => setTitleKeyword(event.target.value)}
                             className="w-full min-w-0 sm:flex-1"
                         />
@@ -87,17 +89,14 @@ export default function PromptsPage() {
                             value={order}
                             onChange={setOrder}
                             className="w-full sm:w-48"
-                            options={[
-                                { value: "asc", label: "来源顺序 · 升序" },
-                                { value: "desc", label: "来源顺序 · 降序" },
-                            ]}
+                            options={promptSortOptions}
                         />
                     </div>
                     <details className="mb-5 rounded-md border border-white/10 p-3 lg:hidden">
-                        <summary className="cursor-pointer py-2 text-sm text-[#e7d2a6]">筛选功法{selectedCategory !== ALL_PROMPTS_OPTION || selectedTags.length ? " · 已筛选" : " · 来源与分类"}</summary>
+                        <summary className="cursor-pointer py-2 text-sm text-[#e7d2a6]">筛选功法 · {selectedTags[0] || (hasFilters ? "已选来源" : "来源与主题")}</summary>
                         <div className="max-h-60 space-y-4 overflow-y-auto pt-3">
                             <PromptFilter label="来源" options={promptCategoryOptions} selected={selectedCategory} onChange={setSelectedCategory} />
-                            <PromptFilter label="主分类" options={promptTags} selected={selectedTags[0] || ALL_PROMPTS_OPTION} onChange={toggleTag} />
+                            <PromptFilter label="主题" options={themes} selected={selectedTags[0] || ALL_PROMPTS_OPTION} onChange={toggleTag} />
                             <Button
                                 size="small"
                                 onClick={() => {
@@ -113,17 +112,7 @@ export default function PromptsPage() {
                         <aside className="thin-scrollbar hidden overflow-y-auto lg:block lg:sticky lg:top-0 lg:max-h-[calc(100dvh-6rem)] lg:border-r lg:pb-8 lg:pr-5 dark:border-stone-800">
                             <PromptFilter label="来源" options={promptCategoryOptions} selected={selectedCategory} onChange={setSelectedCategory} />
                             <div className="mt-6">
-                                <div className="mb-2 text-xs font-semibold text-stone-400 dark:text-stone-500">主分类</div>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {promptTags.map((tag) => {
-                                        const active = tag === ALL_PROMPTS_OPTION ? selectedTags.length === 0 : selectedTags.includes(tag);
-                                        return (
-                                            <Tag.CheckableTag key={tag} checked={active} className={cn("prompt-filter-tag", active && "is-active")} onChange={() => toggleTag(tag)}>
-                                                {tag}
-                                            </Tag.CheckableTag>
-                                        );
-                                    })}
-                                </div>
+                                <PromptFilter label="主题" options={themes} selected={selectedTags[0] || ALL_PROMPTS_OPTION} onChange={toggleTag} />
                             </div>
                         </aside>
                         <section className="min-w-0">
@@ -194,24 +183,9 @@ export default function PromptsPage() {
                         </div>
                     }
                 >
-                    <PromptDetailDialog prompt={selectedPrompt} onClose={() => setSelectedPrompt(null)} onCopy={(prompt) => copyText(prompt, "提示词已复制")} onSaveAsset={savePromptAsset} onUse={(item) => navigate("/image", { state: { promptTransfer: item.prompt } })} />
+                    <PromptDetailDialog prompt={selectedPrompt} onClose={() => setSelectedPrompt(null)} onCopy={(prompt) => copyText(prompt, "提示词已复制")} onSaveAsset={savePromptAsset} onUse={(item) => navigate(item.usage?.media === "video" ? "/video" : "/image", { state: { promptTransfer: item.prompt } })} />
                 </Suspense>
             ) : null}
-        </div>
-    );
-}
-
-function PromptFilter({ label, options, selected, onChange }: { label: string; options: string[]; selected: string; onChange: (value: string) => void }) {
-    return (
-        <div>
-            <div className="mb-2 text-xs font-semibold text-stone-400 dark:text-stone-500">{label}</div>
-            <div className="flex flex-wrap gap-1.5">
-                {options.map((option) => (
-                    <Tag.CheckableTag key={option} checked={selected === option} className={cn("prompt-filter-tag", selected === option && "is-active")} onChange={() => onChange(option)}>
-                        {option}
-                    </Tag.CheckableTag>
-                ))}
-            </div>
         </div>
     );
 }

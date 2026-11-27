@@ -305,7 +305,7 @@ export async function deleteServerChannel(channelId: string) {
 }
 
 export async function fetchServerPromptSources() {
-    return serverRequest<{ items: ServerPromptSource[] }>("/api/prompt-sources", { timeoutMs: 12_000 });
+    return serverRequest<{ items: ServerPromptSource[]; builtInSources?: ServerPromptSource[] }>("/api/prompt-sources", { timeoutMs: 12_000 });
 }
 
 export async function saveServerPromptSource(source: PromptSource) {

@@ -1,4 +1,5 @@
 import type { AppDatabase } from "../db/database";
+import { BUILT_IN_PROMPT_SOURCES } from "../../shared/prompt-source-presets";
 
 export const MANAGED_PROMPT_SOURCES_SETTING_KEY = "app.prompt-sources";
 export const MAX_MANAGED_PROMPT_SOURCES = 100;
@@ -7,17 +8,8 @@ export const MAX_PROMPT_SOURCE_URL_LENGTH = 2_000;
 export const MAX_PROMPT_SOURCE_SCRIPT_LENGTH = 120_000;
 
 const PROMPT_SOURCE_ID_PATTERN = /^[A-Za-z0-9_-]{1,96}$/;
-const RESERVED_PROMPT_SOURCE_IDS = new Set([
-  "banana-prompt-quicker",
-  "davidwu-gpt-image2-prompts",
-  "freestylefly-awesome-gpt-image-2",
-  "awesome-gpt-image",
-  "awesome-gpt4o-image-prompts",
-  "evolink-gpt-image-2-commercial",
-  "jamez-bondos-awesome-gpt4o-images",
-  "youmind-gpt-image-2",
-  "youmind-nano-banana-pro",
-]);
+const RESERVED_PROMPT_SOURCE_IDS = new Set<string>(BUILT_IN_PROMPT_SOURCES.map(({ id }) => id));
+const DISABLED_BUILT_IN_SOURCES_SETTING_KEY = "app.disabled-built-in-prompt-sources";
 
 export type ManagedPromptSource = {
   id: string;
@@ -72,4 +64,25 @@ export function loadManagedPromptSources(database: Pick<AppDatabase, "loadSettin
 
 export function saveManagedPromptSources(database: Pick<AppDatabase, "saveSetting">, sources: ManagedPromptSource[]) {
   database.saveSetting(MANAGED_PROMPT_SOURCES_SETTING_KEY, sources.slice(0, MAX_MANAGED_PROMPT_SOURCES));
+}
+
+function loadDisabledBuiltInSourceIds(database: Pick<AppDatabase, "loadSetting">) {
+  const saved = database.loadSetting(DISABLED_BUILT_IN_SOURCES_SETTING_KEY);
+  return new Set<string>(Array.isArray(saved) ? saved.filter((id) => typeof id === "string" && isReservedPromptSourceId(id)) : []);
+}
+
+export function loadBuiltInPromptSources(database: Pick<AppDatabase, "loadSetting">): ManagedPromptSource[] {
+  const disabledIds = loadDisabledBuiltInSourceIds(database);
+  return BUILT_IN_PROMPT_SOURCES.map((source) => ({ ...source, enabled: !disabledIds.has(source.id), script: "" }));
+}
+
+export function saveBuiltInPromptSourceEnabled(database: Pick<AppDatabase, "loadSetting" | "saveSetting">, id: string, enabled: boolean) {
+  const disabledIds = loadDisabledBuiltInSourceIds(database);
+  if (enabled) disabledIds.delete(id);
+  else disabledIds.add(id);
+  database.saveSetting(DISABLED_BUILT_IN_SOURCES_SETTING_KEY, [...disabledIds]);
+}
+
+export function loadAvailablePromptSources(database: Pick<AppDatabase, "loadSetting">): ManagedPromptSource[] {
+  return [...loadBuiltInPromptSources(database), ...loadManagedPromptSources(database)];
 }

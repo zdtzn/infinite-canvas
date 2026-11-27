@@ -10,6 +10,7 @@ import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal"
 import { AssetSyncStatus } from "@/components/assets/asset-sync-status";
 import { ModelPicker } from "@/components/model-picker";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
+import { usePromptAdoption, usePromptTransfer } from "@/hooks/use-prompt-adoption";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { friendlyErrorMessage, userFacingErrorMessage } from "@/lib/friendly-error";
 import { generationFailureFeedback } from "@/features/cultivation/generation-messages";
@@ -40,6 +41,7 @@ export default function VideoPage() {
     const { data: cultivationProfile } = useCultivationProfile();
     const authenticatedUserId = useUserStore((state) => state.user?.id || "");
     const historyUserId = PUBLIC_MODE ? authenticatedUserId : "local";
+    const draftOwner = useRef(historyUserId);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const videoInputRef = useRef<HTMLInputElement>(null);
     const audioInputRef = useRef<HTMLInputElement>(null);
@@ -50,6 +52,7 @@ export default function VideoPage() {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
     const [prompt, setPrompt] = useState("");
+    const adoptPrompt = usePromptAdoption(prompt, setPrompt, historyUserId);
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [videoReferences, setVideoReferences] = useState<ReferenceVideo[]>([]);
     const [audioReferences, setAudioReferences] = useState<ReferenceAudio[]>([]);
@@ -95,6 +98,8 @@ export default function VideoPage() {
 
     useEffect(() => {
         void videoTasks.prepare(videoTaskOwner());
+        if (draftOwner.current === historyUserId) return;
+        draftOwner.current = historyUserId;
         setPreviewLog(null);
         setSelectedLogIds([]);
         setSavedAssetIds({});
@@ -103,6 +108,7 @@ export default function VideoPage() {
         setVideoReferences([]);
         setAudioReferences([]);
     }, [historyUserId]);
+    usePromptTransfer(adoptPrompt);
 
     useEffect(() => {
         videoTasks.setConcurrency(cultivationProfile?.maxConcurrency || 2);
@@ -697,7 +703,7 @@ export default function VideoPage() {
             </Drawer>
             {promptDialogOpen ? (
                 <Suspense fallback={<DeferredVideoToolLoading label="正在打开提示词库..." />}>
-                    <PromptSelectDialog open onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
+                    <PromptSelectDialog open onOpenChange={setPromptDialogOpen} onSelect={adoptPrompt} media="video" />
                 </Suspense>
             ) : null}
             {assetPickerOpen ? (

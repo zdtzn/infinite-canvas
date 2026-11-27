@@ -1,11 +1,12 @@
 import { Archive, ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Eye, FolderPlus, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, RotateCcw, Scan, Search, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { App, Button, Checkbox, Input, Modal, Pagination, Popover, Select, Tag, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { ImagePromptOptimizer } from "@/components/prompts/image-prompt-optimizer";
+import { usePromptAdoption, usePromptTransfer } from "@/hooks/use-prompt-adoption";
 import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { DeferredImage } from "@/components/ui/deferred-image";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -114,7 +115,6 @@ function getLogStore() {
 }
 
 export default function ImagePage() {
-    const location = useLocation();
     const { message, modal } = App.useApp();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
@@ -148,13 +148,8 @@ export default function ImagePage() {
     const assets = useAssetStore((state) => state.assets);
     const saveAsset = useAssetStore((state) => state.saveAsset);
     const [prompt, setPrompt] = useState("");
-    useEffect(() => {
-        const state = location.state;
-        if (!state || typeof state.promptTransfer !== "string") return;
-        setPrompt(state.promptTransfer);
-        const { promptTransfer: _consumed, ...remainingState } = state;
-        navigate(`${location.pathname}${location.search}${location.hash}`, { replace: true, state: remainingState });
-    }, [location, navigate]);
+    const adoptPrompt = usePromptAdoption(prompt, setPrompt, historyUserId);
+    usePromptTransfer(adoptPrompt);
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [referenceUploads, setReferenceUploads] = useState(0);
     const referenceUploadsRef = useRef(0);
@@ -1616,7 +1611,7 @@ export default function ImagePage() {
             />
             {promptDialogOpen ? (
                 <Suspense fallback={<DeferredDialogLoading title="提示词库" />}>
-                    <PromptSelectDialog open onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
+                    <PromptSelectDialog open onOpenChange={setPromptDialogOpen} onSelect={adoptPrompt} media="image" />
                 </Suspense>
             ) : null}
             {assetPickerOpen ? (

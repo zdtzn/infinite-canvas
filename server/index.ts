@@ -86,10 +86,12 @@ import { assertAllowedUpstreamUrl, assertResolvedPublicUpstreamUrl, buildUpstrea
 import { proxyPathModel, proxyRequestKind } from "./lib/ai-proxy-policy";
 import { DEFAULT_PROMPT_CACHE_MAX_ENTRIES, DEFAULT_PROMPT_THUMBNAIL_PROXY_CONCURRENCY, promptProxyLane } from "./lib/prompt-cache-policy";
 import { createPromptThumbnail, promptThumbnailOptions } from "./lib/prompt-thumbnail";
-import { loadManagedPromptSources, normalizeManagedPromptSource, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
-import { normalizePromptIndexItems, normalizePromptSourceIndexItems, normalizeStoredPromptIndexTaxonomy, promptIndexStatuses, queryPromptCovers, queryPromptIndex, recordPromptIndexError, replacePromptIndex } from "./lib/prompt-index";
+import { isReservedPromptSourceId, loadAvailablePromptSources, loadBuiltInPromptSources, loadManagedPromptSources, MAX_MANAGED_PROMPT_SOURCES, normalizeManagedPromptSource, saveBuiltInPromptSourceEnabled, saveManagedPromptSources, type ManagedPromptSource } from "./lib/prompt-sources";
+import { normalizeStoredPromptIndexTaxonomy, promptIndexStatuses, queryPromptCovers, queryPromptIndex } from "./lib/prompt-index";
 import { PROMPT_TAXONOMY_REVISION } from "./lib/prompt-taxonomy";
-import { runPromptSourceScript, type ServerPromptSourceItem } from "./lib/prompt-source-runtime";
+import { runBuiltInPromptSource, runPromptSourceScript, type ServerPromptSourceItem } from "./lib/prompt-source-runtime";
+import { createPromptIndexRefresher } from "./lib/prompt-source-refresh";
+import { BUILT_IN_PROMPT_SOURCES } from "../shared/prompt-source-presets";
 import { defaultUserChatPresetId, normalizeUserCanvasImageToolbar, normalizeUserChatPersona, normalizeUserChatPresetId, normalizeUserGenerationPreferences, normalizeUserSystemPrompt, readStoredUserCanvasImageToolbar, readStoredUserChatPersona, readStoredUserChatPresetId, readStoredUserGenerationPreferences, readStoredUserSystemPrompt, USER_CANVAS_IMAGE_TOOLBAR_KEY, USER_CHAT_PERSONA_KEY, USER_CHAT_PRESET_KEY, USER_GENERATION_PREFERENCES_KEY, USER_SYSTEM_PROMPT_KEY } from "./lib/user-preferences";
 import { openAppDatabase, persistReference } from "./db/database";
 import { createChatService, ChatError, type ChatAttachment, type ChatMessage } from "./modules/chat/service";
@@ -323,8 +325,10 @@ const promptSourceRuntimeCache = new Map<string, {
     expiresAt: number;
     staleUntil: number;
     inFlight?: Promise<ServerPromptSourceItem[]>;
-    lastError?: string;
 }>();
+const promptIndexRefresher = appDatabase.raw
+    ? createPromptIndexRefresher(appDatabase.raw, loadPromptSourceItems, (sourceId) => promptSourceRuntimeCache.delete(sourceId))
+    : null;
 const PROMPT_SOURCE_CACHE_TTL_MS = 5 * 60_000;
 const PROMPT_SOURCE_STALE_MS = 30 * 60_000;
 
@@ -412,7 +416,7 @@ console.info(
 );
 
 setTimeout(() => {
-    void warmManagedPromptIndexes();
+    void warmMissingPromptIndexes();
 }, 1_000);
 
 async function route(request: Request, requestId: string) {
@@ -472,14 +476,18 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/admin/prompt-optimizer" && request.method === "PUT") return adminUpdatePromptOptimizationConfiguration(request, session);
         if (url.pathname === "/api/prompt-sources" && request.method === "GET") return listPromptSources(session);
         const promptSourceItemsMatch = url.pathname.match(/^\/api\/prompt-sources\/([^/]+)\/items$/);
-        if (promptSourceItemsMatch && request.method === "GET") return runPromptSourceItems(request, session, decodeRouteSegment(promptSourceItemsMatch[1], "提示词来源 ID"));
+        if (promptSourceItemsMatch && request.method === "GET") return runPromptSourceItems(request, decodeRouteSegment(promptSourceItemsMatch[1], "提示词来源 ID"));
         if (url.pathname === "/api/prompt-index" && request.method === "GET") return listPromptIndex(url);
         if (url.pathname === "/api/prompt-index/covers" && request.method === "GET") {
             const sourceIds = url.searchParams.getAll("sourceId");
-            if (sourceIds.length > 100 || sourceIds.some((id) => !/^[A-Za-z0-9_-]{1,96}$/.test(id))) throw new HttpError(400, "提示词来源参数无效");
-            return json(appDatabase.raw ? queryPromptCovers(appDatabase.raw, sourceIds) : { items: [], indexedSourceIds: [] }, 200, { "Cache-Control": "private, no-cache" });
+            if (sourceIds.length > MAX_MANAGED_PROMPT_SOURCES + BUILT_IN_PROMPT_SOURCES.length || sourceIds.some((id) => !/^[A-Za-z0-9_-]{1,96}$/.test(id))) throw new HttpError(400, "提示词来源参数无效");
+            const enabledIds = new Set(enabledPromptSourceIds());
+            const enabledSourceIds = sourceIds.filter((id) => enabledIds.has(id));
+            const covers = appDatabase.raw ? queryPromptCovers(appDatabase.raw, enabledSourceIds) : { items: [], indexedSourceIds: [] };
+            return json({ ...covers, enabledSourceIds }, 200, { "Cache-Control": "private, no-store" });
         }
         if (url.pathname === "/api/prompt-index" && request.method === "PUT") return savePromptIndex(request, session);
+        if (url.pathname === "/api/admin/prompt-index/refresh" && request.method === "POST") return refreshPromptIndexes(request, session);
         if (url.pathname === "/api/admin/prompt-index/status" && request.method === "GET") return listPromptIndexStatus(session);
         const adminPromptSourceMatch = url.pathname.match(/^\/api\/admin\/prompt-sources\/([^/]+)$/);
         if (adminPromptSourceMatch && request.method === "PUT") return savePromptSource(request, session, decodeRouteSegment(adminPromptSourceMatch[1], "提示词来源 ID"));
@@ -1426,52 +1434,55 @@ function promptOptimizationPreferredTarget() {
 }
 
 function listPromptSources(session: SessionPayload) {
-    return json({ items: loadManagedPromptSources(appDatabase).map((source) => publicPromptSource(source, Boolean(state.users[session.userId]?.admin))) });
+    const includeScript = Boolean(state.users[session.userId]?.admin);
+    return json({
+        items: loadManagedPromptSources(appDatabase).map((source) => publicPromptSource(source, includeScript)),
+        builtInSources: loadBuiltInPromptSources(appDatabase).map((source) => publicPromptSource(source, false)),
+    }, 200, { "Cache-Control": "private, no-store" });
 }
 
-async function runPromptSourceItems(request: Request, session: SessionPayload, sourceId: string) {
-    const source = loadManagedPromptSources(appDatabase).find((item) => item.id === sourceId);
-    if (!source) throw new HttpError(404, "提示词来源不存在");
+function enabledPromptSourceIds() {
+    return loadAvailablePromptSources(appDatabase).filter((source) => source.enabled).map((source) => source.id);
+}
+
+function loadPromptSourceItems(source: ManagedPromptSource, signal?: AbortSignal) {
+    return isReservedPromptSourceId(source.id)
+        ? runBuiltInPromptSource(source.id, signal)
+        : runPromptSourceScript(source.script, signal);
+}
+
+async function runPromptSourceItems(request: Request, sourceId: string) {
+    const source = loadAvailablePromptSources(appDatabase).find((item) => item.id === sourceId && item.enabled);
+    if (!source) throw new HttpError(404, "提示词来源不存在或已停用");
     const signature = createHash("sha256").update(`${source.name}\n${source.githubUrl}\n${source.script}`).digest("hex");
     const cached = promptSourceRuntimeCache.get(source.id);
+    const headers = { "Cache-Control": "private, no-store" };
     const now = Date.now();
     if (cached?.signature === signature && cached.items.length && cached.expiresAt > now) {
-        return json({ sourceId: source.id, items: cached.items, cached: true }, 200, { "Cache-Control": "private, max-age=300, stale-while-revalidate=1800", "X-Prompt-Cache": "hit" });
+        return json({ sourceId: source.id, items: cached.items, cached: true }, 200, { ...headers, "X-Prompt-Cache": "hit" });
     }
-    const inFlight = cached?.signature === signature ? cached.inFlight : undefined;
-    const task = inFlight || runPromptSourceScript(source.script).then((items) => {
-        const entry = promptSourceRuntimeCache.get(source.id);
-        if (entry) {
-            entry.items = items;
-            entry.expiresAt = Date.now() + PROMPT_SOURCE_CACHE_TTL_MS;
-            entry.staleUntil = Date.now() + PROMPT_SOURCE_STALE_MS;
-            entry.lastError = undefined;
-        }
+    const entry = cached?.signature === signature ? cached : { signature, items: [], expiresAt: 0, staleUntil: 0 };
+    const inFlight = entry.inFlight;
+    const task = inFlight ?? loadPromptSourceItems(source).then((items) => {
+        entry.items = items;
+        entry.expiresAt = Date.now() + PROMPT_SOURCE_CACHE_TTL_MS;
+        entry.staleUntil = Date.now() + PROMPT_SOURCE_STALE_MS;
         return items;
-    });
-    promptSourceRuntimeCache.set(source.id, {
-        signature,
-        items: cached?.signature === signature ? cached.items : [],
-        expiresAt: cached?.signature === signature ? cached.expiresAt : 0,
-        staleUntil: cached?.signature === signature ? cached.staleUntil : 0,
-        inFlight: task,
-        lastError: cached?.lastError,
-    });
+    }).finally(() => delete entry.inFlight);
+    entry.inFlight = task;
+    promptSourceRuntimeCache.set(source.id, entry);
+    let items: ServerPromptSourceItem[];
     try {
-        const items = await awaitWithRequestAbort(task, request.signal);
-        const entry = promptSourceRuntimeCache.get(source.id);
-        if (entry) delete entry.inFlight;
-        return json({ sourceId: source.id, items, cached: false }, 200, { "Cache-Control": "private, max-age=300, stale-while-revalidate=1800", "X-Prompt-Cache": inFlight ? "coalesced" : "miss" });
+        items = await awaitWithRequestAbort(task, request.signal);
     } catch (error) {
-        const entry = promptSourceRuntimeCache.get(source.id);
-        if (entry) {
-            delete entry.inFlight;
-            entry.lastError = error instanceof Error ? error.message : String(error);
-            if (entry.items.length && entry.staleUntil > Date.now()) return json({ sourceId: source.id, items: entry.items, cached: true, stale: true }, 200, { "Cache-Control": "private, max-age=60, stale-while-revalidate=300", "X-Prompt-Cache": "stale" });
-        }
         if (request.signal.aborted) throw error;
+        if (promptSourceRuntimeCache.get(source.id) === entry && entry.items.length && entry.staleUntil > Date.now()) {
+            return json({ sourceId: source.id, items: entry.items, cached: true, stale: true }, 200, { ...headers, "X-Prompt-Cache": "stale" });
+        }
         throw new HttpError(502, error instanceof Error ? error.message : "提示词来源执行失败");
     }
+    if (promptSourceRuntimeCache.get(source.id) !== entry) throw new HttpError(409, "提示词来源已更新，请重新读取");
+    return json({ sourceId: source.id, items, cached: false }, 200, { ...headers, "X-Prompt-Cache": inFlight ? "coalesced" : "miss" });
 }
 
 function awaitWithRequestAbort<T>(task: Promise<T>, signal: AbortSignal) {
@@ -1499,90 +1510,120 @@ function awaitWithRequestAbort<T>(task: Promise<T>, signal: AbortSignal) {
 function listPromptIndex(url: URL) {
     const database = appDatabase.raw;
     if (!database) return json({ items: [], tags: [], categories: [], total: 0, page: 1, pageSize: 20, indexed: false });
+    const order = url.searchParams.get("order");
+    const media = url.searchParams.get("media");
     return json(queryPromptIndex(database, {
-        order: url.searchParams.get("order") === "asc" ? "asc" : "desc",
+        order: order === "asc" || order === "desc" || order === "relevance" ? order : undefined,
+        media: media === "image" || media === "video" ? media : undefined,
+        enabledSourceIds: enabledPromptSourceIds(),
         keyword: url.searchParams.get("keyword") || "",
         sourceId: url.searchParams.get("sourceId") || "",
         category: url.searchParams.get("category") || "",
         tags: url.searchParams.getAll("tag"),
         page: Number(url.searchParams.get("page") || 1),
         pageSize: Number(url.searchParams.get("pageSize") || 20),
-    }), 200, { "Cache-Control": "private, max-age=30, stale-while-revalidate=300" });
+    }), 200, { "Cache-Control": "private, no-store" });
 }
 
+function getRefreshSources(sourceId: string) {
+    const sources = loadAvailablePromptSources(appDatabase);
+    if (!sourceId) return sources.filter((source) => source.enabled);
+    const source = sources.find((item) => item.id === sourceId);
+    if (!source) throw new HttpError(404, "提示词来源不存在");
+    if (!source.enabled) throw new HttpError(409, "提示词来源已停用，请先启用");
+    return [source];
+}
+
+async function refreshPromptIndexes(request: Request, session: SessionPayload) {
+    requireAdmin(session);
+    if (!promptIndexRefresher) throw new HttpError(503, "提示词索引数据库暂不可用");
+    const body = await readJson<{ sourceId?: unknown }>(request, 1024);
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "提示词来源参数无效");
+    const sourceId = body.sourceId;
+    if (sourceId !== undefined && (typeof sourceId !== "string" || !/^[A-Za-z0-9_-]{1,96}$/.test(sourceId))) {
+        throw new HttpError(400, "提示词来源 ID 无效");
+    }
+    const results = await Promise.all(getRefreshSources(sourceId ?? "").map(promptIndexRefresher.refresh));
+    return json({ results }, 200, { "Cache-Control": "no-store" });
+}
+
+// Older clients use PUT. Refresh from the configured source so partial browser payloads cannot replace the index.
 async function savePromptIndex(request: Request, session: SessionPayload) {
     requireAdmin(session);
-    const database = appDatabase.raw;
-    if (!database) throw new HttpError(503, "提示词索引数据库暂不可用");
-    const body = await readJson<{ sourceId?: unknown; items?: unknown }>(request, 8 * 1024 * 1024);
-    const sourceId = String(body.sourceId || "").trim();
+    if (!promptIndexRefresher) throw new HttpError(503, "提示词索引数据库暂不可用");
+    const body = await readJson<{ sourceId?: unknown }>(request, 8 * 1024 * 1024);
+    const sourceId = String(body?.sourceId || "").trim();
     if (!sourceId) throw new HttpError(400, "提示词来源 ID 不能为空");
-    let items;
-    try {
-        items = normalizePromptIndexItems(sourceId, body.items);
-    } catch (error) {
-        throw new HttpError(400, error instanceof Error ? error.message : "提示词索引格式无效");
-    }
-    replacePromptIndex(database, sourceId, items);
-    return json({ sourceId, count: items.length });
+    const result = await promptIndexRefresher.refresh(getRefreshSources(sourceId)[0]);
+    if (!result.success) throw new HttpError(502, result.lastError);
+    return json({ sourceId, count: result.count });
 }
 
 function listPromptIndexStatus(session: SessionPayload) {
     requireAdmin(session);
     const database = appDatabase.raw;
-    return json({ items: database ? promptIndexStatuses(database) : [] }, 200, { "Cache-Control": "no-store" });
+    if (!database) throw new HttpError(503, "提示词索引数据库暂不可用");
+    const indexed = new Map(promptIndexStatuses(database).map((status) => [status.sourceId, status]));
+    const items = loadAvailablePromptSources(appDatabase).map(({ id }) => ({
+        sourceId: id,
+        count: 0,
+        lastSuccessAt: "",
+        lastError: "",
+        ...indexed.get(id),
+        refreshing: promptIndexRefresher?.isRefreshing(id) ?? false,
+    }));
+    return json({ items }, 200, { "Cache-Control": "no-store" });
 }
 
-let promptIndexWarmup: Promise<void> | null = null;
-
-function warmManagedPromptIndexes() {
-    if (!appDatabase.raw || promptIndexWarmup) return promptIndexWarmup || Promise.resolve();
-    const sources = loadManagedPromptSources(appDatabase).filter((source) => source.enabled);
-    if (!sources.length) return Promise.resolve();
-    promptIndexWarmup = Promise.all(
-        sources.map(async (source) => {
-            try {
-                const rawItems = await runPromptSourceScript(source.script);
-                const items = normalizePromptSourceIndexItems(source, rawItems);
-                replacePromptIndex(appDatabase.raw!, source.id, items);
-                console.info(JSON.stringify({ event: "prompt_index_warmed", sourceId: source.id, count: items.length }));
-            } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                recordPromptIndexError(appDatabase.raw!, source.id, message);
-                console.warn(JSON.stringify({ event: "prompt_index_warmup_failed", sourceId: source.id, message }));
-            }
-        }),
-    )
-        .then(() => undefined)
-        .finally(() => {
-            promptIndexWarmup = null;
-        });
-    return promptIndexWarmup;
+async function warmMissingPromptIndexes() {
+    if (!appDatabase.raw || !promptIndexRefresher) return;
+    const indexed = new Set(promptIndexStatuses(appDatabase.raw).filter((source) => source.lastSuccessAt).map((source) => source.sourceId));
+    const sources = getRefreshSources("").filter((source) => !indexed.has(source.id));
+    await Promise.allSettled(sources.map(promptIndexRefresher.refresh));
 }
 
 async function savePromptSource(request: Request, session: SessionPayload, id: string) {
     requireAdmin(session);
     const body = await readJson<Record<string, unknown>>(request);
     let source: ManagedPromptSource;
-    try {
-        source = normalizeManagedPromptSource(body, id);
-    } catch (error) {
-        throw new HttpError(400, error instanceof Error ? error.message : "提示词来源配置无效");
+    const builtIn = loadBuiltInPromptSources(appDatabase).find((item) => item.id === id);
+    if (builtIn) {
+        if (typeof body?.enabled !== "boolean" || (body.id !== undefined && body.id !== id)) throw new HttpError(400, "提示词来源状态无效");
+        source = { ...builtIn, enabled: body.enabled };
+        saveBuiltInPromptSourceEnabled(appDatabase, id, source.enabled);
+    } else {
+        try {
+            source = normalizeManagedPromptSource(body, id);
+        } catch (error) {
+            throw new HttpError(400, error instanceof Error ? error.message : "提示词来源配置无效");
+        }
+        const sources = loadManagedPromptSources(appDatabase).filter((item) => item.id !== id);
+        if (sources.length >= MAX_MANAGED_PROMPT_SOURCES) throw new HttpError(409, "自定义提示词来源已达到上限");
+        saveManagedPromptSources(appDatabase, [...sources, source]);
     }
-    const sources = loadManagedPromptSources(appDatabase).filter((item) => item.id !== id);
-    saveManagedPromptSources(appDatabase, [...sources, source]);
+    promptIndexRefresher?.invalidate(source.id);
     promptSourceRuntimeCache.delete(source.id);
-    void warmManagedPromptIndexes();
+    if (source.enabled) void promptIndexRefresher?.refresh(source).catch((error: unknown) => {
+        console.warn(JSON.stringify({ event: "prompt_source_refresh_failed", sourceId: source.id, message: String(error) }));
+    });
     console.info(JSON.stringify({ event: "prompt_source_updated", adminUserId: session.userId, sourceId: source.id }));
     return json({ ok: true, source: publicPromptSource(source) });
 }
 
 function deletePromptSource(session: SessionPayload, id: string) {
     requireAdmin(session);
+    if (isReservedPromptSourceId(id)) throw new HttpError(400, "内置提示词来源只能停用");
     const sources = loadManagedPromptSources(appDatabase);
     saveManagedPromptSources(appDatabase, sources.filter((item) => item.id !== id));
+    promptIndexRefresher?.invalidate(id);
     promptSourceRuntimeCache.delete(id);
-    if (appDatabase.raw) appDatabase.raw.query("DELETE FROM prompt_index WHERE source_id = ?").run(id);
+    const database = appDatabase.raw;
+    if (database) {
+        database.transaction(() => {
+            database.query("DELETE FROM prompt_index WHERE source_id = ?").run(id);
+            database.query("DELETE FROM prompt_index_status WHERE source_id = ?").run(id);
+        })();
+    }
     console.info(JSON.stringify({ event: "prompt_source_deleted", adminUserId: session.userId, sourceId: id }));
     return new Response(null, { status: 204 });
 }

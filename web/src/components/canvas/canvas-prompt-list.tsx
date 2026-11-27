@@ -3,6 +3,7 @@ import { App, Empty, Input, Select, Spin } from "antd";
 import { Eye, FileText, Plus, Search } from "lucide-react";
 
 import { promptImageCandidates, PromptCover } from "@/components/prompts/prompt-cover";
+import { promptDisplayTags } from "@/components/prompts/prompt-labels";
 import { usePromptList } from "@/components/prompts/use-prompt-list";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { PromptDetailDialog } from "@/pages/prompts/components/prompt-detail-dialog";
@@ -13,7 +14,7 @@ import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { InsertAssetPayload } from "./asset-picker-modal";
 
 const ALL_SOURCES = "all";
-const ALL_PRIMARY_CATEGORIES = "all";
+const ALL_THEMES = "all";
 const CANVAS_PROMPT_PAGE_SIZE = 30;
 
 function promptIdentity(item: Prompt) {
@@ -38,7 +39,7 @@ export const CanvasPromptList = memo(function CanvasPromptList({ onInsert, theme
     const enabledSources = useMemo(() => sources.filter((source) => source.enabled), [sources]);
     const [keyword, setKeyword] = useState("");
     const [sourceId, setSourceId] = useState(ALL_SOURCES);
-    const [primaryCategory, setPrimaryCategory] = useState(ALL_PRIMARY_CATEGORIES);
+    const [themeFilter, setThemeFilter] = useState(ALL_THEMES);
     const [detail, setDetail] = useState<Prompt | null>(null);
 
     useEffect(() => {
@@ -48,7 +49,7 @@ export const CanvasPromptList = memo(function CanvasPromptList({ onInsert, theme
     const { query, total } = usePromptList({
         sourceId: sourceId === ALL_SOURCES ? "" : sourceId,
         keyword,
-        tags: primaryCategory === ALL_PRIMARY_CATEGORIES ? [] : [primaryCategory],
+        tags: themeFilter === ALL_THEMES ? [] : [themeFilter],
         category: ALL_PROMPTS_OPTION,
         pageSize: CANVAS_PROMPT_PAGE_SIZE,
         enabled: enabledSources.length > 0,
@@ -67,7 +68,7 @@ export const CanvasPromptList = memo(function CanvasPromptList({ onInsert, theme
     return (
         <div className="flex h-full flex-col">
             <div className="space-y-2 px-3 pb-2.5 pt-1">
-                <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索标题、正文或分类" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
+                <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索标题、内容或主题" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
                 <div className="grid grid-cols-2 gap-2">
                     <Select
                         size="small"
@@ -80,10 +81,10 @@ export const CanvasPromptList = memo(function CanvasPromptList({ onInsert, theme
                     />
                     <Select
                         size="small"
-                        value={primaryCategory}
-                        onChange={setPrimaryCategory}
-                        aria-label="筛选主分类"
-                        options={[{ label: "全部分类", value: ALL_PRIMARY_CATEGORIES }, ...PROMPT_TAXONOMY.map((category) => ({ label: category, value: category }))]}
+                        value={themeFilter}
+                        onChange={setThemeFilter}
+                        aria-label="筛选提示词主题"
+                        options={[{ label: "全部主题", value: ALL_THEMES }, ...PROMPT_TAXONOMY.map((theme) => ({ label: theme, value: theme }))]}
                     />
                 </div>
                 {query.isSuccess ? (
@@ -142,7 +143,7 @@ export function CanvasPromptRow({ item, theme, onInsert, onView }: { item: Promp
             )}
             <button type="button" onClick={onView} className="min-w-0 flex-1 text-left">
                 <div className="truncate text-sm font-medium leading-snug">{item.title}</div>
-                <div className="mt-0.5 truncate text-[11px] leading-snug opacity-45">{[item.category, item.tags[0]].filter(Boolean).join(" · ")}</div>
+                <div className="mt-0.5 text-[11px] leading-snug opacity-45">{[item.category, ...promptDisplayTags(item)].filter(Boolean).join(" · ")}</div>
                 <div className="mt-0.5 truncate text-xs leading-snug opacity-50">{item.prompt}</div>
             </button>
             <div className="flex shrink-0 flex-col items-center gap-0.5">
