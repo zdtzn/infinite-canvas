@@ -12,7 +12,7 @@ function DirectorNode({ ctx }: { ctx: CanvasNodeContext }) {
         <div className="text-center"><p className="font-medium">3D 导演台</p><p className="mt-2 text-xs opacity-60">摆位、机位、轨迹与分镜录制</p></div>
         <Button type="text" onPointerDown={event => event.stopPropagation()} onClick={() => setOpen(true)}>打开导演台</Button>
         <Modal open={open} footer={null} closable={false} keyboard={false} mask={{ closable: false }} width="100vw" style={{ top: 0, margin: 0, paddingBottom: 0, maxWidth: "100vw" }} styles={{ body: { height: "100dvh", padding: 0 }, container: { padding: 0, borderRadius: 0 } }} destroyOnHidden>
-            <Suspense fallback={<div className="grid h-full place-items-center"><Spin description="正在打开导演台" /></div>}>
+            <Suspense fallback={<div className="flex h-full flex-col items-center justify-center gap-4"><Spin description="正在打开导演台" /><Button type="text" onClick={() => setOpen(false)}>关闭导演台</Button></div>}>
                 {open && <DirectorEditor ctx={ctx} onClose={() => setOpen(false)} />}
             </Suspense>
         </Modal>

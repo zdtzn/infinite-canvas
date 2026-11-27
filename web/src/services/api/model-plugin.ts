@@ -30,14 +30,13 @@ export type RunPluginArgs = {
     config: AiConfig;
     prompt?: string;
     images?: string[];
-    videos?: File[];
-    audios?: File[];
+    videos?: (File | string)[];
+    audios?: (File | string)[];
     messages?: unknown[];
     params?: Record<string, unknown>;
     signal?: AbortSignal;
     onDelta?: (text: string) => void;
     taskId?: string;
-    publicImages?: string[];
 };
 
 function pluginHeaders(extra?: Record<string, string>, hasJsonBody = false): Record<string, string> {

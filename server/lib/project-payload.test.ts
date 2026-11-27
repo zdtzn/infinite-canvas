@@ -14,6 +14,14 @@ describe("project payload validation", () => {
         expect(isValidProjectPayload(project, "project-1")).toBe(true);
     });
 
+    test("persists a canvas plugin node and a connection to the generated image", () => {
+        const nodeId = "director:studio-123-abcd";
+        const graph = { ...project, nodes: [{ id: nodeId, type: "director:studio" }, { id: "shot-1", type: "image" }], connections: [{ id: "link-1", fromNodeId: nodeId, toNodeId: "shot-1" }] };
+        expect(isValidProjectPayload(graph, graph.id)).toBe(true);
+        expect(isSafeRecordId(nodeId)).toBe(false);
+        expect(isValidProjectPayload({ ...graph, nodes: [{ id: "director:../studio" }], connections: [] }, graph.id)).toBe(false);
+    });
+
     test("rejects prototype keys, duplicate ids, and dangling connections", () => {
         expect(isSafeRecordId("__proto__")).toBe(false);
         expect(isValidProjectPayload({ ...project, id: "__proto__" }, "__proto__")).toBe(false);

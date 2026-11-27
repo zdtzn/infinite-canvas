@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openAppDatabase } from "../db/database";
-import { readAssetFolders, saveAssetFolders, assertAssetFolder } from "./asset-folders";
+import { readAssetFolders, saveAssetFolders, assertAssetFolder, moveLibraryAsset } from "./asset-folders";
 import { assetFolderOptions, mergeAssetFolders, normalizeAssetFolders } from "../../shared/asset-folders";
 
 test("folder validation rejects cycles, missing parents, duplicate siblings and excessive depth", () => {
@@ -24,6 +24,25 @@ test("folder package merge preserves hierarchy and merges names while remapping 
     expect(merged.mapping.get("b")).not.toBe("b");
     expect(assetFolderOptions(merged.folders).map(item => item.label)).toContain("项目 / 新素材");
     expect(existing).toHaveLength(2);
+});
+
+test("moving a cloud asset preserves recent content and cannot modify another account", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "canvas-folder-move-"));
+    const database = openAppDatabase({ dataDir });
+    try {
+        for (const owner of ["alice", "bob"]) database.raw!.query("INSERT INTO users(user_id, display_name, created_at) VALUES (?, ?, 1)").run(owner, owner);
+        saveAssetFolders(database, "alice", [{ id: "folder", name: "参考", parentId: null }], 0);
+        for (const owner of ["alice", "bob"]) database.upsertAssetLibraryItem(owner, { id: "one", updatedAt: 1, payload: { id: "one", kind: "text", title: owner, data: { content: `latest edit by ${owner}` } } });
+
+        expect(moveLibraryAsset(database, "alice", "one", "folder")).toMatchObject({ title: "alice", folderId: "folder", data: { content: "latest edit by alice" } });
+        expect(() => moveLibraryAsset(database, "bob", "one", "folder")).toThrow("目标文件夹");
+        expect(database.loadAssetLibrary("bob").items[0].payload.folderId).toBeUndefined();
+        expect(moveLibraryAsset(database, "alice", "missing", "folder")).toBeNull();
+        expect(moveLibraryAsset(database, "alice", "one", null)?.folderId).toBeNull();
+    } finally {
+        database.close();
+        rmSync(dataDir, { recursive: true, force: true });
+    }
 });
 
 test("folder updates are account isolated, revision checked and move assets atomically without deleting files", () => {

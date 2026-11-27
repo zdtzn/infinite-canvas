@@ -26,3 +26,15 @@ export function saveAssetFolders(database: AppDatabase, userId: string, input: u
 export function assertAssetFolder(database: AppDatabase, userId: string, payload: Record<string, unknown>) {
     if (payload.folderId && !readAssetFolders(database, userId).folders.some(folder => folder.id === payload.folderId)) throw new AssetLibraryInputError("目标文件夹已移除，请重新选择文件夹");
 }
+
+export function moveLibraryAsset(database: AppDatabase, userId: string, id: string, folderId: unknown) {
+    if (folderId !== null && (typeof folderId !== "string" || !folderId)) throw new AssetLibraryInputError("目标文件夹无效");
+    return database.transaction(() => {
+        assertAssetFolder(database, userId, { folderId });
+        const now = new Date();
+        const row = database.raw!.query<{ payload_json: string }, [string | null, string, number, string, string]>(
+            "UPDATE asset_library_items SET payload_json = json_set(payload_json, '$.folderId', ?, '$.updatedAt', ?), updated_at = ? WHERE user_id = ? AND asset_id = ? RETURNING payload_json",
+        ).get(folderId, now.toISOString(), now.getTime(), userId, id);
+        return row ? JSON.parse(row.payload_json) as Record<string, unknown> : null;
+    });
+}

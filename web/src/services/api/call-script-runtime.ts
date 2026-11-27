@@ -10,6 +10,25 @@ type ScriptUtils = {
     sleep: (ms: number) => Promise<void>;
 };
 
+/** Keep public media URLs intact. Private files are read locally by protocols that support file contents. */
+export function publicReferenceUrl(input: unknown, appOrigin = globalThis.location?.origin) {
+    if (typeof input !== "string" || !/^https?:\/\//i.test(input)) return;
+    let url: URL;
+    try { url = new URL(input); } catch { return; }
+    if (url.username || url.password || (url.origin === appOrigin && /^\/api(?:\/|$)/.test(url.pathname))) return;
+    const host = url.hostname.toLowerCase().replace(/\.$/, "");
+    if (host.startsWith("[")) {
+        if (!/^\[[23][\da-f]{3}:/.test(host)) return;
+    } else if (!host.includes(".") || /\.(?:localhost|local)$/.test(host)) return;
+    else if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+        const [first, second] = host.split(".").map(Number);
+        if ([0, 10, 127].includes(first) || first >= 224 || (first === 100 && second >= 64 && second <= 127) ||
+            (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168) ||
+            (first === 198 && (second === 18 || second === 19))) return;
+    }
+    return input;
+}
+
 export async function runMainCallScript<T>(args: RunPluginArgs, utils: ScriptUtils): Promise<T> {
     args.signal?.throwIfAborted();
     const toBlob = async (input: string | Blob) => {
@@ -33,8 +52,10 @@ export async function runMainCallScript<T>(args: RunPluginArgs, utils: ScriptUti
         });
     };
     const main = new Function(`"use strict";\n${args.script}\nreturn main;`)();
-    const videos = await Promise.all((args.videos || []).map(toDataUrl));
-    const audios = await Promise.all((args.audios || []).map(toDataUrl));
+    const mediaSource = (source: string | File) => typeof source === "string" ? source : toDataUrl(source);
+    const videos = await Promise.all((args.videos || []).map(mediaSource));
+    const audios = await Promise.all((args.audios || []).map(mediaSource));
+    args.signal?.throwIfAborted();
     const options = { ...args.params };
     if (args.capability === "image") options.resolution = ({ low: "1K", medium: "2K", high: "4K" } as Record<string, string>)[String(options.resolution)] || options.resolution;
     return main({
@@ -43,7 +64,7 @@ export async function runMainCallScript<T>(args: RunPluginArgs, utils: ScriptUti
         prompt: args.prompt || "", images: args.images || [], videos, audios,
         messages: args.messages || [], options, taskId: args.taskId, signal: args.signal,
         utils: {
-            ...utils, onDelta: args.onDelta, toBlob, toDataUrl,
+            ...utils, onDelta: args.onDelta ?? (() => {}), toBlob, toDataUrl,
             request: (config: AxiosRequestConfig & { url: string }) => utils.request({ ...config, timeout: config.timeout ?? (args.taskId ? 30_000 : 600_000) }),
             http: {
                 ...utils.http,
@@ -51,9 +72,8 @@ export async function runMainCallScript<T>(args: RunPluginArgs, utils: ScriptUti
                 post: (path: string, body?: unknown, options?: Parameters<PluginHttp["post"]>[2]) => utils.http.post(path, body, { timeout: 600_000, ...options }),
             },
             toPublicUrl: async (input: string | Blob) => {
-                const index = typeof input === "string" ? args.images?.indexOf(input) ?? -1 : -1;
-                const candidate = index >= 0 ? args.publicImages?.[index] || input : input;
-                if (typeof candidate === "string" && /^https?:\/\//i.test(candidate) && !new URL(candidate).username && !new URL(candidate).password) return candidate;
+                const url = publicReferenceUrl(input);
+                if (url) return url;
                 throw new Error("该协议需要可公开访问的参考素材链接，请使用公网链接；本机图片和登录后才能读取的素材不能直接提交");
             },
             markdownImages: async (source: string) => {

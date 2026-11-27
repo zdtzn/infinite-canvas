@@ -6,12 +6,12 @@ import localforage from "localforage";
 import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { runWithConcurrency } from "@/lib/async-pool";
 import "@/lib/localforage-storage";
-import { deleteServerAssetLibraryItem, fetchServerAssetLibrary, replaceServerAssetLibrary, upsertServerAssetLibraryItem } from "@/services/server-api";
+import { deleteServerAssetLibraryItem, fetchServerAssetLibrary, moveServerAssetLibraryItem, replaceServerAssetLibrary, upsertServerAssetLibraryItem } from "@/services/server-api";
 import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { mergeAssetRecords, planAssetLibraryHydration, shouldFetchCompleteServerLibraryForMigration } from "./asset-library-sync";
 import { normalizeAssetSource } from "./asset-source";
-import { ASSET_SYNC_MAX_ATTEMPTS, ASSET_SYNC_SUCCESS_EVENT, assetSyncRetryDelay, preservePendingAssets, queueAssetSync, type AssetSyncEntry, type AssetSyncStatus, type AssetSyncSuccessDetail } from "./asset-sync-queue";
+import { ASSET_SYNC_MAX_ATTEMPTS, ASSET_SYNC_SUCCESS_EVENT, assetSyncRetryDelay, preservePendingAssets, queueAssetSync, reparentFolderAssets, type AssetSyncEntry, type AssetSyncStatus, type AssetSyncSuccessDetail } from "./asset-sync-queue";
 import { useUserStore } from "./use-user-store";
 
 export type AssetKind = "text" | "image" | "video";
@@ -53,8 +53,9 @@ type AssetStore = {
     getAssetSyncStatus: (id: string) => AssetSyncStatus;
     waitForAssetLocalSave: (id: string) => Promise<AssetSyncStatus>;
     addAsset: (asset: Omit<Asset, "id" | "createdAt" | "updatedAt">) => string;
-    saveAsset: (asset: Asset) => string;
+    saveAsset: (asset: Asset, operation?: "upsert" | "move") => string;
     updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
+    moveAssetsFromDeletedFolders: (owner: string, destinations: ReadonlyMap<string, string | null>) => Promise<void>;
     removeAsset: (id: string) => Promise<void>;
     replaceAssets: (assets: Asset[]) => void;
     prepareForUser: (userId: string) => void;
@@ -172,16 +173,17 @@ export const useAssetStore = create<AssetStore>()(
             },
             // Accept complete records from remote pages, including items not in the
             // current cache. Every writer shares one revision-aware upsert path.
-            saveAsset: (asset) => {
+            saveAsset: (asset, operation = "upsert") => {
                 assertAssetOwnerReady();
                 const { id } = asset;
                 if (!id) throw new Error("素材标识不能为空");
                 const current = get();
-                if (current.syncOutbox.some((entry) => entry.userId === current.ownerUserId && entry.assetId === id && entry.operation === "delete")) throw new Error("该素材正在删除，请等待删除完成或重试删除");
-                const item = normalizeAssetRecord(asset);
+                const queued = current.syncOutbox.find(entry => entry.userId === current.ownerUserId && entry.assetId === id);
+                if (queued?.operation === "delete") throw new Error("该素材正在删除，请等待删除完成或重试删除");
+                const item = normalizeAssetRecord(operation === "move" && queued?.asset ? { ...queued.asset, folderId: asset.folderId, updatedAt: asset.updatedAt } : asset);
                 set((state) => ({
                     assets: [item, ...state.assets.filter((existing) => existing.id !== id)],
-                    syncOutbox: PUBLIC_MODE ? queueAssetSync(state.syncOutbox, { userId: state.ownerUserId, assetId: id, asset: item, operation: "upsert" }) : state.syncOutbox,
+                    syncOutbox: PUBLIC_MODE ? queueAssetSync(state.syncOutbox, { userId: state.ownerUserId, assetId: id, asset: item, operation: queued?.operation === "upsert" ? "upsert" : operation }) : state.syncOutbox,
                 }));
                 void flushAssetSyncOutbox();
                 return id;
@@ -192,6 +194,13 @@ export const useAssetStore = create<AssetStore>()(
                 const asset = current.assets.find((item) => item.id === id);
                 if (!asset) return;
                 get().saveAsset({ ...asset, ...patch, id, updatedAt: new Date().toISOString() } as Asset);
+            },
+            moveAssetsFromDeletedFolders: async (owner, destinations) => {
+                assertAssetOwnerReady();
+                if ((useUserStore.getState().user?.id || "") !== owner) throw new Error("账号已切换，请重新操作");
+                set(state => reparentFolderAssets(state.assets, state.syncOutbox, owner, destinations));
+                await assetPersistenceTask;
+                void flushAssetSyncOutbox();
             },
             removeAsset: async (id) => {
                 assertAssetOwnerReady();
@@ -442,6 +451,9 @@ async function syncAssetEntry(entry: AssetSyncEntry) {
             if (!isActiveAssetOwner(entry.userId) || !currentSyncEntry(entry)) return;
             const upsert = await upsertServerAssetLibraryItem(prepared, entry.userId);
             if (isActiveAssetOwner(entry.userId) && currentSyncEntry(entry)) saved = await hydrateServerAsset(upsert.item);
+        } else if (entry.operation === "move" && entry.asset) {
+            const moved = await moveServerAssetLibraryItem(entry.assetId, entry.asset.folderId ?? null, entry.userId);
+            if (isActiveAssetOwner(entry.userId) && currentSyncEntry(entry)) saved = await hydrateServerAsset(moved.item);
         } else if (entry.operation === "delete") {
             await deleteServerAssetLibraryItem(entry.assetId, entry.userId);
         }

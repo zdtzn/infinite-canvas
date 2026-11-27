@@ -5,6 +5,7 @@ import { CALL_PRESETS } from "./call-presets";
 import { createVideoGenerationTask, pollVideoGenerationTask } from "./video";
 import { runModelPlugin } from "./model-plugin";
 import { useUserStore } from "@/stores/use-user-store";
+import { publicReferenceUrl } from "./call-script-runtime";
 
 const mocks: { mockRestore(): void }[] = [];
 afterEach(() => mocks.splice(0).forEach(mock => mock.mockRestore()));
@@ -34,6 +35,8 @@ for (const protocol of protocols) test(`${protocol.id} persists the provider id 
     const selected = config(protocol.id, protocol.id === "wan-video" ? "wan2.7-t2v" : "model");
     const task = await createVideoGenerationTask(selected, "模拟生成");
     expect(task.provider).toBe("script");
+    expect(task.scriptHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(task.script).toBeUndefined();
     expect(JSON.stringify(task)).not.toContain("fixture-only-credential");
     const restored = JSON.parse(JSON.stringify(task));
     for (let repeat = 0; repeat < 2; repeat++) {
@@ -92,6 +95,48 @@ test("protocols requiring public references reject local images before submittin
     mocks.push(request);
     await expect(createVideoGenerationTask(selected, "模拟", [{ id: "image", name: "image.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" }])).rejects.toThrow("公开访问");
     expect(request).not.toHaveBeenCalled();
+});
+
+test("video presets forward public images, videos and audio directly with an aspect ratio", async () => {
+    const request = spyOn(axios, "request").mockResolvedValue({ data: { video_id: "agnes-task" } });
+    const fetch = spyOn(globalThis, "fetch").mockRejectedValue(new Error("public references should not require CORS or a download"));
+    mocks.push(request, fetch);
+    const image = (id: string) => ({ id, name: "image", type: "image/png", url: `https://media.invalid/${id}.png`, dataUrl: "data:image/png;base64,AA==" });
+    const selected = { ...config("agnes-video"), size: "1024x768" };
+    await createVideoGenerationTask(selected, "模拟", [image("first"), image("second")],
+        [{ id: "clip", name: "clip.mp4", type: "video/mp4", url: "https://media.invalid/clip.mp4" }],
+        [{ id: "audio", name: "voice.wav", type: "audio/wav", url: "https://media.invalid/voice.wav" }]);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(request.mock.calls[0][0].data).toMatchObject({
+        aspect_ratio: "4:3",
+        images: ["https://media.invalid/first.png", "https://media.invalid/second.png"],
+        videos: [{ url: "https://media.invalid/clip.mp4" }],
+        audios: ["https://media.invalid/voice.wav"],
+    });
+});
+
+test("preset recovery queries by the saved task id and records no inline script credentials", async () => {
+    const selected = config("wan-video", "wan2.7-t2v");
+    selected.channels[0].apiFormat = "gemini";
+    const model = selected.channels[0].models[0];
+    model.script += "\n// fixture-inline-credential";
+    const request = spyOn(axios, "request").mockImplementation(async ({ method }) => ({ data: method === "post" ? { output: { task_id: "original" } } : { output: { task_status: "RUNNING" } } }));
+    mocks.push(request);
+    const task = JSON.parse(JSON.stringify(await createVideoGenerationTask(selected, "模拟")));
+    expect(JSON.stringify(task)).not.toContain("fixture-inline-credential");
+    expect((await pollVideoGenerationTask(selected, task)).status).toBe("pending");
+    expect(request.mock.calls.map(([options]) => options.method)).toEqual(["post", "get"]);
+    model.script += "\n// changed";
+    await expect(pollVideoGenerationTask(selected, task)).rejects.toThrow("原视频调用方式已变更");
+    expect(request).toHaveBeenCalledTimes(2);
+});
+
+test("known private or authenticated references are not accepted as public media", () => {
+    const origin = "https://example.invalid";
+    for (const url of ["http://localhost/image.png", "http://192.168.0.2/video.mp4", "http://[::1]/a.wav", "https://user:pass@example.invalid/a.wav", origin + "/api/assets/key"]) {
+        expect(publicReferenceUrl(url, origin)).toBeUndefined();
+    }
+    expect(publicReferenceUrl(origin + "/static/key", origin)).toBe(origin + "/static/key");
 });
 
 test("Messages protocol handles SSE events split across bytes and sends native authentication", async () => {

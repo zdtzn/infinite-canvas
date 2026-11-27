@@ -394,6 +394,10 @@ export async function upsertServerAssetLibraryItem(item: Asset, expectedUserId?:
     return serverRequest<{ item: Asset }>(`/api/library-assets/${encodeURIComponent(item.id)}`, { method: "PUT", body: { item }, expectedUserId });
 }
 
+export function moveServerAssetLibraryItem(id: string, folderId: string | null, expectedUserId: string) {
+    return serverRequest<{ item: Asset }>(`/api/library-assets/${encodeURIComponent(id)}`, { method: "PATCH", body: { folderId }, expectedUserId });
+}
+
 export async function deleteServerAssetLibraryItem(id: string, expectedUserId?: string) {
     await serverRequest(`/api/library-assets/${encodeURIComponent(id)}`, { method: "DELETE", expectedUserId });
 }

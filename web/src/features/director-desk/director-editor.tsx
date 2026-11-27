@@ -31,6 +31,7 @@ export default function DirectorEditor({ ctx, onClose }: { ctx: CanvasNodeContex
     const [height, setHeight] = useState(2);
     const [count, setCount] = useState(4);
     const [busy, setBusy] = useState(false);
+    const [ready, setReady] = useState(false);
 
     useEffect(() => {
         if (openedFor.current.userId !== userId || openedFor.current.pathname !== pathname || openedFor.current.nodeId !== ctx.node.id) {
@@ -156,7 +157,7 @@ export default function DirectorEditor({ ctx, onClose }: { ctx: CanvasNodeContex
                 else waiter.reject(new Error("镜头布局未完成，请重试"));
                 return;
             }
-            if (data.ready) return;
+            if (data.ready) { setReady(true); return; }
             try {
                 const value = await handle(data);
                 if (!controller.signal.aborted) port.postMessage({ id: data.id, ok: true, value });
@@ -203,7 +204,9 @@ export default function DirectorEditor({ ctx, onClose }: { ctx: CanvasNodeContex
         finally { setBusy(false); }
     };
     return <div className="flex h-full flex-col">
-        <div className="flex shrink-0 justify-end px-3 py-1"><Button type="text" onClick={() => void readTargets()}>环绕镜头布局</Button></div>
+        <div className="flex shrink-0 justify-end px-3 py-1">
+            {ready ? <Button type="text" onClick={() => void readTargets()}>环绕镜头布局</Button> : <Button type="text" onClick={onClose}>关闭导演台</Button>}
+        </div>
         <div ref={container} className="min-h-0 flex-1" />
         <Modal title="环绕目标添加镜头" open={Boolean(scene)} onCancel={() => !busy && setScene(null)} onOk={() => void addOrbit()} confirmLoading={busy} okButtonProps={{ disabled: !target }} okText="添加镜头" cancelText="取消">
             <Space orientation="vertical" className="w-full">

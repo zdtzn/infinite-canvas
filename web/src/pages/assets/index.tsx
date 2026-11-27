@@ -149,6 +149,7 @@ export default function AssetsPage() {
     const content = Form.useWatch("content", form) || "";
     const validAssets = useMemo(() => assets.filter((asset) => asset.kind === "text" || asset.kind === "image" || asset.kind === "video"), [assets]);
     const useRemoteLibrary = PUBLIC_MODE && Boolean(userId);
+    const pendingIds = useMemo(() => new Set(syncOutbox.filter(entry => useRemoteLibrary && entry.userId === userId).map(entry => entry.assetId)), [syncOutbox, userId, useRemoteLibrary]);
     const pendingAssets = useMemo(() => useRemoteLibrary ? pendingAssetUpserts(syncOutbox, userId).filter(asset => matchesAssetFilters(asset, { keyword, kind: kindFilter, category, folderId, tags: filterTags })) : [], [syncOutbox, userId, useRemoteLibrary, keyword, kindFilter, category, folderId, filterTags]);
 
     useEffect(() => {
@@ -215,7 +216,7 @@ export default function AssetsPage() {
 
     const serverLibraryReady = Boolean(useRemoteLibrary && remoteLibrary?.initialized);
     const remoteBlocked = useRemoteLibrary && !remoteLibrary;
-    const displayedAssets = remoteBlocked ? [] : serverLibraryReady ? remoteLibrary!.items : visibleAssets;
+    const displayedAssets = (remoteBlocked ? [] : serverLibraryReady ? remoteLibrary!.items : visibleAssets).filter(asset => !pendingIds.has(asset.id));
     const displayedTotal = remoteBlocked ? 0 : serverLibraryReady ? remoteLibrary!.total || 0 : filteredAssets.length;
     const displayedCount = serverLibraryReady ? remoteLibrary!.total || 0 : validAssets.length;
 
@@ -262,18 +263,25 @@ export default function AssetsPage() {
     }, [validAssets]);
 
     const moveSelected = async () => {
-        if (moving) return;
+        if (moving || folderState.loading || folderState.error || folderState.busy) return;
+        if (moveTarget && !folderState.folders.some(folder => folder.id === moveTarget)) {
+            setMoveTarget("");
+            message.error("目标文件夹已移除，请重新选择");
+            return;
+        }
         const owner = userId;
         setMoving(true);
         try {
             const records = [...displayedAssets, ...pendingAssets].filter(asset => selectedIds.includes(asset.id));
+            const statuses = [];
             for (const asset of records) {
                 if ((useUserStore.getState().user?.id || "") !== owner) throw new Error("账号已切换");
-                persistAsset({ ...asset, folderId: moveTarget || null, updatedAt: new Date().toISOString() });
-                await useAssetStore.getState().waitForAssetLocalSave(asset.id);
+                persistAsset({ ...asset, folderId: moveTarget || null, updatedAt: new Date().toISOString() }, serverLibraryReady ? "move" : "upsert");
+                statuses.push(await useAssetStore.getState().waitForAssetLocalSave(asset.id));
             }
             setSelectedIds([]); setRemoteRefresh(value => value + 1);
-            message.success(`已移动 ${records.length} 个素材`);
+            if (statuses.includes("failed")) message.warning(assetSaveMessage("failed"));
+            else if (records.length) message.success(`已移动 ${records.length} 个素材${statuses.includes("pending") ? "，等待云端同步" : ""}`);
         } catch (error) { message.error(userFacingErrorMessage(error, "素材移动失败，请重试")); }
         finally { setMoving(false); }
     };
@@ -391,10 +399,10 @@ export default function AssetsPage() {
         setExportProgress("读取全部素材…");
         try {
             const items = useRemoteLibrary ? await collectExportAssets((nextPage) => fetchServerAssetLibrary(userId, { page: nextPage, pageSize: 60 }), assertCurrent) : validAssets;
-            if (!items.length) { message.warning("暂无资产可导出"); return; }
+            if (!items.length && !folderState.folders.length) { message.warning("暂无资产可导出"); return; }
             const { exportAssets } = await import("./asset-transfer");
             await exportAssets(items, userId, assertCurrent, (count) => setExportProgress(`打包 ${count}/${items.length}`), folderState.folders);
-            message.success(`已导出 ${items.length} 个资产`);
+            message.success(`已导出 ${items.length} 个素材、${folderState.folders.length} 个文件夹`);
         } catch (error) {
             message.error(userFacingErrorMessage(error, "素材未能导出，请再试一次"));
         } finally {
@@ -408,10 +416,10 @@ export default function AssetsPage() {
             const { readAssetPackage } = await import("./asset-transfer");
             const importedAssets = await readAssetPackage(file, async folders => {
                 const merged = mergeAssetFolders(folderState.folders, folders);
-                await folderState.save(merged.folders);
+                if (merged.folders.length !== folderState.folders.length) await folderState.save(merged.folders);
                 return merged.mapping;
-            });
-            if (PUBLIC_MODE && useUserStore.getState().user?.id !== userId) return;
+            }, userId);
+            if ((useUserStore.getState().user?.id || "") !== userId) return;
             const ids = importedAssets.map((asset) => {
                 const payload = { ...asset } as Record<string, unknown>;
                 delete payload.id;
@@ -444,6 +452,13 @@ export default function AssetsPage() {
             message.error(userFacingErrorMessage(error, "删除失败，素材已保留，请再试一次"));
         } finally { setDeleteBusy(false); }
     };
+
+    const renderAssetCard = (asset: Asset) => (
+        <div key={asset.id} className="relative">
+            <Checkbox aria-label={`选择${asset.title}`} className="absolute left-3 top-3 z-20 rounded bg-background/90 p-1" checked={selectedIds.includes(asset.id)} onChange={event => setSelectedIds(previous => event.target.checked ? [...previous, asset.id] : previous.filter(id => id !== asset.id))} />
+            <AssetScrollCard asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
+        </div>
+    );
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
@@ -488,7 +503,7 @@ export default function AssetsPage() {
                                     type="button"
                                     className="asset-transfer-button inline-flex h-10 items-center gap-2 rounded-md border border-[rgb(201_168_106/0.16)] bg-white/[0.025] px-3 text-sm font-medium text-[#c9c4b9] transition-[color,background-color,border-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a86a]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e0e12]"
                                     onClick={() => void exportAllAssets()}
-                                    disabled={exportProgress !== null}
+                                    disabled={exportProgress !== null || folderState.loading || Boolean(folderState.error) || folderState.busy}
                                 >
                                     <Download className="size-4 text-[#8a8a96] transition-colors duration-200" aria-hidden />
                                     {exportProgress || "导出全部资产"}
@@ -497,6 +512,7 @@ export default function AssetsPage() {
                                     type="button"
                                     className="asset-transfer-button inline-flex h-10 items-center gap-2 rounded-md border border-[rgb(201_168_106/0.16)] bg-white/[0.025] px-3 text-sm font-medium text-[#c9c4b9] transition-[color,background-color,border-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a86a]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e0e12]"
                                     onClick={() => assetInputRef.current?.click()}
+                                    disabled={folderState.loading || Boolean(folderState.error) || folderState.busy}
                                 >
                                     <Upload className="size-4 text-[#8a8a96] transition-colors duration-200" aria-hidden />
                                     导入资产
@@ -507,13 +523,13 @@ export default function AssetsPage() {
 
                     <AssetSyncStatus className="mt-4" />
                     <div className="mt-4 flex flex-wrap items-center gap-2" aria-label="素材文件夹">
-                        <Select aria-label="筛选文件夹" className="min-w-44" loading={folderState.loading} value={folderId === undefined ? "__all__" : folderId} onChange={value => { setFolderId(value === "__all__" ? undefined : value); setSelectedIds([]); setPage(1); }} options={[{ value: "__all__", label: "全部文件夹" }, { value: "", label: "未归档" }, ...folderOptions]} />
-                        <AssetFolderManager key={userId} folders={folderState.folders} busy={folderState.busy} disabled={folderState.loading || Boolean(folderState.error)} onSave={async folders => { await folderState.save(folders); setFolderId(undefined); setSelectedIds([]); }} />
+                        <Select aria-label="筛选文件夹" className="min-w-44" loading={folderState.loading} value={folderId ?? "*"} onChange={value => { setFolderId(value === "*" ? undefined : value); setSelectedIds([]); setPage(1); }} options={[{ value: "*", label: "全部文件夹" }, { value: "", label: "未归档" }, ...folderOptions]} />
+                        <AssetFolderManager key={userId} folders={folderState.folders} busy={folderState.busy} disabled={folderState.loading || Boolean(folderState.error)} onSave={async folders => { await folderState.save(folders); setFolderId(undefined); setSelectedIds([]); setMoveTarget(""); }} />
                         {folderState.error && <Button type="text" onClick={folderState.reload}>{folderState.error}</Button>}
                         {selectedIds.length > 0 && <>
                             <span className="text-sm text-muted-foreground">已选 {selectedIds.length} 项</span>
                             <Select aria-label="移动到文件夹" className="min-w-40" value={moveTarget} onChange={setMoveTarget} options={[{ value: "", label: "根目录" }, ...folderOptions]} />
-                            <Button loading={moving} disabled={folderState.loading || Boolean(folderState.error)} onClick={() => void moveSelected()}>移动</Button>
+                            <Button loading={moving} disabled={folderState.loading || Boolean(folderState.error) || folderState.busy} onClick={() => void moveSelected()}>移动</Button>
                             <Button type="text" onClick={() => setSelectedIds([])}>取消选择</Button>
                         </>}
                     </div>
@@ -557,15 +573,10 @@ export default function AssetsPage() {
                 <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 pb-12 sm:px-6">
                     {pendingAssets.length > 0 && <section aria-label="待同步的本机素材" className="space-y-4">
                         <div><h2 className="text-base font-medium">待同步的本机素材</h2><p className="mt-1 text-sm text-muted-foreground">以下收藏已留在本机，同步到云端后即可在其他设备查看。</p></div>
-                        <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{pendingAssets.map(asset => <AssetScrollCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />)}</div>
+                        <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{pendingAssets.map(renderAssetCard)}</div>
                     </section>}
                     <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {displayedAssets.filter(asset => !pendingAssets.some(pending => pending.id === asset.id)).map((asset) => (
-                            <div key={asset.id} className="relative">
-                                <Checkbox aria-label={`选择${asset.title}`} className="absolute left-3 top-3 z-20 rounded bg-background/90 p-1" checked={selectedIds.includes(asset.id)} onChange={event => setSelectedIds(previous => event.target.checked ? [...previous, asset.id] : previous.filter(id => id !== asset.id))} />
-                                <AssetScrollCard asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
-                            </div>
-                        ))}
+                        {displayedAssets.map(renderAssetCard)}
                     </div>
 
                     {useRemoteLibrary && remoteStatus !== "ready" && (

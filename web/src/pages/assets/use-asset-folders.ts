@@ -32,15 +32,29 @@ export function useAssetFolders(userId: string, onChange: () => void) {
         saving.current = true; setBusy(true);
         try {
             assertOwner();
-            let value = { revision: snapshot.revision + 1, folders: next };
-            if (PUBLIC_MODE) value = await saveServerAssetFolders({ revision: snapshot.revision, folders: next }, owner);
-            else await localforage.setItem(`asset-folders:${owner || "local"}`, value);
-            assertOwner();
             const kept = new Set(next.map(folder => folder.id));
-            const store = useAssetStore.getState();
-            for (const asset of store.assets) {
-                if (asset.folderId && !kept.has(asset.folderId)) store.updateAsset(asset.id, { folderId: removedFolderDestination(asset.folderId, folders, next) });
+            const destinations = new Map(folders.filter(folder => !kept.has(folder.id)).map(folder => [folder.id, removedFolderDestination(folder.id, folders, next)]));
+            const moveAssets = async () => {
+                if (destinations.size) await useAssetStore.getState().moveAssetsFromDeletedFolders(owner, destinations);
+            };
+            let value: AssetFolderSnapshot;
+            if (PUBLIC_MODE) {
+                value = await saveServerAssetFolders({ revision: snapshot.revision, folders: next }, owner);
+                assertOwner();
+                await moveAssets();
+            } else {
+                const key = `asset-folders:${owner || "local"}`;
+                const write = async () => {
+                    const current = await localforage.getItem<AssetFolderSnapshot>(key);
+                    assertOwner();
+                    if ((current?.revision ?? 0) !== snapshot.revision) throw new Error("文件夹已在其他页面更新，请重新读取后操作");
+                    await moveAssets();
+                    assertOwner();
+                    return localforage.setItem(key, { revision: snapshot.revision + 1, folders: next });
+                };
+                value = navigator.locks ? await navigator.locks.request(key, write) : await write();
             }
+            assertOwner();
             setSnapshot({ ...value, owner }); onChange();
         } catch (reason) {
             setRefresh(value => value + 1);

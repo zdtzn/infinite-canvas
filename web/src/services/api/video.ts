@@ -9,6 +9,7 @@ import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSe
 import { assertModelAvailable, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import { CALL_SCRIPT_MARKER } from "./call-presets/template";
+import { publicReferenceUrl } from "./call-script-runtime";
 import { resolveVideoMode } from "@/lib/video-reference-mode";
 import { normalizeVideoResolution, normalizeVideoSize, videoAspectRatio } from "@/lib/video-request-size";
 import { withLocalProxy } from "./local-proxy";
@@ -33,7 +34,7 @@ type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: strin
 export type RequestOptions = { signal?: AbortSignal; expectedUserId?: string; onTaskCreated?: (task: VideoGenerationTask) => void };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string; ownerUserId?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "plugin" | "script"; model: string; script?: string; ownerUserId?: string; result?: { url: string; storageKey?: string; mimeType?: string } };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "plugin" | "script"; model: string; scriptHash?: string; script?: string; ownerUserId?: string; result?: { url: string; storageKey?: string; mimeType?: string } };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 function aiApiUrl(config: ManagedAiConfig, path: string) {
@@ -87,17 +88,30 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     }
     assertModelAvailable(config, task.model);
     const requestConfig = resolveModelRequestConfig(config, task.model);
-    assertVideoConfig(requestConfig, requestConfig.model);
     const boundOptions = { ...options, expectedUserId: task.ownerUserId || options?.expectedUserId || useUserStore.getState().user?.id || "" };
     if (task.provider === "script") {
-        if (!task.script || resolveModelScript(config, task.model) !== task.script) throw new Error("原视频调用方式已变更，请恢复原调用预设后继续查询");
-        const state = await runModelPlugin<{ status: string; result?: unknown }>({ capability: "video", script: task.script, config: requestConfig, taskId: task.id, signal: options?.signal });
+        const script = resolveModelScript(config, task.model);
+        if (!script || (task.scriptHash ? await videoScriptHash(script) !== task.scriptHash : script !== task.script)) throw new Error("原视频调用方式已变更，请恢复原调用预设后继续查询");
+        assertVideoScriptConfig(requestConfig, boundOptions.expectedUserId);
+        const state = await runModelPlugin<{ status: string; result?: unknown }>({ capability: "video", script, config: requestConfig, taskId: task.id, signal: options?.signal });
         if (state.status === "pending") return { status: "pending" };
         if (state.status === "completed" && state.result) return { status: "completed", result: { ...videoPluginResult(state.result), ownerUserId: boundOptions.expectedUserId } };
         return { status: "failed", error: "视频生成失败，请查看渠道任务记录" };
     }
+    assertVideoConfig(requestConfig, requestConfig.model);
     const state = task.provider === "seedance" ? await pollSeedanceTask(requestConfig, task, boundOptions) : await pollOpenAIVideoTask(requestConfig, task, boundOptions);
     return state.status === "completed" ? { ...state, result: { ...state.result, ownerUserId: boundOptions.expectedUserId } } : state;
+}
+
+async function videoScriptHash(script: string) {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(script));
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function assertVideoScriptConfig(config: AiConfig, owner?: string) {
+    if (owner !== undefined && (useUserStore.getState().user?.id || "") !== owner) throw new Error("所属账号已切换");
+    if (!config.baseUrl.trim()) throw new Error("请先配置 Base URL");
+    if (!config.apiKey.trim()) throw new Error("请先配置 API Key");
 }
 
 async function createPluginVideoTask(
@@ -110,34 +124,38 @@ async function createPluginVideoTask(
     audioReferences: ReferenceAudio[],
     options?: RequestOptions,
 ): Promise<VideoGenerationTask> {
-    if (!config.baseUrl.trim()) throw new Error("请先配置 Base URL");
-    if (!config.apiKey.trim()) throw new Error("请先配置 API Key");
-    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
-    const videos = await Promise.all(videoReferences.map((item) => referenceMediaToFile(item, options)));
-    const audios = await Promise.all(audioReferences.map((item) => referenceMediaToFile(item, options)));
+    assertVideoScriptConfig(config, options?.expectedUserId);
+    const marked = script.trimStart().startsWith(CALL_SCRIPT_MARKER);
+    const scriptHash = marked ? await videoScriptHash(script) : undefined;
+    const refs = await Promise.all(references.map(image =>
+        (marked && (publicReferenceUrl(image.url) || publicReferenceUrl(image.dataUrl))) || imageToDataUrl(image, options?.expectedUserId)));
+    const mediaSource = (item: ReferenceVideo | ReferenceAudio) => (marked && publicReferenceUrl(item.url)) || referenceMediaToFile(item, options);
+    const videos = await Promise.all(videoReferences.map(mediaSource));
+    const audios = await Promise.all(audioReferences.map(mediaSource));
     const seedance = isSeedanceVideoConfig(config);
+    const ratio = marked ? videoAspectRatio(config.size) : config.size;
+    assertVideoScriptConfig(config, options?.expectedUserId);
     const raw = await runModelPlugin({
             capability: "video",
             script,
             config,
             prompt,
             images: refs,
-            publicImages: references.map(image => image.url || image.dataUrl),
             videos,
             audios,
             params: {
                 seconds: seedance ? String(normalizeSeedanceDuration(config.videoSeconds)) : normalizeVideoSeconds(config.videoSeconds),
-                size: normalizeVideoSize(config.size, config.vquality),
+                size: normalizeVideoSize(config.size, config.vquality) ?? (marked ? normalizeVideoSize(ratio, config.vquality) : null),
                 resolution: seedance ? normalizeSeedanceResolution(config.vquality, modelOptionName(model)) : normalizeVideoResolution(config.vquality),
-                ratio: config.size,
+                ratio,
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 watermark: boolConfig(config.videoWatermark, false),
                 mode: resolveVideoMode(config.videoMode, refs.length, videos.length + audios.length),
             },
             signal: options?.signal,
         });
-    if (script.trimStart().startsWith(CALL_SCRIPT_MARKER) && raw && typeof raw === "object" && "id" in raw && typeof raw.id === "string" && raw.id) {
-        return { id: raw.id, provider: "script", script, model, ownerUserId: options?.expectedUserId };
+    if (marked && raw && typeof raw === "object" && "id" in raw && typeof raw.id === "string" && raw.id) {
+        return { id: raw.id, provider: "script", scriptHash, model, ownerUserId: options?.expectedUserId };
     }
     const result = videoPluginResult(raw);
     const id = nanoid();

@@ -15,6 +15,8 @@ const sent = new Set<string>();
 const released = new Set<(url: string) => void>();
 let held = false;
 let dirty = false;
+let savedProject: DirectorProject | undefined;
+let saving: { project: DirectorProject; promise: Promise<void> } | undefined;
 let status = "";
 const listeners = new Set<() => void>();
 
@@ -92,9 +94,9 @@ function restoreProject(project: DirectorProject, urls: Map<string, string>) {
     return { lost, project: { ...project, assets, objects, cameras, panoramaAssetId: project.panoramaAssetId && kept.has(project.panoramaAssetId) ? project.panoramaAssetId : null } };
 }
 
-async function save() {
+async function writeProject(current: DirectorProject) {
     const used = new Map<string, Attachment>();
-    const project = mapUrls(useDirectorStore.getState().project, url => {
+    const project = mapUrls(current, url => {
         const item = resources.get(url)!;
         used.set(item.key, item);
         return item.key;
@@ -102,7 +104,17 @@ async function save() {
     const added = [...used.values()].filter(item => !sent.has(item.key));
     await request({ action: "save", scene: { project, keys: [...used.keys()] }, added });
     for (const item of added) sent.add(item.key);
-    notify("已保存");
+    savedProject = current;
+}
+
+async function save() {
+    const project = useDirectorStore.getState().project;
+    if (saving?.project === project) return saving.promise;
+    if (!saving && savedProject === project) return;
+    const promise = writeProject(project);
+    saving = { project, promise };
+    try { await promise; }
+    finally { if (saving?.promise === promise) saving = undefined; }
 }
 export function holdAutosave(value: boolean) {
     held = value;
@@ -113,7 +125,11 @@ function autosave() {
     if (!held) void retrySave();
 }
 export async function retrySave() {
-    try { await save(); return true; }
+    try {
+        await save();
+        if (savedProject === useDirectorStore.getState().project) notify("已保存");
+        return true;
+    }
     catch { notify("场景尚未保存，请点击保存重试。"); return false; }
 }
 export async function saveAndClose() {
@@ -198,6 +214,7 @@ export async function openSession(channel: MessagePort) {
         useDirectorStore.getState().replaceProject(project);
         if (lost.length) notify(`以下素材已丢失，已从场景中移除：${lost.join("、")}`);
     }
+    savedProject = useDirectorStore.getState().project;
     useDirectorStore.subscribe((state, before) => {
         if (before.project === state.project) return;
         autosave();

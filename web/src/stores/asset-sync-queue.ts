@@ -4,12 +4,12 @@ import { mergeAssetRecords } from "./asset-library-sync";
 
 export type AssetSyncStatus = "local" | "pending" | "failed" | "synced";
 export const ASSET_SYNC_SUCCESS_EVENT = "canvas:asset-sync-success";
-export type AssetSyncSuccessDetail = { userId: string; assetId: string; operation: "upsert" | "delete" };
+export type AssetSyncSuccessDetail = { userId: string; assetId: string; operation: "upsert" | "move" | "delete" };
 export type AssetSyncEntry = {
     userId: string;
     assetId: string;
     asset?: Asset;
-    operation: "upsert" | "delete";
+    operation: AssetSyncSuccessDetail["operation"];
     revision: string;
     status: "pending" | "failed";
     attempts: number;
@@ -33,9 +33,21 @@ export function pendingAssetRecords(outbox: AssetSyncEntry[], userId: string) {
 /** Use outside remote pagination so an unacknowledged save is always visible. */
 export function pendingAssetUpserts(outbox: AssetSyncEntry[], userId: string) {
     return pendingAssetRecords(
-        outbox.filter((entry) => entry.operation === "upsert"),
+        outbox.filter((entry) => entry.operation !== "delete"),
         userId,
     );
+}
+
+// The folder API already moved server records. Only existing local upserts need a new revision.
+export function reparentFolderAssets(assets: Asset[], outbox: AssetSyncEntry[], userId: string, destinations: ReadonlyMap<string, string | null>) {
+    const move = (asset: Asset) => asset.folderId && destinations.has(asset.folderId) ? { ...asset, folderId: destinations.get(asset.folderId) ?? null } : asset;
+    let syncOutbox = outbox;
+    for (const entry of outbox) {
+        if (entry.userId !== userId || entry.operation === "delete" || !entry.asset) continue;
+        const asset = move(entry.asset);
+        if (asset !== entry.asset) syncOutbox = queueAssetSync(syncOutbox, { userId, assetId: entry.assetId, operation: entry.operation, asset });
+    }
+    return { assets: assets.map(move), syncOutbox };
 }
 
 export function preservePendingAssets(assets: Asset[], outbox: AssetSyncEntry[], userId: string) {

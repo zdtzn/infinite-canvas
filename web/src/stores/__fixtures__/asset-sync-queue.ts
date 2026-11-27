@@ -130,6 +130,14 @@ mock.module("@/services/server-api", () => ({
         if (loseUpsertResponse) throw new Error("lost PUT response");
         return { item: structuredClone(saved) };
     },
+    moveServerAssetLibraryItem: async (id: string, folderId: string | null, userId: string) => {
+        recordCall("move", userId, id);
+        const current = catalog(userId).get(id);
+        if (!current) throw new Error("missing asset");
+        const saved = { ...current, folderId };
+        catalog(userId).set(id, structuredClone(saved));
+        return { item: saved };
+    },
     replaceServerAssetLibrary: async () => {
         throw new Error("unexpected catalog replacement");
     },
@@ -416,6 +424,38 @@ if (scenario.startsWith("cleanup-")) {
         await assert.rejects(state().waitForAssetLocalSave(asset.id), /disk full/);
         await state().flushAssetSync();
         assert.equal(mutationCalls().length, 2);
+    } else if (scenario === "folder-move-preserves-newer-edits") {
+        const stale = textAsset("other-device");
+        catalog("alice").set(stale.id, { ...stale, title: "另一台设备的最新编辑" });
+        online(false);
+        state().saveAsset({ ...stale, folderId: "destination" }, "move");
+        assert.equal(await state().waitForAssetLocalSave(stale.id), "pending");
+        await useAssetStore.persist.rehydrate();
+        online(true);
+        await state().flushAssetSync();
+        assert.equal(mutationCalls().length, 1);
+        assert.equal(mutationCalls()[0].operation, "move");
+        assert.equal(catalog("alice").get(stale.id)?.title, "另一台设备的最新编辑");
+        assert.equal(catalog("alice").get(stale.id)?.folderId, "destination");
+        assert.equal(state().assets.find(asset => asset.id === stale.id)?.title, "另一台设备的最新编辑");
+    } else if (scenario === "folder-removal-preserves-queued-mutations") {
+        const cached = { ...textAsset("cached"), folderId: "removed" };
+        catalog("alice").set(cached.id, { ...cached, folderId: "parent", title: "保留远端最新标题" });
+        online(false);
+        useAssetStore.setState({ assets: [cached] });
+        const id = state().addAsset({ ...draft, folderId: "removed" });
+        state().saveAsset({ ...textAsset(id), title: "保留排队中的修改", folderId: "removed" });
+        const revision = pending(id)?.revision;
+        await state().moveAssetsFromDeletedFolders("alice", new Map([["removed", "parent"]]));
+        assert.equal(pending(cached.id), undefined);
+        assert.equal(pending(id)?.asset?.title, "保留排队中的修改");
+        assert.equal(pending(id)?.asset?.folderId, "parent");
+        assert.notEqual(pending(id)?.revision, revision);
+        failUpsert = false;
+        online(true);
+        await state().flushAssetSync();
+        assert.equal(catalog("alice").get(cached.id)?.title, "保留远端最新标题");
+        assert.equal(catalog("alice").get(id)?.folderId, "parent");
     } else if (scenario === "latest-edit") {
         failUpsert = false;
         upsertGate = deferred();

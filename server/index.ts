@@ -8,7 +8,7 @@ import { IMAGE_SUBMISSION_UNCONFIRMED, isImageSubmissionUnconfirmed } from "../s
 
 import { createIdentityToken, createSessionToken, expiredIdentityCookie, expiredSessionCookie, hashAccessCode, identityCookie, personalPasswordIssue, readCookie, readSessionToken, sessionCookie, verifyAccessCode, type SessionPayload } from "./lib/auth";
 import { AssetLibraryInputError, normalizeAssetLibrary, normalizeAssetLibraryItem, publicAssetLibraryPayload } from "./lib/asset-library";
-import { readAssetFolders, saveAssetFolders, assertAssetFolder } from "./lib/asset-folders";
+import { readAssetFolders, saveAssetFolders, assertAssetFolder, moveLibraryAsset } from "./lib/asset-folders";
 import { assetReferenceId, collectReferencedAssetIds, garbageCollectableAssets } from "./lib/asset-references";
 import { buildStorageOverview, indexStorageReferences, planStorageCleanup, type StorageReferenceRoot } from "./lib/storage-overview";
 import { AsyncSemaphore } from "./lib/async-semaphore";
@@ -599,6 +599,12 @@ async function route(request: Request, requestId: string) {
         if (url.pathname === "/api/storage/cleanup" && request.method === "POST") return cleanupPersonalStorage(request, session);
         if (url.pathname === "/api/library-assets" && request.method === "PUT") return heavyRequestSemaphore.run(request.signal, () => replaceLibraryAssets(request, session));
         const libraryAssetMatch = url.pathname.match(/^\/api\/library-assets\/([^/]+)$/);
+        if (libraryAssetMatch && request.method === "PATCH") {
+            const { folderId } = await readJson<{ folderId?: unknown }>(request, 1024);
+            const item = moveLibraryAsset(appDatabase, session.userId, decodeRouteSegment(libraryAssetMatch[1], "资产记录 ID"), folderId);
+            if (!item) throw new HttpError(404, "素材已移除，请刷新素材库");
+            return json({ item: publicAssetLibraryPayload(item, key => state.assets[assetKey(session.userId, key)], assetUrl) });
+        }
         if (libraryAssetMatch && request.method === "PUT") return saveLibraryAsset(request, session, decodeRouteSegment(libraryAssetMatch[1], "资产记录 ID"));
         if (libraryAssetMatch && request.method === "DELETE") return deleteLibraryAsset(session, decodeRouteSegment(libraryAssetMatch[1], "资产记录 ID"));
         const generationHistoryMatch = url.pathname.match(/^\/api\/generation-history\/(image|video)$/);
@@ -4737,14 +4743,16 @@ function runtimeConfigResponse() {
 
 function withSecurityHeaders(response: Response, requestId: string, request: Request) {
     const headers = new Headers(response.headers);
+    const pathname = new URL(request.url).pathname;
     headers.set("x-content-type-options", "nosniff");
     headers.set("x-frame-options", "DENY");
     headers.set("referrer-policy", "strict-origin-when-cross-origin");
     headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
     headers.set("cross-origin-opener-policy", "same-origin");
-    headers.set("cross-origin-resource-policy", "same-origin");
+    // The sandbox has an opaque origin and can load only this public script from the app.
+    const studioBundle = response.ok && /^\/assets\/director-studio-[a-f0-9]{16}\.js$/.test(pathname) && headers.get("content-type")?.includes("javascript");
+    headers.set("cross-origin-resource-policy", studioBundle ? "cross-origin" : "same-origin");
     headers.set("x-request-id", requestId);
-    const pathname = new URL(request.url).pathname;
     if ((pathname.startsWith("/api/") || pathname === "/health" || pathname === "/config.js") && headers.get("content-type")?.includes("application/json")) {
         headers.set("cache-control", "no-store");
     }

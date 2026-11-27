@@ -6,6 +6,8 @@ for (const scenario of [
     "offline-reload",
     "latest-edit",
     "remote-page-edit",
+    "folder-move-preserves-newer-edits",
+    "folder-removal-preserves-queued-mutations",
     "account-switch",
     "early-account-switch",
     "delete-in-flight",
