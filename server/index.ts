@@ -3447,7 +3447,7 @@ async function performJobImageRecovery(jobId: string): Promise<ImageRecoveryResu
             return await persistJobImage(job.input.userId, job.id, url.toString(), image.durationMs, new AbortController().signal, {
                 downloadTimeoutMs: usesRelay ? RESULT_IMAGE_RELAY_DOWNLOAD_TIMEOUT_MS : useSadaiUrlResult ? 180_000 : RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
                 downloadAttempts: 1,
-                input: job.input,
+                ...(job.input.preserveOutsideMask ? { input: job.input } : {}),
             });
         } catch (error) {
             lastError = error instanceof Error ? error.message : "结果图片仍无法连接";
@@ -3639,7 +3639,11 @@ async function runImageJob(input: ImageJobInput, signal: AbortSignal, job: Queue
                         raw,
                         durationMs,
                         signal,
-                        { downloadTimeoutMs: RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS, downloadAttempts: 1, input },
+                        raw.startsWith("data:") && !input.preserveOutsideMask ? undefined : {
+                            downloadTimeoutMs: RESULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
+                            downloadAttempts: 1,
+                            ...(input.preserveOutsideMask ? { input } : {}),
+                        },
                     ),
                 );
             } catch (error) {
