@@ -15,19 +15,32 @@ test("local edits keep original RGBA outside the selection and can erase inside 
     expect(Array.from(data)).toEqual([24, 56, 94, 123, 0, 0, 0, 0]);
 });
 
-test("transparent edits keep the original background clear and cap opacity at translucent edges", async () => {
-    const original = await png([10, 20, 30, 0, 120, 130, 140, 96, 25, 35, 45, 255, 17, 18, 19, 72], 4, 1);
-    const selection = await png([255, 255, 255, 0, 255, 255, 255, 128, 255, 255, 255, 0, 255, 255, 255, 255], 4, 1);
-    const generated = await png([230, 170, 0, 255, 40, 50, 60, 255, 100, 110, 120, 10, 4, 5, 6, 255], 4, 1);
+test("transparent edits preserve every source alpha and use the source color where the edit is invisible", async () => {
+    const original = await png([
+        10, 20, 30, 0, 120, 130, 140, 96, 25, 35, 45, 255,
+        17, 18, 19, 72, 89, 90, 91, 64, 60, 120, 180, 144,
+    ], 6, 1);
+    const selection = await png([
+        255, 255, 255, 0, 255, 255, 255, 128, 255, 255, 255, 0,
+        255, 255, 255, 255, 255, 255, 255, 0, 255, 255, 255, 128,
+    ], 6, 1);
+    const generated = await png([
+        230, 170, 0, 255, 40, 50, 60, 255, 100, 110, 120, 10,
+        4, 5, 6, 255, 0, 0, 0, 0, 20, 40, 60, 24,
+    ], 6, 1);
     const signal = new AbortController().signal;
 
     const protectedResult = await finalizeLocalEdit(original, selection, generated, signal, true);
-    expect(Array.from(await sharp(protectedResult).raw().toBuffer())).toEqual([10, 20, 30, 0, 80, 90, 100, 96, 100, 110, 120, 10, 17, 18, 19, 72]);
+    expect(Array.from(await sharp(protectedResult).raw().toBuffer())).toEqual([
+        10, 20, 30, 0, 80, 90, 100, 96, 100, 110, 120, 255,
+        17, 18, 19, 72, 89, 90, 91, 64, 40, 80, 120, 144,
+    ]);
 
     const defaultResult = await finalizeLocalEdit(original, selection, generated, signal);
     const defaultPixels = await sharp(defaultResult).raw().toBuffer();
     expect(Array.from(defaultPixels.subarray(0, 4))).toEqual([230, 170, 0, 255]);
     expect(defaultPixels[7]).toBeGreaterThan(96);
+    expect(defaultPixels[19]).toBe(0);
 });
 
 test("rejects an invalid selection before an edit can run", async () => {

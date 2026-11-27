@@ -35,9 +35,10 @@ export function mergeImageEditPixels(original: Pixels, edited: Pixels, keep: Pix
         const strength = Math.max(keep[alpha], feather?.[offset / 4] ?? 0);
         if (strength === 255) continue;
         const originalAlpha = original[offset + 3];
-        if (preserveSourceTransparency && originalAlpha === 0) continue;
-        // Transparent local edits can remove opacity, but keep the source's existing transparent background and edges.
-        const editedAlpha = preserveSourceTransparency ? Math.min(edited[offset + 3], originalAlpha) : edited[offset + 3];
+        const generatedAlpha = edited[offset + 3];
+        // Use the source color where the result has no visible color to blend.
+        if (preserveSourceTransparency && (originalAlpha === 0 || generatedAlpha === 0)) continue;
+        const editedAlpha = preserveSourceTransparency ? originalAlpha : generatedAlpha;
         if (strength === 0) {
             original[offset] = edited[offset];
             original[offset + 1] = edited[offset + 1];
