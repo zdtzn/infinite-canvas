@@ -56,6 +56,7 @@ export function mergeCanvasDeletedProjects(...lists: CanvasDeletedProject[][]): 
 type CanvasStore = {
     hydrated: boolean;
     ownerUserId: string;
+    serverProjectsStatus: { userId: string; status: "ready" | "error" } | null;
     projects: CanvasProject[];
     deletedProjects: CanvasDeletedProject[];
     deletedProjectsByUser: Record<string, CanvasDeletedProject[]>;
@@ -74,6 +75,14 @@ type CanvasStore = {
     restoreSnapshot: (projectId: string, snapshotId: string) => CanvasProjectSnapshot | null;
     updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
 };
+
+export function canvasProjectAvailability(state: Pick<CanvasStore, "hydrated" | "ownerUserId" | "projects" | "serverProjectsStatus">, projectId: string, userId?: string) {
+    if (!state.hydrated || (userId !== undefined && (!userId || state.ownerUserId !== userId))) return "loading";
+    if (state.projects.some(project => project.id === projectId)) return "available";
+    if (userId === undefined) return "missing";
+    if (state.serverProjectsStatus?.userId !== userId) return "loading";
+    return state.serverProjectsStatus.status === "ready" ? "missing" : "error";
+}
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
@@ -132,6 +141,7 @@ export const useCanvasStore = create<CanvasStore>()(
         (set, get) => ({
             hydrated: false,
             ownerUserId: "",
+            serverProjectsStatus: null,
             projects: [],
             deletedProjects: [],
             deletedProjectsByUser: {},

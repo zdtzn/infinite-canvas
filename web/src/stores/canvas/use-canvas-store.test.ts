@@ -1,7 +1,32 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { normalizeCanvasProject, useCanvasStore } from "./use-canvas-store";
+import { canvasProjectAvailability, normalizeCanvasProject, useCanvasStore } from "./use-canvas-store";
+
+describe("canvas deep link entry", () => {
+    const empty = { hydrated: true, ownerUserId: "alice", projects: [], serverProjectsStatus: null };
+    const ready = { userId: "alice", status: "ready" as const };
+    const project = normalizeCanvasProject({ id: "cloud-canvas" })!;
+
+    test("waits for the authenticated cloud list before deciding a missing local project is gone", () => {
+        assert.equal(canvasProjectAvailability(empty, project.id, "alice"), "loading");
+        assert.equal(canvasProjectAvailability({ ...empty, projects: [project], serverProjectsStatus: ready }, project.id, "alice"), "available");
+        assert.equal(canvasProjectAvailability({ ...empty, serverProjectsStatus: ready }, project.id, "alice"), "missing");
+    });
+
+    test("distinguishes a network failure from absence and still opens a cached project", () => {
+        const offline = { ...empty, serverProjectsStatus: { userId: "alice", status: "error" as const } };
+        assert.equal(canvasProjectAvailability(offline, project.id, "alice"), "error");
+        assert.equal(canvasProjectAvailability({ ...offline, projects: [project] }, project.id, "alice"), "available");
+        assert.equal(canvasProjectAvailability(empty, project.id), "missing");
+    });
+
+    test("never uses another account's cache or cloud lookup result", () => {
+        assert.equal(canvasProjectAvailability({ ...empty, projects: [project], serverProjectsStatus: ready }, project.id, "bob"), "loading");
+        assert.equal(canvasProjectAvailability({ ...empty, ownerUserId: "bob", serverProjectsStatus: ready }, project.id, "bob"), "loading");
+        assert.equal(canvasProjectAvailability({ ...empty, serverProjectsStatus: ready }, project.id, ""), "loading");
+    });
+});
 
 describe("canvas project schema migration", () => {
     test("fills required fields for legacy or server-restored projects", () => {

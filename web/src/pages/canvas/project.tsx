@@ -51,7 +51,7 @@ import { useAgentStore } from "@/stores/use-agent-store";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { resolveImageSlotConcurrency } from "@/stores/model-capabilities";
-import { normalizeCanvasProject, useCanvasStore, type CanvasProjectSnapshot } from "@/stores/canvas/use-canvas-store";
+import { canvasProjectAvailability, normalizeCanvasProject, useCanvasStore, type CanvasProjectSnapshot } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { getNodeReferenceTargetId, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -254,14 +254,35 @@ const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用�
 
 export default function CanvasPage() {
     const [mounted, setMounted] = useState(false);
+    const projectId = useParams<{ id: string }>().id || "";
+    const userId = useUserStore((state) => state.user?.id || "");
+    const navigate = useNavigate();
+    const availability = useCanvasStore((state) => canvasProjectAvailability(state, projectId, PUBLIC_MODE ? userId : undefined));
 
     useEffect(() => {
         setMounted(true);
     }, []);
 
-    if (!mounted) return <CanvasRefreshShell />;
+    useEffect(() => {
+        if (mounted && availability === "missing") navigate("/canvas", { replace: true });
+    }, [availability, mounted, navigate]);
 
-    return <InfiniteCanvasPage />;
+    if (!mounted || availability === "loading" || availability === "missing") return <CanvasRefreshShell />;
+    if (availability === "error") {
+        return (
+            <main className="grid h-full place-items-center bg-background px-4 text-foreground">
+                <section className="text-center">
+                    <h1 role="alert" className="text-lg font-semibold">暂时无法读取云端画布</h1>
+                    <div className="mt-4 flex justify-center gap-2">
+                        <Button type="primary" onClick={() => window.location.reload()}>重试</Button>
+                        <Button onClick={() => navigate("/canvas", { replace: true })}>返回画布列表</Button>
+                    </div>
+                </section>
+            </main>
+        );
+    }
+
+    return <InfiniteCanvasPage key={`${userId}:${projectId}`} />;
 }
 
 function InfiniteCanvasPage() {
@@ -332,7 +353,6 @@ function InfiniteCanvasPage() {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
-    const hydrated = useCanvasStore((state) => state.hydrated);
     const createProject = useCanvasStore((state) => state.createProject);
     const importProject = useCanvasStore((state) => state.importProject);
     const insertProject = useCanvasStore((state) => state.insertProject);
@@ -781,7 +801,8 @@ function InfiniteCanvasPage() {
     );
 
     useEffect(() => {
-        if (!hydrated) return;
+        const project = openProject(projectId);
+        if (!project) return;
         const controller = new AbortController();
         restoreAbortRef.current?.abort();
         restoreAbortRef.current = controller;
@@ -790,11 +811,6 @@ function InfiniteCanvasPage() {
             if (restoreAbortRef.current === controller) restoreAbortRef.current = null;
         };
         setProjectLoaded(false);
-        const project = openProject(projectId);
-        if (!project) {
-            navigate("/canvas", { replace: true });
-            return cleanup;
-        }
 
         const restore = async () => {
             const [restoredNodes, restoredSessions] = await Promise.all([hydrateCanvasImages(resetInterruptedGeneration(project.nodes)), hydrateAssistantImages(project.chatSessions || [])]);
@@ -827,7 +843,7 @@ function InfiniteCanvasPage() {
         };
         void restore();
         return cleanup;
-    }, [getDocumentNodes, hydrated, navigate, openProject, projectId, resumeCanvasImageJob]);
+    }, [getDocumentNodes, openProject, projectId, resumeCanvasImageJob]);
 
     useEffect(() => {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "")) return;

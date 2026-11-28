@@ -1,6 +1,6 @@
 export function CanvasRefreshShell() {
     return (
-        <main className="relative h-full min-h-0 overflow-hidden bg-background text-foreground">
+        <main className="relative h-full min-h-0 overflow-hidden bg-background text-foreground" aria-busy="true" aria-label="正在加载画布">
             <div
                 className="absolute inset-0 opacity-60"
                 style={{

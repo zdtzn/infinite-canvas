@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -79,6 +79,9 @@ case "$1 $2" in
       printf '%s' 'new color' > "$TEST_ROOT/data/job-files/result.png"
       touch -r "$staged/job-files/result.png" "$TEST_ROOT/data/job-files/result.png"
       rm "$TEST_ROOT/data/job-files/removed.png"
+      if [ -n "$BACKUP_BASE_SNAPSHOT" ]; then
+        chmod 600 "$TEST_ROOT/data/job-files/permission.png"
+      fi
       printf '%s' 'new result' > "$TEST_ROOT/data/job-files/added.png"
       printf '%s' 'committed at stop' > "$TEST_ROOT/data/app.sqlite"
     fi ;;
@@ -106,6 +109,7 @@ exit 0`);
         CURRENT_IMAGE_ID: previousImageId, DEPLOYED_IMAGE_ID: deployedImageId, CURRENT_HEALTH: "healthy",
         UNAVAILABLE_IMAGE: "", USED_IMAGE_ID: "", TEST_FREE_KB: "10485760",
         DEPLOY_LOCK_FILE: `${posix(root)}/release.lock`, BACKUP_ROOT: `${posix(root)}/backups`,
+        BACKUP_BASE_SNAPSHOT: "",
         ENV_FILE: `${posix(root)}/absent.env`, DEPLOY_MODE: "fast", BIND_ADDRESS: "127.0.0.1",
         REQUIRE_HTTPS: "0", FORCE_RECREATE: "0", ALLOW_ACTIVE_JOBS: "0",
         VOLUME_NAME: "canvas-test-data",
@@ -252,6 +256,51 @@ test("safe deployment stages data online, captures last writes and preserves exi
         expect(existsSync(join(snapshot, "data", "job-files", "removed.png"))).toBe(false);
         expect(readFileSync(join(snapshot, "SHA256SUMS"), "utf8")).toContain("./app.sqlite");
         expect(readFileSync(join(backups, "last-deployment.txt"), "utf8")).toContain(snapshots[0]);
+        checkBackups();
+    } finally { server.stop(true); f.cleanup(); }
+});
+
+test("safe deployment can reuse immutable files from a verified snapshot within the space reserve", async () => {
+    const f = fixture();
+    const checkBackups = protectPreviousBackups(f.root);
+    const server = healthyApp();
+    const backups = join(f.root, "backups");
+    const base = join(backups, "infinite-canvas-20261103T000000Z.snapshot");
+    const source = join(f.root, "data");
+    const baseData = join(base, "data");
+    const stableFile = "job-files/unchanged.png";
+    const permissionFile = "job-files/permission.png";
+    const changedFile = "job-files/result.png";
+    try {
+        writeFileSync(join(source, stableFile), Buffer.alloc(32 * 1024, 1));
+        writeFileSync(join(source, permissionFile), "same content", { mode: 0o644 });
+        chmodSync(join(source, permissionFile), 0o644);
+        cpSync(source, baseData, { recursive: true, preserveTimestamps: true });
+        const files = ["app.sqlite", stableFile, permissionFile, changedFile, "job-files/removed.png"];
+        const manifest = files.map((file) => {
+            const hash = Bun.CryptoHasher.hash("sha256", readFileSync(join(baseData, file)), "hex");
+            return `${hash}  ./${file}\n`;
+        }).join("");
+        writeFileSync(join(base, "SHA256SUMS"), manifest);
+
+        const result = await f.run({
+            DEPLOY_MODE: "safe", BACKUP_BASE_SNAPSHOT: posix(base), SCENARIO: "changes-during-copy",
+            TEST_FREE_KB: String(4194304 + 16), HOST_PORT: String(server.port),
+        });
+        expect(result.code).toBe(0);
+        expect(result.output).toContain("Verified full-volume backup");
+        const snapshots = readdirSync(backups).filter((name) => name.endsWith(".snapshot"));
+        expect(snapshots).toHaveLength(2);
+        const snapshotData = join(backups, snapshots.find((name) => join(backups, name) !== base)!, "data");
+        expect(statSync(join(snapshotData, stableFile)).ino).toBe(statSync(join(baseData, stableFile)).ino);
+        expect(statSync(join(snapshotData, permissionFile)).mode & 0o777).toBe(0o600);
+        expect(statSync(join(baseData, permissionFile)).mode & 0o777).toBe(0o644);
+        expect(readFileSync(join(snapshotData, changedFile), "utf8")).toBe("new color");
+        expect(readFileSync(join(baseData, changedFile), "utf8")).toBe("old color");
+        expect(readFileSync(join(snapshotData, "app.sqlite"), "utf8")).toBe("committed at stop");
+        expect(readFileSync(join(baseData, "app.sqlite"), "utf8")).toBe("SQLite fixture");
+        expect(existsSync(join(snapshotData, "job-files", "removed.png"))).toBe(false);
+        expect(readFileSync(join(base, "SHA256SUMS"), "utf8")).toBe(manifest);
         checkBackups();
     } finally { server.stop(true); f.cleanup(); }
 });

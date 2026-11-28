@@ -5,6 +5,7 @@ import { PUBLIC_MODE } from "@/constant/runtime-config";
 import { userFacingErrorMessage } from "@/lib/friendly-error";
 import { deleteServerProject, fetchServerProjects, saveServerProject } from "@/services/server-api";
 import { normalizeCanvasProject, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { useUserStore } from "@/stores/use-user-store";
 
 type RemoteProject = { project: Record<string, unknown>; revision: number; updatedAt: number };
 
@@ -38,7 +39,8 @@ export function useProjectServerSync(userId?: string) {
         let active = true;
         let initialized = false;
 
-        const ownsCurrentStore = () => active && useCanvasStore.getState().ownerUserId === userId;
+        const isCurrentSession = () => active && useUserStore.getState().user?.id === userId;
+        const ownsCurrentStore = () => isCurrentSession() && useCanvasStore.getState().ownerUserId === userId;
         const showSaveError = (error: unknown) => {
             if (!active) return;
             message.error(userFacingErrorMessage(error, "画布暂时未能同步，请检查网络"));
@@ -214,9 +216,9 @@ export function useProjectServerSync(userId?: string) {
             }
         };
 
-        void waitForCanvasHydration(() => active)
+        void waitForCanvasHydration(isCurrentSession)
             .then(() => {
-                if (!active) return null;
+                if (!isCurrentSession()) return null;
                 useCanvasStore.getState().prepareForUser(userId);
                 return fetchServerProjects(userId);
             })
@@ -264,6 +266,7 @@ export function useProjectServerSync(userId?: string) {
                 useCanvasStore.getState().replaceProjects([...recovered, ...merged]);
                 recovered.forEach((project) => revisions.set(project.id, project.serverRevision || 0));
                 initialized = true;
+                useCanvasStore.setState({ serverProjectsStatus: { userId, status: "ready" } });
                 for (const tombstone of localDeleted.values()) {
                     if (tombstone.serverDeleted) continue;
                     // Keep the revision observed at deletion; never overwrite a newer cloud edit.
@@ -276,6 +279,7 @@ export function useProjectServerSync(userId?: string) {
                 if (!ownsCurrentStore()) return;
                 showSaveError(error);
                 initialized = true;
+                useCanvasStore.setState({ serverProjectsStatus: { userId, status: "error" } });
                 useCanvasStore.getState().projects.forEach((project) => scheduleSave(project.id));
             });
 
@@ -303,6 +307,7 @@ export function useProjectServerSync(userId?: string) {
         return () => {
             active = false;
             unsubscribe();
+            if (useCanvasStore.getState().serverProjectsStatus?.userId === userId) useCanvasStore.setState({ serverProjectsStatus: null });
             saveTimers.forEach((timer) => window.clearTimeout(timer));
             deletionRetryTimers.forEach((timer) => window.clearTimeout(timer));
         };

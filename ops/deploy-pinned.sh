@@ -4,6 +4,7 @@ set -eu
 CONTAINER_NAME="${CONTAINER_NAME:-infinite-canvas}"
 VOLUME_NAME="${VOLUME_NAME:-${DATA_VOLUME_NAME:-infinite-canvas-data}}"
 BACKUP_ROOT="${BACKUP_ROOT:-/root/infinite-canvas-backups}"
+BACKUP_BASE_SNAPSHOT="${BACKUP_BASE_SNAPSHOT:-}"
 ENV_FILE="${ENV_FILE:-/root/infinite-canvas.env}"
 BIND_ADDRESS="${BIND_ADDRESS:-}"
 HOST_PORT="${HOST_PORT:-3000}"
@@ -295,6 +296,20 @@ assert_backup_space() {
   fi
 }
 
+estimate_snapshot_copy_kb() {
+  snapshot_stats="$(LC_ALL=C nice -n 10 rsync -aHSn --numeric-ids --stats --link-dest="$1" "$volume_path/" "$2/")" || return 1
+  printf '%s\n' "$snapshot_stats" | awk '
+    /^Total transferred file size:/ {
+      bytes = $5
+      gsub(/,/, "", bytes)
+      if (bytes !~ /^[0-9]+$/) exit 1
+      printf "%.0f\n", int((bytes + 1023) / 1024)
+      found = 1
+    }
+    END { if (!found) exit 1 }
+  '
+}
+
 trap recover_on_failure EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -317,11 +332,6 @@ if [ "$DEPLOY_MODE" = "safe" ]; then
     "$volume_path/"*) echo "BACKUP_ROOT must be outside the live data volume" >&2; exit 1 ;;
   esac
   mkdir -p "$BACKUP_ROOT"
-  volume_kb="$(du -sk "$volume_path" | awk '{ print $1 }')"
-  case "$volume_kb" in
-    ''|*[!0-9]*) echo "Unable to estimate the full data volume size" >&2; exit 1 ;;
-  esac
-  assert_backup_space "$volume_kb"
   backup_record="$BACKUP_ROOT/infinite-canvas-${timestamp}.snapshot"
   if [ -e "$backup_record" ] || [ -L "$backup_record" ]; then
     echo "Backup already exists at $backup_record" >&2
@@ -331,9 +341,43 @@ if [ "$DEPLOY_MODE" = "safe" ]; then
   mkdir "$backup_stage/data"
   echo "Copying the data volume while the current application is running"
   # The stopped pass will capture SQLite and any files written or removed during this copy.
+  set --
+  if [ -n "$BACKUP_BASE_SNAPSHOT" ]; then
+    base_snapshot="$(realpath -e -- "$BACKUP_BASE_SNAPSHOT")"
+    case "$base_snapshot" in
+      "$BACKUP_ROOT"/infinite-canvas-*.snapshot) ;;
+      *) echo "Backup base must be an existing deployment snapshot in BACKUP_ROOT" >&2; exit 1 ;;
+    esac
+    if [ "$(dirname -- "$base_snapshot")" != "$BACKUP_ROOT" ] ||
+       [ -L "$base_snapshot/data" ] || [ ! -s "$base_snapshot/data/app.sqlite" ] ||
+       [ ! -s "$base_snapshot/SHA256SUMS" ] ||
+       [ "$(stat -c %d -- "$base_snapshot/data")" != "$(stat -c %d -- "$backup_stage")" ]; then
+      echo "Backup base must contain a complete snapshot on the backup filesystem" >&2
+      exit 1
+    fi
+    echo "Verifying the backup base before reusing unchanged files"
+    (cd "$base_snapshot/data" && nice -n 10 sha256sum -c --quiet --strict ../SHA256SUMS)
+    copy_kb="$(estimate_snapshot_copy_kb "$base_snapshot/data" "$backup_stage/data")" ||
+      { echo "Unable to estimate the space needed with the backup base" >&2; exit 1; }
+    set -- --link-dest="$base_snapshot/data"
+  else
+    copy_kb="$(du -sk "$volume_path" | awk '{ print $1 }')"
+    case "$copy_kb" in
+      ''|*[!0-9]*) echo "Unable to estimate the full data volume size" >&2; exit 1 ;;
+    esac
+  fi
+  assert_backup_space "$copy_kb"
   nice -n 10 rsync -aHS --numeric-ids --exclude='/app.sqlite' --exclude='/app.sqlite-wal' --exclude='/app.sqlite-shm' \
-    "$volume_path/" "$backup_stage/data/" || [ "$?" -eq 24 ]
-  assert_backup_space 0
+    "$@" "$volume_path/" "$backup_stage/data/" || [ "$?" -eq 24 ]
+  if [ -n "$BACKUP_BASE_SNAPSHOT" ]; then
+    mkdir "$backup_stage/final"
+    # The online copy excludes SQLite, so this estimate includes its stopped copy.
+    copy_kb="$(estimate_snapshot_copy_kb "$backup_stage/data" "$backup_stage/final")" ||
+      { echo "Unable to estimate the space needed to finalize the backup" >&2; exit 1; }
+  else
+    copy_kb=0
+  fi
+  assert_backup_space "$copy_kb"
 else
   mkdir -p "$BACKUP_ROOT"
 fi
@@ -344,7 +388,14 @@ switch_started=1
 docker stop -t 30 "$CONTAINER_NAME" >/dev/null
 if [ "$DEPLOY_MODE" = "safe" ]; then
   echo "Finalizing the backup from the stopped data volume"
-  rsync -aHS --numeric-ids --delete --checksum "$volume_path/" "$backup_stage/data/"
+  if [ -n "$BACKUP_BASE_SNAPSHOT" ]; then
+    # An empty receiver keeps rsync from updating shared inode metadata in place.
+    rsync -aHS --numeric-ids --checksum --link-dest="$backup_stage/data" "$volume_path/" "$backup_stage/final/"
+    rm -rf -- "$backup_stage/data"
+    mv -- "$backup_stage/final" "$backup_stage/data"
+  else
+    rsync -aHS --numeric-ids --delete --checksum "$volume_path/" "$backup_stage/data/"
+  fi
   assert_backup_space 0
   docker run --rm --network none -v "$backup_stage/data:/snapshot:ro" "$IMAGE_REF" bun -e '
     import { Database } from "bun:sqlite";
