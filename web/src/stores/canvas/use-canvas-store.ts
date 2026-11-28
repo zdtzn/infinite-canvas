@@ -272,7 +272,10 @@ export async function flushCanvasPersistence(strict = false) {
         }
         persistedCanvasState = state;
     };
-    const operation = persistence.then(() => typeof window !== "undefined" && window.navigator?.locks ? window.navigator.locks.request(name, write) : write());
+    const operation = persistence.then(async () => {
+        if (typeof window !== "undefined" && window.navigator?.locks) await window.navigator.locks.request(name, write);
+        else await write();
+    });
     persistence = operation.catch(() => undefined);
     try {
         await operation;

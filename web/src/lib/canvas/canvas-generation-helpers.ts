@@ -47,17 +47,17 @@ export async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
 export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
     return Promise.all(
         nodes.map(async (node) => {
-            const content = node.metadata?.content;
-            const key = node.metadata?.storageKey;
-            if (!key) return node;
+            const metadata = node.metadata;
+            if (!metadata?.storageKey) return node;
+            const { content, storageKey: key, thumbnailKey, thumbnailUrl } = metadata;
             try {
-                if (node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(key, content) } };
+                if (node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) return { ...node, metadata: { ...metadata, content: await resolveMediaUrl(key, content) } };
                 if (node.type === CanvasNodeType.Image) {
                     const [resolvedContent, resolvedThumbnail] = await Promise.all([
                         resolveImageUrl(key, content || ""),
-                        node.metadata.thumbnailKey ? resolveImageUrl(node.metadata.thumbnailKey, node.metadata.thumbnailUrl) : Promise.resolve(node.metadata.thumbnailUrl),
+                        thumbnailKey ? resolveImageUrl(thumbnailKey, thumbnailUrl) : Promise.resolve(thumbnailUrl),
                     ]);
-                    return { ...node, metadata: { ...node.metadata, content: resolvedContent, ...(resolvedThumbnail ? { thumbnailUrl: resolvedThumbnail } : {}) } };
+                    return { ...node, metadata: { ...metadata, content: resolvedContent, ...(resolvedThumbnail ? { thumbnailUrl: resolvedThumbnail } : {}) } };
                 }
             } catch {
                 return node;
