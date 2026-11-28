@@ -4604,7 +4604,7 @@ function deleteProject(url: URL, session: SessionPayload, id: string) {
     const projects = state.projects[session.userId];
     const current = projects?.[id];
     const requestedRevision = Number(url.searchParams.get("revision") || 0);
-    if (current && requestedRevision && requestedRevision !== current.revision)
+    if (current && requestedRevision !== current.revision)
         return json(
             {
                 error: { message: "画布已在其他位置更新", code: "REVISION_CONFLICT" },
@@ -4614,6 +4614,7 @@ function deleteProject(url: URL, session: SessionPayload, id: string) {
         );
     const tombstones = (state.projectTombstones[session.userId] ||= {});
     const previous = tombstones[id];
+    if (!current && previous) return new Response(null, { status: 204 });
     const nextTombstone = {
         revision: Math.max(current?.revision || 0, previous?.revision || 0) + 1,
         deletedAt: Date.now(),

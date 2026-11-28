@@ -1,5 +1,17 @@
 import { shallow } from "zustand/shallow";
-import type { CanvasNodeData } from "@/types/canvas";
+import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
+
+export function canvasDocumentDuringUploads(nodes: CanvasNodeData[], connections: CanvasConnection[], pending: ReadonlyMap<string, { previousNode?: CanvasNodeData }>) {
+    if (!pending.size) return { nodes, connections };
+    const durableNodes = nodes.flatMap((node) => {
+        const upload = pending.get(node.id);
+        if (!upload) return [node];
+        return upload.previousNode ? [upload.previousNode] : [];
+    });
+    if (durableNodes.length === nodes.length) return { nodes: durableNodes, connections };
+    const ids = new Set(durableNodes.map((node) => node.id));
+    return { nodes: durableNodes, connections: connections.filter((connection) => ids.has(connection.fromNodeId) && ids.has(connection.toNodeId)) };
+}
 
 // Progress belongs to the live view. Preserve document identity across phase-only
 // updates so polling cannot create undo entries, clear redo, or dirty persistence.

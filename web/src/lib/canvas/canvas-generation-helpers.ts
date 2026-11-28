@@ -1,9 +1,9 @@
 import { reconcileCanvasBatch } from "./canvas-generated-image";
 import { defaultConfig, normalizeImageSizeSelection, resolveModelForCapability, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
-import { resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { resolveImageUrl } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
-import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
+import { referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import { flattenGenerationInputs, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
@@ -48,30 +48,29 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
     return Promise.all(
         nodes.map(async (node) => {
             const content = node.metadata?.content;
-            if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(node.metadata.storageKey, content) } };
-            if (node.type !== CanvasNodeType.Image) return node;
-            if (node.metadata?.storageKey) {
-                const [resolvedContent, resolvedThumbnail] = await Promise.all([
-                    resolveImageUrl(node.metadata.storageKey, content || ""),
-                    node.metadata.thumbnailKey ? resolveImageUrl(node.metadata.thumbnailKey, node.metadata.thumbnailUrl) : Promise.resolve(node.metadata.thumbnailUrl),
-                ]);
-                return { ...node, metadata: { ...node.metadata, content: resolvedContent, ...(resolvedThumbnail ? { thumbnailUrl: resolvedThumbnail } : {}) } };
+            const key = node.metadata?.storageKey;
+            if (!key) return node;
+            try {
+                if (node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(key, content) } };
+                if (node.type === CanvasNodeType.Image) {
+                    const [resolvedContent, resolvedThumbnail] = await Promise.all([
+                        resolveImageUrl(key, content || ""),
+                        node.metadata.thumbnailKey ? resolveImageUrl(node.metadata.thumbnailKey, node.metadata.thumbnailUrl) : Promise.resolve(node.metadata.thumbnailUrl),
+                    ]);
+                    return { ...node, metadata: { ...node.metadata, content: resolvedContent, ...(resolvedThumbnail ? { thumbnailUrl: resolvedThumbnail } : {}) } };
+                }
+            } catch {
+                return node;
             }
-            if (!content) return node;
-            if (!content.startsWith("data:image/")) return node;
-            return { ...node, metadata: { ...node.metadata, ...imageMetadata(await uploadImage(content)) } };
+            return node;
         }),
     );
 }
 
 export async function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
     const hydrateItem = async <T extends { dataUrl?: string; storageKey?: string }>(item: T) => {
-        if (item.storageKey) return { ...item, dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl) };
-        if (item.dataUrl?.startsWith("data:image/")) {
-            const image = await uploadImage(item.dataUrl);
-            return { ...item, dataUrl: image.url, storageKey: image.storageKey };
-        }
-        return item;
+        if (!item?.storageKey) return item;
+        return resolveImageUrl(item.storageKey, item.dataUrl).then((dataUrl) => ({ ...item, dataUrl }), () => item);
     };
     return Promise.all(
         sessions.map(async (session) => ({

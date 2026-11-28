@@ -19,6 +19,7 @@ function project(updatedAt: string, serverRevision?: number): CanvasProject {
         backgroundMode: "lines",
         showImageInfo: false,
         viewport: { x: 0, y: 0, k: 1 },
+        snapshots: [],
     };
 }
 
@@ -39,6 +40,11 @@ describe("project server sync", () => {
 
     test("keeps the remote project when its revision is newer", () => {
         assert.equal(shouldUploadLocalProject(project("2026-07-23T03:00:00.000Z", 3), remote, remote.project), false);
+    });
+
+    test("an explicit pending edit takes precedence over client clock skew at the same server revision", () => {
+        assert.equal(shouldUploadLocalProject({ ...project("2026-07-23T00:00:00.000Z", 4), pendingSync: true }, remote, remote.project), true);
+        assert.equal(shouldUploadLocalProject({ ...project("2026-07-23T03:00:00.000Z", 4), pendingSync: false }, remote, remote.project), false);
     });
 
     test("stays independent from router context because it runs above RouterProvider", () => {

@@ -3,6 +3,7 @@ import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, Mous
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Group, ImagePlus, Sparkles, Type, Video } from "lucide-react";
+import { shallow } from "zustand/shallow";
 
 import { completedServerImages, requestEdit, requestGeneration, requestImageQuestion, retryServerImageJob } from "@/services/api/image";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
@@ -51,12 +52,12 @@ import { useAgentStore } from "@/stores/use-agent-store";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 import { resolveImageModelSettings } from "@/stores/image-model-settings";
 import { resolveImageSlotConcurrency } from "@/stores/model-capabilities";
-import { canvasProjectAvailability, normalizeCanvasProject, useCanvasStore, type CanvasProjectSnapshot } from "@/stores/canvas/use-canvas-store";
+import { canvasProjectAvailability, canvasProjectPayload, flushCanvasPersistence, normalizeCanvasProject, useCanvasStore, type CanvasProjectSnapshot } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { getNodeReferenceTargetId, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { createCanvasResourceCache } from "@/lib/canvas/canvas-resource-cache";
-import { createCanvasDocumentNodes } from "@/lib/canvas/canvas-document-nodes";
+import { canvasDocumentDuringUploads, createCanvasDocumentNodes } from "@/lib/canvas/canvas-document-nodes";
 import { applyCanvasImageSaveResult, reconcileCanvasBatch, canvasImageMetadata as imageMetadata, canvasImageResourceMetadata, createCanvasImageSaver, imageSaveState } from "@/lib/canvas/canvas-generated-image";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, createPendingImageUploadNode, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import {
@@ -166,6 +167,7 @@ type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     activeChatId: string | null;
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
+    viewport?: ViewportTransform;
 };
 
 type CanvasGenerationRequest = {
@@ -258,6 +260,7 @@ export default function CanvasPage() {
     const userId = useUserStore((state) => state.user?.id || "");
     const navigate = useNavigate();
     const availability = useCanvasStore((state) => canvasProjectAvailability(state, projectId, PUBLIC_MODE ? userId : undefined));
+    const reload = useCanvasStore((state) => state.projectReloads.get(projectId) || 0);
 
     useEffect(() => {
         setMounted(true);
@@ -282,10 +285,10 @@ export default function CanvasPage() {
         );
     }
 
-    return <InfiniteCanvasPage key={`${userId}:${projectId}`} />;
+    return <InfiniteCanvasPage key={`${userId}:${projectId}:${reload}`} reload={reload} />;
 }
 
-function InfiniteCanvasPage() {
+function InfiniteCanvasPage({ reload }: { reload: number }) {
     const { message, modal } = App.useApp();
     const { isDouEmperor, generationSuccessMessage } = useImperialMode();
     const queryClient = useQueryClient();
@@ -307,6 +310,12 @@ function InfiniteCanvasPage() {
             toolSessionRef.current.active = false;
         };
     }, []);
+    const canPersistCanvas = useCallback(() => {
+        const state = useCanvasStore.getState();
+        const session = toolSessionRef.current;
+        return session.canEdit && (state.projectReloads.get(projectId) || 0) === reload &&
+            (!PUBLIC_MODE || (state.ownerUserId === session.userId && useUserStore.getState().user?.id === session.userId));
+    }, [projectId, reload]);
     const [cameraNodeId, setCameraNodeId] = useState<string | null>(null);
     const [mediaNodeId, setMediaNodeId] = useState<string | null>(null);
     useEffect(() => {
@@ -454,9 +463,19 @@ function InfiniteCanvasPage() {
     const generationOwnersRef = useRef(new WeakMap<AbortController, { epoch: number; userId: string }>());
     const stoppedGenerationControllersRef = useRef(new WeakSet<AbortController>());
     const pendingImageUploadsRef = useRef(new Map<string, PendingImageUpload>());
+    const lastSavedDocumentRef = useRef<Omit<CanvasHistoryEntry, "viewport"> | null>(null);
+    const lastSavedViewportRef = useRef<ViewportTransform | null>(null);
     const restoreAbortRef = useRef<AbortController | null>(null);
     const snapshotRestoreAbortRef = useRef<AbortController | null>(null);
     const consumedImageTransferRef = useRef<string | null>(null);
+
+    const cancelPendingImageUploads = useCallback(() => {
+        pendingImageUploadsRef.current.forEach((pending) => {
+            pending.canceled = true;
+            URL.revokeObjectURL(pending.previewUrl);
+        });
+        pendingImageUploadsRef.current.clear();
+    }, []);
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -823,6 +842,7 @@ function InfiniteCanvasPage() {
             setBackgroundMode(project.backgroundMode);
             setShowImageInfo(project.showImageInfo || false);
             setViewport(project.viewport);
+            lastSavedViewportRef.current = project.viewport;
             didInitialCenterRef.current = Boolean(project.nodes.length || project.viewport.x !== 0 || project.viewport.y !== 0 || project.viewport.k !== 1);
             historyRef.current = { past: [], future: [] };
             if (historyCommitTimerRef.current) {
@@ -837,6 +857,7 @@ function InfiniteCanvasPage() {
                 backgroundMode: project.backgroundMode,
                 showImageInfo: project.showImageInfo || false,
             };
+            lastSavedDocumentRef.current = lastHistoryRef.current;
             setHistoryState({ canUndo: false, canRedo: false });
             setProjectLoaded(true);
             restoredNodes.filter((node) => node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.isBatchRoot && (node.metadata.jobId || node.metadata.imageSubmissionParent !== undefined)).forEach((node) => void resumeCanvasImageJob(node, controller.signal));
@@ -896,45 +917,60 @@ function InfiniteCanvasPage() {
         };
     }, [activeChatId, backgroundMode, chatSessions, connections, createHistoryEntry, documentNodes, projectLoaded, showImageInfo]);
 
-    useEffect(() => {
-        if (!projectLoaded || historyPausedRef.current || pendingImageUploadsRef.current.size) return;
-        updateProject(projectId, { nodes: documentNodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
-    }, [activeChatId, backgroundMode, chatSessions, connections, documentNodes, projectId, projectLoaded, showImageInfo, updateProject]);
+    useLayoutEffect(() => {
+        if (!projectLoaded || historyPausedRef.current || !canPersistCanvas()) return;
+        const durable = canvasDocumentDuringUploads(documentNodes, connections, pendingImageUploadsRef.current);
+        const document = { ...durable, chatSessions, activeChatId, backgroundMode, showImageInfo };
+        const saved = lastSavedDocumentRef.current;
+        if (saved && shallow({ ...document, nodes: saved.nodes, connections: saved.connections }, saved) &&
+            shallow(document.nodes, saved.nodes) && shallow(document.connections, saved.connections)) return;
+        lastSavedDocumentRef.current = document;
+        updateProject(projectId, document);
+    }, [activeChatId, backgroundMode, canPersistCanvas, chatSessions, connections, documentNodes, projectId, projectLoaded, projectLock.canEdit, showImageInfo, updateProject]);
 
     useEffect(() => {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
     }, [dialogNodeId]);
 
-    useEffect(() => {
-        if (!projectLoaded) return;
-        if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
-        viewportSaveTimerRef.current = setTimeout(() => {
-            updateProject(projectId, { viewport: viewportRef.current });
-            viewportSaveTimerRef.current = null;
-        }, 500);
-    }, [projectId, projectLoaded, updateProject, viewport]);
+    const savePendingViewport = useCallback(() => {
+        if (!viewportSaveTimerRef.current) return;
+        clearTimeout(viewportSaveTimerRef.current);
+        viewportSaveTimerRef.current = null;
+        const next = viewportRef.current;
+        if (!canPersistCanvas() || shallow(next, lastSavedViewportRef.current)) return;
+        lastSavedViewportRef.current = next;
+        updateProject(projectId, { viewport: next });
+    }, [canPersistCanvas, projectId, updateProject]);
 
-    useEffect(
-        () => () => {
-            if (viewportSaveTimerRef.current) {
-                clearTimeout(viewportSaveTimerRef.current);
-                viewportSaveTimerRef.current = null;
-                updateProject(projectId, { viewport: viewportRef.current });
-            }
-        },
-        [projectId, updateProject],
-    );
+    useEffect(() => {
+        if (!projectLoaded || !projectLock.canEdit) return;
+        if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
+        viewportSaveTimerRef.current = setTimeout(savePendingViewport, 500);
+    }, [projectLoaded, projectLock.canEdit, savePendingViewport, viewport]);
+
+    useEffect(() => {
+        const flushViewport = () => {
+            savePendingViewport();
+            void flushCanvasPersistence().catch(() => undefined);
+        };
+        const onVisibilityChange = () => {
+            if (document.visibilityState === "hidden") flushViewport();
+        };
+        window.addEventListener("pagehide", flushViewport, true);
+        document.addEventListener("visibilitychange", onVisibilityChange, true);
+        return () => {
+            window.removeEventListener("pagehide", flushViewport, true);
+            document.removeEventListener("visibilitychange", onVisibilityChange, true);
+            savePendingViewport();
+        };
+    }, [savePendingViewport]);
 
     useEffect(
         () => () => {
             invalidateGeneration();
-            pendingImageUploadsRef.current.forEach((pending) => {
-                pending.canceled = true;
-                URL.revokeObjectURL(pending.previewUrl);
-            });
-            pendingImageUploadsRef.current.clear();
+            cancelPendingImageUploads();
         },
-        [invalidateGeneration],
+        [cancelPendingImageUploads, invalidateGeneration],
     );
 
     useLayoutEffect(() => {
@@ -960,7 +996,9 @@ function InfiniteCanvasPage() {
             setSize({ width: rect.width, height: rect.height });
             if (!didInitialCenterRef.current) {
                 didInitialCenterRef.current = true;
-                setViewport({ x: rect.width / 2, y: rect.height / 2, k: 1 });
+                const centered = { x: rect.width / 2, y: rect.height / 2, k: 1 };
+                lastSavedViewportRef.current = centered;
+                setViewport(centered);
             }
         };
 
@@ -1557,6 +1595,7 @@ function InfiniteCanvasPage() {
         setActiveChatId(entry.activeChatId);
         setBackgroundMode(entry.backgroundMode);
         setShowImageInfo(entry.showImageInfo);
+        if (entry.viewport) setViewport(entry.viewport);
         setSelectedNodeIds(new Set());
         setSelectedConnectionId(null);
         setContextMenu(null);
@@ -1603,8 +1642,8 @@ function InfiniteCanvasPage() {
                 navigate(`/canvas/${id}`);
                 return;
             }
-            const response = await branchServerProject(projectId, source as unknown as Record<string, unknown>, source.serverRevision);
-            const branch = normalizeCanvasProject({ ...response.project, serverRevision: response.revision });
+            const response = await branchServerProject(projectId, canvasProjectPayload(source), source.serverRevision);
+            const branch = normalizeCanvasProject({ ...response.project, serverRevision: response.revision, pendingSync: false });
             if (!branch) throw new Error("画布分支未能创建，请稍后再试");
             insertProject(branch);
             message.success("已创建画布分支");
@@ -1617,12 +1656,13 @@ function InfiniteCanvasPage() {
     }, [importProject, insertProject, message, navigate, projectId]);
 
     const handleCreateSnapshot = useCallback(() => {
-        const snapshotNodes = compactCanvasNodesForSnapshot(getDocumentNodes(nodesRef.current));
+        const durable = canvasDocumentDuringUploads(getDocumentNodes(nodesRef.current), connectionsRef.current, pendingImageUploadsRef.current);
+        const snapshotNodes = compactCanvasNodesForSnapshot(durable.nodes);
         const snapshotSessions = compactCanvasAssistantSessionsForSnapshot(chatSessions);
         const snapshotSize = new Blob([
             JSON.stringify({
                 nodes: snapshotNodes,
-                connections: connectionsRef.current,
+                connections: durable.connections,
                 chatSessions: snapshotSessions,
                 activeChatId,
                 backgroundMode,
@@ -1637,7 +1677,7 @@ function InfiniteCanvasPage() {
         const snapshot = createSnapshot(projectId, {
             title: `快照 ${new Date().toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}`,
             nodes: structuredClone(snapshotNodes),
-            connections: structuredClone(connectionsRef.current),
+            connections: structuredClone(durable.connections),
             chatSessions: structuredClone(snapshotSessions),
             activeChatId,
             backgroundMode,
@@ -1665,8 +1705,10 @@ function InfiniteCanvasPage() {
                 cancelText: "取消",
                 onOk: async () => {
                     if (!toolSessionRef.current.active || toolSessionRef.current.projectId !== projectId) return;
-                    const restored = restoreSnapshot(projectId, snapshot.id);
-                    if (!restored) return;
+                    const saved = useCanvasStore.getState().openProject(projectId)?.snapshots.find((item) => item.id === snapshot.id);
+                    if (!saved || !canPersistCanvas()) return;
+                    const current = createHistoryEntry();
+                    const before = { ...current, ...canvasDocumentDuringUploads(current.nodes, current.connections, pendingImageUploadsRef.current), viewport: viewportRef.current };
                     invalidateGeneration();
                     imageSaver.retain([]);
                     setRunningNodeId(null);
@@ -1676,8 +1718,18 @@ function InfiniteCanvasPage() {
                     const isCurrent = () => !controller.signal.aborted && generationEpochRef.current === epoch && toolSessionRef.current.active;
                     setProjectLoaded(false);
                     try {
-                        const [restoredNodes, restoredSessions] = await Promise.all([hydrateCanvasImages(resetInterruptedGeneration(restored.nodes)), hydrateAssistantImages(restored.chatSessions || [])]);
+                        const [restoredNodes, restoredSessions] = await Promise.all([hydrateCanvasImages(resetInterruptedGeneration(saved.nodes)), hydrateAssistantImages(saved.chatSessions || [])]);
                         if (!isCurrent()) return;
+                        if (!canPersistCanvas()) {
+                            setProjectLoaded(true);
+                            return;
+                        }
+                        const restored = restoreSnapshot(projectId, snapshot.id);
+                        if (!restored) {
+                            setProjectLoaded(true);
+                            return;
+                        }
+                        cancelPendingImageUploads();
                         setNodes(restoredNodes);
                         setConnections(restored.connections);
                         setChatSessions(restoredSessions);
@@ -1685,8 +1737,9 @@ function InfiniteCanvasPage() {
                         setBackgroundMode(restored.backgroundMode);
                         setShowImageInfo(restored.showImageInfo || false);
                         setViewport(restored.viewport);
-                        historyRef.current = { past: [], future: [] };
-                        lastHistoryRef.current = {
+                        lastSavedViewportRef.current = restored.viewport;
+                        historyRef.current = { past: [...historyRef.current.past.slice(-49), before], future: [] };
+                        const document = {
                             nodes: getDocumentNodes(restoredNodes),
                             connections: restored.connections,
                             chatSessions: restoredSessions,
@@ -1694,7 +1747,9 @@ function InfiniteCanvasPage() {
                             backgroundMode: restored.backgroundMode,
                             showImageInfo: restored.showImageInfo || false,
                         };
-                        setHistoryState({ canUndo: false, canRedo: false });
+                        lastHistoryRef.current = { ...document, viewport: restored.viewport };
+                        lastSavedDocumentRef.current = document;
+                        setHistoryState({ canUndo: true, canRedo: false });
                         setSelectedNodeIds(new Set());
                         setSelectedConnectionId(null);
                         setProjectLoaded(true);
@@ -1708,7 +1763,7 @@ function InfiniteCanvasPage() {
                 },
             });
         },
-        [getDocumentNodes, imageSaver, invalidateGeneration, message, modal, projectId, restoreSnapshot, resumeCanvasImageJob],
+        [cancelPendingImageUploads, canPersistCanvas, createHistoryEntry, getDocumentNodes, imageSaver, invalidateGeneration, message, modal, projectId, restoreSnapshot, resumeCanvasImageJob],
     );
 
     const deleteCurrentProject = useCallback(() => {
@@ -3045,7 +3100,7 @@ function InfiniteCanvasPage() {
                             const pending: PendingImageUpload = {
                                 previewUrl,
                                 canceled: false,
-                                previousNode: previousPending?.previousNode || targetNode,
+                                previousNode: previousPending ? previousPending.previousNode : targetNode,
                             };
                             const pendingMetadata = createPendingImageUploadNode(file, previewUrl, {
                                 x: targetNode.position.x + targetNode.width / 2,

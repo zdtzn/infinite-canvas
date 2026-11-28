@@ -14,7 +14,7 @@ const read = (path: string) => readFileSync(new URL(path, root), "utf8");
 const project = ts.createSourceFile("project.tsx", read("pages/canvas/project.tsx"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const page = project.statements.find((s: any) => ts.isFunctionDeclaration(s) && s.name?.text === "InfiniteCanvasPage") as any;
 function effect(marker: string) {
-    const found = page.body.statements.filter((s: any) => ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && s.expression.expression.getText(project) === "useEffect" && s.expression.arguments[0].getText(project).includes(marker));
+    const found = page.body.statements.filter((s: any) => ts.isExpressionStatement(s) && ts.isCallExpression(s.expression) && ["useEffect", "useLayoutEffect"].includes(s.expression.expression.getText(project)) && s.expression.arguments[0].getText(project).includes(marker));
     assert.equal(found.length, 1, marker);
     return found[0].expression.arguments[0].getText(project);
 }
@@ -66,12 +66,13 @@ function harness() {
         generationEpochRef: { current: 0 },
         generationOwnersRef: { current: new WeakMap() },
         stoppedGenerationControllersRef: { current: new WeakSet() },
-        toolSessionRef: { current: { active: true, projectId: "fixture-project", userId: "fixture-owner" } },
+        toolSessionRef: { current: { active: true, canEdit: true, projectId: "fixture-project", userId: "fixture-owner" } },
         PUBLIC_MODE: true,
         NODE_DEFAULT_SIZE: { image: { width: 340, height: 240 } },
         fetchCanvasJobReceipt: async () => ({ idempotencyKey: "fixture-receipt", jobId: null }),
         projectId: "fixture-project",
         projectLoaded: true,
+        reload: 0,
         effectiveConfigRef: { current: { model: "fixture-model" } },
         resolveModelRequestConfig: () => ({ channelId: "fixture-channel", serverManaged: true }),
         NODE_STATUS_LOADING: "loading",
@@ -90,6 +91,8 @@ function harness() {
         viewportRef: { current: { x: 0, y: 0, k: 1 } },
         historyRef: { current: { past: [], future: [] } },
         lastHistoryRef: { current: null },
+        lastSavedDocumentRef: { current: null },
+        lastSavedViewportRef: { current: null },
         historyCommitTimerRef: { current: null },
         applyingHistoryRef: { current: false },
         historyPausedRef: { current: false },
@@ -168,9 +171,9 @@ function harness() {
     );
     c.getDocumentNodes = c.createCanvasDocumentNodes();
     run(declaration("lib/canvas/canvas-generation-helpers.ts", "isGenerationCanceled"));
-    bind("saveEffect", effect("updateProject(projectId, { nodes"));
+    bind("saveEffect", effect("updateProject(projectId, document)"));
     bind("historyEffect", effect("const next = createHistoryEntry();"));
-    bind("cleanupEffect", effect("pendingImageUploadsRef.current.forEach"));
+    bind("cleanupEffect", effect("cancelPendingImageUploads()"));
     const normalize = (value: any) => JSON.parse(JSON.stringify(value));
     const node = (metadata: any, x = 0) => ({ id: "same-node", type: "image", title: "Fixture", width: 320, height: 220, position: { x, y: 0 }, metadata });
     const install = (nodes: any[], snapshots: any[] = []) => {
@@ -308,6 +311,12 @@ test("snapshot restore invalidates an old recovery completion", async () => {
     advance(200);
     await flush();
     assert.equal(writes.at(-1).state.projects[0].nodes[0].metadata.content, "snapshot-image");
+    assert.equal(c.historyState.canUndo, true);
+    c.undoCanvas();
+    assert.equal(c.nodes[0].metadata.jobId, "job-inflight");
+    advance(0);
+    c.redoCanvas();
+    assert.equal(c.nodes[0].metadata.content, "snapshot-image");
 });
 
 test("phase changes preserve redo and stay out of persistence; real results still save", async () => {
