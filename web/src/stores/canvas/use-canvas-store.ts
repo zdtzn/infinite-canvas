@@ -260,7 +260,6 @@ export async function flushCanvasPersistence(strict = false) {
             if (strict) await localforage.setItem(name, serialized);
             else await localForageStorage.setItem(name, serialized);
         } else {
-            const fallback = readCanvasFallback(name);
             try {
                 await localforage.setItem(name, serialized);
             } catch (error) {
